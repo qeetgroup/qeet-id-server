@@ -1,6 +1,6 @@
 // Package principal manages OAuth-style service principals — non-human
 // callers that authenticate via client_credentials grant and receive a
-// short-lived service JWT scoped to a single tenant.
+// short-lived service JWT scoped to a single organization.
 package principal
 
 import (
@@ -58,7 +58,7 @@ func tsPtr(p pgtype.Timestamptz) *time.Time {
 // secret it replaced at its last rotation stops working.
 type Principal struct {
 	ID                      uuid.UUID  `json:"id"`
-	TenantID                uuid.UUID  `json:"tenant_id"`
+	OrganizationID          uuid.UUID  `json:"tenant_id"`
 	Name                    string     `json:"name"`
 	Description             string     `json:"description"`
 	Scopes                  []string   `json:"scopes"`
@@ -70,10 +70,10 @@ type Principal struct {
 
 // CreateInput is what Create takes.
 type CreateInput struct {
-	TenantID    uuid.UUID `json:"tenant_id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	Scopes      []string  `json:"scopes"`
+	OrganizationID uuid.UUID `json:"tenant_id"`
+	Name           string    `json:"name"`
+	Description    string    `json:"description"`
+	Scopes         []string  `json:"scopes"`
 }
 
 // Create adds a service principal and returns it with its plaintext secret,
@@ -88,33 +88,33 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, in CreateInput) (*Princ
 	}
 	hash := password.HashSecret(raw)
 	row, err := s.q.WithTx(tx).CreateServicePrincipal(ctx, dbgen.CreateServicePrincipalParams{
-		TenantID:    in.TenantID,
-		Name:        in.Name,
-		Description: in.Description,
-		SecretHash:  hash,
-		Scopes:      in.Scopes,
-		CreatedBy:   httpx.PrincipalUserID(ctx),
+		OrganizationID: in.OrganizationID,
+		Name:           in.Name,
+		Description:    in.Description,
+		SecretHash:     hash,
+		Scopes:         in.Scopes,
+		CreatedBy:      httpx.PrincipalUserID(ctx),
 	})
 	if err != nil {
 		return nil, "", err
 	}
 	p := &Principal{
-		ID: row.ID, TenantID: row.TenantID, Name: row.Name, Description: row.Description,
+		ID: row.ID, OrganizationID: row.OrganizationID, Name: row.Name, Description: row.Description,
 		Scopes: row.Scopes, DisabledAt: tsPtr(row.DisabledAt), CreatedAt: row.CreatedAt,
 	}
 	return p, raw, nil
 }
 
-// List returns the tenant's service principals.
-func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Principal, error) {
-	rows, err := s.q.ListServicePrincipals(ctx, tenantID)
+// List returns the organization's service principals.
+func (s *Service) List(ctx context.Context, organizationID uuid.UUID) ([]Principal, error) {
+	rows, err := s.q.ListServicePrincipals(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]Principal, 0, len(rows))
 	for _, row := range rows {
 		p := Principal{
-			ID: row.ID, TenantID: row.TenantID, Name: row.Name, Description: row.Description,
+			ID: row.ID, OrganizationID: row.OrganizationID, Name: row.Name, Description: row.Description,
 			Scopes: row.Scopes, DisabledAt: tsPtr(row.DisabledAt), LastUsedAt: tsPtr(row.LastUsedAt), CreatedAt: row.CreatedAt,
 		}
 		if until := tsPtr(row.PreviousSecretExpiresAt); until != nil && until.After(time.Now()) {
@@ -135,17 +135,17 @@ func (s *Service) PrincipalLive(ctx context.Context, id uuid.UUID) (bool, error)
 	return live, err
 }
 
-// Disable marks a service principal disabled. Returns the (tenantID,
+// Disable marks a service principal disabled. Returns the (organizationID,
 // name) for the audit row so the caller doesn't have to re-query.
-func (s *Service) Disable(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (uuid.UUID, string, error) {
-	row, err := s.q.WithTx(tx).DisableServicePrincipal(ctx, dbgen.DisableServicePrincipalParams{ID: id, TenantID: tenantID})
+func (s *Service) Disable(ctx context.Context, tx pgx.Tx, organizationID, id uuid.UUID) (uuid.UUID, string, error) {
+	row, err := s.q.WithTx(tx).DisableServicePrincipal(ctx, dbgen.DisableServicePrincipalParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, "", errs.ErrPrincipalNotFound
 	}
 	if err != nil {
 		return uuid.Nil, "", err
 	}
-	return row.TenantID, row.Name, nil
+	return row.OrganizationID, row.Name, nil
 }
 
 // TokenResponse is a client-credentials token. ExpiresIn is the RFC 6749
@@ -189,7 +189,7 @@ func (s *Service) IssueClientCredentials(ctx context.Context, clientID, clientSe
 	}
 	if rehash {
 		if err := s.q.UpgradeServicePrincipalSecretHash(ctx, dbgen.UpgradeServicePrincipalSecretHashParams{
-			NewHash: password.HashSecret(clientSecret), ID: row.ID, TenantID: row.TenantID, OldHash: row.SecretHash,
+			NewHash: password.HashSecret(clientSecret), ID: row.ID, OrganizationID: row.OrganizationID, OldHash: row.SecretHash,
 		}); err != nil {
 			slog.Warn("service principal hash upgrade failed", "err", err, "principal_id", row.ID)
 		}
@@ -197,10 +197,10 @@ func (s *Service) IssueClientCredentials(ctx context.Context, clientID, clientSe
 	if row.DisabledAt.Valid {
 		return nil, errs.ErrPrincipalDisabled
 	}
-	if err := s.q.TouchServicePrincipal(ctx, dbgen.TouchServicePrincipalParams{ID: row.ID, TenantID: row.TenantID}); err != nil {
+	if err := s.q.TouchServicePrincipal(ctx, dbgen.TouchServicePrincipalParams{ID: row.ID, OrganizationID: row.OrganizationID}); err != nil {
 		slog.Warn("service principal last use not recorded", "err", err, "principal_id", row.ID)
 	}
-	id, tenantID, scopes := row.ID, row.TenantID, row.Scopes
+	id, organizationID, scopes := row.ID, row.OrganizationID, row.Scopes
 	now := time.Now().UTC()
 	exp := now.Add(s.issuer.AccessTTL())
 	scope := joinScopes(scopes)
@@ -209,15 +209,15 @@ func (s *Service) IssueClientCredentials(ctx context.Context, clientID, clientSe
 	// with the same verifier the user endpoints use. ActorType comes from
 	// a custom claim so the verifier can distinguish.
 	type svcClaims struct {
-		TenantID  uuid.UUID `json:"tenant_id"`
-		Scope     string    `json:"scope,omitempty"`
-		ActorType string    `json:"actor_type"`
+		OrganizationID uuid.UUID `json:"tenant_id"`
+		Scope          string    `json:"scope,omitempty"`
+		ActorType      string    `json:"actor_type"`
 		jwt.RegisteredClaims
 	}
 	claims := svcClaims{
-		TenantID:  tenantID,
-		Scope:     scope,
-		ActorType: "service",
+		OrganizationID: organizationID,
+		Scope:          scope,
+		ActorType:      "service",
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    s.issuer.JWTIssuer(),
 			Audience:  jwt.ClaimStrings{s.issuer.JWTAudience()},
@@ -257,7 +257,7 @@ type Handler struct {
 	Service *Service
 	// GrantCheck refuses a credential carrying a scope the caller doesn't hold
 	// (rbac.Repository.CheckGrantScopes). Without it creating one is refused.
-	GrantCheck func(ctx context.Context, caller *httpx.Principal, tenantID uuid.UUID, scopes []string) error
+	GrantCheck func(ctx context.Context, caller *httpx.Principal, organizationID uuid.UUID, scopes []string) error
 }
 
 // Mount registers the service principal routes on r.
@@ -276,7 +276,7 @@ func (h *Handler) MountToken(r chi.Router) {
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
-	tid, err := httpx.RequireTenant(r)
+	tid, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -286,7 +286,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	in.TenantID = tid
+	in.OrganizationID = tid
 	if h.GrantCheck == nil {
 		httpx.WriteError(w, r, errs.ErrNotImplemented)
 		return
@@ -308,19 +308,19 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actorID, actorType := audit.ActorOf(r).Identity()
-	tenantID := p.TenantID
+	organizationID := p.OrganizationID
 	resID := p.ID
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     &tenantID,
-		ActorUserID:  actorID,
-		ActorType:    actorType,
-		Action:       "service_principal.created",
-		ResourceType: "service_principal",
-		ResourceID:   &resID,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
-		Metadata:     map[string]any{"name": p.Name, "scopes": p.Scopes},
+		OrganizationID: &organizationID,
+		ActorUserID:    actorID,
+		ActorType:      actorType,
+		Action:         "service_principal.created",
+		ResourceType:   "service_principal",
+		ResourceID:     &resID,
+		IP:             httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
+		RequestID:      httpx.RequestID(r),
+		Metadata:       map[string]any{"name": p.Name, "scopes": p.Scopes},
 	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -357,7 +357,7 @@ func (h *Handler) disable(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrPrincipalInvalidID)
 		return
 	}
-	callerTenant, err := httpx.RequireTenant(r)
+	callerOrganization, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -369,7 +369,7 @@ func (h *Handler) disable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	tenantID, name, err := h.Service.Disable(ctx, tx, callerTenant, id)
+	organizationID, name, err := h.Service.Disable(ctx, tx, callerOrganization, id)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -377,16 +377,16 @@ func (h *Handler) disable(w http.ResponseWriter, r *http.Request) {
 	actorID, actorType := audit.ActorOf(r).Identity()
 	resID := id
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     &tenantID,
-		ActorUserID:  actorID,
-		ActorType:    actorType,
-		Action:       "service_principal.disabled",
-		ResourceType: "service_principal",
-		ResourceID:   &resID,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
-		Metadata:     map[string]any{"name": name},
+		OrganizationID: &organizationID,
+		ActorUserID:    actorID,
+		ActorType:      actorType,
+		Action:         "service_principal.disabled",
+		ResourceType:   "service_principal",
+		ResourceID:     &resID,
+		IP:             httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
+		RequestID:      httpx.RequestID(r),
+		Metadata:       map[string]any{"name": name},
 	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return

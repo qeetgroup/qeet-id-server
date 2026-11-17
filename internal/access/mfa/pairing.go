@@ -86,7 +86,7 @@ func normalizePairingCode(raw string) string {
 // CreatePushPairing issues a single-use code that can link a phone to userID's
 // account for pushPairingTTL, ending their earlier unused codes. The code is
 // returned only here. Past pushPairingsPerHour it fails with retry_after.
-func (s *Service) CreatePushPairing(ctx context.Context, userID uuid.UUID, tenantID *uuid.UUID, ip, ua string) (PushPairing, string, error) {
+func (s *Service) CreatePushPairing(ctx context.Context, userID uuid.UUID, organizationID *uuid.UUID, ip, ua string) (PushPairing, string, error) {
 	code, err := newPairingCode()
 	if err != nil {
 		return PushPairing{}, "", err
@@ -124,14 +124,14 @@ func (s *Service) CreatePushPairing(ctx context.Context, userID uuid.UUID, tenan
 	}
 	p := PushPairing{Status: "pending"}
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO auth.mfa_push_pairings (user_id, tenant_id, code_hash, expires_at)
+		INSERT INTO auth.mfa_push_pairings (user_id, organization_id, code_hash, expires_at)
 		VALUES ($1, $2, $3, NOW() + make_interval(secs => $4))
 		RETURNING id, expires_at
-	`, userID, tenantID, secretHash(normalizePairingCode(code)), pushPairingTTL.Seconds()).Scan(&p.ID, &p.ExpiresAt); err != nil {
+	`, userID, organizationID, secretHash(normalizePairingCode(code)), pushPairingTTL.Seconds()).Scan(&p.ID, &p.ExpiresAt); err != nil {
 		return PushPairing{}, "", err
 	}
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID: tenantID, ActorUserID: &userID, ActorType: "user",
+		OrganizationID: organizationID, ActorUserID: &userID, ActorType: "user",
 		Action: "mfa.push_pairing_created", ResourceType: "push_pairing", ResourceID: &p.ID,
 		IP: ip, UserAgent: ua,
 		Metadata: map[string]any{"expires_at": p.ExpiresAt},
@@ -224,16 +224,16 @@ func (s *Service) ClaimPushPairing(ctx context.Context, code, name, pushToken, p
 	}
 	defer tx.Rollback(ctx)
 	var pairingID, userID uuid.UUID
-	var tenantID *uuid.UUID
+	var organizationID *uuid.UUID
 	var email string
 	err = tx.QueryRow(ctx, `
-		SELECT p.id, p.user_id, p.tenant_id, u.email
+		SELECT p.id, p.user_id, p.organization_id, u.email
 		FROM auth.mfa_push_pairings p
 		JOIN account.users u ON u.id = p.user_id
 		WHERE p.code_hash = $1 AND p.used_at IS NULL AND p.expires_at > NOW()
 		  AND u.status = 'active' AND u.deleted_at IS NULL
 		FOR UPDATE OF p
-	`, secretHash(normalized)).Scan(&pairingID, &userID, &tenantID, &email)
+	`, secretHash(normalized)).Scan(&pairingID, &userID, &organizationID, &email)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PushPairingClaim{}, errs.ErrMFAPairingCodeInvalid
 	}
@@ -250,7 +250,7 @@ func (s *Service) ClaimPushPairing(ctx context.Context, code, name, pushToken, p
 		return PushPairingClaim{}, err
 	}
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID: tenantID, ActorUserID: &userID, ActorType: "device",
+		OrganizationID: organizationID, ActorUserID: &userID, ActorType: "device",
 		Action: "mfa.push_device_linked", ResourceType: "push_device", ResourceID: &device.ID,
 		IP: ip, UserAgent: ua,
 		Metadata: map[string]any{"pairing_id": pairingID, "platform": device.Platform},
@@ -280,7 +280,7 @@ func (h *Handler) createPushPairing(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
 		return
 	}
-	pairing, code, err := h.Service.CreatePushPairing(r.Context(), *p.UserID, p.TenantID, httpx.ClientIP(r), r.UserAgent())
+	pairing, code, err := h.Service.CreatePushPairing(r.Context(), *p.UserID, p.OrganizationID, httpx.ClientIP(r), r.UserAgent())
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

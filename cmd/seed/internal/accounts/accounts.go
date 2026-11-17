@@ -82,7 +82,7 @@ func (s *seeder) suspend(o *world.Org, p *world.Person) {
 // deactivate suspends p as their identity provider does: SCIM sets active to
 // false (recorded as a SCIM update, reason "provider"), and the directory sync
 // disables an account removed from Active Directory. Source "policy" is the
-// organisation's inactivity policy, recorded as the platform's own change.
+// organization's inactivity policy, recorded as the platform's own change.
 func (s *seeder) deactivate(o *world.Org, p *world.Person, at time.Time, source string) {
 	w := s.w
 	action, reason := "user.updated", "provider"
@@ -110,11 +110,11 @@ func (s *seeder) deactivate(o *world.Org, p *world.Person, at time.Time, source 
 				return err
 			}
 			if _, err := tx.Exec(w.Ctx, `UPDATE account.users SET suspension_source = $3, suspension_reason = $4
-				WHERE id = $1 AND tenant_id = $2`, p.ID, o.ID, source, reason); err != nil {
+				WHERE id = $1 AND organization_id = $2`, p.ID, o.ID, source, reason); err != nil {
 				return err
 			}
 			id := p.ID
-			return audit.Record(w.Ctx, tx, audit.Event{TenantID: &o.ID, ActorType: actorType, Action: action,
+			return audit.Record(w.Ctx, tx, audit.Event{OrganizationID: &o.ID, ActorType: actorType, Action: action,
 				ResourceType: "user", ResourceID: &id, IP: ip, UserAgent: ua, Metadata: meta})
 		})
 	})

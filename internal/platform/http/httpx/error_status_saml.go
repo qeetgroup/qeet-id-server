@@ -9,8 +9,8 @@ import (
 // init registers the HTTP statuses of the SAML error codes.
 func init() {
 	registerStatuses(map[string]int{
-		errs.CodeSAMLTenantIDInvalid:          http.StatusBadRequest,
-		errs.CodeSAMLTenantMismatch:           http.StatusForbidden,
+		errs.CodeSAMLOrganizationIDInvalid:    http.StatusBadRequest,
+		errs.CodeSAMLOrganizationMismatch:     http.StatusForbidden,
 		errs.CodeSAMLIDInvalid:                http.StatusBadRequest,
 		errs.CodeSAMLLoginCodeRequired:        http.StatusBadRequest,
 		errs.CodeSAMLLoginCodeInvalid:         http.StatusUnauthorized,
@@ -40,7 +40,7 @@ func init() {
 		errs.CodeSAMLACSMismatch:              http.StatusBadRequest,
 		errs.CodeSAMLACSURLInvalid:            http.StatusUnprocessableEntity,
 		errs.CodeSAMLSPFieldsRequired:         http.StatusUnprocessableEntity,
-		errs.CodeSAMLUserTenantMismatch:       http.StatusForbidden,
+		errs.CodeSAMLUserOrganizationMismatch: http.StatusForbidden,
 		errs.CodeSAMLAccountUnverified:        http.StatusForbidden,
 		errs.CodeSAMLEmailDomainUnverified:    http.StatusForbidden,
 		errs.CodeSAMLAccountAdministers:       http.StatusForbidden,

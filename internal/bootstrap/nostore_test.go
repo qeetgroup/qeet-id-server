@@ -46,7 +46,7 @@ func TestRouterAnswersTheTokenEndpointUncacheable(t *testing.T) {
 // sign-in and secrets shown once are answered as uncacheable.
 func TestTokenAndSecretResponsesAreNotStored(t *testing.T) {
 	h := httpx.NoStore(NoStoreRoutes())(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	const tenant, id = "/v1/tenants/0b8e2c7e-6a4f-4d8e-9a43-3f0c2b1d5e6a", "8c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f"
+	const organization, id = "/v1/tenants/0b8e2c7e-6a4f-4d8e-9a43-3f0c2b1d5e6a", "8c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f"
 	for _, tc := range []struct{ method, path string }{
 		{http.MethodPost, "/v1/oauth/token"},
 		{http.MethodPost, "/v1/oauth/token-code"},
@@ -56,9 +56,9 @@ func TestTokenAndSecretResponsesAreNotStored(t *testing.T) {
 		{http.MethodPost, "/v1/auth/refresh"},
 		{http.MethodPost, "/v1/auth/session"},
 		{http.MethodPost, "/v1/api-keys"},
-		{http.MethodPost, tenant + "/oidc/clients/" + id + "/rotate-secret"},
-		{http.MethodPost, tenant + "/scim/tokens"},
-		{http.MethodPost, tenant + "/scim/tokens/" + id + "/rotate"},
+		{http.MethodPost, organization + "/oidc/clients/" + id + "/rotate-secret"},
+		{http.MethodPost, organization + "/scim/tokens"},
+		{http.MethodPost, organization + "/scim/tokens/" + id + "/rotate"},
 		{http.MethodPost, "/v1/mfa/recovery-codes/regenerate"},
 	} {
 		rec := httptest.NewRecorder()

@@ -33,16 +33,16 @@ func dropKeyInfo(response *etree.Element) {
 // current and next certificates accepts an assertion signed with either, with
 // or without KeyInfo, and only the next once the current is removed; that the
 // last certificate can't be removed nor one added twice; and that another
-// organisation can neither add nor remove them.
+// organization can neither add nor remove them.
 func TestSAMLCertificateRollover(t *testing.T) {
 	sp := newSPSide(t)
 	idp, next := newUpstreamIdP(t), newUpstreamIdP(t)
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	conn := sp.connect(t, tenant, idp)
-	member := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, tenant), tenant, tenant)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	conn := sp.connect(t, organization, idp)
+	member := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, organization), organization, organization)
 	verify(t, member.ID)
-	admin, outsider := sp.asAdmin(t, tenant), sp.asAdmin(t, other)
-	path := "/tenants/" + tenant.String() + "/saml/" + conn.ID.String()
+	admin, outsider := sp.asAdmin(t, organization), sp.asAdmin(t, other)
+	path := "/tenants/" + organization.String() + "/saml/" + conn.ID.String()
 	refused := func(name string, a answer, want string) {
 		t.Helper()
 		a.inResponseTo, a.email = sp.begin(t, conn.ID), member.Email
@@ -114,7 +114,7 @@ func TestSAMLCertificateRollover(t *testing.T) {
 	if rec := dbtest.Do(t, admin, http.MethodDelete, path+"/certificates/"+uuid.NewString(), nil); rec.Code != http.StatusNotFound {
 		t.Errorf("remove an unknown certificate: %d, want 404", rec.Code)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND resource_id = $2 AND action IN ('saml.certificate_added', 'saml.certificate_removed')`, tenant, conn.ID); n != 2 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND resource_id = $2 AND action IN ('saml.certificate_added', 'saml.certificate_removed')`, organization, conn.ID); n != 2 {
 		t.Errorf("%d certificate changes recorded, want the addition and the removal", n)
 	}
 

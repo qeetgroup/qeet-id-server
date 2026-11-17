@@ -46,47 +46,47 @@ func TestAdministersCountsEveryPrivilegedPermission(t *testing.T) {
 	}
 	privileged = append(privileged, dbtest.Unique("newfeature")+".manage")
 
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	conn := uuid.New()
 	linked := func(userID uuid.UUID) {
 		t.Helper()
-		if _, err := pool.Exec(ctx, `INSERT INTO account.external_identities (user_id, tenant_id, provider, connection_id, subject) VALUES ($1, $2, 'saml', $3, $4)`,
-			userID, tenant, conn, dbtest.Unique("subject")); err != nil {
+		if _, err := pool.Exec(ctx, `INSERT INTO account.external_identities (user_id, organization_id, provider, connection_id, subject) VALUES ($1, $2, 'saml', $3, $4)`,
+			userID, organization, conn, dbtest.Unique("subject")); err != nil {
 			t.Fatal(err)
 		}
 	}
 	throughGroup := func(userID, role uuid.UUID) {
 		t.Helper()
 		var group uuid.UUID
-		if err := pool.QueryRow(ctx, `INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, $2) RETURNING id`, tenant, dbtest.Unique("group")).Scan(&group); err != nil {
+		if err := pool.QueryRow(ctx, `INSERT INTO organization.groups (organization_id, name) VALUES ($1, $2) RETURNING id`, organization, dbtest.Unique("group")).Scan(&group); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := pool.Exec(ctx, `INSERT INTO rbac.group_roles (tenant_id, group_id, role_id) VALUES ($1, $2, $3)`, tenant, group, role); err != nil {
+		if _, err := pool.Exec(ctx, `INSERT INTO rbac.group_roles (organization_id, group_id, role_id) VALUES ($1, $2, $3)`, organization, group, role); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := pool.Exec(ctx, `INSERT INTO tenant.group_members (tenant_id, group_id, user_id) VALUES ($1, $2, $3)`, tenant, group, userID); err != nil {
+		if _, err := pool.Exec(ctx, `INSERT INTO organization.group_members (organization_id, group_id, user_id) VALUES ($1, $2, $3)`, organization, group, userID); err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	want := map[uuid.UUID]string{}
 	for _, key := range privileged {
-		role := dbtest.Role(t, tenant, key)
-		direct, grouped := dbtest.User(t, tenant), dbtest.User(t, tenant)
-		dbtest.Assign(t, direct.ID, tenant, role)
+		role := dbtest.Role(t, organization, key)
+		direct, grouped := dbtest.User(t, organization), dbtest.User(t, organization)
+		dbtest.Assign(t, direct.ID, organization, role)
 		throughGroup(grouped.ID, role)
 		want[direct.ID], want[grouped.ID] = key+" directly", key+" through a group"
 	}
 	var owner uuid.UUID
-	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name, is_system) VALUES ($1, 'owner', TRUE) RETURNING id`, tenant).Scan(&owner); err != nil {
+	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (organization_id, name, is_system) VALUES ($1, 'owner', TRUE) RETURNING id`, organization).Scan(&owner); err != nil {
 		t.Fatal(err)
 	}
-	ownerAccount := dbtest.User(t, tenant)
-	dbtest.Assign(t, ownerAccount.ID, tenant, owner)
+	ownerAccount := dbtest.User(t, organization)
+	dbtest.Assign(t, ownerAccount.ID, organization, owner)
 	want[ownerAccount.ID] = "the owner role"
 	for id, what := range want {
 		linked(id)
-		ok, err := Administers(ctx, pool, id, tenant)
+		ok, err := Administers(ctx, pool, id, organization)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -95,14 +95,14 @@ func TestAdministersCountsEveryPrivilegedPermission(t *testing.T) {
 		}
 	}
 
-	reader := dbtest.User(t, tenant)
-	readerRole := dbtest.Role(t, tenant, MemberPermissions()...)
-	dbtest.Assign(t, reader.ID, tenant, readerRole)
-	groupReader := dbtest.User(t, tenant)
+	reader := dbtest.User(t, organization)
+	readerRole := dbtest.Role(t, organization, MemberPermissions()...)
+	dbtest.Assign(t, reader.ID, organization, readerRole)
+	groupReader := dbtest.User(t, organization)
 	throughGroup(groupReader.ID, readerRole)
 	for _, id := range []uuid.UUID{reader.ID, groupReader.ID} {
 		linked(id)
-		ok, err := Administers(ctx, pool, id, tenant)
+		ok, err := Administers(ctx, pool, id, organization)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -111,7 +111,7 @@ func TestAdministersCountsEveryPrivilegedPermission(t *testing.T) {
 		}
 	}
 
-	admins, err := LinkedAdministrators(ctx, pool, tenant, conn, "saml")
+	admins, err := LinkedAdministrators(ctx, pool, organization, conn, "saml")
 	if err != nil {
 		t.Fatal(err)
 	}

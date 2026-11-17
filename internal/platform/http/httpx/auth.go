@@ -52,9 +52,9 @@ func RequireAuth(v *AuthVerifier) func(http.Handler) http.Handler {
 					if uid, err := uuid.Parse(devUser); err == nil {
 						p.UserID = &uid
 					}
-					if devTenant := r.Header.Get("X-Dev-Tenant"); devTenant != "" {
-						if tid, err := uuid.Parse(devTenant); err == nil {
-							p.TenantID = &tid
+					if devOrganization := r.Header.Get("X-Dev-Tenant"); devOrganization != "" {
+						if tid, err := uuid.Parse(devOrganization); err == nil {
+							p.OrganizationID = &tid
 						}
 					}
 					next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), p)))
@@ -89,9 +89,9 @@ func RequireAuth(v *AuthVerifier) func(http.Handler) http.Handler {
 				uid := claims.UserID
 				p.UserID = &uid
 			}
-			if claims.TenantID != uuid.Nil {
-				tid := claims.TenantID
-				p.TenantID = &tid
+			if claims.OrganizationID != uuid.Nil {
+				tid := claims.OrganizationID
+				p.OrganizationID = &tid
 			}
 			if claims.SessionID != uuid.Nil {
 				sid := claims.SessionID
@@ -159,19 +159,19 @@ func RequireAuth(v *AuthVerifier) func(http.Handler) http.Handler {
 	}
 }
 
-// EnforceTenantScope rejects a request whose route has a {tenantID} path param
-// other than the caller's own tenant, so a handler can't serve another tenant's
+// EnforceOrganizationScope rejects a request whose route has a {tenantID} path param
+// other than the caller's own organization, so a handler can't serve another organization's
 // data even if it forgets to check. Routes without the param pass through;
 // their handlers scope themselves.
-func EnforceTenantScope(next http.Handler) http.Handler {
+func EnforceOrganizationScope(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if pathTenant := chi.URLParam(r, "tenantID"); pathTenant != "" {
-			want, err := RequireTenant(r)
+		if pathOrganization := chi.URLParam(r, "tenantID"); pathOrganization != "" {
+			want, err := RequireOrganization(r)
 			if err != nil {
 				WriteError(w, r, err)
 				return
 			}
-			got, perr := uuid.Parse(pathTenant)
+			got, perr := uuid.Parse(pathOrganization)
 			if perr != nil {
 				WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
 				return
@@ -186,49 +186,49 @@ func EnforceTenantScope(next http.Handler) http.Handler {
 }
 
 // ScopeDatabase scopes the request's database work to the caller's
-// organisation, so row-level security shows it only that organisation's rows
-// of the protected tables. A caller with no organisation is left unscoped.
+// organization, so row-level security shows it only that organization's rows
+// of the protected tables. A caller with no organization is left unscoped.
 func ScopeDatabase(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if p := PrincipalFromCtx(r.Context()); p != nil && p.TenantID != nil && *p.TenantID != uuid.Nil {
-			r = r.WithContext(postgres.WithTenant(r.Context(), *p.TenantID))
+		if p := PrincipalFromCtx(r.Context()); p != nil && p.OrganizationID != nil && *p.OrganizationID != uuid.Nil {
+			r = r.WithContext(postgres.WithOrganization(r.Context(), *p.OrganizationID))
 		}
 		next.ServeHTTP(w, r)
 	})
 }
 
-// PathTenant returns the caller's tenant once the {tenantID} path parameter
+// PathOrganization returns the caller's organization once the {tenantID} path parameter
 // names it: bad_request for a malformed parameter, forbidden for another
-// tenant's. It repeats EnforceTenantScope's check inside a handler.
-func PathTenant(r *http.Request) (uuid.UUID, error) {
-	return PathTenantOr(r, errs.ErrBadRequest.WithDetail("invalid tenantID"), errs.ErrForbidden.WithDetail("tenant mismatch"))
+// organization's. It repeats EnforceOrganizationScope's check inside a handler.
+func PathOrganization(r *http.Request) (uuid.UUID, error) {
+	return PathOrganizationOr(r, errs.ErrBadRequest.WithDetail("invalid tenantID"), errs.ErrForbidden.WithDetail("tenant mismatch"))
 }
 
-// PathTenantOr is PathTenant answering a malformed parameter with invalid and
-// another tenant's with mismatch, for a domain with its own error codes.
-func PathTenantOr(r *http.Request, invalid, mismatch error) (uuid.UUID, error) {
-	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+// PathOrganizationOr is PathOrganization answering a malformed parameter with invalid and
+// another organization's with mismatch, for a domain with its own error codes.
+func PathOrganizationOr(r *http.Request, invalid, mismatch error) (uuid.UUID, error) {
+	pathOrganization, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
 		return uuid.Nil, invalid
 	}
-	scope, err := RequireTenant(r)
+	scope, err := RequireOrganization(r)
 	if err != nil {
 		return uuid.Nil, err
 	}
-	if pathTenant != scope {
+	if pathOrganization != scope {
 		return uuid.Nil, mismatch
 	}
 	return scope, nil
 }
 
-// RequireTenant returns the principal's tenant id — the only trustworthy
-// source of tenant scope. Handlers must never take tenant id from URL/body.
-func RequireTenant(r *http.Request) (uuid.UUID, error) {
+// RequireOrganization returns the principal's organization id — the only trustworthy
+// source of organization scope. Handlers must never take organization id from URL/body.
+func RequireOrganization(r *http.Request) (uuid.UUID, error) {
 	p := PrincipalFromCtx(r.Context())
-	if p == nil || p.TenantID == nil {
+	if p == nil || p.OrganizationID == nil {
 		return uuid.Nil, errs.ErrUnauthorized.WithDetail("tenant scope required")
 	}
-	return *p.TenantID, nil
+	return *p.OrganizationID, nil
 }
 
 // RequireUser returns the principal's user id, or an error if absent.

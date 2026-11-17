@@ -20,7 +20,7 @@ import (
 
 // prompt is one out-of-band notice a Notifier was asked to deliver.
 type prompt struct {
-	tenantID, userID         uuid.UUID
+	organizationID, userID   uuid.UUID
 	title, description, href string
 }
 
@@ -31,16 +31,16 @@ type promptBox struct {
 }
 
 // Notify records the prompt.
-func (b *promptBox) Notify(_ context.Context, tenantID, userID uuid.UUID, _, title, description, href string) error {
+func (b *promptBox) Notify(_ context.Context, organizationID, userID uuid.UUID, _, title, description, href string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.sent = append(b.sent, prompt{tenantID: tenantID, userID: userID, title: title, description: description, href: href})
+	b.sent = append(b.sent, prompt{organizationID: organizationID, userID: userID, title: title, description: description, href: href})
 	return nil
 }
 
 // TestBackchannelFlow checks that only a confidential application with the
 // CIBA grant starts a backchannel sign-in, for a person of its own
-// organisation, who is prompted and alone decides it, once; and that polling
+// organization, who is prompted and alone decides it, once; and that polling
 // answers pending, slow_down and access_denied, and an approval buys tokens once.
 func TestBackchannelFlow(t *testing.T) {
 	ctx := dbtest.Context(t)
@@ -48,13 +48,13 @@ func TestBackchannelFlow(t *testing.T) {
 	p := newProvider(t)
 	prompts := &promptBox{}
 	p.svc.SetNotifier(prompts)
-	tenant, otherTenant := dbtest.Tenant(t), dbtest.Tenant(t)
-	person := dbtest.User(t, tenant, tenant)
-	colleague := dbtest.User(t, tenant, tenant)
-	outsider := dbtest.User(t, otherTenant, otherTenant)
-	kiosk, secret := registerClientWith(t, p.svc, CreateClientInput{TenantID: tenant, Name: "Kiosk", GrantTypes: []string{grantTypeCIBA, "refresh_token"}})
-	plain, plainSecret := registerClient(t, p.svc, tenant)
-	public, _ := registerClientWith(t, p.svc, CreateClientInput{TenantID: tenant, Type: "public"})
+	organization, otherOrganization := dbtest.Organization(t), dbtest.Organization(t)
+	person := dbtest.User(t, organization, organization)
+	colleague := dbtest.User(t, organization, organization)
+	outsider := dbtest.User(t, otherOrganization, otherOrganization)
+	kiosk, secret := registerClientWith(t, p.svc, CreateClientInput{OrganizationID: organization, Name: "Kiosk", GrantTypes: []string{grantTypeCIBA, "refresh_token"}})
+	plain, plainSecret := registerClient(t, p.svc, organization)
+	public, _ := registerClientWith(t, p.svc, CreateClientInput{OrganizationID: organization, Type: "public"})
 	hint := func(email string) url.Values {
 		return url.Values{"login_hint": {email}, "scope": {"openid"}, "binding_message": {"Till 4"}}
 	}
@@ -80,7 +80,7 @@ func TestBackchannelFlow(t *testing.T) {
 			t.Errorf("start with %s: %d %s, want %s", tc.name, rec.Code, rec.Body.String(), tc.want)
 		}
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM auth.oidc_ciba_requests WHERE tenant_id = $1`, tenant); n != 0 || len(prompts.sent) != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM auth.oidc_ciba_requests WHERE organization_id = $1`, organization); n != 0 || len(prompts.sent) != 0 {
 		t.Errorf("refused requests stored %d and prompted %d, want none", n, len(prompts.sent))
 	}
 
@@ -102,7 +102,7 @@ func TestBackchannelFlow(t *testing.T) {
 	poll := func(authReqID string) *httptest.ResponseRecorder {
 		t.Helper()
 		if _, err := pool.Exec(ctx, `UPDATE auth.oidc_ciba_requests SET last_polled_at = last_polled_at - INTERVAL '1 minute'
-			WHERE tenant_id = $1 AND auth_req_id_hash = $2`, tenant, codes.Hash(authReqID)); err != nil {
+			WHERE organization_id = $1 AND auth_req_id_hash = $2`, organization, codes.Hash(authReqID)); err != nil {
 			t.Fatal(err)
 		}
 		return collect(authReqID)
@@ -112,8 +112,8 @@ func TestBackchannelFlow(t *testing.T) {
 		code, _ := decodeTokenError(t, poll(authReqID))
 		return code
 	}
-	asPerson := dbtest.Serve(dbtest.Principal(person.ID, tenant), p.mount)
-	asColleague := dbtest.Serve(dbtest.Principal(colleague.ID, tenant), p.mount)
+	asPerson := dbtest.Serve(dbtest.Principal(person.ID, organization), p.mount)
+	asColleague := dbtest.Serve(dbtest.Principal(colleague.ID, organization), p.mount)
 	pending := func(h http.Handler) []CIBAPendingRequest {
 		t.Helper()
 		var page struct {
@@ -128,7 +128,7 @@ func TestBackchannelFlow(t *testing.T) {
 	}
 
 	authReqID := begin()
-	if len(prompts.sent) != 1 || prompts.sent[0].userID != person.ID || prompts.sent[0].tenantID != tenant || prompts.sent[0].description != "Till 4" || prompts.sent[0].href != "" {
+	if len(prompts.sent) != 1 || prompts.sent[0].userID != person.ID || prompts.sent[0].organizationID != organization || prompts.sent[0].description != "Till 4" || prompts.sent[0].href != "" {
 		t.Errorf("prompts %+v, want one to the person in the organisation with the binding message, linking to no page", prompts.sent)
 	}
 	if got := pollError(authReqID); got != "authorization_pending" {

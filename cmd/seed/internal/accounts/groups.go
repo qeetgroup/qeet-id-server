@@ -17,7 +17,7 @@ var groupRoles = map[string][][2]string{
 	"vertex":    {{"IT Support", world.RoleITAdmin}},
 }
 
-// groupTemplates are the group trees organisations saved to stamp out again.
+// groupTemplates are the group trees organizations saved to stamp out again.
 var groupTemplates = map[string][]group.TemplateInput{
 	"qeet": {{
 		Name: "Product squad", Description: "A cross-functional squad: engineers, design and product",
@@ -54,7 +54,7 @@ var groupTemplates = map[string][]group.TemplateInput{
 }
 
 // groups grants roles to teams and saves group templates, a few weeks into
-// each organisation's life.
+// each organization's life.
 func (s *seeder) groups(o *world.Org) {
 	w := s.w
 	for i, gr := range groupRoles[o.Spec.Slug] {

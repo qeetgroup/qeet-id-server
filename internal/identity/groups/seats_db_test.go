@@ -31,35 +31,35 @@ func TestJoiningAGroupWithARoleTakesASeat(t *testing.T) {
 	seats.SetPlanLimiter(seatPlan(1))
 	svc := NewService(pool)
 	svc.SetSeatGuard(seats)
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant) // the one seat
-	customer := dbtest.User(t, tenant)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization) // the one seat
+	customer := dbtest.User(t, organization)
 	actor := audit.Actor{UserID: &admin.ID, Type: "user"}
 	group := func(name string, roles ...uuid.UUID) uuid.UUID {
 		t.Helper()
 		var id uuid.UUID
-		if err := pool.QueryRow(ctx, `INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, $2) RETURNING id`, tenant, name).Scan(&id); err != nil {
+		if err := pool.QueryRow(ctx, `INSERT INTO organization.groups (organization_id, name) VALUES ($1, $2) RETURNING id`, organization, name).Scan(&id); err != nil {
 			t.Fatal(err)
 		}
 		for _, role := range roles {
-			if _, err := pool.Exec(ctx, `INSERT INTO rbac.group_roles (tenant_id, group_id, role_id) VALUES ($1, $2, $3)`, tenant, id, role); err != nil {
+			if _, err := pool.Exec(ctx, `INSERT INTO rbac.group_roles (organization_id, group_id, role_id) VALUES ($1, $2, $3)`, organization, id, role); err != nil {
 				t.Fatal(err)
 			}
 		}
 		return id
 	}
 
-	if err := svc.AddMember(ctx, group("Newsletter"), customer.ID, tenant, actor); err != nil {
+	if err := svc.AddMember(ctx, group("Newsletter"), customer.ID, organization, actor); err != nil {
 		t.Errorf("joining a group without a role, with no seat left: %v", err)
 	}
-	support := group("Support", dbtest.Role(t, tenant))
-	if err := svc.AddMember(ctx, support, customer.ID, tenant, actor); !errors.Is(err, errs.ErrPlanLimit) {
+	support := group("Support", dbtest.Role(t, organization))
+	if err := svc.AddMember(ctx, support, customer.ID, organization, actor); !errors.Is(err, errs.ErrPlanLimit) {
 		t.Errorf("joining a group with a role, with no seat left: %v, want %v", err, errs.ErrPlanLimit)
 	}
-	if err := svc.AddMember(ctx, support, admin.ID, tenant, actor); err != nil {
+	if err := svc.AddMember(ctx, support, admin.ID, organization, actor); err != nil {
 		t.Errorf("someone holding a role joins a group with one: %v", err)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.group_members WHERE group_id = $1 AND user_id = $2`, support, customer.ID); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM organization.group_members WHERE group_id = $1 AND user_id = $2`, support, customer.ID); n != 0 {
 		t.Errorf("the refused member was added")
 	}
 }

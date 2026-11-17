@@ -9,7 +9,7 @@ import (
 // init registers the HTTP statuses of the data-retention error codes.
 func init() {
 	registerStatuses(map[string]int{
-		errs.CodeRetentionTenantInvalid:  http.StatusBadRequest,
-		errs.CodeRetentionTenantMismatch: http.StatusForbidden,
+		errs.CodeRetentionOrganizationInvalid:  http.StatusBadRequest,
+		errs.CodeRetentionOrganizationMismatch: http.StatusForbidden,
 	})
 }

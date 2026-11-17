@@ -32,9 +32,9 @@ func newHandler(t *testing.T) *Handler {
 }
 
 // writeTuple stores the tuple object#relation@subject through h's write route.
-func writeTuple(t *testing.T, h http.Handler, tenant uuid.UUID, object, relation, subject string) Tuple {
+func writeTuple(t *testing.T, h http.Handler, organization uuid.UUID, object, relation, subject string) Tuple {
 	t.Helper()
-	rec := dbtest.Do(t, h, http.MethodPost, "/tenants/"+tenant.String()+"/relation-tuples",
+	rec := dbtest.Do(t, h, http.MethodPost, "/tenants/"+organization.String()+"/relation-tuples",
 		map[string]string{"object": object, "relation": relation, "subject": subject})
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("write %s#%s@%s: %d %s", object, relation, subject, rec.Code, rec.Body.String())
@@ -53,9 +53,9 @@ type checkResult struct {
 
 // ask asks h's check route, with an explanation, whether user holds relation
 // on object.
-func ask(t *testing.T, h http.Handler, tenant uuid.UUID, object, relation, user string) checkResult {
+func ask(t *testing.T, h http.Handler, organization uuid.UUID, object, relation, user string) checkResult {
 	t.Helper()
-	rec := dbtest.Do(t, h, http.MethodPost, "/tenants/"+tenant.String()+"/relation-tuples/check?explain=true",
+	rec := dbtest.Do(t, h, http.MethodPost, "/tenants/"+organization.String()+"/relation-tuples/check?explain=true",
 		map[string]string{"object": object, "relation": relation, "user_id": user})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("check %s#%s for %s: %d %s", object, relation, user, rec.Code, rec.Body.String())
@@ -74,29 +74,29 @@ func TestTuplesGrantRelations(t *testing.T) {
 	ctx := dbtest.Context(t)
 	rh := newHandler(t)
 	svc := rh.Service
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	alice, erin, stranger := dbtest.User(t, tenant), dbtest.User(t, tenant), dbtest.User(t, tenant)
-	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), rh.Mount)
-	base := "/tenants/" + tenant.String() + "/relation-tuples"
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	alice, erin, stranger := dbtest.User(t, organization), dbtest.User(t, organization), dbtest.User(t, organization)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), rh.Mount)
+	base := "/tenants/" + organization.String() + "/relation-tuples"
 	aliceSubject, erinSubject := "user:"+alice.ID.String(), "user:"+erin.ID.String()
 	audited := func(action string, id uuid.UUID) int {
-		return dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = $2 AND resource_id = $3 AND actor_user_id = $4`, tenant, action, id, admin.ID)
+		return dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = $2 AND resource_id = $3 AND actor_user_id = $4`, organization, action, id, admin.ID)
 	}
 	announced := func(eventType string, id uuid.UUID) int {
 		return dbtest.Count(t, `SELECT count(*) FROM platform.outbox WHERE event_type = $1 AND aggregate_id = $2`, eventType, id)
 	}
 
-	direct := writeTuple(t, h, tenant, "document:readme", "viewer", aliceSubject)
+	direct := writeTuple(t, h, organization, "document:readme", "viewer", aliceSubject)
 	if audited("rebac.tuple_written", direct.ID) != 1 || announced("rebac.tuple_written", direct.ID) != 1 {
 		t.Error("the write was not audited and announced as the administrator's")
 	}
-	if again := writeTuple(t, h, tenant, "document:readme", "viewer", aliceSubject); again.ID != direct.ID {
+	if again := writeTuple(t, h, organization, "document:readme", "viewer", aliceSubject); again.ID != direct.ID {
 		t.Errorf("writing a tuple twice: ids %s and %s, want one", direct.ID, again.ID)
 	}
-	writeTuple(t, h, tenant, "document:readme", "viewer", "group:eng#member")
-	writeTuple(t, h, tenant, "group:eng", "member", "group:core#member")
-	writeTuple(t, h, tenant, "group:core", "member", erinSubject)
+	writeTuple(t, h, organization, "document:readme", "viewer", "group:eng#member")
+	writeTuple(t, h, organization, "group:eng", "member", "group:core#member")
+	writeTuple(t, h, organization, "group:core", "member", erinSubject)
 
 	subjects := func(query string) []string {
 		t.Helper()
@@ -127,38 +127,38 @@ func TestTuplesGrantRelations(t *testing.T) {
 		{"a viewer asked about another relation", "editor", alice.ID, false},
 		{"a stranger", "viewer", stranger.ID, false},
 	} {
-		if got := ask(t, h, tenant, "document:readme", tc.relation, tc.user.String()).Allowed; got != tc.want {
+		if got := ask(t, h, organization, "document:readme", tc.relation, tc.user.String()).Allowed; got != tc.want {
 			t.Errorf("check for %s: %v, want %v", tc.name, got, tc.want)
 		}
 	}
-	if got := ask(t, h, tenant, "document:readme", "viewer", erin.ID.String()); got.DecidedBy["model"] != decide.ModelReBAC ||
+	if got := ask(t, h, organization, "document:readme", "viewer", erin.ID.String()); got.DecidedBy["model"] != decide.ModelReBAC ||
 		len(got.Path) != 3 || got.Path[0].Subject != "group:eng#member" || got.Path[2].Subject != erinSubject {
 		t.Errorf("explained check through nested groups: %+v; want decided by the tuples via eng and core", got)
 	}
-	reader := dbtest.User(t, tenant)
-	dbtest.Assign(t, reader.ID, tenant, dbtest.Role(t, tenant, "document:viewer"))
-	if got := ask(t, h, tenant, "document:readme", "viewer", reader.ID.String()); !got.Allowed || got.DecidedBy["model"] != decide.ModelRBAC {
+	reader := dbtest.User(t, organization)
+	dbtest.Assign(t, reader.ID, organization, dbtest.Role(t, organization, "document:viewer"))
+	if got := ask(t, h, organization, "document:readme", "viewer", reader.ID.String()); !got.Allowed || got.DecidedBy["model"] != decide.ModelRBAC {
 		t.Errorf("check for a role holding document:viewer: %+v, want allowed by the role", got)
 	}
 
 	// group:g0 ⊇ group:g1 ⊇ … ⊇ group:g26, whose one member is "deep".
 	actor := audit.Actor{UserID: &admin.ID, Type: "user"}
 	for i := range maxDepth + 1 {
-		if _, err := svc.Write(ctx, tenant, fmt.Sprintf("group:g%d", i), "member", fmt.Sprintf("group:g%d#member", i+1), actor); err != nil {
+		if _, err := svc.Write(ctx, organization, fmt.Sprintf("group:g%d", i), "member", fmt.Sprintf("group:g%d#member", i+1), actor); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := svc.Write(ctx, tenant, fmt.Sprintf("group:g%d", maxDepth+1), "member", "user:deep", actor); err != nil {
+	if _, err := svc.Write(ctx, organization, fmt.Sprintf("group:g%d", maxDepth+1), "member", "user:deep", actor); err != nil {
 		t.Fatal(err)
 	}
 	for start, want := range map[int]bool{1: true, 0: false} {
-		if got, err := svc.Check(ctx, tenant, fmt.Sprintf("group:g%d", start), "member", "deep"); err != nil || got != want {
+		if got, err := svc.Check(ctx, organization, fmt.Sprintf("group:g%d", start), "member", "deep"); err != nil || got != want {
 			t.Errorf("check for a member %d nested groups down: %v, %v; want %v", maxDepth+1-start, got, err, want)
 		}
 	}
-	writeTuple(t, h, tenant, "group:a", "member", "group:b#member")
-	writeTuple(t, h, tenant, "group:b", "member", "group:a#member")
-	if ask(t, h, tenant, "group:a", "member", stranger.ID.String()).Allowed {
+	writeTuple(t, h, organization, "group:a", "member", "group:b#member")
+	writeTuple(t, h, organization, "group:b", "member", "group:a#member")
+	if ask(t, h, organization, "group:a", "member", stranger.ID.String()).Allowed {
 		t.Error("check around a cycle of groups: true, want false")
 	}
 
@@ -187,14 +187,14 @@ func TestTuplesGrantRelations(t *testing.T) {
 	if rec := dbtest.Do(t, h, http.MethodDelete, base+"/"+direct.ID.String(), nil); rec.Code != http.StatusNoContent {
 		t.Fatalf("delete: %d %s", rec.Code, rec.Body.String())
 	}
-	if ask(t, h, tenant, "document:readme", "viewer", alice.ID.String()).Allowed {
+	if ask(t, h, organization, "document:readme", "viewer", alice.ID.String()).Allowed {
 		t.Error("check after the tuple was deleted: true, want false")
 	}
 	if audited("rebac.tuple_deleted", direct.ID) != 1 || announced("rebac.tuple_deleted", direct.ID) != 1 {
 		t.Error("the delete was not audited and announced as the administrator's")
 	}
 	var removed map[string]any
-	if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `SELECT metadata FROM audit.events WHERE tenant_id = $1 AND action = 'rebac.tuple_deleted' AND resource_id = $2`, tenant, direct.ID).Scan(&removed); err != nil {
+	if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `SELECT metadata FROM audit.events WHERE organization_id = $1 AND action = 'rebac.tuple_deleted' AND resource_id = $2`, organization, direct.ID).Scan(&removed); err != nil {
 		t.Fatal(err)
 	}
 	if removed["object"] != direct.Object || removed["relation"] != direct.Relation || removed["subject"] != direct.Subject {
@@ -229,34 +229,34 @@ func TestTuplesGrantRelations(t *testing.T) {
 	}
 
 	t.Run("a shorter path to a group the depth limit cut off", func(t *testing.T) {
-		writeTuple(t, h, tenant, "document:deep", "viewer", "group:g0#member")
-		writeTuple(t, h, tenant, "document:deep", "viewer", "group:g24#member")
-		if ok, err := svc.Check(ctx, tenant, "document:deep", "viewer", "deep"); err != nil || !ok {
+		writeTuple(t, h, organization, "document:deep", "viewer", "group:g0#member")
+		writeTuple(t, h, organization, "document:deep", "viewer", "group:g24#member")
+		if ok, err := svc.Check(ctx, organization, "document:deep", "viewer", "deep"); err != nil || !ok {
 			t.Errorf("check for a viewer three groups down by the short path: %v, %v; want true", ok, err)
 		}
 	})
 }
 
-// TestTuplesStayInTheirOrganisation checks that another organisation can't
-// list, check against, write to or delete an organisation's tuples, over HTTP
+// TestTuplesStayInTheirOrganization checks that another organization can't
+// list, check against, write to or delete an organization's tuples, over HTTP
 // or through the service, and that its own tuples under the same names grant
 // nothing in the first.
-func TestTuplesStayInTheirOrganisation(t *testing.T) {
+func TestTuplesStayInTheirOrganization(t *testing.T) {
 	ctx := dbtest.Context(t)
 	rh := newHandler(t)
 	svc := rh.Service
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin, otherAdmin := dbtest.User(t, tenant, tenant), dbtest.User(t, other, other)
-	alice, mallory := dbtest.User(t, tenant), dbtest.User(t, other)
-	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), rh.Mount)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	admin, otherAdmin := dbtest.User(t, organization, organization), dbtest.User(t, other, other)
+	alice, mallory := dbtest.User(t, organization), dbtest.User(t, other)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), rh.Mount)
 	asOther := dbtest.Serve(dbtest.Principal(otherAdmin.ID, other), rh.Mount)
-	base, otherBase := "/tenants/"+tenant.String()+"/relation-tuples", "/tenants/"+other.String()+"/relation-tuples"
+	base, otherBase := "/tenants/"+organization.String()+"/relation-tuples", "/tenants/"+other.String()+"/relation-tuples"
 
-	shared := writeTuple(t, h, tenant, "document:readme", "viewer", "group:eng#member")
-	writeTuple(t, h, tenant, "group:eng", "member", "user:"+alice.ID.String())
+	shared := writeTuple(t, h, organization, "document:readme", "viewer", "group:eng#member")
+	writeTuple(t, h, organization, "group:eng", "member", "user:"+alice.ID.String())
 	writeTuple(t, asOther, other, "group:eng", "member", "user:"+mallory.ID.String())
 
-	if ask(t, h, tenant, "document:readme", "viewer", mallory.ID.String()).Allowed {
+	if ask(t, h, organization, "document:readme", "viewer", mallory.ID.String()).Allowed {
 		t.Error("check through another organisation's group of the same name: true, want false")
 	}
 	if ask(t, asOther, other, "document:readme", "viewer", alice.ID.String()).Allowed {
@@ -303,7 +303,7 @@ func TestTuplesStayInTheirOrganisation(t *testing.T) {
 	if err := svc.Delete(ctx, shared.ID, other, audit.Actor{Type: "system"}); !errors.Is(err, errs.ErrNotFound) {
 		t.Errorf("service delete across organisations: %v, want %v", err, errs.ErrNotFound)
 	}
-	if !ask(t, h, tenant, "document:readme", "viewer", alice.ID.String()).Allowed {
+	if !ask(t, h, organization, "document:readme", "viewer", alice.ID.String()).Allowed {
 		t.Error("check after another organisation tried to delete the tuple: false, want true")
 	}
 }
@@ -315,17 +315,17 @@ func TestTuplesStayInTheirOrganisation(t *testing.T) {
 func TestRequestBudgetSpansChecks(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
 	svc := NewService(pool)
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO auth.relation_tuples (tenant_id, object_type, object_id, relation, subject_type, subject_id, subject_relation)
+		INSERT INTO auth.relation_tuples (organization_id, object_type, object_id, relation, subject_type, subject_id, subject_relation)
 		SELECT $1, 'document', 'wide', 'viewer', 'group', 'g' || n, 'member' FROM generate_series(1, $2::int) n`,
-		tenant, maxExpansions*9/10-1); err != nil {
+		organization, maxExpansions*9/10-1); err != nil {
 		t.Fatal(err)
 	}
 	perCheck := maxExpansions * 9 / 10
 	request := WithRequestBudget(ctx)
 	for i := 1; ; i++ {
-		_, err := svc.Check(request, tenant, "document:wide", "viewer", uuid.NewString())
+		_, err := svc.Check(request, organization, "document:wide", "viewer", uuid.NewString())
 		if i*perCheck <= maxRequestExpansions {
 			if err != nil {
 				t.Fatalf("check %d within the request's budget: %v", i, err)
@@ -337,7 +337,7 @@ func TestRequestBudgetSpansChecks(t *testing.T) {
 		}
 		break
 	}
-	if _, err := svc.Check(WithRequestBudget(ctx), tenant, "document:wide", "viewer", uuid.NewString()); err != nil {
+	if _, err := svc.Check(WithRequestBudget(ctx), organization, "document:wide", "viewer", uuid.NewString()); err != nil {
 		t.Errorf("the same check in a request of its own: %v", err)
 	}
 }
@@ -348,19 +348,19 @@ func TestRequestBudgetSpansChecks(t *testing.T) {
 func TestExpandStopsAtItsBudget(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
 	svc := NewService(pool)
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	for object, groups := range map[string]int{"wide": maxRequestExpansions + 1, "narrow": 10} {
 		if _, err := pool.Exec(ctx, `
-			INSERT INTO auth.relation_tuples (tenant_id, object_type, object_id, relation, subject_type, subject_id, subject_relation)
+			INSERT INTO auth.relation_tuples (organization_id, object_type, object_id, relation, subject_type, subject_id, subject_relation)
 			SELECT $1, 'document', $2, 'viewer', 'group', $2 || n, 'member' FROM generate_series(1, $3::int) n`,
-			tenant, object, groups); err != nil {
+			organization, object, groups); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if g, err := svc.Expand(ctx, tenant, "document:wide", "viewer", maxExpandDepth); !errors.Is(err, errs.ErrReBACCheckTooComplex) {
+	if g, err := svc.Expand(ctx, organization, "document:wide", "viewer", maxExpandDepth); !errors.Is(err, errs.ErrReBACCheckTooComplex) {
 		t.Errorf("the graph of %d groups: %v, %v; want %v", maxRequestExpansions+1, g != nil, err, errs.ErrReBACCheckTooComplex)
 	}
-	if g, err := svc.Expand(ctx, tenant, "document:narrow", "viewer", maxExpandDepth); err != nil || len(g.Nodes) != 11 {
+	if g, err := svc.Expand(ctx, organization, "document:narrow", "viewer", maxExpandDepth); err != nil || len(g.Nodes) != 11 {
 		t.Errorf("the graph of 10 groups: %v, want its 11 nodes", err)
 	}
 }

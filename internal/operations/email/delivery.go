@@ -15,8 +15,8 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/delivery"
 )
 
-// DeliveryHandler answers whether an organisation's mail arrived, and lets an
-// administrator lift a suppression the organisation's mail caused.
+// DeliveryHandler answers whether an organization's mail arrived, and lets an
+// administrator lift a suppression the organization's mail caused.
 type DeliveryHandler struct {
 	Store *delivery.Store
 }
@@ -38,7 +38,7 @@ func listLimit(r *http.Request) int32 {
 }
 
 func (h *DeliveryHandler) messages(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -53,7 +53,7 @@ func (h *DeliveryHandler) messages(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	items, next, err := h.Store.MessagesTo(r.Context(), tenantID, to.Address, listLimit(r), after)
+	items, next, err := h.Store.MessagesTo(r.Context(), organizationID, to.Address, listLimit(r), after)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -66,11 +66,11 @@ func (h *DeliveryHandler) messages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if sup != nil {
-		// Only the organisation whose mail caused a suppression may clear it, so
+		// Only the organization whose mail caused a suppression may clear it, so
 		// only it is told which one it is, and why and when. Any other learns
 		// only that its mail to the address isn't sent.
 		view := map[string]any{"own": false}
-		if sup.TenantID != nil && *sup.TenantID == tenantID {
+		if sup.OrganizationID != nil && *sup.OrganizationID == organizationID {
 			view = map[string]any{"own": true, "id": sup.ID, "reason": sup.Reason, "detail": sup.Detail, "created_at": sup.CreatedAt}
 		}
 		out["suppression"] = view
@@ -79,7 +79,7 @@ func (h *DeliveryHandler) messages(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *DeliveryHandler) suppressions(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -89,7 +89,7 @@ func (h *DeliveryHandler) suppressions(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	items, next, err := h.Store.Suppressions(r.Context(), tenantID, listLimit(r), after)
+	items, next, err := h.Store.Suppressions(r.Context(), organizationID, listLimit(r), after)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -98,7 +98,7 @@ func (h *DeliveryHandler) suppressions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *DeliveryHandler) clear(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -121,12 +121,12 @@ func (h *DeliveryHandler) clear(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
-	sup, err := h.Store.ClearSuppression(r.Context(), tx, tenantID, id, actor.UserID)
+	sup, err := h.Store.ClearSuppression(r.Context(), tx, organizationID, id, actor.UserID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := audit.Record(r.Context(), tx, actor.Event(tenantID, "email.suppression_cleared", "email_suppression", id,
+	if err := audit.Record(r.Context(), tx, actor.Event(organizationID, "email.suppression_cleared", "email_suppression", id,
 		map[string]any{"address": sup.AddressHint, "reason": sup.Reason})); err != nil {
 		httpx.WriteError(w, r, err)
 		return

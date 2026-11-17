@@ -17,9 +17,9 @@ import (
 func TestASignInSaysWhichApplicationItWasFor(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := newService(t)
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	client := dbtest.Unique("app")
-	if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO auth.oidc_clients (tenant_id, client_id, name) VALUES ($1, $2, 'Payroll')`, tenant, client); err != nil {
+	if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO auth.oidc_clients (organization_id, client_id, name) VALUES ($1, $2, 'Payroll')`, organization, client); err != nil {
 		t.Fatal(err)
 	}
 	recorded := func(userID any) int {
@@ -28,7 +28,7 @@ func TestASignInSaysWhichApplicationItWasFor(t *testing.T) {
 			AND metadata->>'client_id' = $2 AND metadata->>'client_name' = 'Payroll'`, userID, client)
 	}
 
-	byPassword := dbtest.User(t, tenant, tenant)
+	byPassword := dbtest.User(t, organization, organization)
 	dbtest.SetPassword(t, byPassword.ID, testPassword)
 	if _, err := svc.BeginLoginSession(ctx, SignInAttempt{Email: byPassword.Email, Password: testPassword, IP: freshIP(), ClientID: client}, testUserAgent, "", ""); err != nil {
 		t.Fatal(err)
@@ -37,7 +37,7 @@ func TestASignInSaysWhichApplicationItWasFor(t *testing.T) {
 		t.Errorf("a password sign-in for the application recorded it %d times, want once", n)
 	}
 
-	byCookie := dbtest.User(t, tenant, tenant)
+	byCookie := dbtest.User(t, organization, organization)
 	req := httptest.NewRequest(http.MethodPost, "/v1/auth/passkeys/login/finish", nil)
 	req.AddCookie(&http.Cookie{Name: SignInClientCookie, Value: client})
 	SignInClientContext(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
@@ -53,7 +53,7 @@ func TestASignInSaysWhichApplicationItWasFor(t *testing.T) {
 		t.Errorf("a passkey sign-in recorded its second factor %d times, want once", n)
 	}
 
-	unknown := dbtest.User(t, tenant, tenant)
+	unknown := dbtest.User(t, organization, organization)
 	if _, err := svc.CreatePasskeyLoginSession(WithSignInClient(ctx, "no-such-app"), unknown.ID, freshIP(), testUserAgent); err != nil {
 		t.Fatal(err)
 	}

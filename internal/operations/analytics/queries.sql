@@ -16,28 +16,28 @@
 -- Sign-ins and active users come from the sign-in log, the auth.login_succeeded
 -- audit events, not from auth.sessions: ended sessions are purged after a
 -- week, and the log is kept. Counts of people take every such event in the
--- organisation, switching to it, creating it and accepting an invitation to it
+-- organization, switching to it, creating it and accepting an invitation to it
 -- included; counts of sign-ins leave those three out, as they record no factor
 -- of their own.
 
 -- name: CountMAUWindows :one
--- People who signed in to the organisation in the last 30 days, and in the 30
+-- People who signed in to the organization in the last 30 days, and in the 30
 -- before.
 SELECT
     COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days') AS mau_now,
     COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at <  NOW() - INTERVAL '30 days') AS mau_prev
 FROM audit.events
-WHERE tenant_id = @tid
+WHERE organization_id = @tid
   AND action = 'auth.login_succeeded'
   AND created_at >= NOW() - INTERVAL '60 days';
 
 -- name: CountLoginsTodayWindows :one
--- Sign-ins to the organisation today, and yesterday.
+-- Sign-ins to the organization today, and yesterday.
 SELECT
     COUNT(*) FILTER (WHERE created_at >= date_trunc('day', NOW())) AS logins_today,
     COUNT(*) FILTER (WHERE created_at <  date_trunc('day', NOW())) AS logins_yday
 FROM audit.events
-WHERE tenant_id = @tid
+WHERE organization_id = @tid
   AND action = 'auth.login_succeeded'
   AND COALESCE(metadata->>'method', '') NOT IN ('tenant_switch', 'tenant_create', 'invite_accept')
   AND created_at >= date_trunc('day', NOW() - INTERVAL '1 day');
@@ -48,12 +48,12 @@ SELECT
     COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '48 hours'
                       AND created_at <  NOW() - INTERVAL '24 hours') AS failed_prev
 FROM audit.events
-WHERE tenant_id = @tid AND action = 'auth.sign_in_failed';
+WHERE organization_id = @tid AND action = 'auth.sign_in_failed';
 
 -- name: GetLoginActivity14d :many
 -- Sign-ins per day by first factor. The method's _mfa or _email_confirmed
 -- suffix (a second step) is dropped, and sessions opened by switching or
--- creating an organisation or accepting an invitation are not counted: they
+-- creating an organization or accepting an invitation are not counted: they
 -- record no factor of their own.
 WITH days AS (
     SELECT date_trunc('day', d)::date AS day
@@ -68,7 +68,7 @@ grouped AS (
            regexp_replace(COALESCE(metadata->>'method', 'password'), '_(mfa|email_confirmed)$', '') AS method,
            COUNT(*) AS n
     FROM audit.events
-    WHERE tenant_id = @tid
+    WHERE organization_id = @tid
       AND action = 'auth.login_succeeded'
       AND COALESCE(metadata->>'method', '') NOT IN ('tenant_switch', 'tenant_create', 'invite_accept')
       AND created_at >= NOW() - INTERVAL '14 days'
@@ -91,13 +91,13 @@ ORDER BY days.day ASC;
 SELECT COUNT(*)
 FROM auth.mfa_totp t
 JOIN account.users u ON u.id = t.user_id
-WHERE u.tenant_id = @tid AND u.deleted_at IS NULL AND t.confirmed_at IS NOT NULL;
+WHERE u.organization_id = @tid AND u.deleted_at IS NULL AND t.confirmed_at IS NOT NULL;
 
 -- name: CountMFARecoveryUsers :one
 SELECT COUNT(DISTINCT c.user_id)
 FROM auth.mfa_recovery_codes c
 JOIN account.users u ON u.id = c.user_id
-WHERE u.tenant_id = @tid AND u.deleted_at IS NULL AND c.used_at IS NULL;
+WHERE u.organization_id = @tid AND u.deleted_at IS NULL AND c.used_at IS NULL;
 
 -- name: GetFailedLoginsHourly24h :many
 WITH hours AS (
@@ -111,7 +111,7 @@ WITH hours AS (
 grouped AS (
     SELECT date_trunc('hour', created_at) AS hour, COUNT(*) AS n
     FROM audit.events
-    WHERE tenant_id = @tid
+    WHERE organization_id = @tid
       AND action = 'auth.sign_in_failed'
       AND created_at >= NOW() - INTERVAL '24 hours'
     GROUP BY 1
@@ -121,12 +121,12 @@ FROM hours LEFT JOIN grouped ON grouped.hour = hours.hour
 ORDER BY hours.hour ASC;
 
 -- name: CountDAUWindows :one
--- People who signed in to the organisation today, and yesterday.
+-- People who signed in to the organization today, and yesterday.
 SELECT
     COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at >= date_trunc('day', NOW())) AS dau_now,
     COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at <  date_trunc('day', NOW())) AS dau_prev
 FROM audit.events
-WHERE tenant_id = @tid
+WHERE organization_id = @tid
   AND action = 'auth.login_succeeded'
   AND created_at >= date_trunc('day', NOW() - INTERVAL '1 day');
 
@@ -135,7 +135,7 @@ SELECT
     COUNT(*) FILTER (WHERE deleted_at IS NULL) AS users_now,
     COUNT(*) FILTER (WHERE deleted_at IS NULL AND created_at <= NOW() - INTERVAL '30 days') AS users_prev
 FROM account.users
-WHERE tenant_id = @tid;
+WHERE organization_id = @tid;
 
 -- name: CountStickinessPriorWeek :one
 -- DAU and MAU as they stood a week ago.
@@ -143,13 +143,13 @@ SELECT
     COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '8 days') AS dau_prev_week,
     COUNT(DISTINCT actor_user_id) AS mau_prev_week
 FROM audit.events
-WHERE tenant_id = @tid
+WHERE organization_id = @tid
   AND action = 'auth.login_succeeded'
   AND created_at >= NOW() - INTERVAL '37 days'
   AND created_at <  NOW() - INTERVAL '7 days';
 
 -- name: GetWeeklyActivity8w :many
--- People who signed in to the organisation per ISO week, and their daily
+-- People who signed in to the organization per ISO week, and their daily
 -- average, for the last 8 weeks.
 WITH weeks AS (
     SELECT date_trunc('week', d) AS week_start
@@ -162,7 +162,7 @@ WITH weeks AS (
 sign_ins AS (
     SELECT created_at, actor_user_id AS user_id
     FROM audit.events
-    WHERE tenant_id = @tid
+    WHERE organization_id = @tid
       AND action = 'auth.login_succeeded'
       AND created_at >= date_trunc('week', NOW() - INTERVAL '7 weeks')
 ),

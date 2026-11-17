@@ -15,7 +15,7 @@ import (
 // configured (gdpr.NewService in bootstrap).
 const grace = 30 * 24 * time.Hour
 
-// erasureReason is why an organisation files an erasure request, in its
+// erasureReason is why an organization files an erasure request, in its
 // jurisdiction's terms.
 func erasureReason(o *world.Org) string {
 	switch o.Spec.Country {
@@ -54,12 +54,12 @@ func (s *seeder) erasures(o *world.Org) {
 		var req *gdpr.Request
 		w.At(filed, func() {
 			var err error
-			req, err = svc.Request(w.Ctx, gdpr.CreateInput{TenantID: o.ID, UserID: p.ID, Reason: erasureReason(o)}, requester.Actor())
+			req, err = svc.Request(w.Ctx, gdpr.CreateInput{OrganizationID: o.ID, UserID: p.ID, Reason: erasureReason(o)}, requester.Actor())
 			w.Check(err, "erasure request for "+p.Email)
 		})
 		// The service set the grace period's end from the clock, which At
 		// doesn't move.
-		w.Exec("grace of erasure request", `UPDATE account.purge_requests SET grace_until = $3 WHERE id = $1 AND tenant_id = $2`,
+		w.Exec("grace of erasure request", `UPDATE account.purge_requests SET grace_until = $3 WHERE id = $1 AND organization_id = $2`,
 			req.ID, o.ID, ends)
 		if ends.Before(w.Now) {
 			s.purged(o, p, req.ID, ends.Add(time.Duration(1+w.Rand.IntN(50))*time.Second))
@@ -87,13 +87,13 @@ func (s *seeder) erasures(o *world.Org) {
 		requester := by(o, filed, world.RoleAdmin)
 		var cancelled uuid.UUID
 		w.At(filed, func() {
-			req, err := svc.Request(w.Ctx, gdpr.CreateInput{TenantID: o.ID, UserID: p.ID,
+			req, err := svc.Request(w.Ctx, gdpr.CreateInput{OrganizationID: o.ID, UserID: p.ID,
 				Reason: erasureReason(o) + " (filed in error: account on legal hold)"}, requester.Actor())
 			w.Check(err, "erasure request for "+p.Email)
 			w.Check(svc.Cancel(w.Ctx, o.ID, req.ID, requester.Actor()), "cancel erasure request for "+p.Email)
 			cancelled = req.ID
 		})
-		w.Exec("grace of erasure request", `UPDATE account.purge_requests SET grace_until = $3 WHERE id = $1 AND tenant_id = $2`,
+		w.Exec("grace of erasure request", `UPDATE account.purge_requests SET grace_until = $3 WHERE id = $1 AND organization_id = $2`,
 			cancelled, o.ID, filed.Add(grace))
 		break
 	}
@@ -106,7 +106,7 @@ func (s *seeder) erasures(o *world.Org) {
 func (s *seeder) purged(o *world.Org, p *world.Person, id uuid.UUID, done time.Time) {
 	w := s.w
 	w.Exec("complete erasure", `UPDATE account.purge_requests SET status = 'completed', completed_at = $3
-		WHERE id = $1 AND tenant_id = $2`, id, o.ID, done)
+		WHERE id = $1 AND organization_id = $2`, id, o.ID, done)
 	w.At(done, func() {
 		w.Check(w.Deps.GDPR.Service.PurgeSelf(w.Ctx, p.ID), "erase "+p.Email)
 	})
@@ -152,7 +152,7 @@ func (s *seeder) exports(o *world.Org) {
 	var req *gdpr.ExportRequest
 	w.At(at, func() {
 		var err error
-		req, err = w.Deps.GDPR.Service.RequestExport(w.Ctx, gdpr.ExportInput{TenantID: o.ID, UserID: subject.ID}, requester.Actor())
+		req, err = w.Deps.GDPR.Service.RequestExport(w.Ctx, gdpr.ExportInput{OrganizationID: o.ID, UserID: subject.ID}, requester.Actor())
 		w.Check(err, "export request for "+subject.Email)
 	})
 	if o.Spec.Slug == "qeet" {
@@ -165,10 +165,10 @@ func (s *seeder) exports(o *world.Org) {
 	raw, err := json.Marshal(payload)
 	w.Check(err, "encode export of "+subject.Email)
 	w.Exec("export ready", `UPDATE account.export_requests SET status = 'ready', payload = $3, completed_at = $4
-		WHERE id = $1 AND tenant_id = $2`, req.ID, o.ID, raw, done)
+		WHERE id = $1 AND organization_id = $2`, req.ID, o.ID, raw, done)
 	// The API deletes a payload once it has been downloadable for the retention window.
 	if done.Before(w.Now.Add(-gdpr.ExportRetention)) {
 		w.Exec("export expired", `UPDATE account.export_requests SET status = 'expired', payload = NULL
-			WHERE id = $1 AND tenant_id = $2`, req.ID, o.ID)
+			WHERE id = $1 AND organization_id = $2`, req.ID, o.ID)
 	}
 }

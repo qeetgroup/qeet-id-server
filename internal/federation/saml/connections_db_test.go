@@ -2,7 +2,7 @@
 
 package saml
 
-// Database tests for the admin routes managing an organisation's IdP
+// Database tests for the admin routes managing an organization's IdP
 // connections and the service providers its IdP serves.
 
 import (
@@ -29,19 +29,19 @@ func withChanges(body, change map[string]any) map[string]any {
 	return out
 }
 
-// TestSAMLConnectionsOverHTTP checks that an organisation creates, lists,
+// TestSAMLConnectionsOverHTTP checks that an organization creates, lists,
 // reads, tests, changes and deletes its IdP connections, refusing invalid
-// input and auditing each change, and that another organisation can neither
+// input and auditing each change, and that another organization can neither
 // see nor change them.
 func TestSAMLConnectionsOverHTTP(t *testing.T) {
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin, otherAdmin := dbtest.User(t, tenant, tenant), dbtest.User(t, other, other)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	admin, otherAdmin := dbtest.User(t, organization, organization), dbtest.User(t, other, other)
 	h := &Handler{Service: NewService(dbtest.Pool(t), nil, testAppBase), PublicBaseURL: testPublicBase}
-	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), h.Mount)
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)
 	asOther := dbtest.Serve(dbtest.Principal(otherAdmin.ID, other), h.Mount)
 	public := chi.NewRouter()
 	h.MountPublic(public)
-	base := "/tenants/" + tenant.String() + "/saml"
+	base := "/tenants/" + organization.String() + "/saml"
 	cert, _ := selfSignedCert(t)
 	connection := map[string]any{
 		"name": " Okta ", "idp_entity_id": "https://idp.example.test", "idp_sso_url": " https://idp.example.test/sso ",
@@ -61,7 +61,7 @@ func TestSAMLConnectionsOverHTTP(t *testing.T) {
 	var conn Connection
 	dbtest.Decode(t, rec, &conn)
 	if rec.Code != http.StatusCreated || conn.Name != "Okta" || conn.IdpSSOURL != "https://idp.example.test/sso" ||
-		conn.Status != "draft" || conn.AllowIdPInitiated || conn.TenantID != tenant {
+		conn.Status != "draft" || conn.AllowIdPInitiated || conn.OrganizationID != organization {
 		t.Fatalf("create: %d %s; want a trimmed draft in the organisation", rec.Code, rec.Body.String())
 	}
 	if rec := dbtest.Do(t, asOther, http.MethodPost, "/tenants/"+other.String()+"/saml", connection); rec.Code != http.StatusCreated {
@@ -137,21 +137,21 @@ func TestSAMLConnectionsOverHTTP(t *testing.T) {
 	if rec := dbtest.Do(t, public, http.MethodGet, "/saml/metadata/"+conn.ID.String(), nil); rec.Code != http.StatusNotFound {
 		t.Errorf("metadata of a deleted connection: %d, want 404", rec.Code)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND resource_id = $2 AND action LIKE 'saml.connection_%' AND actor_user_id = $3`, tenant, conn.ID, admin.ID); n != 4 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND resource_id = $2 AND action LIKE 'saml.connection_%' AND actor_user_id = $3`, organization, conn.ID, admin.ID); n != 4 {
 		t.Errorf("%d connection changes recorded, want created, two updates and deleted", n)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.saml_connections WHERE tenant_id = $1`, other); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM organization.saml_connections WHERE organization_id = $1`, other); n != 1 {
 		t.Errorf("another organisation's connections: %d, want its one untouched", n)
 	}
 }
 
-// TestSAMLServiceProvidersOverHTTP checks that an organisation registers,
+// TestSAMLServiceProvidersOverHTTP checks that an organization registers,
 // lists, reads, changes and deletes the service providers its IdP serves,
 // refusing invalid input and auditing each change, and that another
-// organisation can neither see nor change them.
+// organization can neither see nor change them.
 func TestSAMLServiceProvidersOverHTTP(t *testing.T) {
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin, otherAdmin := dbtest.User(t, tenant, tenant), dbtest.User(t, other, other)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	admin, otherAdmin := dbtest.User(t, organization, organization), dbtest.User(t, other, other)
 	keyPEM, certPEM, err := GenerateIdPKeyPEM("Test Qeet IdP")
 	if err != nil {
 		t.Fatal(err)
@@ -161,9 +161,9 @@ func TestSAMLServiceProvidersOverHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := &Handler{Service: &Service{}, IdP: idp}
-	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), h.Mount)
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)
 	asOther := dbtest.Serve(dbtest.Principal(otherAdmin.ID, other), h.Mount)
-	base := "/tenants/" + tenant.String() + "/saml-providers"
+	base := "/tenants/" + organization.String() + "/saml-providers"
 	spCert, _ := selfSignedCert(t)
 	provider := map[string]any{"name": " App ", "entity_id": " https://sp.example.test ", "acs_url": "https://sp.example.test/acs",
 		"certificate": spCert, "require_signed_requests": true}
@@ -182,7 +182,7 @@ func TestSAMLServiceProvidersOverHTTP(t *testing.T) {
 	var sp ServiceProvider
 	dbtest.Decode(t, rec, &sp)
 	if rec.Code != http.StatusCreated || sp.Name != "App" || sp.EntityID != "https://sp.example.test" || sp.Status != "draft" ||
-		sp.NameIDFormat != nameIDEmail || sp.NameIDAttribute != "email" || sp.TenantID != tenant {
+		sp.NameIDFormat != nameIDEmail || sp.NameIDAttribute != "email" || sp.OrganizationID != organization {
 		t.Fatalf("register: %d %s; want a trimmed draft with the email NameID defaults", rec.Code, rec.Body.String())
 	}
 	if rec := dbtest.Do(t, asOther, http.MethodPost, "/tenants/"+other.String()+"/saml-providers", provider); rec.Code != http.StatusCreated {
@@ -232,20 +232,20 @@ func TestSAMLServiceProvidersOverHTTP(t *testing.T) {
 			t.Errorf("%s a deleted SP: %d, want 404", method, rec.Code)
 		}
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND resource_id = $2 AND action LIKE 'saml.sp_%' AND actor_user_id = $3`, tenant, sp.ID, admin.ID); n != 3 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND resource_id = $2 AND action LIKE 'saml.sp_%' AND actor_user_id = $3`, organization, sp.ID, admin.ID); n != 3 {
 		t.Errorf("%d SP changes recorded, want created, updated and deleted", n)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.saml_service_providers WHERE tenant_id = $1 AND acs_url = 'https://sp.example.test/acs'`, other); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM organization.saml_service_providers WHERE organization_id = $1 AND acs_url = 'https://sp.example.test/acs'`, other); n != 1 {
 		t.Errorf("another organisation's SP: %d, want its one untouched", n)
 	}
 }
 
 // TestSAMLRegistryRefusesBadInputAsInvalid checks that an unknown status on
-// create, or a second SP with an entity ID the organisation already serves, is
+// create, or a second SP with an entity ID the organization already serves, is
 // refused as the client's mistake.
 func TestSAMLRegistryRefusesBadInputAsInvalid(t *testing.T) {
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
 	keyPEM, certPEM, err := GenerateIdPKeyPEM("Test Qeet IdP")
 	if err != nil {
 		t.Fatal(err)
@@ -255,13 +255,13 @@ func TestSAMLRegistryRefusesBadInputAsInvalid(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := &Handler{Service: NewService(dbtest.Pool(t), nil, testAppBase), IdP: idp}
-	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), h.Mount)
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)
 	cert, _ := selfSignedCert(t)
 	connection := map[string]any{"name": "Okta", "idp_entity_id": "https://idp.example.test", "idp_sso_url": "https://idp.example.test/sso", "idp_certificate": cert, "status": "enabled"}
-	if rec := dbtest.Do(t, asAdmin, http.MethodPost, "/tenants/"+tenant.String()+"/saml", connection); !strings.Contains(rec.Body.String(), errs.CodeSAMLStatusInvalid) {
+	if rec := dbtest.Do(t, asAdmin, http.MethodPost, "/tenants/"+organization.String()+"/saml", connection); !strings.Contains(rec.Body.String(), errs.CodeSAMLStatusInvalid) {
 		t.Errorf("a connection with an unknown status: %d %s, want %s", rec.Code, rec.Body.String(), errs.CodeSAMLStatusInvalid)
 	}
-	providers := "/tenants/" + tenant.String() + "/saml-providers"
+	providers := "/tenants/" + organization.String() + "/saml-providers"
 	provider := map[string]any{"name": "App", "entity_id": "https://sp.example.test", "acs_url": "https://sp.example.test/acs", "status": "enabled"}
 	if rec := dbtest.Do(t, asAdmin, http.MethodPost, providers, provider); !strings.Contains(rec.Body.String(), errs.CodeSAMLStatusInvalid) {
 		t.Errorf("an SP with an unknown status: %d %s, want %s", rec.Code, rec.Body.String(), errs.CodeSAMLStatusInvalid)

@@ -81,18 +81,18 @@ func NewVerifier(pool *pgxpool.Pool, key CheckpointKey) *Verifier {
 	return &Verifier{pool: pool, q: dbgen.New(pool), key: key}
 }
 
-// Verify recomputes the hash chain of tenantID's audit rows, oldest first, or
-// when tenantID is nil every platform chain in turn, each of which must have a
+// Verify recomputes the hash chain of organizationID's audit rows, oldest first, or
+// when organizationID is nil every platform chain in turn, each of which must have a
 // row, and checks no platform row is outside them. At the first row that fails
 // it returns OK=false with BrokenAtID set. Rows without a hash are skipped. A
 // chain's checkpoint must be signed and name an unchanged row.
-func (v *Verifier) Verify(ctx context.Context, tenantID *uuid.UUID) (VerifyResult, error) {
-	if tenantID != nil {
-		from, err := v.savedCheckpoint(ctx, tenantID, 0)
+func (v *Verifier) Verify(ctx context.Context, organizationID *uuid.UUID) (VerifyResult, error) {
+	if organizationID != nil {
+		from, err := v.savedCheckpoint(ctx, organizationID, 0)
 		if err != nil {
 			return VerifyResult{}, err
 		}
-		res, _, err := v.walk(ctx, tenantID, 0, from, true)
+		res, _, err := v.walk(ctx, organizationID, 0, from, true)
 		return res, err
 	}
 	all := VerifyResult{OK: true}
@@ -147,29 +147,29 @@ type checkpoint struct {
 
 // checkpointMessage is what a checkpoint's MAC covers: its kind, its chain,
 // the row it names and that row's hash.
-func checkpointMessage(kind string, tenantID *uuid.UUID, shard int16, cp *checkpoint) []byte {
-	return []byte(strings.Join([]string{kind, uuidStr(tenantID), strconv.Itoa(int(shard)), cp.EventID.String(),
+func checkpointMessage(kind string, organizationID *uuid.UUID, shard int16, cp *checkpoint) []byte {
+	return []byte(strings.Join([]string{kind, uuidStr(organizationID), strconv.Itoa(int(shard)), cp.EventID.String(),
 		cp.CreatedAt.UTC().Format(time.RFC3339Nano), cp.RowHash}, "|"))
 }
 
 // signCheckpoint returns cp's key id and MAC under key, nil without one.
-func signCheckpoint(key CheckpointKey, kind string, tenantID *uuid.UUID, shard int16, cp *checkpoint) (*string, []byte) {
+func signCheckpoint(key CheckpointKey, kind string, organizationID *uuid.UUID, shard int16, cp *checkpoint) (*string, []byte) {
 	if key == nil {
 		return nil, nil
 	}
-	id, mac := key.MAC(checkpointPurpose, checkpointMessage(kind, tenantID, shard, cp))
+	id, mac := key.MAC(checkpointPurpose, checkpointMessage(kind, organizationID, shard, cp))
 	return &id, mac
 }
 
 // signedCheckpoint reports whether cp carries a MAC of one of key's keys;
 // without a key, checkpoints aren't checked.
-func signedCheckpoint(key CheckpointKey, kind string, tenantID *uuid.UUID, shard int16, cp *checkpoint) bool {
-	return key == nil || (cp.KeyID != "" && key.CheckMAC(checkpointPurpose, cp.KeyID, checkpointMessage(kind, tenantID, shard, cp), cp.MAC))
+func signedCheckpoint(key CheckpointKey, kind string, organizationID *uuid.UUID, shard int16, cp *checkpoint) bool {
+	return key == nil || (cp.KeyID != "" && key.CheckMAC(checkpointPurpose, cp.KeyID, checkpointMessage(kind, organizationID, shard, cp), cp.MAC))
 }
 
 // savedCheckpoint is a chain's checkpoint, nil when it has none.
-func (v *Verifier) savedCheckpoint(ctx context.Context, tenantID *uuid.UUID, shard int16) (*checkpoint, error) {
-	row, err := v.q.GetAuditChainCheckpoint(ctx, dbgen.GetAuditChainCheckpointParams{ChainShard: shard, TenantID: pgUUIDNullable(tenantID)})
+func (v *Verifier) savedCheckpoint(ctx context.Context, organizationID *uuid.UUID, shard int16) (*checkpoint, error) {
+	row, err := v.q.GetAuditChainCheckpoint(ctx, dbgen.GetAuditChainCheckpointParams{ChainShard: shard, OrganizationID: pgUUIDNullable(organizationID)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -179,36 +179,36 @@ func (v *Verifier) savedCheckpoint(ctx context.Context, tenantID *uuid.UUID, sha
 	return &checkpoint{EventID: row.EventID, CreatedAt: row.EventCreatedAt, RowHash: trimmed(&row.RowHash), KeyID: deref(row.KeyID), MAC: row.Mac}, nil
 }
 
-// walk verifies tenantID's chain, or with a nil tenantID platform chain shard,
+// walk verifies organizationID's chain, or with a nil organizationID platform chain shard,
 // as Verify does. Given from, a checkpoint, it first checks that from's row is
 // unchanged and, unless fromStart, walks on from the row after it instead of
 // the first row. It also returns the last row it found intact: nil for none,
 // from itself when no row follows it. A platform chain with no row is broken.
-// An organisation's chain whose oldest events were purged starts at its purge
+// An organization's chain whose oldest events were purged starts at its purge
 // checkpoint; a purge made while the walk ran makes it walk once more.
-func (v *Verifier) walk(ctx context.Context, tenantID *uuid.UUID, shard int16, from *checkpoint, fromStart bool) (VerifyResult, *checkpoint, error) {
-	start, err := v.purgeStart(ctx, tenantID)
+func (v *Verifier) walk(ctx context.Context, organizationID *uuid.UUID, shard int16, from *checkpoint, fromStart bool) (VerifyResult, *checkpoint, error) {
+	start, err := v.purgeStart(ctx, organizationID)
 	if err != nil {
 		return VerifyResult{}, nil, err
 	}
-	res, last, err := v.walkFrom(ctx, tenantID, shard, from, fromStart, start)
-	if err != nil || res.OK || tenantID == nil || (res.ReasonCode != ChainPrevHashMismatch && res.ReasonCode != chainCheckpointGone) {
+	res, last, err := v.walkFrom(ctx, organizationID, shard, from, fromStart, start)
+	if err != nil || res.OK || organizationID == nil || (res.ReasonCode != ChainPrevHashMismatch && res.ReasonCode != chainCheckpointGone) {
 		return res, last, err
 	}
-	again, err := v.purgeStart(ctx, tenantID)
+	again, err := v.purgeStart(ctx, organizationID)
 	if err != nil || again == nil || (start != nil && again.EventID == start.EventID) {
 		return res, last, err
 	}
-	return v.walkFrom(ctx, tenantID, shard, from, fromStart, again)
+	return v.walkFrom(ctx, organizationID, shard, from, fromStart, again)
 }
 
-// purgeStart is where tenantID's chain starts since its oldest events were
+// purgeStart is where organizationID's chain starts since its oldest events were
 // purged, nil when none were (or for a platform chain).
-func (v *Verifier) purgeStart(ctx context.Context, tenantID *uuid.UUID) (*checkpoint, error) {
-	if tenantID == nil {
+func (v *Verifier) purgeStart(ctx context.Context, organizationID *uuid.UUID) (*checkpoint, error) {
+	if organizationID == nil {
 		return nil, nil
 	}
-	row, err := v.q.GetAuditPurgeCheckpoint(ctx, *tenantID)
+	row, err := v.q.GetAuditPurgeCheckpoint(ctx, *organizationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -218,18 +218,18 @@ func (v *Verifier) purgeStart(ctx context.Context, tenantID *uuid.UUID) (*checkp
 	return &checkpoint{EventID: row.EventID, CreatedAt: row.EventCreatedAt, RowHash: strings.TrimSpace(row.RowHash), KeyID: deref(row.KeyID), MAC: row.Mac}, nil
 }
 
-// signPurgeCheckpoint signs tenantID's purge checkpoint again with the current
+// signPurgeCheckpoint signs organizationID's purge checkpoint again with the current
 // key when another signed it, so retiring that key leaves it checkable.
-func (v *Verifier) signPurgeCheckpoint(ctx context.Context, tenantID uuid.UUID) error {
-	start, err := v.purgeStart(ctx, &tenantID)
+func (v *Verifier) signPurgeCheckpoint(ctx context.Context, organizationID uuid.UUID) error {
+	start, err := v.purgeStart(ctx, &organizationID)
 	if err != nil || start == nil || v.key == nil {
 		return err
 	}
-	keyID, mac := signCheckpoint(v.key, purgeCheckpointKind, &tenantID, 0, start)
-	if *keyID == start.KeyID || !signedCheckpoint(v.key, purgeCheckpointKind, &tenantID, 0, start) {
+	keyID, mac := signCheckpoint(v.key, purgeCheckpointKind, &organizationID, 0, start)
+	if *keyID == start.KeyID || !signedCheckpoint(v.key, purgeCheckpointKind, &organizationID, 0, start) {
 		return nil
 	}
-	return v.q.SignAuditPurgeCheckpoint(ctx, dbgen.SignAuditPurgeCheckpointParams{TenantID: tenantID, EventID: start.EventID, KeyID: keyID, Mac: mac})
+	return v.q.SignAuditPurgeCheckpoint(ctx, dbgen.SignAuditPurgeCheckpointParams{OrganizationID: organizationID, EventID: start.EventID, KeyID: keyID, Mac: mac})
 }
 
 // deref is *s, "" for nil.
@@ -251,7 +251,7 @@ func notAfter(a, b *checkpoint) bool {
 
 // walkFrom is walk starting at start, a purge checkpoint (nil: the seed): the
 // first row must link to it, and a from at or before it was purged with it.
-func (v *Verifier) walkFrom(ctx context.Context, tenantID *uuid.UUID, shard int16, from *checkpoint, fromStart bool, start *checkpoint) (VerifyResult, *checkpoint, error) {
+func (v *Verifier) walkFrom(ctx context.Context, organizationID *uuid.UUID, shard int16, from *checkpoint, fromStart bool, start *checkpoint) (VerifyResult, *checkpoint, error) {
 	expectedPrev := chainSeed
 	var (
 		rowsChecked int
@@ -265,9 +265,9 @@ func (v *Verifier) walkFrom(ctx context.Context, tenantID *uuid.UUID, shard int1
 		}, last, nil
 	}
 	// The chain is read a page at a time, so memory doesn't grow with it.
-	page := dbgen.ListAuditEventsForVerifyParams{TenantID: pgUUIDNullable(tenantID), ChainShard: shard, PageSize: verifyPageSize}
+	page := dbgen.ListAuditEventsForVerifyParams{OrganizationID: pgUUIDNullable(organizationID), ChainShard: shard, PageSize: verifyPageSize}
 	if start != nil {
-		if !signedCheckpoint(v.key, purgeCheckpointKind, tenantID, 0, start) {
+		if !signedCheckpoint(v.key, purgeCheckpointKind, organizationID, 0, start) {
 			return broken(start.EventID, chainCheckpointUnsigned, "the chain's purge checkpoint isn't signed by this server")
 		}
 		expectedPrev = start.RowHash
@@ -276,11 +276,11 @@ func (v *Verifier) walkFrom(ctx context.Context, tenantID *uuid.UUID, shard int1
 			from = nil
 		}
 	}
-	if from != nil && !signedCheckpoint(v.key, chainCheckpointKind, tenantID, shard, from) {
+	if from != nil && !signedCheckpoint(v.key, chainCheckpointKind, organizationID, shard, from) {
 		return broken(from.EventID, chainCheckpointUnsigned, "the last verified row's checkpoint isn't signed by this server")
 	}
 	if from != nil {
-		row, err := v.q.GetAuditEventForVerify(ctx, dbgen.GetAuditEventForVerifyParams{ID: from.EventID, TenantID: page.TenantID, ChainShard: shard})
+		row, err := v.q.GetAuditEventForVerify(ctx, dbgen.GetAuditEventForVerifyParams{ID: from.EventID, OrganizationID: page.OrganizationID, ChainShard: shard})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return broken(from.EventID, chainCheckpointGone, "the last verified row is gone")
 		}
@@ -323,7 +323,7 @@ func (v *Verifier) walkFrom(ctx context.Context, tenantID *uuid.UUID, shard int1
 			last = &checkpoint{EventID: row.ID, CreatedAt: row.CreatedAt, RowHash: stored}
 		}
 		if len(rows) < int(page.PageSize) {
-			if tenantID == nil && last == nil {
+			if organizationID == nil && last == nil {
 				return VerifyResult{
 					OK: false, ReasonCode: chainShardMissing,
 					BrokenReason: fmt.Sprintf("platform chain %d has no row", shard),
@@ -345,15 +345,15 @@ func rowHash(row dbgen.ListAuditEventsForVerifyRow) (string, error) {
 	// ip is COALESCE(host(ip), ''), which sqlc types as interface{}.
 	ip, _ := row.Ip.(string)
 	canonical, err := canonicalize(Event{
-		TenantID:     toUUIDPtr(row.TenantID),
-		ActorUserID:  toUUIDPtr(row.ActorUserID),
-		ActorType:    row.ActorType,
-		Action:       row.Action,
-		ResourceType: row.ResourceType,
-		ResourceID:   toUUIDPtr(row.ResourceID),
-		IP:           ip,
-		UserAgent:    row.UserAgent, // already COALESCE'd to ""
-		RequestID:    row.RequestID, // already COALESCE'd to ""
+		OrganizationID: toUUIDPtr(row.OrganizationID),
+		ActorUserID:    toUUIDPtr(row.ActorUserID),
+		ActorType:      row.ActorType,
+		Action:         row.Action,
+		ResourceType:   row.ResourceType,
+		ResourceID:     toUUIDPtr(row.ResourceID),
+		IP:             ip,
+		UserAgent:      row.UserAgent, // already COALESCE'd to ""
+		RequestID:      row.RequestID, // already COALESCE'd to ""
 	}, row.ChainShard, row.ID, row.CreatedAt, metaJSON, trimmed(row.PrevHash))
 	if err != nil {
 		return "", err
@@ -394,7 +394,7 @@ func normaliseMetadata(raw []byte) ([]byte, error) {
 	return json.Marshal(m)
 }
 
-// ChainVerification is an organisation's chain as the scheduled verification
+// ChainVerification is an organization's chain as the scheduled verification
 // last left it, without walking it again.
 type ChainVerification struct {
 	Verified       bool       `json:"verified"`         // the scheduled verification has reached the chain
@@ -406,9 +406,9 @@ type ChainVerification struct {
 	LastRunScope   string     `json:"last_run_scope"` // "all" or "incremental"
 }
 
-// LastVerification returns how the scheduled verification last left tenantID's
+// LastVerification returns how the scheduled verification last left organizationID's
 // chain: when it verified it, up to which event, and whether it found a break.
-func (v *Verifier) LastVerification(ctx context.Context, tenantID uuid.UUID) (*ChainVerification, error) {
+func (v *Verifier) LastVerification(ctx context.Context, organizationID uuid.UUID) (*ChainVerification, error) {
 	out := &ChainVerification{}
 	run, err := v.q.GetLatestVerificationRun(ctx)
 	switch {
@@ -417,7 +417,7 @@ func (v *Verifier) LastVerification(ctx context.Context, tenantID uuid.UUID) (*C
 	case !errors.Is(err, pgx.ErrNoRows):
 		return nil, err
 	}
-	row, err := v.q.GetTenantChainCheckpoint(ctx, tenantID)
+	row, err := v.q.GetOrganizationChainCheckpoint(ctx, organizationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return out, nil
 	}

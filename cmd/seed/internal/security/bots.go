@@ -8,7 +8,7 @@ import (
 )
 
 // Bot verdicts are what the sign-in handler records for a suspicious client:
-// the score bot.Score gives its user agent and the verdict the organisation's
+// the score bot.Score gives its user agent and the verdict the organization's
 // threshold makes of it. The bots screen counts only the last 24 hours, so a
 // realistic share falls there.
 
@@ -24,10 +24,10 @@ var scrapers = []scraper{
 	{"198.51.100.247", "axios/1.7.9"},
 }
 
-// botRate is each organisation's daily suspicious sign-in attempts.
+// botRate is each organization's daily suspicious sign-in attempts.
 var botRate = map[string]float64{"northwind": 6, "lumen": 5, "meridian": 4, "qeet": 3, "aster": 2, "kestrel": 1}
 
-// botTraffic records each organisation's suspicious sign-in attempts over the
+// botTraffic records each organization's suspicious sign-in attempts over the
 // last 30 days: scripts and scrapers working through its people's addresses,
 // and its own people's odd clients — a developer's Postman, an old Outlook, an
 // Android app's built-in browser.
@@ -80,7 +80,7 @@ func botTraffic(w *world.World) {
 // botAttempt records the verdict the sign-in handler reaches for a client
 // with user agent ua trying to sign in to o at t, as bot.Service.Evaluate
 // does: nothing for a clean browser, else challenged or blocked by the
-// organisation's threshold at the time.
+// organization's threshold at the time.
 func botAttempt(w *world.World, o *world.Org, t time.Time, ip, ua string) {
 	score := bot.Score(ua)
 	if score < 0.30 {
@@ -104,6 +104,6 @@ func botAttempt(w *world.World, o *world.Org, t time.Time, ip, ua string) {
 
 func insertBotEvent(w *world.World, o *world.Org, t time.Time, ip, ua string, score float64, verdict string) {
 	w.Exec("record a bot verdict", `
-		INSERT INTO auth.bot_events (tenant_id, ip, user_agent, score, verdict, created_at)
+		INSERT INTO auth.bot_events (organization_id, ip, user_agent, score, verdict, created_at)
 		VALUES ($1, NULLIF($2, '')::inet, $3, $4, $5, $6)`, o.ID, ip, ua, score, verdict, t)
 }

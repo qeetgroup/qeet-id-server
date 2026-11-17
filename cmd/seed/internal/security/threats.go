@@ -13,16 +13,16 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// Each organisation's risk and bot settings, then the attacks on it: wrong
+// Each organization's risk and bot settings, then the attacks on it: wrong
 // passwords through the auth service's own failure path, so the failed
 // sign-ins, locks, throttles, security events and the locked person's alert
 // are the API's own.
 
-// riskSpec and botSpec are an organisation's adaptive-risk and bot settings,
+// riskSpec and botSpec are an organization's adaptive-risk and bot settings,
 // and when its security team set them.
 type riskSpec struct {
 	slug  string
-	after time.Duration // after the organisation signed up
+	after time.Duration // after the organization signed up
 	risk  risk.Settings
 	bot   bot.Settings
 }
@@ -45,7 +45,7 @@ var riskSpecs = []riskSpec{
 
 const day = 24 * time.Hour
 
-// threatSettings stores each organisation's risk and bot settings through
+// threatSettings stores each organization's risk and bot settings through
 // their services, on the day its security team chose them.
 func threatSettings(w *world.World) {
 	for _, s := range riskSpecs {
@@ -72,7 +72,7 @@ func threatSettings(w *world.World) {
 	}
 }
 
-// riskSince is when each organisation configured adaptive risk; compliance
+// riskSince is when each organization configured adaptive risk; compliance
 // evidence reads it.
 var riskSince = map[string]time.Time{}
 
@@ -89,7 +89,7 @@ type attack struct {
 	resolve time.Duration // when the SOC resolved it, after at; 0 leaves it open
 }
 
-// lockouts runs each organisation's attacks through the auth service.
+// lockouts runs each organization's attacks through the auth service.
 func lockouts(w *world.World) {
 	py, curl, headless, goClient := world.Attackers[0], world.Attackers[1], world.Attackers[2], world.Attackers[3]
 	var attacks []attack
@@ -217,7 +217,7 @@ func run(w *world.World, a attack) {
 		           CASE WHEN action = 'auth.account_locked' THEN 'locked_until' ELSE 'throttled_until' END,
 		           to_char(($3::timestamptz + make_interval(secs => CASE WHEN action = 'auth.account_locked' THEN $4::float8 ELSE $5::float8 END))
 		                   AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'))
-		WHERE tenant_id = $1 AND ip = $2::inet AND action IN ('auth.account_locked', 'auth.source_throttled')
+		WHERE organization_id = $1 AND ip = $2::inet AND action IN ('auth.account_locked', 'auth.source_throttled')
 		  AND created_at BETWEEN $6 AND $7`,
 		a.o.ID, a.src.IP, lockTime(w, a), lock.Seconds(), block.Seconds(), a.at.Add(-time.Minute), a.at.Add(time.Hour))
 	w.Exec("date security events", `
@@ -225,11 +225,11 @@ func run(w *world.World, a attack) {
 		       metadata = metadata || CASE WHEN type = 'password_spraying'
 		           THEN jsonb_build_object('throttled_until', $3::timestamptz + make_interval(secs => $5::float8))
 		           ELSE jsonb_build_object('locked_until', $3::timestamptz + make_interval(secs => $4::float8)) END
-		WHERE tenant_id = $1 AND ip = $2::inet AND created_at BETWEEN $6 AND $7`,
+		WHERE organization_id = $1 AND ip = $2::inet AND created_at BETWEEN $6 AND $7`,
 		a.o.ID, a.src.IP, lockTime(w, a), lock.Seconds(), block.Seconds(), a.at.Add(-time.Minute), a.at.Add(time.Hour))
 	w.Exec("date lock notifications", `
 		UPDATE auth.notifications SET created_at = $3
-		WHERE tenant_id = $1 AND kind = 'alert' AND created_at BETWEEN $4 AND $5 AND user_id = ANY($2)`,
+		WHERE organization_id = $1 AND kind = 'alert' AND created_at BETWEEN $4 AND $5 AND user_id = ANY($2)`,
 		a.o.ID, ids(a.victims), lockTime(w, a), a.at.Add(-time.Minute), a.at.Add(time.Hour))
 	for _, t := range times {
 		botAttempt(w, a.o, t, a.src.IP, a.src.UserAgent)
@@ -266,7 +266,7 @@ func lockTime(w *world.World, a attack) time.Time {
 func spaceAttempts(w *world.World, a attack, times []time.Time) {
 	rows, err := w.Admin.Query(w.Ctx, `
 		SELECT id FROM audit.events
-		WHERE tenant_id = $1 AND ip = $2::inet AND action = 'auth.sign_in_failed' AND created_at BETWEEN $3 AND $4
+		WHERE organization_id = $1 AND ip = $2::inet AND action = 'auth.sign_in_failed' AND created_at BETWEEN $3 AND $4
 		ORDER BY created_at, id`, a.o.ID, a.src.IP, a.at.Add(-time.Minute), a.at.Add(time.Hour))
 	w.Check(err, "list an attack's failed sign-ins")
 	var events []uuid.UUID
@@ -278,19 +278,19 @@ func spaceAttempts(w *world.World, a attack, times []time.Time) {
 	rows.Close()
 	for i, id := range events {
 		if i < len(times) {
-			w.Exec("space a failed sign-in", `UPDATE audit.events SET created_at = $2 WHERE id = $1 AND tenant_id = $3`, id, times[i], a.o.ID)
+			w.Exec("space a failed sign-in", `UPDATE audit.events SET created_at = $2 WHERE id = $1 AND organization_id = $3`, id, times[i], a.o.ID)
 		}
 	}
 }
 
-// resolveAttack has the organisation's security team resolve a's events at t,
+// resolveAttack has the organization's security team resolve a's events at t,
 // and the locked people read their alert.
 func resolveAttack(w *world.World, a attack, t time.Time) {
 	if t.After(w.Now) {
 		return
 	}
 	rows, err := w.Admin.Query(w.Ctx, `
-		SELECT id FROM auth.security_events WHERE tenant_id = $1 AND ip = $2::inet AND created_at BETWEEN $3 AND $4`,
+		SELECT id FROM auth.security_events WHERE organization_id = $1 AND ip = $2::inet AND created_at BETWEEN $3 AND $4`,
 		a.o.ID, a.src.IP, a.at.Add(-time.Minute), a.at.Add(time.Hour))
 	w.Check(err, "list an attack's security events")
 	var events []uuid.UUID
@@ -308,7 +308,7 @@ func resolveAttack(w *world.World, a attack, t time.Time) {
 	})
 	w.Exec("read lock alerts", `
 		UPDATE auth.notifications SET read_at = $3
-		WHERE tenant_id = $1 AND user_id = ANY($2) AND kind = 'alert' AND read_at IS NULL AND created_at < $3`,
+		WHERE organization_id = $1 AND user_id = ANY($2) AND kind = 'alert' AND read_at IS NULL AND created_at < $3`,
 		a.o.ID, ids(a.victims), lockTime(w, a).Add(50*time.Minute))
 }
 

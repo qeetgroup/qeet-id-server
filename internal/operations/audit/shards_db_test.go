@@ -40,7 +40,7 @@ func recordPlatform(t *testing.T, shard int16, action string) uuid.UUID {
 		t.Fatalf("record %s on chain %d: %v", action, shard, err)
 	}
 	var id uuid.UUID
-	if err := tx.QueryRow(ctx, `SELECT id FROM audit.events WHERE tenant_id IS NULL AND chain_shard = $1
+	if err := tx.QueryRow(ctx, `SELECT id FROM audit.events WHERE organization_id IS NULL AND chain_shard = $1
 		ORDER BY created_at DESC, id DESC LIMIT 1`, shard).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
@@ -135,13 +135,13 @@ func TestPlatformChainsVerify(t *testing.T) {
 	if err := OpenPlatformChains(ctx, pool); err != nil {
 		t.Fatalf("open the platform chains: %v", err)
 	}
-	if n := dbtest.Count(t, `SELECT count(DISTINCT chain_shard) FROM audit.events WHERE tenant_id IS NULL`); n != PlatformChainShards {
+	if n := dbtest.Count(t, `SELECT count(DISTINCT chain_shard) FROM audit.events WHERE organization_id IS NULL`); n != PlatformChainShards {
 		t.Fatalf("%d platform chains have a row, want %d", n, PlatformChainShards)
 	}
 	if err := OpenPlatformChains(ctx, pool); err != nil {
 		t.Fatalf("open the platform chains again: %v", err)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id IS NULL AND action = 'audit.chain_opened'`); n > PlatformChainShards {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id IS NULL AND action = 'audit.chain_opened'`); n > PlatformChainShards {
 		t.Errorf("opening the chains twice wrote %d chain_opened rows, want at most %d", n, PlatformChainShards)
 	}
 	recordPlatform(t, 3, "auth.signed_up")
@@ -166,7 +166,7 @@ func TestPlatformChainsVerify(t *testing.T) {
 	}
 
 	inTx(t, func(tx pgx.Tx, v *Verifier) {
-		if _, err := tx.Exec(ctx, `UPDATE audit.events SET action = 'auth.deleted' WHERE id = $1 AND tenant_id IS NULL`, changed); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE audit.events SET action = 'auth.deleted' WHERE id = $1 AND organization_id IS NULL`, changed); err != nil {
 			t.Fatal(err)
 		}
 		res, err := v.Verify(ctx, nil)
@@ -175,7 +175,7 @@ func TestPlatformChainsVerify(t *testing.T) {
 		}
 	})
 	inTx(t, func(tx pgx.Tx, v *Verifier) {
-		if _, err := tx.Exec(ctx, `UPDATE audit.events SET chain_shard = 5 WHERE id = $1 AND tenant_id IS NULL`, moved); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE audit.events SET chain_shard = 5 WHERE id = $1 AND organization_id IS NULL`, moved); err != nil {
 			t.Fatal(err)
 		}
 		res, _, err := v.walk(ctx, nil, 4, nil, true)
@@ -188,7 +188,7 @@ func TestPlatformChainsVerify(t *testing.T) {
 		}
 	})
 	inTx(t, func(tx pgx.Tx, v *Verifier) {
-		if _, err := tx.Exec(ctx, `DELETE FROM audit.events WHERE tenant_id IS NULL AND chain_shard = 9`); err != nil {
+		if _, err := tx.Exec(ctx, `DELETE FROM audit.events WHERE organization_id IS NULL AND chain_shard = 9`); err != nil {
 			t.Fatal(err)
 		}
 		res, err := v.Verify(ctx, nil)
@@ -198,7 +198,7 @@ func TestPlatformChainsVerify(t *testing.T) {
 	})
 	inTx(t, func(tx pgx.Tx, v *Verifier) {
 		stray := recordPlatform(t, 6, "auth.signed_up")
-		if _, err := tx.Exec(ctx, `UPDATE audit.events SET chain_shard = $2 WHERE id = $1 AND tenant_id IS NULL`, stray, PlatformChainShards); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE audit.events SET chain_shard = $2 WHERE id = $1 AND organization_id IS NULL`, stray, PlatformChainShards); err != nil {
 			t.Fatal(err)
 		}
 		res, err := v.Verify(ctx, nil)
@@ -231,7 +231,7 @@ func writeAsTheSinglePlatformChain(t *testing.T) uuid.UUID {
 	}
 	var prev string
 	var tipAt time.Time
-	if err := tx.QueryRow(ctx, `SELECT row_hash, created_at FROM audit.events WHERE tenant_id IS NULL AND chain_shard = 0
+	if err := tx.QueryRow(ctx, `SELECT row_hash, created_at FROM audit.events WHERE organization_id IS NULL AND chain_shard = 0
 		AND row_hash IS NOT NULL ORDER BY created_at DESC, id DESC LIMIT 1`).Scan(&prev, &tipAt); err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +271,7 @@ func TestEachPlatformChainKeepsItsCheckpoint(t *testing.T) {
 		t.Helper()
 		var id uuid.UUID
 		if err := pool.QueryRow(ctx, `SELECT event_id FROM platform.audit_chain_checkpoints
-			WHERE tenant_id IS NULL AND chain_shard = $1`, shard).Scan(&id); err != nil {
+			WHERE organization_id IS NULL AND chain_shard = $1`, shard).Scan(&id); err != nil {
 			t.Fatalf("chain %d's checkpoint: %v", shard, err)
 		}
 		return id
@@ -290,10 +290,10 @@ func TestEachPlatformChainKeepsItsCheckpoint(t *testing.T) {
 			t.Fatalf("a second first checkpoint of chain 10: %v", err)
 		}
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM platform.audit_chain_checkpoints WHERE tenant_id IS NULL AND chain_shard = 10`); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM platform.audit_chain_checkpoints WHERE organization_id IS NULL AND chain_shard = 10`); n != 1 {
 		t.Errorf("chain 10 has %d checkpoints, want 1", n)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM platform.audit_chain_checkpoints WHERE tenant_id IS NULL`); n != PlatformChainShards {
+	if n := dbtest.Count(t, `SELECT count(*) FROM platform.audit_chain_checkpoints WHERE organization_id IS NULL`); n != PlatformChainShards {
 		t.Errorf("%d platform checkpoints, want one per chain, %d", n, PlatformChainShards)
 	}
 }

@@ -8,8 +8,8 @@ Each idea starts with a plain explanation (in short, why, what exists today), fo
 
 These are hypotheses about useful combinations, not claims that no competitor
 offers them. Validate demand with design partners before choosing one. All new
-organization APIs must derive tenant scope from the principal and enforce the
-matching tenant path. New routes need OpenAPI and denial tests. Token, SAML,
+organization APIs must derive organization scope from the principal and enforce the
+matching organization path. New routes need OpenAPI and denial tests. Token, SAML,
 SCIM, webhook or cross-repository changes need explicit design/consumer review.
 
 ### F-01: Preview a policy change before it goes live
@@ -35,10 +35,10 @@ Enterprise buyers expect this kind of change control. Keycloak and OpenFGA have 
   and ABAC/ReBAC decisions already answer individual questions. Add immutable
   candidate versions, bounded before/after scenario evaluation and an impact
   summary before activation; do not call the existing simulator a missing feature.
-- **MVP:** Tenant-scoped draft/version and evaluation operations; return newly
+- **MVP:** Organization-scoped draft/version and evaluation operations; return newly
   allowed/denied cases, explanation, input/policy version and expiry. Activation
   checks the expected version to reject stale previews. No simulation mutates grants.
-- **Acceptance:** Production and simulation share decision logic; tenant isolation,
+- **Acceptance:** Production and simulation share decision logic; organization isolation,
   deny precedence and unknown attributes remain identical. Approved test fixtures
   reproduce the report; a concurrent policy change invalidates stale activation.
 - **Dependencies / priority:** 2.12 and 4.2; L; first post-launch candidate.
@@ -47,7 +47,7 @@ Enterprise buyers expect this kind of change control. Keycloak and OpenFGA have 
 
 ### F-02: Access reviews and time-limited admin access
 
-**In short.** Let an organisation regularly review who has access (people, guests, API keys, service principals and AI agents together) and give admin rights for a limited time instead of for ever.
+**In short.** Let an organization regularly review who has access (people, guests, API keys, service principals and AI agents together) and give admin rights for a limited time instead of for ever.
 
 **Why we need it.** Access piles up. People change teams, contractors stay after their project ends, API keys outlive their purpose. ISO 27001 and SOC 2 auditors ask for periodic access reviews, and security teams want admin rights granted "for two hours, approved by someone else" rather than permanently.
 
@@ -96,7 +96,7 @@ For example, a leaver still has a session in a customer's app that never process
   into a queryable operation record showing each credential/session category
   and external delivery outcome. This adds evidence to 1.10, not another
   implementation of basic revocation.
-- **MVP:** A tenant-scoped offboarding operation ID with states such as local
+- **MVP:** An organization-scoped offboarding operation ID with states such as local
   enforcement complete, notification pending, delivered and receiver acknowledged.
   Initially expose local evidence; add SSF/CAEP transport only as a separately
   reviewed adapter, keeping existing webhook contracts stable.
@@ -172,7 +172,7 @@ WorkOS Pipes and Auth0 Token Vault offer similar relays; Qeet's value would be p
   decisions; L; later opt-in pilot. WorkOS Relay/Auth0 Token Vault already provide
   related mechanics, and token/claim changes require consumer coordination.
 
-### F-06: Evidence pack for a release and an organisation's controls
+### F-06: Evidence pack for a release and an organization's controls
 
 **In short.** A downloadable, signed package that shows auditors which version of Qeet ID ran, how it was configured, and which controls were actually tested and passed, not just switched on.
 
@@ -191,11 +191,11 @@ A setting being on is not proof that the control worked, so the package must sho
   links the software revision, configuration digest, policy version, actual test
   results, restore-drill timestamp and revocation outcomes. Do not duplicate the
   audit exporter or equate an enabled setting with evidence that a control worked.
-- **MVP:** Downloadable, tenant-redacted manifest plus verification instructions;
+- **MVP:** Downloadable, organization-redacted manifest plus verification instructions;
   operational evidence stays operator-only unless explicitly safe to disclose.
   Missing, expired and failed checks remain distinguishable from passed checks.
 - **Acceptance:** Tampering is detectable; missing artifacts prevent a passed
-  status; no secret/PII or another tenant's evidence is included. An independent
+  status; no secret/PII or another organization's evidence is included. An independent
   verifier can check the package without trusting the console's rendering.
 - **Dependencies / priority:** 2.4, 5.3, 5.8 and executed release drills; L;
   post-launch. This is evidence packaging, not SOC 2/ISO/NIST certification.
@@ -270,15 +270,15 @@ DELETE /v1/tenants/{tenantID}/workload-trusts/{trustID}
 ```
 Evaluations preview a match without minting credentials. Actual issuance would
 use a separately reviewed federated-assertion authentication method on the
-existing OAuth token surface, not a tenant-selecting unauthenticated CRUD API.
+existing OAuth token surface, not an organization-selecting unauthenticated CRUD API.
 
 **Starting slice and controls.** Support one CI OIDC issuer, exact issuer/audience/
 subject and repository/environment restrictions, one mapped principal and a
 short-lived token no longer valid than its source assertion. Derive the token's
-tenant from the authenticated stored mapping, not an external tenant claim.
+organization from the authenticated stored mapping, not an external organization claim.
 Use a separate external verifier rather than relaxing the normal Qeet JWT verifier.
 Test key rollover, replay policy, disabled trust, wrong audience, protected-branch
-selectors, malicious discovery URLs and cross-tenant targets. Removing a trust
+selectors, malicious discovery URLs and cross-organization targets. Removing a trust
 stops new issuance; document how already-issued credentials become ineffective.
 
 **Measure.** All jobs in the bounded pilot authenticate without a stored Qeet
@@ -384,7 +384,7 @@ Treat embeddings, provenance and conversation history as sensitive data too.
 Fabricated model citations must not create trusted provenance records.
 
 **Measure.** Unauthorized canary chunks never reach a fake model; every admitted
-chunk has connector-verified lineage; revoked, deleted and cross-tenant fixtures
+chunk has connector-verified lineage; revoked, deleted and cross-organization fixtures
 are denied; p95 added authorization latency is measured against a partner-agreed
 budget. A receipt proves what the integration supplied, not that an answer is
 correct. Revocation cannot recall information already disclosed to a provider.
@@ -397,7 +397,7 @@ and clear freshness limits, not the invention of permission-aware RAG.
 
 ### N-04: Pin approved MCP tool servers to a reviewed revision
 
-**In short.** When an organisation approves an MCP tool server for its AI agents, record exactly what was approved, and stop agents from using it if its tools change until someone reviews the change.
+**In short.** When an organization approves an MCP tool server for its AI agents, record exactly what was approved, and stop agents from using it if its tools change until someone reviews the change.
 
 **Why we need it.** MCP (Model Context Protocol) servers give AI agents tools such as "search tickets" or "send email". An admin approves a server after reading its tool list. Later the server's descriptions, input schemas, issuer or destination can change without anyone noticing, on purpose ("tool poisoning") or by accident, and agents start using tools nobody approved.
 
@@ -479,7 +479,7 @@ Analyze current permissions; F-01 remains the home for proposed-change simulatio
 grants and one machine credential type. Reuse actual route and domain decision
 semantics; do not equate role possession, sponsorship or a relationship edge
 with proven usable access. Credential possession and session conditions must be
-stated assumptions. No raw secrets, cross-tenant graph expansion or automatic repair.
+stated assumptions. No raw secrets, cross-organization graph expansion or automatic repair.
 
 **Measure.** Every asserted path agrees with the relevant evaluator for its
 captured context. A design partner can answer three incident-impact questions
@@ -518,7 +518,7 @@ GET  /v1/tenants/{tenantID}/least-privilege-analyses/{analysisID}
 ```
 Recommendations include observation windows, collector coverage, grant provenance,
 business exceptions and evidence. Authenticate collectors and bind their app and
-tenant server-side. Separate simulated checks, allowed attempts and completed
+organization server-side. Separate simulated checks, allowed attempts and completed
 operations; sign-in history alone is insufficient.
 
 **Starting slice and controls.** One participating application, one custom role,
@@ -536,9 +536,9 @@ N-05 where useful, SDK collectors and retained evidence. AWS policy generation
 from CloudTrail is a documented precedent with coverage limits and human review
 [S8]. This is advisory optimization, not autonomous authorization.
 
-### N-07: Two-way trust between partner organisations
+### N-07: Two-way trust between partner organizations
 
-**In short.** Let two Qeet organisations, for example a manufacturer and its supplier, agree a versioned, two-sided arrangement for which of one's people may use which of the other's apps; either side can end it.
+**In short.** Let two Qeet organizations, for example a manufacturer and its supplier, agree a versioned, two-sided arrangement for which of one's people may use which of the other's apps; either side can end it.
 
 **Why we need it.** B2B collaboration today means inviting partner staff one by one as guests. The inviting side controls everything, and the partner can't see or limit what its own staff can reach.
 
@@ -546,8 +546,8 @@ Suppliers, franchises and joint ventures need both sides in control: the supplie
 
 **What Qeet ID has today:**
 
-- Invitations and guest membership: a person whose home is one organisation can be a member of another through a role.
-- Apps that serve many customer organisations, and the finer permissions.
+- Invitations and guest membership: a person whose home is one organization can be a member of another through a role.
+- Apps that serve many customer organizations, and the finer permissions.
 
 **Research detail.**
 
@@ -561,11 +561,11 @@ POST /v1/tenants/{tenantID}/partner-trust-offers
 POST /v1/tenants/{tenantID}/partner-trust-acceptances
 POST /v1/tenants/{tenantID}/partner-trusts/{trustID}/revocations
 ```
-Each administrator acts only within their authenticated tenant. The server
+Each administrator acts only within their authenticated organization. The server
 links the two sides through an intended-recipient-bound offer. Both approve the
 same version, applications, populations, assurance conditions and expiry.
 The effective permission is the intersection of both sides' restrictions and
-the resource organization's normal authorization; trust never merges tenant data.
+the resource organization's normal authorization; trust never merges organization data.
 
 **Starting slice and controls.** Two Qeet organizations and one application, with
 offer/accept/revoke and no automatic provisioning. Unilateral approval grants
@@ -574,17 +574,17 @@ future online evaluations. Do not import partner admin roles or blindly trust
 MFA claims. Define existing token/session revocation separately using F-03.
 
 **Measure.** Compare verified onboarding steps and elapsed time with two partners'
-current process; all unilateral, stale and foreign-tenant approval tests deny.
+current process; all unilateral, stale and foreign-organization approval tests deny.
 
 **Foundation/dependencies.** [Invitations](../../internal/identity/invitations/invite.go),
-tenant membership, 4.1/4.2 and client/SDK/login integration. Entra already documents
-cross-tenant policies and mutual B2B direct-connect agreements [S9]. Qeet's
-opportunity is an application-facing agreement workflow, not ambient cross-tenant
+organization membership, 4.1/4.2 and client/SDK/login integration. Entra already documents
+cross-organization policies and mutual B2B direct-connect agreements [S9]. Qeet's
+opportunity is an application-facing agreement workflow, not ambient cross-organization
 authority or inventing bilateral trust.
 
 ### N-08: Per-app disclosure rules and pairwise subject IDs
 
-**In short.** Let an organisation control exactly which personal attributes each app receives, and optionally give each app a different user ID, so apps can't link a person across services.
+**In short.** Let an organization control exactly which personal attributes each app receives, and optionally give each app a different user ID, so apps can't link a person across services.
 
 **Why we need it.** Today an app that asks for the profile and email scopes gets those attributes, and every app sees the same user ID (the sub claim). Privacy-sensitive customers in health, finance and the public sector want each app to get only what it needs, and want to stop two unrelated apps matching their records by user ID.
 
@@ -616,7 +616,7 @@ all existing clients' identifiers and contracts.
 two sandbox clients in distinct sectors. A pairwise ID-token `sub` alone is not
 unlinkability if UserInfo, introspection or another claim reveals the shared ID.
 Keep sector mappings stable; test ID token, UserInfo, refresh and logout consistency.
-Consent/release policy can narrow claims but must not change internal tenant scope
+Consent/release policy can narrow claims but must not change internal organization scope
 or let an unrelated client reuse another sector's subject.
 
 **Measure.** Remove unnecessary personal fields while preserving the agreed
@@ -632,9 +632,9 @@ are a later separate profile, not a new name for the current JWT-VC format.
 
 ### N-09: Recovery readiness and quorum-approved recovery
 
-**In short.** Show an organisation whether it could recover if its identity provider or admin devices failed, let it rehearse that, and later let account recovery require two of three trusted people to approve.
+**In short.** Show an organization whether it could recover if its identity provider or admin devices failed, let it rehearse that, and later let account recovery require two of three trusted people to approve.
 
-**Why we need it.** Two failures hurt enterprises. One is lockout: the SSO provider is down, or the only admin lost their passkey. The other is takeover: an attacker talks one helpdesk operator into resetting an owner's account. Most organisations don't know which recovery paths actually work until they need one.
+**Why we need it.** Two failures hurt enterprises. One is lockout: the SSO provider is down, or the only admin lost their passkey. The other is takeover: an attacker talks one helpdesk operator into resetting an owner's account. Most organizations don't know which recovery paths actually work until they need one.
 
 A readiness report and drills make that visible, and quorum approval means one person is never enough. For example: "identity provider outage: break-glass admin Priya can sign in with a passkey; the second custodian has no factor enrolled, so you are not ready".
 
@@ -661,10 +661,10 @@ credentials. Live recovery cases require a separately approved assurance design.
 **Starting slice and controls.** Identify pre-enrolled custodians with independent
 authentication, then rehearse IdP outage and one absent custodian. Model a two-of-
 three approval bound to the exact account/action, policy version, expiry and
-one-time challenge. Duplicate, self, stale and foreign-tenant approvals fail.
+one-time challenge. Duplicate, self, stale and foreign-organization approvals fail.
 Quorum adds authorization, not identity proof. Preserve home-account authority,
 admin hierarchy, MFA locks and suspension; no guest-admin account takeover and
-no unauthenticated tenant-selection fallback. If no valid custodian remains,
+no unauthenticated organization-selection fallback. If no valid custodian remains,
 escalate under an approved recovery procedure, not a bypass.
 
 **Measure.** Demonstrably usable independent recovery paths and time to a valid
@@ -682,7 +682,7 @@ old recovery paths too; adding a new endpoint alone cannot make recovery safer.
 | --- | --- | --- | --- |
 | N-10 | Enterprise authenticator and device assurance | New verified-assurance input; not MFA, browser familiarity or N-09 recovery | Enterprise IAM and endpoint-security teams |
 | N-11 | Bounded-freshness distributed authorization | New runtime distribution; not F-01 preview/versioning | Application teams with measured authorization latency/connectivity pain |
-| N-12 | Tenant/customer-controlled encryption keys | Expands the customer-key item in the discovery queue; not 5.4 rotation or AI BYOK | A buyer with an explicit key-custody procurement requirement |
+| N-12 | Organization/customer-controlled encryption keys | Expands the customer-key item in the discovery queue; not 5.4 rotation or AI BYOK | A buyer with an explicit key-custody procurement requirement |
 | N-13 | Outbound-only private enterprise connector | Expands the private-connectivity discovery item; not data residency | Hybrid enterprises with private directories/applications |
 | N-14 | Approved configuration promotion and drift | Expands the environment-promotion discovery item under F-01 | Teams repeatedly configuring multiple environments |
 | N-15 | Customer relying-party integration diagnostics | New customer test workflow; distinct from F-04 incoming-IdP checks and G-02 release tests | Developers integrating customer apps and SDKs |
@@ -695,15 +695,15 @@ enforcement moves. These options do not displace N-03/N-05's earlier recommended
 pilots unless customer evidence changes the priority. Do not start six new teams.
 
 All APIs below are proposed, not implemented. The rules for every idea in the README apply:
-principal-derived tenant scope, matching paths, explicit permissions, tenant
+principal-derived organization scope, matching paths, explicit permissions, organization
 predicates/RLS, bounded work, audit, retention, OpenAPI and denial tests. Runtime
-delivery credentials must not inherit tenant-administration privileges. Existing
+delivery credentials must not inherit organization-administration privileges. Existing
 JWT/federation/webhook contracts and other repositories require separate approval.
 Sprint slices are prototypes or discovery, not production delivery promises.
 
 ### N-10: Authenticator and device assurance
 
-**In short.** Let an organisation require that sensitive apps are used only with an approved authenticator (a specific passkey model) on a compliant, company-managed device, checked with verifiable evidence.
+**In short.** Let an organization require that sensitive apps are used only with an approved authenticator (a specific passkey model) on a compliant, company-managed device, checked with verifiable evidence.
 
 **Why we need it.** A passkey proves the person, not the device: a valid passkey on a personal, unpatched laptop still passes. Regulated enterprises want rules such as "only YubiKeys on company laptops that pass our device-management check" for finance or admin apps.
 
@@ -734,15 +734,15 @@ and [risk signals](../../internal/access/threat/risk/risk.go) serve other purpos
 Add trusted attestation assessment and separately authenticated posture-provider
 observations, not an administrator-writable `compliant: true` field.
 
-**Pilot and enforcement.** One opted-in tenant, supported attestation format and
+**Pilot and enforcement.** One opted-in organization, supported attestation format and
 one posture-provider integration, initially shadow-only. Validate attestation
 chains/metadata and cryptographically bind posture evidence to the current
-endpoint/session, not a supplied device ID. Bind observations to tenant, user,
+endpoint/session, not a supplied device ID. Bind observations to organization, user,
 application, credential/device key, source time and evidence version. Define
 freshness, replay and revocation behavior; stale evidence cannot renew its own
 lease. Required-but-unknown assurance must not silently pass.
 
-**Acceptance.** Forged, stale, revoked, replayed, wrong-device and cross-tenant
+**Acceptance.** Forged, stale, revoked, replayed, wrong-device and cross-organization
 evidence never passes the pilot fixtures. Nonparticipating consumer enrollment
 remains unchanged. Measure supported-fleet coverage, unknown/error rates and
 user friction; a proposed target is explainable results for 95% of the explicitly
@@ -788,14 +788,14 @@ enforcement architecture must be explicitly revisited for customer-app evaluatio
 
 **Pilot and enforcement.** Shadow-only, one customer service and one custom
 permission. Distribute a bounded, consistent snapshot of policies AND required
-authorization data. Bind signed artifacts to tenant, app/evaluator, semantics
+authorization data. Bind signed artifacts to organization, app/evaluator, semantics
 version, digest, snapshot time, monotonic epoch, expiry and eligible operations.
 Protect sensitive snapshots in transport/storage and use dedicated artifact keys.
 Explicitly require signature verification; signature validity alone proves neither
 freshness nor acceptable current authority.
 
 **Acceptance.** Compare against the server on the same captured context; reject
-tampering, cross-tenant/audience substitution, rollback, expired leases and
+tampering, cross-organization/audience substitution, rollback, expired leases and
 stale renewals. Unsupported applicable rules return `require_online`, never an
 allow with the rule omitted. Persist revocation high-water marks; after trusted
 state loss, require online bootstrap. A proposed 60-second lease starts from the
@@ -843,20 +843,20 @@ and [bootstrap key registry](../../internal/bootstrap/keys.go) are the starting 
 Not every encrypted-column context identifies an organization: some identify
 users, sessions or platform material. Map real ownership before extending custody.
 
-**Pilot and enforcement.** Vault values only, two synthetic tenants and one
-supported regional KMS service. Use independent random tenant data keys wrapped
-under approved tenant/customer key references; do not wrap the shared deployment
-data key and call that isolation. Preserve tenant/purpose/resource binding.
+**Pilot and enforcement.** Vault values only, two synthetic organizations and one
+supported regional KMS service. Use independent random organization data keys wrapped
+under approved organization/customer key references; do not wrap the shared deployment
+data key and call that isolation. Preserve organization/purpose/resource binding.
 Pin validated key identity and permissions, never accept raw cloud credentials
 or arbitrary KMS URLs. Activation uses a resumable, audited migration operation.
 The existing resealer must not silently move customer-key records back to shared keys.
 
-**Acceptance.** Swapped tenant/key/context data fails; migration/restart/restore
+**Acceptance.** Swapped organization/key/context data fails; migration/restart/restore
 retains correct ownership and versioned dependencies. Key withdrawal fails closed
-only for covered operations in that tenant, never global startup/readiness or
-unrelated tenants. Start without cross-request plaintext-key caching; any later
+only for covered operations in that organization, never global startup/readiness or
+unrelated organizations. Start without cross-request plaintext-key caching; any later
 cache requires a bounded non-sliding lease and documented withdrawal delay.
-Use per-tenant concurrency/circuit breakers and test another tenant's availability.
+Use per-organization concurrency/circuit breakers and test another organization's availability.
 
 **Limits and ownership.** Withdrawal does not recall plaintext or cached data
 keys; AWS explicitly documents this [T3]. Keep local suspension separate from
@@ -901,13 +901,13 @@ workload-trust concepts; F-05 can later use an approved private action adapter.
 **Pilot and enforcement.** One outbound-mTLS connector, one LDAPS target,
 constrained read-only lookup/test operations. A stepped-up admin authorizes
 single-use enrollment bound to expected workload identity and key possession;
-runtime tenant identity comes from the verified connector record, not job input.
+runtime organization identity comes from the verified connector record, not job input.
 Both server and connector-local policy approve target, protocol, port, trust,
 base/filter template, allowed attributes and actions. Validate actual resolved
 addresses, referrals and redirects; block metadata and unintended loopback access.
 Target credentials remain local; no arbitrary commands, plugins or remote shell.
 
-**Acceptance.** Reject foreign-tenant enrollment/jobs, target escape, expired
+**Acceptance.** Reject foreign-organization enrollment/jobs, target escape, expired
 jobs, replay and stale lease owners. Bound queues, execution time, retries and
 results; authenticate the original actor and reauthorize at dispatch. Revocation
 stops new leases; already authorized work may finish within its bounded deadline.
@@ -926,7 +926,7 @@ a supported multi-protocol fleet; defer without a hybrid-enterprise buyer.
 
 **In short.** Let a team copy reviewed configuration, for example OIDC client settings, from development to staging to production as a plan they approve, without copying secrets.
 
-**Why we need it.** Customers run separate Qeet organisations for development, staging and production, and recreate apps and settings by hand in each. Mistakes creep in, secrets get pasted around, and nobody can explain why production differs from staging.
+**Why we need it.** Customers run separate Qeet organizations for development, staging and production, and recreate apps and settings by hand in each. Mistakes creep in, secrets get pasted around, and nobody can explain why production differs from staging.
 
 A promote-with-diff workflow, like Auth0's Deploy CLI, fixes that.
 
@@ -962,7 +962,7 @@ stale approval; record the applied operation outcome atomically with bounded DB
 changes. No deletion, credential rotation or federation-policy activation initially.
 
 **Acceptance.** Identical normalized input is a no-op; self-approved, stale,
-changed-reference and cross-tenant plans fail. Interrupted-response retry does not
+changed-reference and cross-organization plans fail. Interrupted-response retry does not
 apply a committed plan twice. Existing secrets/unmanaged fields remain unchanged.
 Initial approval governs promotions only; ordinary authorized admin changes are
 reported as drift, not falsely claimed to be blocked by this workflow.
@@ -972,7 +972,7 @@ application in sprint two; this assumes F-01's change-control design is availabl
 Measure operator time and promotion error rates against repeated real work. CLI/CI,
 SDK, console and environment provisioning need additional owners and estimates.
 Auth0 Deploy CLI and Keycloak import/export are precedents, including destructive
-import warnings [T5]. Do not build a generic tenant clone or backup system.
+import warnings [T5]. Do not build a generic organization clone or backup system.
 
 ### N-15: Integration diagnostics for customer apps
 
@@ -1036,7 +1036,7 @@ append another long feature list without first collecting adoption evidence.
 | --- | --- | --- |
 | Developers repeatedly abandon integration or need lengthy support | N-15 | One useful local-runner report; prove hosted operations are worth their cost before adding APIs |
 | Teams make frequent manual environment changes | N-14 | Safe manifest/diff for five existing clients with no secret export |
-| Procurement requires tenant key control | N-12 | Written custody, coverage, withdrawal/cache, restore and outage-isolation contract |
+| Procurement requires organization key control | N-12 | Written custody, coverage, withdrawal/cache, restore and outage-isolation contract |
 | A private directory cannot be reached without network exceptions | N-13 | One authenticated outbound connector performs a confined lookup without changing global egress |
 | A managed enterprise fleet needs stronger application admission | N-10 | Explainable shadow assessments with no invalid-evidence passes |
 | Measured network cost justifies distributed decisions | N-11 | Architecture approval and same-snapshot shadow conformance; no mandatory online check removed |
@@ -1085,7 +1085,7 @@ guidance is not automatically a universal private-enterprise deadline.
 
 ### PQ-01: Cryptographic inventory and post-quantum plan
 
-**In short.** A read-only report of every place Qeet ID uses public-key cryptography for an organisation (signing keys, encryption, TLS), who depends on it, and what would need to move to post-quantum algorithms first.
+**In short.** A read-only report of every place Qeet ID uses public-key cryptography for an organization (signing keys, encryption, TLS), who depends on it, and what would need to move to post-quantum algorithms first.
 
 **Why we need it.** Future quantum computers could break today's public-key algorithms (RSA and elliptic curves). NIST published post-quantum standards in 2024 (ML-KEM for key exchange; ML-DSA and SLH-DSA for signatures) and has set transition timelines. Enterprise security and procurement teams are starting to ask vendors for their post-quantum plan.
 
@@ -1109,8 +1109,8 @@ GET /v1/tenants/{tenantID}/crypto/exposure-plan
 ```
 Return purpose, algorithm/parameters, public key ID, owner, consumer dependencies,
 confidentiality/authenticity horizon, evidence source/freshness and unknowns.
-Operators collect deployment-wide facts; tenants see only sanitized implications
-for their resources. Tenant admins cannot change the shared signer or see others'
+Operators collect deployment-wide facts; organizations see only sanitized implications
+for their resources. Organization admins cannot change the shared signer or see others'
 key inventories. No decrypted secret material is needed.
 
 **Starting slice and controls.** Inventory issuer metadata from
@@ -1153,12 +1153,12 @@ GET /v1/tenants/{tenantID}/crypto/transport-evidence
 Evidence identifies the connection segment, build/configuration reference, time,
 TLS version, negotiated group, certificate algorithms separately, resumption state,
 coverage and errors. Missing evidence is unknown, not success. Shared topology
-details remain operator-only unless safe for tenant disclosure.
+details remain operator-only unless safe for organization disclosure.
 
 **Starting slice and controls.** Model one staging ingress and one permitted
 outbound/KMS path, initially with supplied telemetry fixtures. An operator-approved
 experiment then checks hybrid-capable and classical-only peers, a representative
-proxy, resumption and invalid certificates. Tenants cannot supply arbitrary URLs
+proxy, resumption and invalid certificates. Organizations cannot supply arbitrary URLs
 to scan or change global TLS policy. Preserve certificate checks and explicit
 fallback policy; no hidden insecure retries to make a test pass.
 
@@ -1220,8 +1220,8 @@ documentation are precedents [S12, S16]; FIPS validation is a separate question.
 These may be commercially important but are not claimed as unique or currently
 broken. Do not turn them into parallel implementation without a specific buyer.
 
-- **Customer-controlled tenant keys:** distinguish this from 5.4 deployment-key
-  rotation. Investigate tenant-specific custody, cache/revocation behavior,
+- **Customer-controlled organization keys:** distinguish this from 5.4 deployment-key
+  rotation. Investigate organization-specific custody, cache/revocation behavior,
   unavailable customer KMS, cryptographic erasure and backup recovery without
   allowing one customer to stop the shared platform. Requires a separate threat
   model and operating-cost decision.
@@ -1232,15 +1232,15 @@ broken. Do not turn them into parallel implementation without a specific buyer.
 - **Deployment isolation and residency:** real regional storage, disaster recovery,
   private connectivity or dedicated deployments require deploy/data architecture
   work. The existing 5.2 region-label correction is not implementation of residency.
-  Do not advertise physical residency based on a tenant setting.
+  Do not advertise physical residency based on an organization setting.
 
 ### RESIDENCY: Data residency and dedicated deployments (discovery)
 
 **In short.** Find out whether customers need their data kept in a specific country or region, private network connectivity, or a dedicated deployment, and what it would cost us to offer that.
 
-**Why we need it.** Large Indian and international enterprises, and regulated sectors, often ask where their data is stored, and may require India-only or EU-only storage, a private link (such as AWS PrivateLink) or a single-tenant deployment.
+**Why we need it.** Large Indian and international enterprises, and regulated sectors, often ask where their data is stored, and may require India-only or EU-only storage, a private link (such as AWS PrivateLink) or a single-organization deployment.
 
-Qeet ID runs one shared deployment. Offering residency is deploy and data-architecture work (separate databases, backups and disaster recovery per region), not a setting. The organisation's region field was relabelled in 1.0 so it doesn't suggest residency we don't have.
+Qeet ID runs one shared deployment. Offering residency is deploy and data-architecture work (separate databases, backups and disaster recovery per region), not a setting. The organization's region field was relabelled in 1.0 so it doesn't suggest residency we don't have.
 
 **What Qeet ID has today:**
 

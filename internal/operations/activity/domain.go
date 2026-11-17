@@ -1,4 +1,4 @@
-// Package activity serves the Live Activity feed: a tenant-filtered SSE stream
+// Package activity serves the Live Activity feed: an organization-filtered SSE stream
 // of live events from the NATS outbox, and paginated history from audit.events.
 // Both sources map to ActivityEvent, so live and history look the same.
 package activity
@@ -37,30 +37,30 @@ const (
 )
 
 // ActivityEvent is the wire form of a domain event, from either the live NATS
-// stream or the audit log. The SSE handler drops any event whose TenantID is not
-// the connection's tenant, in case the hub ever mis-routes one.
+// stream or the audit log. The SSE handler drops any event whose OrganizationID is not
+// the connection's organization, in case the hub ever mis-routes one.
 type ActivityEvent struct {
-	ID          uuid.UUID       `json:"id"`
-	TenantID    uuid.UUID       `json:"tenant_id"`
-	Type        string          `json:"type"`
-	Category    string          `json:"category"`
-	Severity    string          `json:"severity"`
-	Title       string          `json:"title"`
-	Description *string         `json:"description,omitempty"`
-	Actor       *ActivityActor  `json:"actor,omitempty"`
-	Target      *ActivityTarget `json:"target,omitempty"`
-	At          time.Time       `json:"at"`
-	Source      *string         `json:"source,omitempty"`
-	IP          *string         `json:"ip,omitempty"`
-	Location    *string         `json:"location,omitempty"`
-	Country     *string         `json:"country,omitempty"`
-	City        *string         `json:"city,omitempty"`
-	Device      *string         `json:"device,omitempty"`
-	OS          *string         `json:"os,omitempty"`
-	Browser     *string         `json:"browser,omitempty"`
-	Status      *string         `json:"status,omitempty"`
-	RequestID   *string         `json:"request_id,omitempty"`
-	Metadata    map[string]any  `json:"metadata,omitempty"`
+	ID             uuid.UUID       `json:"id"`
+	OrganizationID uuid.UUID       `json:"tenant_id"`
+	Type           string          `json:"type"`
+	Category       string          `json:"category"`
+	Severity       string          `json:"severity"`
+	Title          string          `json:"title"`
+	Description    *string         `json:"description,omitempty"`
+	Actor          *ActivityActor  `json:"actor,omitempty"`
+	Target         *ActivityTarget `json:"target,omitempty"`
+	At             time.Time       `json:"at"`
+	Source         *string         `json:"source,omitempty"`
+	IP             *string         `json:"ip,omitempty"`
+	Location       *string         `json:"location,omitempty"`
+	Country        *string         `json:"country,omitempty"`
+	City           *string         `json:"city,omitempty"`
+	Device         *string         `json:"device,omitempty"`
+	OS             *string         `json:"os,omitempty"`
+	Browser        *string         `json:"browser,omitempty"`
+	Status         *string         `json:"status,omitempty"`
+	RequestID      *string         `json:"request_id,omitempty"`
+	Metadata       map[string]any  `json:"metadata,omitempty"`
 }
 
 // ActivityActor is the principal that caused the event (user, system, or agent).
@@ -304,19 +304,19 @@ func matchesStreamFilter(ev ActivityEvent, f StreamFilter) bool {
 // auditRow is the common shape of the activity query rows, which mapAuditRow
 // turns into an ActivityEvent.
 type auditRow struct {
-	ID           uuid.UUID
-	ActorUserID  *uuid.UUID
-	ActorType    string
-	Action       string
-	ResourceType string
-	ResourceID   *uuid.UUID
-	IP           *string
-	UserAgent    *string
-	RequestID    *string
-	ActorName    *string
-	CreatedAt    time.Time
-	Metadata     []byte
-	TenantID     uuid.UUID
+	ID             uuid.UUID
+	ActorUserID    *uuid.UUID
+	ActorType      string
+	Action         string
+	ResourceType   string
+	ResourceID     *uuid.UUID
+	IP             *string
+	UserAgent      *string
+	RequestID      *string
+	ActorName      *string
+	CreatedAt      time.Time
+	Metadata       []byte
+	OrganizationID uuid.UUID
 }
 
 // firstNonEmpty returns the first non-nil, non-empty value, or nil.
@@ -332,14 +332,14 @@ func firstNonEmpty(vals ...*string) *string {
 // mapAuditRow converts one DB row from audit.events into a public ActivityEvent.
 func mapAuditRow(r auditRow) ActivityEvent {
 	ev := ActivityEvent{
-		ID:       r.ID,
-		TenantID: r.TenantID,
-		Type:     r.Action,
-		Category: categoryOf(r.Action),
-		Severity: severityOf(r.Action),
-		Title:    titleOf(r.Action),
-		At:       r.CreatedAt.UTC(),
-		IP:       r.IP,
+		ID:             r.ID,
+		OrganizationID: r.OrganizationID,
+		Type:           r.Action,
+		Category:       categoryOf(r.Action),
+		Severity:       severityOf(r.Action),
+		Title:          titleOf(r.Action),
+		At:             r.CreatedAt.UTC(),
+		IP:             r.IP,
 	}
 
 	if r.ActorUserID != nil || r.ActorType != "" {
@@ -429,27 +429,27 @@ func nonEmpty(s string) *string {
 // outboxPayload holds the common fields of a domain event payload. Every event
 // carries tenant_id; the other fields are present only for some domains.
 type outboxPayload struct {
-	TenantID    *uuid.UUID `json:"tenant_id"`
-	ID          *uuid.UUID `json:"id"`
-	UserID      *uuid.UUID `json:"user_id"`
-	ActorUserID *uuid.UUID `json:"actor_user_id"`
-	IP          string     `json:"ip"`
+	OrganizationID *uuid.UUID `json:"tenant_id"`
+	ID             *uuid.UUID `json:"id"`
+	UserID         *uuid.UUID `json:"user_id"`
+	ActorUserID    *uuid.UUID `json:"actor_user_id"`
+	IP             string     `json:"ip"`
 }
 
 // mapOutboxEvent converts a NATS outbox message into an ActivityEvent, with the
 // whole payload as metadata. eventType comes from the Qeet-Event-Type header.
-func mapOutboxEvent(subject, eventType string, tenantID uuid.UUID, payload []byte) ActivityEvent {
+func mapOutboxEvent(subject, eventType string, organizationID uuid.UUID, payload []byte) ActivityEvent {
 	var raw outboxPayload
 	_ = json.Unmarshal(payload, &raw)
 
 	ev := ActivityEvent{
-		ID:       uuid.New(),
-		TenantID: tenantID,
-		Type:     eventType,
-		Category: categoryOf(eventType),
-		Severity: severityOf(eventType),
-		Title:    titleOf(eventType),
-		At:       time.Now().UTC(),
+		ID:             uuid.New(),
+		OrganizationID: organizationID,
+		Type:           eventType,
+		Category:       categoryOf(eventType),
+		Severity:       severityOf(eventType),
+		Title:          titleOf(eventType),
+		At:             time.Now().UTC(),
 	}
 
 	// Actor: prefer actor_user_id, fall back to user_id (auth events).

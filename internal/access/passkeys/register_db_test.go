@@ -41,7 +41,7 @@ type device struct {
 }
 
 // register creates a passkey for userID on a new virtual authenticator, asked
-// for by userID with no organisation.
+// for by userID with no organization.
 func register(t *testing.T, svc *Service, userID uuid.UUID, name string) *device {
 	t.Helper()
 	return registerAs(t, svc, userID, name, Requester{Actor: audit.Actor{UserID: &userID, Type: "user"}})
@@ -93,8 +93,8 @@ func (d *device) assert(t *testing.T, svc *Service, email string, rp virtualweba
 func TestPasskeyRegistersAndSignsIn(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := signInService(t)
-	tenant := dbtest.Tenant(t)
-	a := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	a := dbtest.User(t, organization, organization)
 	d := register(t, svc, a.ID, "Laptop")
 
 	creds, err := svc.List(ctx, a.ID)
@@ -131,7 +131,7 @@ func TestPasskeyRegistersAndSignsIn(t *testing.T) {
 }
 
 // TestPasskeyChangesAreAuditedAndTold checks that adding, renaming and
-// removing a passkey are each recorded in the organisation the session is in,
+// removing a passkey are each recorded in the organization the session is in,
 // naming the passkey, and that the account holder is emailed when one is added
 // or removed, but not when a removal is refused or another's passkey is asked
 // for.
@@ -140,9 +140,9 @@ func TestPasskeyChangesAreAuditedAndTold(t *testing.T) {
 	svc := signInService(t)
 	mail := &dbtest.Mailbox{}
 	svc.SetSender(mail)
-	tenant := dbtest.Tenant(t)
-	a, other := dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant)
-	who := Requester{Actor: audit.Actor{UserID: &a.ID, Type: "user", IP: "192.0.2.7", RequestID: "req-passkey"}, TenantID: &tenant}
+	organization := dbtest.Organization(t)
+	a, other := dbtest.User(t, organization, organization), dbtest.User(t, organization, organization)
+	who := Requester{Actor: audit.Actor{UserID: &a.ID, Type: "user", IP: "192.0.2.7", RequestID: "req-passkey"}, OrganizationID: &organization}
 	type record struct {
 		PasskeyID    uuid.UUID `json:"passkey_id"`
 		Name         string    `json:"name"`
@@ -152,9 +152,9 @@ func TestPasskeyChangesAreAuditedAndTold(t *testing.T) {
 		t.Helper()
 		rows, err := dbtest.Pool(t).Query(ctx, `
 			SELECT metadata FROM audit.events
-			WHERE tenant_id = $1 AND action = $2 AND resource_type = 'user' AND resource_id = $3
+			WHERE organization_id = $1 AND action = $2 AND resource_type = 'user' AND resource_id = $3
 			  AND actor_user_id = $3 AND ip = '192.0.2.7' AND request_id = 'req-passkey'
-			ORDER BY created_at`, tenant, action, a.ID)
+			ORDER BY created_at`, organization, action, a.ID)
 		if err != nil {
 			t.Fatalf("read audit: %v", err)
 		}
@@ -202,7 +202,7 @@ func TestPasskeyChangesAreAuditedAndTold(t *testing.T) {
 	if err := svc.Delete(ctx, id, a.ID, who); !errors.Is(err, errs.ErrAuthLastSignInMethod) {
 		t.Fatalf("remove the only way to sign in: %v, want %v", err, errs.ErrAuthLastSignInMethod)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'auth.sign_in_method_removal_refused' AND resource_id = $2`, tenant, a.ID); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'auth.sign_in_method_removal_refused' AND resource_id = $2`, organization, a.ID); n != 1 {
 		t.Errorf("%d refusals recorded in the organisation, want 1", n)
 	}
 	dbtest.SetPassword(t, a.ID, "Kx7mQ2vLp9Wz")
@@ -224,18 +224,18 @@ func TestPasskeyChangesAreAuditedAndTold(t *testing.T) {
 	}
 }
 
-// noPasskeys is an organisation policy that turns passkeys off.
+// noPasskeys is an organization policy that turns passkeys off.
 type noPasskeys struct{}
 
 func (noPasskeys) PasskeyEnabled(context.Context, uuid.UUID) (bool, error) { return false, nil }
 
-// TestPasskeysOffForTheOrganisation checks that a passkey can't be registered
-// where the account's organisation turned passkeys off.
-func TestPasskeysOffForTheOrganisation(t *testing.T) {
+// TestPasskeysOffForTheOrganization checks that a passkey can't be registered
+// where the account's organization turned passkeys off.
+func TestPasskeysOffForTheOrganization(t *testing.T) {
 	svc := signInService(t)
 	svc.SetMethodPolicy(noPasskeys{})
-	tenant := dbtest.Tenant(t)
-	a := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	a := dbtest.User(t, organization, organization)
 	if _, _, err := svc.BeginRegister(dbtest.Context(t), a.ID); !errors.Is(err, errs.ErrPasskeyDisabled) {
 		t.Errorf("register where passkeys are off: %v, want %v", err, errs.ErrPasskeyDisabled)
 	}

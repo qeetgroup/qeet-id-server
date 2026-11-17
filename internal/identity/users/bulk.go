@@ -48,7 +48,7 @@ type userCreator func(ctx context.Context, in CreateInput) (*User, error)
 // runBulkImport validates each row and creates it with create, carrying on past
 // failed rows, and returns the per-row summary. create records each user's own
 // audit and outbox evidence.
-func runBulkImport(ctx context.Context, v *validator.Validate, tenantID uuid.UUID, rows []BulkUserInput, create userCreator) BulkImportResult {
+func runBulkImport(ctx context.Context, v *validator.Validate, organizationID uuid.UUID, rows []BulkUserInput, create userCreator) BulkImportResult {
 	var res BulkImportResult
 	for i, row := range rows {
 		line := i + 1
@@ -64,11 +64,11 @@ func runBulkImport(ctx context.Context, v *validator.Validate, tenantID uuid.UUI
 			}
 		}
 		u, err := create(ctx, CreateInput{
-			TenantID:    tenantID,
-			Email:       row.Email,
-			Password:    row.Password,
-			DisplayName: row.DisplayName,
-			Phone:       row.Phone,
+			OrganizationID: organizationID,
+			Email:          row.Email,
+			Password:       row.Password,
+			DisplayName:    row.DisplayName,
+			Phone:          row.Phone,
 		})
 		if err != nil {
 			res.Failed++
@@ -101,7 +101,7 @@ func runBulkImport(ctx context.Context, v *validator.Validate, tenantID uuid.UUI
 }
 
 // isPasswordRefusal reports whether code is a refusal from the password check
-// (the organisation's rules, the offline baseline or the breach check).
+// (the organization's rules, the offline baseline or the breach check).
 func isPasswordRefusal(code string) bool {
 	switch code {
 	case errs.CodeAuthPolicyPasswordTooShort, errs.CodeAuthPolicyPasswordNoUppercase,
@@ -145,7 +145,7 @@ func validationIssue(err error) (code, field string) {
 // bulkCreate handles POST /v1/users/bulk. Each row is attempted on its own: a
 // bad or duplicate row is reported in the response rather than failing the batch.
 func (h *Handler) bulkCreate(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.RequireTenant(r)
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -155,8 +155,8 @@ func (h *Handler) bulkCreate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	// Never let a caller import into a tenant other than their own.
-	if in.TenantID != uuid.Nil && in.TenantID != tenantID {
+	// Never let a caller import into an organization other than their own.
+	if in.OrganizationID != uuid.Nil && in.OrganizationID != organizationID {
 		httpx.WriteError(w, r, errs.ErrForbidden.WithDetail("cannot import users into another tenant"))
 		return
 	}
@@ -168,7 +168,7 @@ func (h *Handler) bulkCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	var role *importRole
 	if in.RoleID != nil {
-		seats, err := h.checkImportRole(r, tenantID, *in.RoleID)
+		seats, err := h.checkImportRole(r, organizationID, *in.RoleID)
 		if err != nil {
 			httpx.WriteError(w, r, err)
 			return
@@ -176,12 +176,12 @@ func (h *Handler) bulkCreate(w http.ResponseWriter, r *http.Request) {
 		role = &importRole{ID: *in.RoleID, Seats: seats}
 	}
 
-	// Each row's password is checked against the tenant's rules before its
+	// Each row's password is checked against the organization's rules before its
 	// user is written; a refused row is reported and the batch carries on.
 	create := func(ctx context.Context, ci CreateInput) (*User, error) {
 		var hash string
 		if ci.Password != "" {
-			ph, herr := h.hashNewPassword(ctx, tenantID, ci.Email, ci.Password)
+			ph, herr := h.hashNewPassword(ctx, organizationID, ci.Email, ci.Password)
 			if herr != nil {
 				return nil, herr
 			}
@@ -190,8 +190,8 @@ func (h *Handler) bulkCreate(w http.ResponseWriter, r *http.Request) {
 		return h.createWithEvidence(r, ci, hash, role)
 	}
 
-	res := runBulkImport(r.Context(), h.Validate, tenantID, in.Users, create)
-	if err := h.auditBulkImport(r, tenantID, res); err != nil {
+	res := runBulkImport(r.Context(), h.Validate, organizationID, in.Users, create)
+	if err := h.auditBulkImport(r, organizationID, res); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -199,21 +199,21 @@ func (h *Handler) bulkCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 // checkImportRole refuses giving roleID to an import's users unless it is one
-// of the tenant's roles and the caller may give it: they hold role.write and
+// of the organization's roles and the caller may give it: they hold role.write and
 // the authority the role carries, as when assigning it to one person. It
-// returns the tenant's seat cap, which each user's role then counts against.
-func (h *Handler) checkImportRole(r *http.Request, tenantID, roleID uuid.UUID) (int, error) {
+// returns the organization's seat cap, which each user's role then counts against.
+func (h *Handler) checkImportRole(r *http.Request, organizationID, roleID uuid.UUID) (int, error) {
 	if h.Roles == nil {
 		return 0, errs.ErrForbidden.WithDetail("roles can't be given here")
 	}
 	var exists bool
-	if err := h.Repo.Pool().QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM rbac.roles WHERE id = $1 AND tenant_id = $2)`, roleID, tenantID).Scan(&exists); err != nil {
+	if err := h.Repo.Pool().QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM rbac.roles WHERE id = $1 AND organization_id = $2)`, roleID, organizationID).Scan(&exists); err != nil {
 		return 0, err
 	}
 	if !exists {
 		return 0, errs.ErrRBACUserOrRoleNotFound
 	}
-	return h.Roles.CheckGrant(r, tenantID, roleID)
+	return h.Roles.CheckGrant(r, organizationID, roleID)
 }
 
 // bulkImportFromVendor handles POST /v1/users/bulk/import?source=auth0|cognito|azure_b2c.
@@ -221,7 +221,7 @@ func (h *Handler) checkImportRole(r *http.Request, tenantID, roleID uuid.UUID) (
 // imported like bulkCreate. Vendors don't export password hashes, so imported
 // users have no password.
 func (h *Handler) bulkImportFromVendor(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.RequireTenant(r)
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -254,13 +254,13 @@ func (h *Handler) bulkImportFromVendor(w http.ResponseWriter, r *http.Request) {
 	create := func(ctx context.Context, ci CreateInput) (*User, error) {
 		return h.createWithEvidence(r, ci, "", nil)
 	}
-	res := runBulkImport(r.Context(), h.Validate, tenantID, rows, create)
+	res := runBulkImport(r.Context(), h.Validate, organizationID, rows, create)
 	// Parse-level failures (rows that never reached validation) count toward
 	// the same summary, with their own line numbers from the source file.
 	res.Failed += len(parseErrs)
 	res.Errors = append(parseErrs, res.Errors...)
 
-	if err := h.auditBulkImport(r, tenantID, res); err != nil {
+	if err := h.auditBulkImport(r, organizationID, res); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -268,7 +268,7 @@ func (h *Handler) bulkImportFromVendor(w http.ResponseWriter, r *http.Request) {
 }
 
 // auditBulkImport records a single summary row for the batch.
-func (h *Handler) auditBulkImport(r *http.Request, tenantID uuid.UUID, res BulkImportResult) error {
+func (h *Handler) auditBulkImport(r *http.Request, organizationID uuid.UUID, res BulkImportResult) error {
 	ctx := r.Context()
 	tx, err := h.Repo.Pool().Begin(ctx)
 	if err != nil {
@@ -283,27 +283,27 @@ func (h *Handler) auditBulkImport(r *http.Request, tenantID uuid.UUID, res BulkI
 			actorType = p.ActorType
 		}
 	}
-	tid := tenantID
+	tid := organizationID
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     &tid,
-		ActorUserID:  actorID,
-		ActorType:    actorType,
-		Action:       "user.bulk_imported",
-		ResourceType: "tenant",
-		ResourceID:   &tenantID,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
-		Metadata:     map[string]any{"succeeded": res.Succeeded, "failed": res.Failed},
+		OrganizationID: &tid,
+		ActorUserID:    actorID,
+		ActorType:      actorType,
+		Action:         "user.bulk_imported",
+		ResourceType:   "tenant",
+		ResourceID:     &organizationID,
+		IP:             httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
+		RequestID:      httpx.RequestID(r),
+		Metadata:       map[string]any{"succeeded": res.Succeeded, "failed": res.Failed},
 	}); err != nil {
 		return err
 	}
 	if err := outbox.Enqueue(ctx, tx, outbox.Event{
-		AggregateID: tenantID,
+		AggregateID: organizationID,
 		Topic:       "user.events",
 		EventType:   "user.bulk_imported",
 		Payload: map[string]any{
-			"tenant_id": tenantID,
+			"tenant_id": organizationID,
 			"succeeded": res.Succeeded,
 			"failed":    res.Failed,
 		},

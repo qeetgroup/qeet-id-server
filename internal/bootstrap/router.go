@@ -48,8 +48,8 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	group "github.com/qeetgroup/qeet-id-server/internal/identity/groups"
 	invite "github.com/qeetgroup/qeet-id-server/internal/identity/invitations"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant/branding"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/organization"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/organization/branding"
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/verification"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/activity"
@@ -82,11 +82,11 @@ import (
 // Deps is everything the router serves: each package's handler and the shared
 // middleware settings.
 type Deps struct {
-	Tenant     *tenant.Handler
-	User       *user.Handler
-	Auth       *auth.Handler
-	AuthPolicy *authpolicy.Handler
-	RBAC       *rbac.Handler
+	Organization *organization.Handler
+	User         *user.Handler
+	Auth         *auth.Handler
+	AuthPolicy   *authpolicy.Handler
+	RBAC         *rbac.Handler
 	// AccessRequest serves people asking for a role and administrators answering.
 	AccessRequest *accessrequest.Handler
 	// CriticalEvents is the short list of what an on-call administrator triages.
@@ -163,10 +163,10 @@ type Deps struct {
 	// RateLimitStore, when set, backs every limiter (shared across replicas).
 	// Nil = in-process limits.
 	RateLimitStore ratelimit.Store
-	// TenantLim, UserLim and APIKeyLim limit the authenticated routes per
-	// organisation, user and API key, at the organisation's own limits where it
+	// OrganizationLim, UserLim and APIKeyLim limit the authenticated routes per
+	// organization, user and API key, at the organization's own limits where it
 	// has set them.
-	TenantLim, UserLim, APIKeyLim *ratelimit.TenantLimiter
+	OrganizationLim, UserLim, APIKeyLim *ratelimit.OrganizationLimiter
 	// Idempotency stores the answers to IdempotentRoutes requests sent with
 	// an Idempotency-Key.
 	Idempotency *idempotency.Store
@@ -272,19 +272,19 @@ func NewRouter(d Deps) http.Handler {
 			r.Use(httpx.RequireAuth(d.AuthVerifier))
 			// A token issued to an application reaches only the routes meant for
 			// applications (ApplicationTokenRoutes); everything else here is account
-			// and organisation management, which only the user's own tokens may do.
+			// and organization management, which only the user's own tokens may do.
 			r.Use(httpx.RefuseApplicationTokens(ApplicationTokenRoutes()))
-			// Cross-tenant guard: a {tenantID} path parameter must match the caller's
-			// tenant. It needs the nested Route("/v1") + Group structure to see the
+			// Cross-organization guard: a {tenantID} path parameter must match the caller's
+			// organization. It needs the nested Route("/v1") + Group structure to see the
 			// parameter; flattening these routes onto the top mux makes it fail open.
-			r.Use(httpx.EnforceTenantScope)
-			// Row-level security: on organisation-administration routes the
-			// database shows the request only its organisation's rows.
-			r.Use(scopeOrganisationRoutes(RoutePolicies()))
-			// Generous per-organisation, per-user and per-key buckets: one
-			// organisation can't exhaust shared resources, nor one compromised
-			// principal its organisation's.
-			r.Use(d.TenantLim.MiddlewareBy("tenant", ratelimit.PerTenant))
+			r.Use(httpx.EnforceOrganizationScope)
+			// Row-level security: on organization-administration routes the
+			// database shows the request only its organization's rows.
+			r.Use(scopeOrganizationRoutes(RoutePolicies()))
+			// Generous per-organization, per-user and per-key buckets: one
+			// organization can't exhaust shared resources, nor one compromised
+			// principal its organization's.
+			r.Use(d.OrganizationLim.MiddlewareBy("tenant", ratelimit.PerOrganization))
 			r.Use(d.UserLim.MiddlewareBy("user", ratelimit.PerUser))
 			r.Use(d.APIKeyLim.MiddlewareBy("apikey", ratelimit.PerAPIKey))
 			// RBAC permission enforcement for end-user principals. Gates the
@@ -386,7 +386,7 @@ func mountV1TokenRoutes(r chi.Router, d Deps) {
 // set without duplicating it or changing the load-bearing middleware nesting.
 func mountAuthenticatedRoutes(r chi.Router, d Deps) {
 	d.Auth.MountAuthed(r)
-	d.Tenant.Mount(r)
+	d.Organization.Mount(r)
 	d.User.Mount(r)
 	d.RBAC.Mount(r)
 	d.AccessRequest.Mount(r)
@@ -472,11 +472,11 @@ func LoginSessionRoutes() []string {
 	}
 }
 
-// scopeOrganisationRoutes applies row-level security (httpx.ScopeDatabase) to
-// the organisation-administration routes: those whose policy needs a user
+// scopeOrganizationRoutes applies row-level security (httpx.ScopeDatabase) to
+// the organization-administration routes: those whose policy needs a user
 // permission or a machine scope. A person's own routes (user-only policies)
-// act on their data across organisations and run unscoped.
-func scopeOrganisationRoutes(policies map[string]rbac.RoutePolicy) func(http.Handler) http.Handler {
+// act on their data across organizations and run unscoped.
+func scopeOrganizationRoutes(policies map[string]rbac.RoutePolicy) func(http.Handler) http.Handler {
 	administration := chi.NewRouter()
 	for route, p := range policies {
 		if p.UserPermission == "" && len(p.MachineScopes) == 0 && !p.HandlerAuthorizedMachine {

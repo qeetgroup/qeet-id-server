@@ -16,12 +16,12 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// TestEnforceTenantScope checks that a {tenantID} route admits only the caller's
-// own tenant (403 for another, 400 for a malformed id) and that routes without
+// TestEnforceOrganizationScope checks that a {tenantID} route admits only the caller's
+// own organization (403 for another, 400 for a malformed id) and that routes without
 // the param pass through.
-func TestEnforceTenantScope(t *testing.T) {
-	callerTenant := uuid.New()
-	otherTenant := uuid.New()
+func TestEnforceOrganizationScope(t *testing.T) {
+	callerOrganization := uuid.New()
+	otherOrganization := uuid.New()
 	uid := uuid.New()
 
 	// Mirror the production router structure exactly (nested Route + Group with
@@ -34,11 +34,11 @@ func TestEnforceTenantScope(t *testing.T) {
 			r.Group(func(r chi.Router) {
 				r.Use(func(next http.Handler) http.Handler {
 					return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-						p := &httpx.Principal{UserID: &uid, TenantID: &callerTenant}
+						p := &httpx.Principal{UserID: &uid, OrganizationID: &callerOrganization}
 						next.ServeHTTP(w, req.WithContext(httpx.WithPrincipal(req.Context(), p)))
 					})
 				})
-				r.Use(httpx.EnforceTenantScope)
+				r.Use(httpx.EnforceOrganizationScope)
 				ok := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }
 				r.Get("/tenants/{tenantID}/roles", ok)
 				r.Get("/users/{id}", ok) // no tenantID param — must pass through
@@ -52,8 +52,8 @@ func TestEnforceTenantScope(t *testing.T) {
 		path string
 		want int
 	}{
-		{"own tenant allowed", "/v1/tenants/" + callerTenant.String() + "/roles", http.StatusOK},
-		{"cross tenant forbidden", "/v1/tenants/" + otherTenant.String() + "/roles", http.StatusForbidden},
+		{"own tenant allowed", "/v1/tenants/" + callerOrganization.String() + "/roles", http.StatusOK},
+		{"cross tenant forbidden", "/v1/tenants/" + otherOrganization.String() + "/roles", http.StatusForbidden},
 		{"malformed tenant rejected", "/v1/tenants/not-a-uuid/roles", http.StatusBadRequest},
 		{"no tenant param passes through", "/v1/users/" + uuid.New().String(), http.StatusOK},
 	}
@@ -87,7 +87,7 @@ func testIssuer(t *testing.T) *tokens.Issuer {
 
 func TestRequireAuth_AgentStatusEnforced(t *testing.T) {
 	iss := testIssuer(t)
-	tenantID, agentID := uuid.New(), uuid.New()
+	organizationID, agentID := uuid.New(), uuid.New()
 	now := time.Now()
 	// Mint an agent access token the way the agents service does: a normal ES256
 	// access token additionally carrying actor_type=agent + agent_id.
@@ -99,7 +99,7 @@ func TestRequireAuth_AgentStatusEnforced(t *testing.T) {
 		"nbf":        now.Unix(),
 		"exp":        now.Add(time.Hour).Unix(),
 		"jti":        uuid.NewString(),
-		"tenant_id":  tenantID.String(),
+		"tenant_id":  organizationID.String(),
 		"scope":      "openid",
 		"actor_type": "agent",
 		"agent_id":   agentID.String(),
@@ -160,12 +160,12 @@ func TestRequireAuth_AgentStatusEnforced(t *testing.T) {
 // that an application's token, which has no session of its own, isn't looked up.
 func TestRequireAuth_EndedSessionRefused(t *testing.T) {
 	iss := testIssuer(t)
-	userID, tenantID, sessionID := uuid.New(), uuid.New(), uuid.New()
-	own, _, err := iss.IssueSessionAccess(userID, tenantID, sessionID, nil, time.Now().Add(time.Hour))
+	userID, organizationID, sessionID := uuid.New(), uuid.New(), uuid.New()
+	own, _, err := iss.IssueSessionAccess(userID, organizationID, sessionID, nil, time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, _, err := iss.IssueClientAccess(tokens.ClientAccess{UserID: userID, TenantID: tenantID, SessionID: uuid.New(), ClientID: "app"})
+	app, _, err := iss.IssueClientAccess(tokens.ClientAccess{UserID: userID, OrganizationID: organizationID, SessionID: uuid.New(), ClientID: "app"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestRequireAuth_EndedSessionRefused(t *testing.T) {
 	}
 }
 
-func TestRequireTenant(t *testing.T) {
+func TestRequireOrganization(t *testing.T) {
 	tid := uuid.New()
 	uid := uuid.New()
 	cases := []struct {
@@ -216,7 +216,7 @@ func TestRequireTenant(t *testing.T) {
 		want    uuid.UUID
 		wantErr bool
 	}{
-		{"tenant present", &httpx.Principal{UserID: &uid, TenantID: &tid}, tid, false},
+		{"tenant present", &httpx.Principal{UserID: &uid, OrganizationID: &tid}, tid, false},
 		{"tenant-less principal", &httpx.Principal{UserID: &uid}, uuid.Nil, true},
 		{"no principal", nil, uuid.Nil, true},
 	}
@@ -226,7 +226,7 @@ func TestRequireTenant(t *testing.T) {
 			if tc.p != nil {
 				r = r.WithContext(httpx.WithPrincipal(r.Context(), tc.p))
 			}
-			got, err := httpx.RequireTenant(r)
+			got, err := httpx.RequireOrganization(r)
 			if tc.wantErr && err == nil {
 				t.Fatalf("expected error, got tenant %s", got)
 			}
@@ -246,8 +246,8 @@ func TestRequireUser(t *testing.T) {
 		want    uuid.UUID
 		wantErr bool
 	}{
-		{"user present", &httpx.Principal{UserID: &uid, TenantID: &tid}, uid, false},
-		{"user-less principal", &httpx.Principal{TenantID: &tid}, uuid.Nil, true},
+		{"user present", &httpx.Principal{UserID: &uid, OrganizationID: &tid}, uid, false},
+		{"user-less principal", &httpx.Principal{OrganizationID: &tid}, uuid.Nil, true},
 		{"no principal", nil, uuid.Nil, true},
 	}
 	for _, tc := range cases {

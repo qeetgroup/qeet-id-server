@@ -18,7 +18,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// Reader computes a tenant's dashboard projections.
+// Reader computes an organization's dashboard projections.
 type Reader struct {
 	pool *pgxpool.Pool  // queries sqlc cannot type: mixed-type CASE, jsonb ->>, bigint+numeric
 	q    *dbgen.Queries // the static aggregations of queries.sql
@@ -120,10 +120,10 @@ type WeeklyActivityPoint struct {
 	DAU  int64  `json:"dau"`  // average DAU within the week
 }
 
-// Overview runs every dashboard projection for the tenant, one query at a
+// Overview runs every dashboard projection for the organization, one query at a
 // time, and returns them in one payload. Any failure fails the whole request,
 // so the dashboard shows one error rather than partial charts.
-func (r *Reader) Overview(ctx context.Context, tenantID uuid.UUID) (*Overview, error) {
+func (r *Reader) Overview(ctx context.Context, organizationID uuid.UUID) (*Overview, error) {
 	// Non-nil slices, so empty series encode as [] rather than null.
 	out := &Overview{
 		GeneratedAt:           time.Now().UTC(),
@@ -138,28 +138,28 @@ func (r *Reader) Overview(ctx context.Context, tenantID uuid.UUID) (*Overview, e
 		FailedLoginsHourly24h: []HourlyPoint{},
 	}
 
-	if err := r.kpis(ctx, tenantID, out); err != nil {
+	if err := r.kpis(ctx, organizationID, out); err != nil {
 		return nil, err
 	}
-	if err := r.trends14d(ctx, tenantID, out); err != nil {
+	if err := r.trends14d(ctx, organizationID, out); err != nil {
 		return nil, err
 	}
-	if err := r.loginActivity14d(ctx, tenantID, out); err != nil {
+	if err := r.loginActivity14d(ctx, organizationID, out); err != nil {
 		return nil, err
 	}
-	if err := r.loginMethodsMix(ctx, tenantID, out); err != nil {
+	if err := r.loginMethodsMix(ctx, organizationID, out); err != nil {
 		return nil, err
 	}
-	if err := r.mfaMethodsAdoption(ctx, tenantID, out); err != nil {
+	if err := r.mfaMethodsAdoption(ctx, organizationID, out); err != nil {
 		return nil, err
 	}
-	if err := r.failedHourly24h(ctx, tenantID, out); err != nil {
+	if err := r.failedHourly24h(ctx, organizationID, out); err != nil {
 		return nil, err
 	}
-	if err := r.extraKPIs(ctx, tenantID, out); err != nil {
+	if err := r.extraKPIs(ctx, organizationID, out); err != nil {
 		return nil, err
 	}
-	if err := r.weeklyActivity8w(ctx, tenantID, out); err != nil {
+	if err := r.weeklyActivity8w(ctx, organizationID, out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -187,7 +187,7 @@ func (r *Reader) kpis(ctx context.Context, tid uuid.UUID, out *Overview) error {
 	if err := r.pool.QueryRow(ctx, `
 		WITH active AS (
 			SELECT id FROM account.users
-			WHERE tenant_id = $1 AND status = 'active' AND deleted_at IS NULL
+			WHERE organization_id = $1 AND status = 'active' AND deleted_at IS NULL
 		),
 		enrolled AS (
 			SELECT user_id FROM auth.mfa_totp WHERE confirmed_at IS NOT NULL
@@ -203,7 +203,7 @@ func (r *Reader) kpis(ctx context.Context, tid uuid.UUID, out *Overview) error {
 	if err := r.pool.QueryRow(ctx, `
 		WITH active AS (
 			SELECT id FROM account.users
-			WHERE tenant_id = $1 AND status = 'active' AND deleted_at IS NULL
+			WHERE organization_id = $1 AND status = 'active' AND deleted_at IS NULL
 			  AND created_at <= NOW() - INTERVAL '7 days'
 		),
 		enrolled AS (
@@ -245,19 +245,19 @@ func (r *Reader) trends14d(ctx context.Context, tid uuid.UUID, out *Overview) er
 		users_per_day AS (
 			SELECT date_trunc('day', created_at)::date AS day, COUNT(*) AS new_users
 			FROM account.users
-			WHERE tenant_id = $1 AND deleted_at IS NULL
+			WHERE organization_id = $1 AND deleted_at IS NULL
 			GROUP BY 1
 		),
 		base AS (
 			SELECT COUNT(*) AS total
 			FROM account.users
-			WHERE tenant_id = $1 AND deleted_at IS NULL
+			WHERE organization_id = $1 AND deleted_at IS NULL
 			  AND created_at < NOW() - INTERVAL '14 days'
 		),
 		sign_ins_per_day AS (
 			SELECT date_trunc('day', created_at)::date AS day, COUNT(*) AS sign_ins
 			FROM audit.events
-			WHERE tenant_id = $1 AND action = 'auth.login_succeeded'
+			WHERE organization_id = $1 AND action = 'auth.login_succeeded'
 			  AND COALESCE(metadata->>'method', '') NOT IN ('tenant_switch', 'tenant_create', 'invite_accept')
 			  AND created_at >= NOW() - INTERVAL '14 days'
 			GROUP BY 1
@@ -265,7 +265,7 @@ func (r *Reader) trends14d(ctx context.Context, tid uuid.UUID, out *Overview) er
 		failed_per_day AS (
 			SELECT date_trunc('day', created_at)::date AS day, COUNT(*) AS fails
 			FROM audit.events
-			WHERE tenant_id = $1 AND action = 'auth.sign_in_failed'
+			WHERE organization_id = $1 AND action = 'auth.sign_in_failed'
 			  AND created_at >= NOW() - INTERVAL '14 days'
 			GROUP BY 1
 		),
@@ -273,7 +273,7 @@ func (r *Reader) trends14d(ctx context.Context, tid uuid.UUID, out *Overview) er
 			SELECT date_trunc('day', confirmed_at)::date AS day, COUNT(*) AS enrolled
 			FROM auth.mfa_totp t
 			JOIN account.users u ON u.id = t.user_id
-			WHERE u.tenant_id = $1 AND u.deleted_at IS NULL AND t.confirmed_at IS NOT NULL
+			WHERE u.organization_id = $1 AND u.deleted_at IS NULL AND t.confirmed_at IS NOT NULL
 			GROUP BY 1
 		)
 		SELECT
@@ -337,7 +337,7 @@ func (r *Reader) loginMethodsMix(ctx context.Context, tid uuid.UUID, out *Overvi
 		SELECT regexp_replace(COALESCE(metadata->>'method', 'password'), '_(mfa|email_confirmed)$', '') AS method,
 		       COUNT(*) AS n
 		FROM audit.events
-		WHERE tenant_id = $1
+		WHERE organization_id = $1
 		  AND action = 'auth.login_succeeded'
 		  AND COALESCE(metadata->>'method', '') NOT IN ('tenant_switch', 'tenant_create', 'invite_accept')
 		  AND created_at >= NOW() - INTERVAL '30 days'
@@ -446,7 +446,7 @@ func (r *Reader) extraKPIs(ctx context.Context, tid uuid.UUID, out *Overview) er
 				          / NULLIF(COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at < NOW() - INTERVAL '30 days'), 0)
 				END, 0)
 		FROM audit.events
-		WHERE tenant_id = $1 AND action = 'auth.login_succeeded'
+		WHERE organization_id = $1 AND action = 'auth.login_succeeded'
 		  AND COALESCE(metadata->>'method', '') NOT IN ('tenant_switch', 'tenant_create', 'invite_accept')
 		  AND created_at >= NOW() - INTERVAL '60 days'
 	`, tid).Scan(&avgNow, &avgPrev); err != nil {
@@ -482,7 +482,7 @@ func (r *Reader) extraKPIs(ctx context.Context, tid uuid.UUID, out *Overview) er
 
 // weeklyActivity8w fills 8 trailing ISO-week buckets of WAU and average DAU.
 // A week with no activity is zero, so the chart keeps its width for a new
-// tenant.
+// organization.
 func (r *Reader) weeklyActivity8w(ctx context.Context, tid uuid.UUID, out *Overview) error {
 	rows, err := r.q.GetWeeklyActivity8w(ctx, pgUUID(tid))
 	if err != nil {
@@ -523,13 +523,13 @@ func (h *Handler) Mount(r chi.Router) {
 func (h *Handler) overview(w http.ResponseWriter, r *http.Request) {
 	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrAnalyticsTenantInvalid)
+		httpx.WriteError(w, r, errs.ErrAnalyticsOrganizationInvalid)
 		return
 	}
-	// The caller's tenant must be the path's.
+	// The caller's organization must be the path's.
 	p := httpx.PrincipalFromCtx(r.Context())
-	if p == nil || p.TenantID == nil || *p.TenantID != tid {
-		httpx.WriteError(w, r, errs.ErrAnalyticsTenantMismatch)
+	if p == nil || p.OrganizationID == nil || *p.OrganizationID != tid {
+		httpx.WriteError(w, r, errs.ErrAnalyticsOrganizationMismatch)
 		return
 	}
 	from, to, asked, err := parseRange(r)

@@ -24,51 +24,51 @@ type SessionManager interface {
 	ResolveLoginSessionAt(ctx context.Context, raw string) (sessionID, userID uuid.UUID, signedInAt time.Time, err error)
 	EndLoginSession(ctx context.Context, in auth.EndLoginSessionInput) (auth.LoginSessionEnded, error)
 	// LoginSessionFactorShortfall says what stops a code or token being
-	// issued for tenantID through the session: nil, or ErrStepUpRequired /
-	// ErrMFAEnrollmentRequired while the organisation requires a second
+	// issued for organizationID through the session: nil, or ErrStepUpRequired /
+	// ErrMFAEnrollmentRequired while the organization requires a second
 	// factor its sign-in didn't meet.
-	LoginSessionFactorShortfall(ctx context.Context, loginSessionID, userID, tenantID uuid.UUID) error
+	LoginSessionFactorShortfall(ctx context.Context, loginSessionID, userID, organizationID uuid.UUID) error
 }
 
-// ProviderLister lists a tenant's enabled social providers, so the hosted login
+// ProviderLister lists an organization's enabled social providers, so the hosted login
 // app can render the right social buttons. Satisfied by *social.Service.
 type ProviderLister interface {
-	EnabledProviderNames(ctx context.Context, tenantID uuid.UUID) ([]string, error)
+	EnabledProviderNames(ctx context.Context, organizationID uuid.UUID) ([]string, error)
 }
 
-// RegistrationChecker reports whether a tenant permits hosted self-registration,
+// RegistrationChecker reports whether an organization permits hosted self-registration,
 // so the login-context tells the hosted app whether to show a signup link.
 // Satisfied by *authpolicy.Service (optional).
 type RegistrationChecker interface {
-	SelfRegistrationEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error)
+	SelfRegistrationEnabled(ctx context.Context, organizationID uuid.UUID) (bool, error)
 }
 
-// SignInMethodsChecker reports which sign-in methods a tenant allows, so the
+// SignInMethodsChecker reports which sign-in methods an organization allows, so the
 // login-context tells the hosted login which to offer. Satisfied by
 // *authpolicy.Service (optional).
 type SignInMethodsChecker interface {
-	AllowedSignInMethods(ctx context.Context, tenantID uuid.UUID) (password, passkey, magicLink bool, err error)
+	AllowedSignInMethods(ctx context.Context, organizationID uuid.UUID) (password, passkey, magicLink bool, err error)
 }
 
-// HostedPolicyReader returns what a tenant's hosted sign-in pages say before anyone signs in: the
+// HostedPolicyReader returns what an organization's hosted sign-in pages say before anyone signs in: the
 // rules a new password must meet, how long a sign-in link works and how long a device is
 // remembered. Satisfied by *authpolicy.Service (optional).
 type HostedPolicyReader interface {
-	HostedSignInPolicy(ctx context.Context, tenantID uuid.UUID) (minLength int, upper, number, symbol bool, magicLinkMinutes, rememberDeviceDays int, err error)
+	HostedSignInPolicy(ctx context.Context, organizationID uuid.UUID) (minLength int, upper, number, symbol bool, magicLinkMinutes, rememberDeviceDays int, err error)
 }
 
-// DeviceTrustChecker reports whether a tenant has opted into adaptive MFA, so
+// DeviceTrustChecker reports whether an organization has opted into adaptive MFA, so
 // the login-context tells the hosted app whether to offer "remember this
 // device" on the MFA step. Satisfied by *authpolicy.Service (optional).
 type DeviceTrustChecker interface {
-	RememberDeviceEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error)
+	RememberDeviceEnabled(ctx context.Context, organizationID uuid.UUID) (bool, error)
 }
 
-// BrandingLister returns a tenant's hosted-login branding (logo + brand colors)
-// so the login page can render the tenant's brand on first paint. Returns empty
+// BrandingLister returns an organization's hosted-login branding (logo + brand colors)
+// so the login page can render the organization's brand on first paint. Returns empty
 // strings when unset. Satisfied by *branding.Repository (optional).
 type BrandingLister interface {
-	LoginBranding(ctx context.Context, tenantID uuid.UUID) (logoURL, primaryColor, secondaryColor, backgroundColor string)
+	LoginBranding(ctx context.Context, organizationID uuid.UUID) (logoURL, primaryColor, secondaryColor, backgroundColor string)
 }
 
 // Handler serves the OIDC provider HTTP API.
@@ -76,7 +76,7 @@ type Handler struct {
 	Service *Service
 	// Sessions resolves the hosted-login SSO cookie for the authorize/consent
 	// flow. LoginBaseURL is the origin of the hosted login app (qeetid-login)
-	// the browser is redirected to for login/consent. Providers lists a tenant's
+	// the browser is redirected to for login/consent. Providers lists an organization's
 	// social providers for the login-context endpoint (optional).
 	Sessions     SessionManager
 	Providers    ProviderLister
@@ -107,9 +107,9 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Delete("/tenants/{tenantID}/oauth/grants/{id}", h.revokeGrant)
 	r.Post("/tenants/{tenantID}/oauth/grants/revoke", h.revokeGrants)
 
-	// Tenant-scoped OIDC client management (admin UI). Reads/writes are confined
-	// to the path tenant; create + mutate + rotate are audited.
-	r.Post("/tenants/{tenantID}/oidc/clients", h.createTenantClient)
+	// Organization-scoped OIDC client management (admin UI). Reads/writes are confined
+	// to the path organization; create + mutate + rotate are audited.
+	r.Post("/tenants/{tenantID}/oidc/clients", h.createOrganizationClient)
 	r.Get("/tenants/{tenantID}/oidc/clients", h.listClients)
 	r.Get("/tenants/{tenantID}/oidc/clients/{id}", h.getClient)
 	r.Patch("/tenants/{tenantID}/oidc/clients/{id}", h.patchClient)
@@ -122,17 +122,17 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/oidc/clients/shadow-ai", h.shadowAI)
 	r.Post("/tenants/{tenantID}/oidc/clients/{id}/review", h.reviewShadowAI)
 
-	// The admin UI's list page wires Delete to the non-tenant-scoped
+	// The admin UI's list page wires Delete to the non-organization-scoped
 	// /v1/oidc/clients/{id}; the create sheet posts to /v1/oidc/clients (handled
-	// by registerClient above). Tenant-scope this delete via the caller's JWT
-	// tenant so it can never reach across tenants.
+	// by registerClient above). Organization-scope this delete via the caller's JWT
+	// organization so it can never reach across organizations.
 	r.Delete("/oidc/clients/{id}", h.deleteClientByScope)
 
-	// Admin device-authorization visibility (RFC 8628 rows), tenant-scoped.
+	// Admin device-authorization visibility (RFC 8628 rows), organization-scoped.
 	r.Get("/tenants/{tenantID}/oauth/devices", h.listDevices)
 	r.Delete("/tenants/{tenantID}/oauth/devices/{id}", h.revokeDevice)
 
-	// Signing-key management (global/issuer-level, not tenant-scoped).
+	// Signing-key management (global/issuer-level, not organization-scoped).
 	r.Get("/oidc/signing-keys", h.signingKeys)
 }
 
@@ -181,8 +181,8 @@ func (h *Handler) MountPublic(r chi.Router) {
 }
 
 // loginContext gives the hosted login app what it needs to render itself for a
-// given client_id: the client's display name, logo and home page, its tenant,
-// and the tenant's enabled social providers.
+// given client_id: the client's display name, logo and home page, its organization,
+// and the organization's enabled social providers.
 func (h *Handler) loginContext(w http.ResponseWriter, r *http.Request) {
 	clientID := r.URL.Query().Get("client_id")
 	client, err := h.Service.ClientBrand(r.Context(), clientID)
@@ -190,39 +190,39 @@ func (h *Handler) loginContext(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	tenantID := client.TenantID
+	organizationID := client.OrganizationID
 	providers := []string{}
 	if h.Providers != nil {
-		if p, perr := h.Providers.EnabledProviderNames(r.Context(), tenantID); perr == nil {
+		if p, perr := h.Providers.EnabledProviderNames(r.Context(), organizationID); perr == nil {
 			providers = p
 		}
 	}
 	selfRegistration := false
 	if h.Registration != nil {
-		if enabled, rerr := h.Registration.SelfRegistrationEnabled(r.Context(), tenantID); rerr == nil {
+		if enabled, rerr := h.Registration.SelfRegistrationEnabled(r.Context(), organizationID); rerr == nil {
 			selfRegistration = enabled
 		}
 	}
 	rememberDevice := false
 	if h.DeviceTrust != nil {
-		if enabled, derr := h.DeviceTrust.RememberDeviceEnabled(r.Context(), tenantID); derr == nil {
+		if enabled, derr := h.DeviceTrust.RememberDeviceEnabled(r.Context(), organizationID); derr == nil {
 			rememberDevice = enabled
 		}
 	}
-	// Which sign-in methods the tenant allows, so the hosted login offers only
+	// Which sign-in methods the organization allows, so the hosted login offers only
 	// those (each is also refused where the credential is accepted). All on when
 	// no checker is wired or it cannot be read.
 	methods := map[string]bool{"password": true, "passkey": true, "magic_link": true}
 	if h.Methods != nil {
-		if password, passkey, magic, merr := h.Methods.AllowedSignInMethods(r.Context(), tenantID); merr == nil {
+		if password, passkey, magic, merr := h.Methods.AllowedSignInMethods(r.Context(), organizationID); merr == nil {
 			methods = map[string]bool{"password": password, "passkey": passkey, "magic_link": magic}
 		}
 	}
-	// Per-tenant branding (logo + brand colors) so the hosted login can render
-	// the tenant's brand on first paint. Omitted entirely when nothing is set.
+	// Per-organization branding (logo + brand colors) so the hosted login can render
+	// the organization's brand on first paint. Omitted entirely when nothing is set.
 	var brand map[string]any
 	if h.Branding != nil {
-		if logo, primary, secondary, background := h.Branding.LoginBranding(r.Context(), tenantID); logo != "" || primary != "" || secondary != "" || background != "" {
+		if logo, primary, secondary, background := h.Branding.LoginBranding(r.Context(), organizationID); logo != "" || primary != "" || secondary != "" || background != "" {
 			brand = map[string]any{}
 			if logo != "" {
 				brand["logo_url"] = logo
@@ -240,17 +240,17 @@ func (h *Handler) loginContext(w http.ResponseWriter, r *http.Request) {
 	}
 	out := map[string]any{
 		"client_name":               client.Name,
-		"tenant_id":                 tenantID,
+		"tenant_id":                 organizationID,
 		"providers":                 providers,
 		"self_registration_enabled": selfRegistration,
 		"remember_device_enabled":   rememberDevice,
 		"sign_in_methods":           methods,
 		"branding":                  brand,
 	}
-	// The organisation's password rules and lifetimes, for the pages to say before anyone signs
+	// The organization's password rules and lifetimes, for the pages to say before anyone signs
 	// in. Absent when no reader is wired or the policy can't be read.
 	if h.Policy != nil {
-		if minLen, upper, number, symbol, linkMinutes, deviceDays, perr := h.Policy.HostedSignInPolicy(r.Context(), tenantID); perr == nil {
+		if minLen, upper, number, symbol, linkMinutes, deviceDays, perr := h.Policy.HostedSignInPolicy(r.Context(), organizationID); perr == nil {
 			out["password_policy"] = map[string]any{
 				"min_length":        minLen,
 				"require_uppercase": upper,
@@ -261,10 +261,10 @@ func (h *Handler) loginContext(w http.ResponseWriter, r *http.Request) {
 			out["remember_device_days"] = deviceDays
 		}
 	}
-	// The organisation's name, so the pages can say whose rules apply ("Brightleaf Foods asks
+	// The organization's name, so the pages can say whose rules apply ("Brightleaf Foods asks
 	// for a second step"). Absent when it can't be read.
-	if client.TenantName != "" {
-		out["organization_name"] = client.TenantName
+	if client.OrganizationName != "" {
+		out["organization_name"] = client.OrganizationName
 	}
 	// The application's registered logo and home page, absent when not set.
 	if client.LogoURI != "" {
@@ -277,7 +277,7 @@ func (h *Handler) loginContext(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) registerClient(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.RequireTenant(r)
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -287,9 +287,9 @@ func (h *Handler) registerClient(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	in.TenantID = tenantID
+	in.OrganizationID = organizationID
 	ctx := r.Context()
-	if err := h.Service.checkClientLimit(ctx, tenantID); err != nil {
+	if err := h.Service.checkClientLimit(ctx, organizationID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -314,18 +314,18 @@ func (h *Handler) registerClient(w http.ResponseWriter, r *http.Request) {
 			actorType = "user"
 		}
 	}
-	auditTenantID := c.TenantID
+	auditOrganizationID := c.OrganizationID
 	resourceID := c.ID
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     &auditTenantID,
-		ActorUserID:  actorID,
-		ActorType:    actorType,
-		Action:       "oidc.client_registered",
-		ResourceType: "oidc_client",
-		ResourceID:   &resourceID,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
+		OrganizationID: &auditOrganizationID,
+		ActorUserID:    actorID,
+		ActorType:      actorType,
+		Action:         "oidc.client_registered",
+		ResourceType:   "oidc_client",
+		ResourceID:     &resourceID,
+		IP:             httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
+		RequestID:      httpx.RequestID(r),
 		Metadata: map[string]any{
 			"client_id":   c.ClientID,
 			"type":        c.Type,
@@ -406,6 +406,6 @@ func appendQuery(base string, kv ...string) string {
 	return out
 }
 
-func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	return httpx.PathTenantOr(r, errs.ErrOIDCTenantIDInvalid, errs.ErrOIDCTenantMismatch)
+func requirePathOrganization(r *http.Request) (uuid.UUID, error) {
+	return httpx.PathOrganizationOr(r, errs.ErrOIDCOrganizationIDInvalid, errs.ErrOIDCOrganizationMismatch)
 }

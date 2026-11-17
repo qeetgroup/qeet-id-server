@@ -24,7 +24,7 @@ import (
 // Client is a registered OAuth client, without its secret.
 type Client struct {
 	ID             uuid.UUID `json:"id"`
-	TenantID       uuid.UUID `json:"tenant_id"`
+	OrganizationID uuid.UUID `json:"tenant_id"`
 	ClientID       string    `json:"client_id"`
 	Type           string    `json:"type"`
 	Name           string    `json:"name"`
@@ -52,7 +52,7 @@ type Client struct {
 
 // CreateClientInput is what RegisterClient takes.
 type CreateClientInput struct {
-	TenantID       uuid.UUID `json:"tenant_id"`
+	OrganizationID uuid.UUID `json:"tenant_id"`
 	Name           string    `json:"name"`
 	Type           string    `json:"type"`
 	RedirectURIs   []string  `json:"redirect_uris"`
@@ -73,16 +73,16 @@ type CreateClientInput struct {
 // unlimited). Satisfied by operations/entitlements.Service, injected via
 // SetPlanLimiter.
 type PlanLimiter interface {
-	Limit(ctx context.Context, tenantID uuid.UUID, resource string) (int, error)
+	Limit(ctx context.Context, organizationID uuid.UUID, resource string) (int, error)
 }
 
 // SetPlanLimiter wires the plan-limit checker (nil disables the gate).
 func (s *Service) SetPlanLimiter(l PlanLimiter) { s.limits = l }
 
-// CountClients returns the tenant's number of registered applications (relying
+// CountClients returns the organization's number of registered applications (relying
 // parties) — the "apps" limit value, surfaced as usage in billing.
-func (s *Service) CountClients(ctx context.Context, tenantID uuid.UUID) (int, error) {
-	n, err := s.q.CountOIDCClientsByTenant(ctx, tenantID)
+func (s *Service) CountClients(ctx context.Context, organizationID uuid.UUID) (int, error) {
+	n, err := s.q.CountOIDCClientsByOrganization(ctx, organizationID)
 	return int(n), err
 }
 
@@ -90,18 +90,18 @@ func (s *Service) CountClients(ctx context.Context, tenantID uuid.UUID) (int, er
 // transactions that wrap an OIDC mutation and its audit row.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
-// checkClientLimit refuses with ErrPlanLimit once the tenant's plan cap for
+// checkClientLimit refuses with ErrPlanLimit once the organization's plan cap for
 // applications is reached. It reads on the pool, so the handlers run it before
 // they open the transaction RegisterClient joins.
-func (s *Service) checkClientLimit(ctx context.Context, tenantID uuid.UUID) error {
+func (s *Service) checkClientLimit(ctx context.Context, organizationID uuid.UUID) error {
 	if s.limits == nil {
 		return nil
 	}
-	lim, err := s.limits.Limit(ctx, tenantID, "apps")
+	lim, err := s.limits.Limit(ctx, organizationID, "apps")
 	if err != nil || lim < 0 {
 		return err
 	}
-	n, err := s.q.CountOIDCClientsByTenant(ctx, tenantID)
+	n, err := s.q.CountOIDCClientsByOrganization(ctx, organizationID)
 	if err != nil {
 		return err
 	}
@@ -148,7 +148,7 @@ func (s *Service) RegisterClient(ctx context.Context, tx pgx.Tx, in CreateClient
 	}
 	q := s.q.WithTx(tx)
 	row, err := q.InsertOIDCClient(ctx, dbgen.InsertOIDCClientParams{
-		TenantID:              in.TenantID,
+		OrganizationID:        in.OrganizationID,
 		ClientID:              clientID,
 		ClientSecretHash:      secretHash,
 		Type:                  in.Type,
@@ -167,7 +167,7 @@ func (s *Service) RegisterClient(ctx context.Context, tx pgx.Tx, in CreateClient
 		return nil, "", err
 	}
 	c := Client{
-		ID: row.ID, TenantID: row.TenantID, ClientID: row.ClientID,
+		ID: row.ID, OrganizationID: row.OrganizationID, ClientID: row.ClientID,
 		Type: row.Type, Name: row.Name,
 		RedirectURIs: row.RedirectUris, PostLogoutURIs: row.PostLogoutUris,
 		GrantTypes: row.GrantTypes, Scopes: row.Scopes, CreatedAt: row.CreatedAt,
@@ -176,13 +176,13 @@ func (s *Service) RegisterClient(ctx context.Context, tx pgx.Tx, in CreateClient
 		LogoURI: derefStr(row.LogoUri), ClientURI: derefStr(row.ClientUri),
 	}
 	if in.WebOrigins != nil {
-		if err := s.setWebOrigins(ctx, tx, row.TenantID, row.ID, in.WebOrigins); err != nil {
+		if err := s.setWebOrigins(ctx, tx, row.OrganizationID, row.ID, in.WebOrigins); err != nil {
 			return nil, "", err
 		}
 	} else {
 		s.webOrigins.forget()
 	}
-	stored, err := s.q.WithTx(tx).GetClientWebOrigins(ctx, dbgen.GetClientWebOriginsParams{ID: row.ID, TenantID: row.TenantID})
+	stored, err := s.q.WithTx(tx).GetClientWebOrigins(ctx, dbgen.GetClientWebOriginsParams{ID: row.ID, OrganizationID: row.OrganizationID})
 	if err != nil {
 		return nil, "", err
 	}
@@ -310,12 +310,12 @@ type ShadowAICandidate struct {
 // without a human present in the loop: token exchange, under either name.
 var machineGrantTypes = []string{"token_exchange", grantTypeTokenExchange}
 
-// ShadowAICandidates lists tenantID's unreviewed OIDC clients whose
+// ShadowAICandidates lists organizationID's unreviewed OIDC clients whose
 // grant_types include a machine grant type, ordered by live-grant count so
 // the ones actually in active use surface first.
-func (s *Service) ShadowAICandidates(ctx context.Context, tenantID uuid.UUID) ([]ShadowAICandidate, error) {
+func (s *Service) ShadowAICandidates(ctx context.Context, organizationID uuid.UUID) ([]ShadowAICandidate, error) {
 	rows, err := s.q.ListShadowAICandidates(ctx, dbgen.ListShadowAICandidatesParams{
-		TenantID:          tenantID,
+		OrganizationID:    organizationID,
 		MachineGrantTypes: machineGrantTypes,
 	})
 	if err != nil {
@@ -334,11 +334,11 @@ func (s *Service) ShadowAICandidates(ctx context.Context, tenantID uuid.UUID) ([
 
 // ReviewShadowAIClient acknowledges a shadow-AI candidate, dropping it off
 // ShadowAICandidates until/unless its grant_types change again.
-func (s *Service) ReviewShadowAIClient(ctx context.Context, tenantID, id, reviewerUserID uuid.UUID) error {
+func (s *Service) ReviewShadowAIClient(ctx context.Context, organizationID, id, reviewerUserID uuid.UUID) error {
 	n, err := s.q.ReviewOIDCClient(ctx, dbgen.ReviewOIDCClientParams{
-		ReviewedBy: pgtype.UUID{Bytes: reviewerUserID, Valid: true},
-		ID:         id,
-		TenantID:   tenantID,
+		ReviewedBy:     pgtype.UUID{Bytes: reviewerUserID, Valid: true},
+		ID:             id,
+		OrganizationID: organizationID,
 	})
 	if err != nil {
 		return err
@@ -419,25 +419,25 @@ func withoutLoopbackPort(raw string) (string, bool) {
 	return "http://" + host + tail, true
 }
 
-// ClientName resolves a client's display name and tenant from its client_id —
+// ClientName resolves a client's display name and organization from its client_id —
 // used to render the hosted login/consent screens. Returns ErrNotFound for an
 // unknown client.
-func (s *Service) ClientName(ctx context.Context, clientID string) (name string, tenantID uuid.UUID, err error) {
+func (s *Service) ClientName(ctx context.Context, clientID string) (name string, organizationID uuid.UUID, err error) {
 	b, err := s.ClientBrand(ctx, clientID)
 	if err != nil {
 		return "", uuid.Nil, err
 	}
-	return b.Name, b.TenantID, nil
+	return b.Name, b.OrganizationID, nil
 }
 
 // ClientBrand is how the hosted sign-in page presents an application: its
-// organisation and the name, logo and home page registered for it.
+// organization and the name, logo and home page registered for it.
 type ClientBrand struct {
-	Name       string
-	TenantID   uuid.UUID
-	LogoURI    string
-	ClientURI  string
-	TenantName string
+	Name             string
+	OrganizationID   uuid.UUID
+	LogoURI          string
+	ClientURI        string
+	OrganizationName string
 }
 
 // ClientBrand returns the application's registered presentation, never anything
@@ -450,7 +450,7 @@ func (s *Service) ClientBrand(ctx context.Context, clientID string) (*ClientBran
 	if err != nil {
 		return nil, err
 	}
-	return &ClientBrand{Name: row.Name, TenantID: row.TenantID, LogoURI: derefStr(row.LogoUri), ClientURI: derefStr(row.ClientUri), TenantName: derefStr(row.TenantName)}, nil
+	return &ClientBrand{Name: row.Name, OrganizationID: row.OrganizationID, LogoURI: derefStr(row.LogoUri), ClientURI: derefStr(row.ClientUri), OrganizationName: derefStr(row.OrganizationName)}, nil
 }
 
 // presentationURIRule is what logo_uri and client_uri must be.
@@ -483,9 +483,9 @@ func (s *Service) ValidatePostLogoutRedirect(ctx context.Context, clientID, uri 
 	return contains(uris, uri), nil
 }
 
-// ClientTenant is the organisation that owns the application clientID;
+// ClientOrganization is the organization that owns the application clientID;
 // ErrOIDCClientUnknown when none does.
-func (s *Service) ClientTenant(ctx context.Context, clientID string) (uuid.UUID, error) {
+func (s *Service) ClientOrganization(ctx context.Context, clientID string) (uuid.UUID, error) {
 	info, err := s.q.GetClientRedirectInfo(ctx, clientID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, errs.ErrOIDCClientUnknown
@@ -493,7 +493,7 @@ func (s *Service) ClientTenant(ctx context.Context, clientID string) (uuid.UUID,
 	if err != nil {
 		return uuid.Nil, err
 	}
-	return info.TenantID, nil
+	return info.OrganizationID, nil
 }
 
 // RegisteredClient reports whether clientID names a registered application.

@@ -64,7 +64,7 @@ func TestRecoveryCodeCount(t *testing.T) {
 }
 
 // TestDefaultStepUpWindow checks that the step-up window used when no
-// organisation is known is 5 minutes, the migration's column default.
+// organization is known is 5 minutes, the migration's column default.
 func TestDefaultStepUpWindow(t *testing.T) {
 	if defaultStepUpWindow != 5*time.Minute {
 		t.Errorf("defaultStepUpWindow = %v, want 5m", defaultStepUpWindow)

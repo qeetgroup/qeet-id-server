@@ -12,7 +12,7 @@ const (
 
 	CodeAuthInvalidCredentials          = "auth.invalid_credentials"
 	CodeAuthAccountLocked               = "auth.account_locked"
-	CodeAuthNotTenantMember             = "auth.not_tenant_member"
+	CodeAuthNotOrganizationMember       = "auth.not_tenant_member"
 	CodeAuthSelfRegistrationDisabled    = "auth.self_registration_disabled"
 	CodeAuthMethodDisabled              = "auth.method_disabled"
 	CodeAuthApplicationToken            = "auth.application_token"
@@ -26,7 +26,7 @@ const (
 	CodeAuthLastSignInMethod            = "auth.last_sign_in_method"
 	CodeAuthSessionLimit                = "auth.session_limit"
 	CodeAuthAccountSuspended            = "auth.account_suspended"
-	CodeAuthTenantInactive              = "auth.tenant_inactive"
+	CodeAuthOrganizationInactive        = "auth.tenant_inactive"
 	CodeAuthSignInUnavailable           = "auth.sign_in_unavailable"
 	CodeAuthAddressNotAllowed           = "auth.address_not_allowed"
 	CodeAuthSSORequired                 = "auth.sso_required"
@@ -47,7 +47,7 @@ var (
 
 	ErrAuthInvalidCredentials          = New(CodeAuthInvalidCredentials, "Invalid email or password.")
 	ErrAuthAccountLocked               = New(CodeAuthAccountLocked, "Too many failed attempts. Your account is temporarily locked — please try again later.").AsRetryable()
-	ErrAuthNotTenantMember             = New(CodeAuthNotTenantMember, "You're not a member of this organization.")
+	ErrAuthNotOrganizationMember       = New(CodeAuthNotOrganizationMember, "You're not a member of this organization.")
 	ErrAuthSelfRegistrationDisabled    = New(CodeAuthSelfRegistrationDisabled, "Self-registration is not enabled for this application.")
 	ErrAuthApplicationToken            = New(CodeAuthApplicationToken, "This token was issued to an application and can't be used here. Sign in to Qeet ID to manage your account.")
 	ErrAuthInsufficientScope           = New(CodeAuthInsufficientScope, "This application wasn't given permission for this. Sign in to the application again and approve the access it asks for.")
@@ -56,14 +56,14 @@ var (
 	ErrAuthMFAChallengeExpired         = New(CodeAuthMFAChallengeExpired, "Your sign-in session expired. Please sign in again.").AsRetryable()
 	ErrAuthRiskVerificationUnavailable = New(CodeAuthRiskVerificationUnavailable,
 		"We couldn't confirm this sign-in. Ask your administrator for help, or set up two-step verification from a device you usually use.")
-	ErrAuthRefreshTokenInvalid = New(CodeAuthRefreshTokenInvalid, "Your session is no longer valid. Please sign in again.").AsRetryable()
-	ErrAuthSessionRevoked      = New(CodeAuthSessionRevoked, "Your session was revoked. Please sign in again.").AsRetryable()
-	ErrAuthSessionTimedOut     = New(CodeAuthSessionTimedOut, "Your session has timed out. Please sign in again.").AsRetryable()
-	ErrAuthLastSignInMethod    = New(CodeAuthLastSignInMethod, "This is the only way to sign in to this account. Add another — a passkey or a password — before removing it.")
-	ErrAuthSessionLimit        = New(CodeAuthSessionLimit, "You're signed in on too many devices for this organisation. Sign out of one of them, then try again.")
-	ErrAuthAccountSuspended    = New(CodeAuthAccountSuspended, "Your account is no longer active. Please contact your administrator.")
-	ErrAuthTenantInactive      = New(CodeAuthTenantInactive, "This organization isn't active. Contact its administrator.")
-	ErrAuthSignInUnavailable   = New(CodeAuthSignInUnavailable, "Sign-in is temporarily unavailable. Please try again in a moment.").AsRetryable()
-	ErrAuthAddressNotAllowed   = New(CodeAuthAddressNotAllowed, "Your organisation doesn't allow sign-in from this network. Contact your administrator.")
-	ErrAuthSSORequired         = New(CodeAuthSSORequired, "Your organisation requires you to sign in with its single sign-on.")
+	ErrAuthRefreshTokenInvalid  = New(CodeAuthRefreshTokenInvalid, "Your session is no longer valid. Please sign in again.").AsRetryable()
+	ErrAuthSessionRevoked       = New(CodeAuthSessionRevoked, "Your session was revoked. Please sign in again.").AsRetryable()
+	ErrAuthSessionTimedOut      = New(CodeAuthSessionTimedOut, "Your session has timed out. Please sign in again.").AsRetryable()
+	ErrAuthLastSignInMethod     = New(CodeAuthLastSignInMethod, "This is the only way to sign in to this account. Add another — a passkey or a password — before removing it.")
+	ErrAuthSessionLimit         = New(CodeAuthSessionLimit, "You're signed in on too many devices for this organisation. Sign out of one of them, then try again.")
+	ErrAuthAccountSuspended     = New(CodeAuthAccountSuspended, "Your account is no longer active. Please contact your administrator.")
+	ErrAuthOrganizationInactive = New(CodeAuthOrganizationInactive, "This organization isn't active. Contact its administrator.")
+	ErrAuthSignInUnavailable    = New(CodeAuthSignInUnavailable, "Sign-in is temporarily unavailable. Please try again in a moment.").AsRetryable()
+	ErrAuthAddressNotAllowed    = New(CodeAuthAddressNotAllowed, "Your organisation doesn't allow sign-in from this network. Contact your administrator.")
+	ErrAuthSSORequired          = New(CodeAuthSSORequired, "Your organisation requires you to sign in with its single sign-on.")
 )

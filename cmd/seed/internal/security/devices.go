@@ -14,14 +14,14 @@ import (
 
 // Remembered devices are written as the hosted login writes them after a
 // second factor: the hash of a random cookie value, labelled with the
-// browser's user agent, trusted for the organisation's remember_device_days.
+// browser's user agent, trusted for the organization's remember_device_days.
 
-// rememberDefault is where devices are remembered when an organisation has no
+// rememberDefault is where devices are remembered when an organization has no
 // authentication policy yet (the settings step writes them).
 var rememberDefault = map[string]bool{"qeet": true, "lumen": true, "northwind": true}
 
 // rememberDevices remembers a browser or two for some of the people with a
-// second factor, in organisations that remember devices.
+// second factor, in organizations that remember devices.
 func rememberDevices(w *world.World) {
 	for _, o := range w.Orgs {
 		days, ok := rememberPolicy(w, o)
@@ -56,7 +56,7 @@ func rememberDevices(w *world.World) {
 func rememberPolicy(w *world.World, o *world.Org) (int, bool) {
 	var enabled bool
 	var days int
-	err := w.Admin.QueryRow(w.Ctx, `SELECT remember_device_enabled, remember_device_days FROM tenant.auth_policy WHERE tenant_id = $1`,
+	err := w.Admin.QueryRow(w.Ctx, `SELECT remember_device_enabled, remember_device_days FROM organization.auth_policy WHERE organization_id = $1`,
 		o.ID).Scan(&enabled, &days)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 30, rememberDefault[o.Spec.Slug]
@@ -85,10 +85,10 @@ func remember(w *world.World, o *world.Org, p *world.Person, d world.Device, ttl
 	w.Check(err, "mint a device token")
 	var id uuid.UUID
 	w.Check(w.Admin.QueryRow(w.Ctx, `
-		INSERT INTO auth.trusted_devices (user_id, tenant_id, token_hash, label, expires_at, created_at, last_used_at)
+		INSERT INTO auth.trusted_devices (user_id, organization_id, token_hash, label, expires_at, created_at, last_used_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
 		p.ID, o.ID, tokens.HashRefresh(raw), d.UserAgent, expires, created, used).Scan(&id), "remember a device")
-	w.Audit(created, audit.Event{TenantID: &o.ID, ActorUserID: &p.ID, Action: "auth.trusted_device_added",
+	w.Audit(created, audit.Event{OrganizationID: &o.ID, ActorUserID: &p.ID, Action: "auth.trusted_device_added",
 		ResourceType: "trusted_device", ResourceID: &id, UserAgent: d.UserAgent,
 		Metadata: map[string]any{"expires_at": expires}})
 }

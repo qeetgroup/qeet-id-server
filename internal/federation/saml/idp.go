@@ -1,9 +1,9 @@
 package saml
 
-// Qeet ID as a SAML identity provider: a tenant's registered SP sends the user to
+// Qeet ID as a SAML identity provider: an organization's registered SP sends the user to
 // /saml/idp/{tenantID}/sso, the hosted-login SSO cookie authenticates them, and an
 // assertion signed with goxmldsig (RSA-SHA256, exclusive c14n) is POSTed to the
-// SP's ACS. Each tenant is its own IdP entity; one signing key serves them all.
+// SP's ACS. Each organization is its own IdP entity; one signing key serves them all.
 
 import (
 	"bytes"
@@ -155,7 +155,7 @@ func GenerateIdPKeyPEM(commonName string) (keyPEM, certPEM string, err error) {
 // AssignmentRequired only the people assigned to it may sign in.
 type ServiceProvider struct {
 	ID                 uuid.UUID          `json:"id"`
-	TenantID           uuid.UUID          `json:"tenant_id"`
+	OrganizationID     uuid.UUID          `json:"tenant_id"`
 	Name               string             `json:"name"`
 	EntityID           string             `json:"entity_id"`
 	ACSURL             string             `json:"acs_url"`
@@ -194,21 +194,21 @@ type IdP struct {
 	factors      FactorPolicy
 }
 
-// AddressPolicy applies an organisation's address rules: CheckSignIn returns
+// AddressPolicy applies an organization's address rules: CheckSignIn returns
 // errs.ErrAuthAddressNotAllowed, after recording the refusal, when ip may not
-// sign in to tenantID. Satisfied by *ipallow.Service.
+// sign in to organizationID. Satisfied by *ipallow.Service.
 type AddressPolicy interface {
-	CheckSignIn(ctx context.Context, tenantID, userID uuid.UUID, ip, path string) error
+	CheckSignIn(ctx context.Context, organizationID, userID uuid.UUID, ip, path string) error
 }
 
 // FactorPolicy reads a hosted-login session's sign-in and what second factor
-// an organisation still requires of it. Satisfied by *auth.Service.
+// an organization still requires of it. Satisfied by *auth.Service.
 type FactorPolicy interface {
 	ResolveLoginSessionAt(ctx context.Context, raw string) (sessionID, userID uuid.UUID, signedInAt time.Time, err error)
-	LoginSessionFactorShortfall(ctx context.Context, loginSessionID, userID, tenantID uuid.UUID) error
+	LoginSessionFactorShortfall(ctx context.Context, loginSessionID, userID, organizationID uuid.UUID) error
 }
 
-// SetSignInRules sets the organisation rules an assertion is signed under, as
+// SetSignInRules sets the organization rules an assertion is signed under, as
 // OIDC authorize applies them: its address rules and its second-factor
 // requirement. A nil one checks nothing.
 func (i *IdP) SetSignInRules(addresses AddressPolicy, factors FactorPolicy) {
@@ -216,9 +216,9 @@ func (i *IdP) SetSignInRules(addresses AddressPolicy, factors FactorPolicy) {
 }
 
 // PlanGate reports whether a plan-gated boolean feature is included in the
-// tenant's plan. Satisfied by *entitlements.Service.
+// organization's plan. Satisfied by *entitlements.Service.
 type PlanGate interface {
-	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
+	FeatureAllowed(ctx context.Context, organizationID uuid.UUID, feature string) (bool, error)
 }
 
 // SetPlanGate wires the plan-feature gate (nil allows all features).
@@ -244,7 +244,7 @@ func NewIdP(pool *pgxpool.Pool, keyPEM, certPEM, loginBaseURL string, sessions S
 func (i *IdP) Pool() *pgxpool.Pool { return i.pool }
 
 // toSP maps a sqlc-generated row to the API-facing ServiceProvider type.
-func toSP(r dbgen.TenantSamlServiceProvider) *ServiceProvider {
+func toSP(r dbgen.OrganizationSamlServiceProvider) *ServiceProvider {
 	var lastLogin *time.Time
 	if r.LastLoginAt.Valid {
 		v := r.LastLoginAt.Time
@@ -252,7 +252,7 @@ func toSP(r dbgen.TenantSamlServiceProvider) *ServiceProvider {
 	}
 	return &ServiceProvider{
 		ID:                 r.ID,
-		TenantID:           r.TenantID,
+		OrganizationID:     r.OrganizationID,
 		Name:               r.Name,
 		EntityID:           r.EntityID,
 		ACSURL:             r.AcsUrl,
@@ -336,20 +336,20 @@ func validACSURL(raw string) bool {
 	return false
 }
 
-// requireSSO refuses with ErrUpgradeRequired when the tenant's plan doesn't
+// requireSSO refuses with ErrUpgradeRequired when the organization's plan doesn't
 // include enterprise SSO (SAML), a paid feature. It reads on the pool, so the
 // handler runs it before it opens the transaction CreateSP joins.
-func (i *IdP) requireSSO(ctx context.Context, tenantID uuid.UUID) error {
-	return requireSSO(ctx, i.gate, tenantID)
+func (i *IdP) requireSSO(ctx context.Context, organizationID uuid.UUID) error {
+	return requireSSO(ctx, i.gate, organizationID)
 }
 
 // requireSSO refuses with ErrUpgradeRequired when gate, if set, finds that
-// the tenant's plan doesn't include enterprise SSO.
-func requireSSO(ctx context.Context, gate PlanGate, tenantID uuid.UUID) error {
+// the organization's plan doesn't include enterprise SSO.
+func requireSSO(ctx context.Context, gate PlanGate, organizationID uuid.UUID) error {
 	if gate == nil {
 		return nil
 	}
-	ok, err := gate.FeatureAllowed(ctx, tenantID, "sso")
+	ok, err := gate.FeatureAllowed(ctx, organizationID, "sso")
 	if err != nil {
 		return err
 	}
@@ -359,9 +359,9 @@ func requireSSO(ctx context.Context, gate PlanGate, tenantID uuid.UUID) error {
 	return nil
 }
 
-// CreateSP registers a service provider in tenantID within tx, refusing input
+// CreateSP registers a service provider in organizationID within tx, refusing input
 // that fails check. Callers check the plan first, with requireSSO.
-func (i *IdP) CreateSP(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in CreateSPInput) (*ServiceProvider, error) {
+func (i *IdP) CreateSP(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, in CreateSPInput) (*ServiceProvider, error) {
 	if err := in.check(); err != nil {
 		return nil, err
 	}
@@ -374,7 +374,7 @@ func (i *IdP) CreateSP(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in Cr
 		return nil, err
 	}
 	r, err := i.q.WithTx(tx).InsertSamlSP(ctx, dbgen.InsertSamlSPParams{
-		TenantID:           tenantID,
+		OrganizationID:     organizationID,
 		Name:               in.Name,
 		EntityID:           in.EntityID,
 		AcsUrl:             in.ACSURL,
@@ -397,9 +397,9 @@ func (i *IdP) CreateSP(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in Cr
 	return toSP(r), nil
 }
 
-// ListSP returns the tenant's service providers.
-func (i *IdP) ListSP(ctx context.Context, tenantID uuid.UUID) ([]ServiceProvider, error) {
-	rows, err := i.q.ListSamlSPs(ctx, tenantID)
+// ListSP returns the organization's service providers.
+func (i *IdP) ListSP(ctx context.Context, organizationID uuid.UUID) ([]ServiceProvider, error) {
+	rows, err := i.q.ListSamlSPs(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -410,9 +410,9 @@ func (i *IdP) ListSP(ctx context.Context, tenantID uuid.UUID) ([]ServiceProvider
 	return out, nil
 }
 
-// GetSP returns one of the tenant's service providers.
-func (i *IdP) GetSP(ctx context.Context, id, tenantID uuid.UUID) (*ServiceProvider, error) {
-	r, err := i.q.GetSamlSP(ctx, dbgen.GetSamlSPParams{ID: id, TenantID: tenantID})
+// GetSP returns one of the organization's service providers.
+func (i *IdP) GetSP(ctx context.Context, id, organizationID uuid.UUID) (*ServiceProvider, error) {
+	r, err := i.q.GetSamlSP(ctx, dbgen.GetSamlSPParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
 	}
@@ -474,16 +474,16 @@ func (in *UpdateSPInput) check() error {
 	return nil
 }
 
-// UpdateSP changes the given fields of a service provider in tenantID within
+// UpdateSP changes the given fields of a service provider in organizationID within
 // tx, refusing input that fails check or NameID settings mergeNameID refuses.
-func (i *IdP) UpdateSP(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID, in UpdateSPInput) (*ServiceProvider, error) {
+func (i *IdP) UpdateSP(ctx context.Context, tx pgx.Tx, id, organizationID uuid.UUID, in UpdateSPInput) (*ServiceProvider, error) {
 	if err := in.check(); err != nil {
 		return nil, err
 	}
 	q := i.q.WithTx(tx)
 	certUse := in.Certificate != nil || in.RequireSignedRequests != nil || in.EncryptAssertions != nil
 	if in.NameIDFormat != nil || in.NameIDAttribute != nil || certUse {
-		cur, err := q.GetSamlSPForUpdate(ctx, dbgen.GetSamlSPForUpdateParams{ID: id, TenantID: tenantID})
+		cur, err := q.GetSamlSPForUpdate(ctx, dbgen.GetSamlSPForUpdateParams{ID: id, OrganizationID: organizationID})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errs.ErrNotFound
 		}
@@ -522,7 +522,7 @@ func (i *IdP) UpdateSP(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID, i
 	}
 	r, err := q.UpdateSamlSP(ctx, dbgen.UpdateSamlSPParams{
 		ID:                 id,
-		TenantID:           tenantID,
+		OrganizationID:     organizationID,
 		Name:               in.Name,
 		EntityID:           in.EntityID,
 		AcsUrl:             in.ACSURL,
@@ -545,9 +545,9 @@ func (i *IdP) UpdateSP(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID, i
 	return toSP(r), nil
 }
 
-// DeleteSP removes one of the tenant's service providers.
-func (i *IdP) DeleteSP(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID) error {
-	n, err := i.q.WithTx(tx).DeleteSamlSP(ctx, dbgen.DeleteSamlSPParams{ID: id, TenantID: tenantID})
+// DeleteSP removes one of the organization's service providers.
+func (i *IdP) DeleteSP(ctx context.Context, tx pgx.Tx, id, organizationID uuid.UUID) error {
+	n, err := i.q.WithTx(tx).DeleteSamlSP(ctx, dbgen.DeleteSamlSPParams{ID: id, OrganizationID: organizationID})
 	if err != nil {
 		return err
 	}
@@ -557,15 +557,15 @@ func (i *IdP) DeleteSP(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID) e
 	return nil
 }
 
-// activeTenant reports whether tenantID names an active, undeleted tenant.
-func (i *IdP) activeTenant(ctx context.Context, tenantID uuid.UUID) (bool, error) {
-	return i.q.IsTenantActive(ctx, tenantID)
+// activeOrganization reports whether organizationID names an active, undeleted organization.
+func (i *IdP) activeOrganization(ctx context.Context, organizationID uuid.UUID) (bool, error) {
+	return i.q.IsOrganizationActive(ctx, organizationID)
 }
 
-// lookupSPByEntityID resolves the tenant's (non-disabled) SP by its EntityID,
-// which is unique only within a tenant.
-func (i *IdP) lookupSPByEntityID(ctx context.Context, tenantID uuid.UUID, entityID string) (*ServiceProvider, error) {
-	r, err := i.q.GetSamlSPByEntityID(ctx, dbgen.GetSamlSPByEntityIDParams{TenantID: tenantID, EntityID: entityID})
+// lookupSPByEntityID resolves the organization's (non-disabled) SP by its EntityID,
+// which is unique only within an organization.
+func (i *IdP) lookupSPByEntityID(ctx context.Context, organizationID uuid.UUID, entityID string) (*ServiceProvider, error) {
+	r, err := i.q.GetSamlSPByEntityID(ctx, dbgen.GetSamlSPByEntityIDParams{OrganizationID: organizationID, EntityID: entityID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
 	}
@@ -575,17 +575,17 @@ func (i *IdP) lookupSPByEntityID(ctx context.Context, tenantID uuid.UUID, entity
 	return toSP(r), nil
 }
 
-// lookupSP resolves the tenant's SP by provider UUID (IdP-initiated
+// lookupSP resolves the organization's SP by provider UUID (IdP-initiated
 // ?sp=<uuid>) or EntityID.
-func (i *IdP) lookupSP(ctx context.Context, tenantID uuid.UUID, key string) (*ServiceProvider, error) {
+func (i *IdP) lookupSP(ctx context.Context, organizationID uuid.UUID, key string) (*ServiceProvider, error) {
 	if id, err := uuid.Parse(key); err == nil {
-		return i.GetSP(ctx, id, tenantID)
+		return i.GetSP(ctx, id, organizationID)
 	}
-	return i.lookupSPByEntityID(ctx, tenantID, key)
+	return i.lookupSPByEntityID(ctx, organizationID, key)
 }
 
 // loadUser returns the account an assertion about userID describes, with its
-// home tenant, or ErrAuthAccountInactive for an account that isn't active.
+// home organization, or ErrAuthAccountInactive for an account that isn't active.
 func (i *IdP) loadUser(ctx context.Context, userID uuid.UUID) (*person, error) {
 	row, err := i.q.GetUserForIdP(ctx, userID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -602,8 +602,8 @@ func (i *IdP) loadUser(ctx context.Context, userID uuid.UUID) (*person, error) {
 	if row.DisplayName != nil {
 		p.displayName = *row.DisplayName
 	}
-	if row.TenantID.Valid {
-		p.tenantID = uuid.UUID(row.TenantID.Bytes)
+	if row.OrganizationID.Valid {
+		p.organizationID = uuid.UUID(row.OrganizationID.Bytes)
 	}
 	return p, nil
 }
@@ -617,18 +617,18 @@ func (i *IdP) recordIssued(ctx context.Context, r *http.Request, sp *ServiceProv
 	if err := i.q.WithTx(tx).TouchSamlSPLastLogin(ctx, sp.ID); err != nil {
 		return err
 	}
-	tid, rid, uid := sp.TenantID, sp.ID, userID
+	tid, rid, uid := sp.OrganizationID, sp.ID, userID
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     &tid,
-		ActorUserID:  &uid,
-		ActorType:    "user",
-		Action:       "saml.idp_assertion_issued",
-		ResourceType: "saml_service_provider",
-		ResourceID:   &rid,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
-		Metadata:     map[string]any{"sp_entity_id": sp.EntityID},
+		OrganizationID: &tid,
+		ActorUserID:    &uid,
+		ActorType:      "user",
+		Action:         "saml.idp_assertion_issued",
+		ResourceType:   "saml_service_provider",
+		ResourceID:     &rid,
+		IP:             httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
+		RequestID:      httpx.RequestID(r),
+		Metadata:       map[string]any{"sp_entity_id": sp.EntityID},
 	}); err != nil {
 		return err
 	}
@@ -642,18 +642,18 @@ func (i *IdP) recordRefused(ctx context.Context, r *http.Request, sp *ServicePro
 		return err
 	}
 	defer tx.Rollback(ctx)
-	tid, rid, uid := sp.TenantID, sp.ID, userID
+	tid, rid, uid := sp.OrganizationID, sp.ID, userID
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     &tid,
-		ActorUserID:  &uid,
-		ActorType:    "user",
-		Action:       "saml.idp_assertion_refused",
-		ResourceType: "saml_service_provider",
-		ResourceID:   &rid,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
-		Metadata:     map[string]any{"sp_entity_id": sp.EntityID, "reason": reason},
+		OrganizationID: &tid,
+		ActorUserID:    &uid,
+		ActorType:      "user",
+		Action:         "saml.idp_assertion_refused",
+		ResourceType:   "saml_service_provider",
+		ResourceID:     &rid,
+		IP:             httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
+		RequestID:      httpx.RequestID(r),
+		Metadata:       map[string]any{"sp_entity_id": sp.EntityID, "reason": reason},
 	}); err != nil {
 		return err
 	}
@@ -901,14 +901,14 @@ func ssoReturnURL(base string, r *http.Request) (string, error) {
 	return base + r.URL.EscapedPath() + "?" + q.Encode(), nil
 }
 
-// idpEntityID is the tenant's IdP entity ID.
-func idpEntityID(base string, tenantID uuid.UUID) string {
-	return base + "/saml/idp/" + tenantID.String()
+// idpEntityID is the organization's IdP entity ID.
+func idpEntityID(base string, organizationID uuid.UUID) string {
+	return base + "/saml/idp/" + organizationID.String()
 }
 
-// idpSSOURL is the tenant's IdP SingleSignOnService URL.
-func idpSSOURL(base string, tenantID uuid.UUID) string {
-	return idpEntityID(base, tenantID) + "/sso"
+// idpSSOURL is the organization's IdP SingleSignOnService URL.
+func idpSSOURL(base string, organizationID uuid.UUID) string {
+	return idpEntityID(base, organizationID) + "/sso"
 }
 
 // autoSubmit posts the page's form to the service provider once it loads.
@@ -969,7 +969,7 @@ func writeSSOError(w http.ResponseWriter, r *http.Request, err error) {
 // ask again, so it needn't be signed.
 const loginAfterParam = "login_after"
 
-// meetsSignInRules applies sp's organisation's sign-in rules to the hosted-login
+// meetsSignInRules applies sp's organization's sign-in rules to the hosted-login
 // session, as OIDC authorize does: an address its rules refuse is refused (and
 // recorded), and a second factor it requires that the session didn't meet sends
 // the browser to sign in again for this request, once; a fresh sign-in still
@@ -977,7 +977,7 @@ const loginAfterParam = "login_after"
 func (h *Handler) meetsSignInRules(w http.ResponseWriter, r *http.Request, sp *ServiceProvider, userID uuid.UUID) bool {
 	ctx := r.Context()
 	if h.IdP.addresses != nil {
-		if err := h.IdP.addresses.CheckSignIn(ctx, sp.TenantID, userID, httpx.ClientIP(r), "saml_idp"); err != nil {
+		if err := h.IdP.addresses.CheckSignIn(ctx, sp.OrganizationID, userID, httpx.ClientIP(r), "saml_idp"); err != nil {
 			writeSSOError(w, r, err)
 			return false
 		}
@@ -995,7 +995,7 @@ func (h *Handler) meetsSignInRules(w http.ResponseWriter, r *http.Request, sp *S
 		err = errs.ErrUnauthorized
 	}
 	if err == nil {
-		err = h.IdP.factors.LoginSessionFactorShortfall(ctx, sessionID, userID, sp.TenantID)
+		err = h.IdP.factors.LoginSessionFactorShortfall(ctx, sessionID, userID, sp.OrganizationID)
 	}
 	switch {
 	case err == nil:
@@ -1048,38 +1048,38 @@ func (h *Handler) idpSessionUser(r *http.Request) (uuid.UUID, bool) {
 	return uid, true
 }
 
-// idpTenant returns the path's tenant for the IdP endpoints. A malformed,
+// idpOrganization returns the path's organization for the IdP endpoints. A malformed,
 // unknown or inactive one is ErrNotFound, the same answer as an unknown SP.
-func (h *Handler) idpTenant(r *http.Request) (uuid.UUID, error) {
-	tenantID, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+func (h *Handler) idpOrganization(r *http.Request) (uuid.UUID, error) {
+	organizationID, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
 		return uuid.Nil, errs.ErrNotFound
 	}
-	active, err := h.IdP.activeTenant(r.Context(), tenantID)
+	active, err := h.IdP.activeOrganization(r.Context(), organizationID)
 	if err != nil {
 		return uuid.Nil, err
 	}
 	if !active {
 		return uuid.Nil, errs.ErrNotFound
 	}
-	return tenantID, nil
+	return organizationID, nil
 }
 
-// idpMetadata serves the tenant's IdP SAML metadata (EntityDescriptor) for SPs
+// idpMetadata serves the organization's IdP SAML metadata (EntityDescriptor) for SPs
 // to import: the signing cert + SSO endpoints.
 func (h *Handler) idpMetadata(w http.ResponseWriter, r *http.Request) {
 	if h.IdP == nil {
 		httpx.WriteError(w, r, errs.ErrSAMLIdPNotConfigured)
 		return
 	}
-	tenantID, err := h.idpTenant(r)
+	organizationID, err := h.idpOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	base := h.publicBase(r)
-	entity := idpEntityID(base, tenantID)
-	sso := idpSSOURL(base, tenantID)
+	entity := idpEntityID(base, organizationID)
+	sso := idpSSOURL(base, organizationID)
 	doc := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="%s">
   <IDPSSODescriptor WantAuthnRequestsSigned="false" protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
@@ -1100,9 +1100,9 @@ func (h *Handler) idpMetadata(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(doc))
 }
 
-// idpSSO is the tenant's SingleSignOnService. It handles SP-initiated SSO (a
+// idpSSO is the organization's SingleSignOnService. It handles SP-initiated SSO (a
 // SAMLRequest via HTTP-Redirect GET or HTTP-POST) and IdP-initiated SSO
-// (?sp=<id|entityID>), for SPs of the path's tenant only. Without a hosted-login
+// (?sp=<id|entityID>), for SPs of the path's organization only. Without a hosted-login
 // SSO cookie, the browser is bounced to the hosted login and returns here. An
 // SP set to assigned people only refuses, and audits refusing, anyone else.
 func (h *Handler) idpSSO(w http.ResponseWriter, r *http.Request) {
@@ -1110,7 +1110,7 @@ func (h *Handler) idpSSO(w http.ResponseWriter, r *http.Request) {
 		writeSSOError(w, r, errs.ErrSAMLIdPNotConfigured)
 		return
 	}
-	tenantID, err := h.idpTenant(r)
+	organizationID, err := h.idpOrganization(r)
 	if err != nil {
 		writeSSOError(w, r, err)
 		return
@@ -1141,9 +1141,9 @@ func (h *Handler) idpSSO(w http.ResponseWriter, r *http.Request) {
 		requestXML = raw
 		inResponseTo = ar.ID
 		acsOverride = strings.TrimSpace(ar.AssertionConsumerServiceURL)
-		sp, lookupErr = h.IdP.lookupSPByEntityID(r.Context(), tenantID, strings.TrimSpace(ar.Issuer))
+		sp, lookupErr = h.IdP.lookupSPByEntityID(r.Context(), organizationID, strings.TrimSpace(ar.Issuer))
 	} else if spKey := strings.TrimSpace(r.FormValue("sp")); spKey != "" {
-		sp, lookupErr = h.IdP.lookupSP(r.Context(), tenantID, spKey)
+		sp, lookupErr = h.IdP.lookupSP(r.Context(), organizationID, spKey)
 	} else {
 		writeSSOError(w, r, errs.ErrSAMLRequestParamMissing)
 		return
@@ -1188,7 +1188,7 @@ func (h *Handler) idpSSO(w http.ResponseWriter, r *http.Request) {
 	}
 	// The plan is checked at every sign-in, not only when the service provider
 	// was registered, so one set up on a plan that has since lapsed stops.
-	if err := h.IdP.requireSSO(r.Context(), sp.TenantID); err != nil {
+	if err := h.IdP.requireSSO(r.Context(), sp.OrganizationID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -1222,8 +1222,8 @@ func (h *Handler) idpSSO(w http.ResponseWriter, r *http.Request) {
 		writeSSOError(w, r, errs.ErrInternalServer)
 		return
 	}
-	if who.tenantID != sp.TenantID {
-		writeSSOError(w, r, errs.ErrSAMLUserTenantMismatch)
+	if who.organizationID != sp.OrganizationID {
+		writeSSOError(w, r, errs.ErrSAMLUserOrganizationMismatch)
 		return
 	}
 	if sp.AssignmentRequired {
@@ -1252,7 +1252,7 @@ func (h *Handler) idpSSO(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respXML, err := h.IdP.buildSignedResponse(idpEntityID(base, tenantID), sp, sp.ACSURL, subj, inResponseTo)
+	respXML, err := h.IdP.buildSignedResponse(idpEntityID(base, organizationID), sp, sp.ACSURL, subj, inResponseTo)
 	if err != nil {
 		slog.Error("saml idp sso: build assertion", "err", err, "sp", sp.ID)
 		writeSSOError(w, r, errs.ErrInternalServer)
@@ -1266,16 +1266,16 @@ func (h *Handler) idpSSO(w http.ResponseWriter, r *http.Request) {
 }
 
 // =====================================================================
-// SP-registry admin handlers (user-JWT, tenant-scoped)
+// SP-registry admin handlers (user-JWT, organization-scoped)
 // =====================================================================
 
 func (h *Handler) listSP(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out, err := h.IdP.ListSP(r.Context(), tenantID)
+	out, err := h.IdP.ListSP(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1284,7 +1284,7 @@ func (h *Handler) listSP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) createSP(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1306,7 +1306,7 @@ func (h *Handler) createSP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	if err := h.IdP.requireSSO(ctx, tenantID); err != nil {
+	if err := h.IdP.requireSSO(ctx, organizationID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -1316,12 +1316,12 @@ func (h *Handler) createSP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	sp, err := h.IdP.CreateSP(ctx, tx, tenantID, in)
+	sp, err := h.IdP.CreateSP(ctx, tx, organizationID, in)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.recordSPAudit(ctx, tx, r, tenantID, sp.ID, "saml.sp_created", map[string]any{
+	if err := h.recordSPAudit(ctx, tx, r, organizationID, sp.ID, "saml.sp_created", map[string]any{
 		"name": sp.Name, "entity_id": sp.EntityID, "name_id_format": sp.NameIDFormat, "name_id_attribute": sp.NameIDAttribute,
 		"attributes": sp.Attributes, "assignment_required": sp.AssignmentRequired,
 		"require_signed_requests": sp.RequireSignedRequests, "encrypt_assertions": sp.EncryptAssertions,
@@ -1337,7 +1337,7 @@ func (h *Handler) createSP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) getSP(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1347,7 +1347,7 @@ func (h *Handler) getSP(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrSAMLIDInvalid)
 		return
 	}
-	sp, err := h.IdP.GetSP(r.Context(), id, tenantID)
+	sp, err := h.IdP.GetSP(r.Context(), id, organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1356,7 +1356,7 @@ func (h *Handler) getSP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) updateSP(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1386,12 +1386,12 @@ func (h *Handler) updateSP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	sp, err := h.IdP.UpdateSP(ctx, tx, id, tenantID, in)
+	sp, err := h.IdP.UpdateSP(ctx, tx, id, organizationID, in)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.recordSPAudit(ctx, tx, r, tenantID, sp.ID, "saml.sp_updated", spUpdateAudit(in, sp)); err != nil {
+	if err := h.recordSPAudit(ctx, tx, r, organizationID, sp.ID, "saml.sp_updated", spUpdateAudit(in, sp)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -1403,7 +1403,7 @@ func (h *Handler) updateSP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) delSP(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1420,11 +1420,11 @@ func (h *Handler) delSP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	if err := h.IdP.DeleteSP(ctx, tx, id, tenantID); err != nil {
+	if err := h.IdP.DeleteSP(ctx, tx, id, organizationID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.recordSPAudit(ctx, tx, r, tenantID, id, "saml.sp_deleted", nil); err != nil {
+	if err := h.recordSPAudit(ctx, tx, r, organizationID, id, "saml.sp_deleted", nil); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -1470,19 +1470,19 @@ func spUpdateAudit(in UpdateSPInput, sp *ServiceProvider) map[string]any {
 	return meta
 }
 
-func (h *Handler) recordSPAudit(ctx context.Context, tx pgx.Tx, r *http.Request, tenantID, resourceID uuid.UUID, action string, meta map[string]any) error {
+func (h *Handler) recordSPAudit(ctx context.Context, tx pgx.Tx, r *http.Request, organizationID, resourceID uuid.UUID, action string, meta map[string]any) error {
 	actorID, actorType := audit.ActorOf(r).Identity()
-	tid, rid := tenantID, resourceID
+	tid, rid := organizationID, resourceID
 	return audit.Record(ctx, tx, audit.Event{
-		TenantID:     &tid,
-		ActorUserID:  actorID,
-		ActorType:    actorType,
-		Action:       action,
-		ResourceType: "saml_service_provider",
-		ResourceID:   &rid,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
-		Metadata:     meta,
+		OrganizationID: &tid,
+		ActorUserID:    actorID,
+		ActorType:      actorType,
+		Action:         action,
+		ResourceType:   "saml_service_provider",
+		ResourceID:     &rid,
+		IP:             httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
+		RequestID:      httpx.RequestID(r),
+		Metadata:       meta,
 	})
 }

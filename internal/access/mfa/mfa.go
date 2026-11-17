@@ -61,8 +61,8 @@ func (s *Service) SetCipher(box *envelope.Cipher) { s.box = box }
 
 // SetPlan wires the plan gate for SMS codes, a paid feature (it also costs per
 // message): every SMS code, at setup, step-up and sign-in, is refused unless
-// the organisation's plan includes sms_mfa, and refused outright with no
-// organisation.
+// the organization's plan includes sms_mfa, and refused outright with no
+// organization.
 func (s *Service) SetPlan(p PlanGate) { s.plan = p }
 
 // SetDeliveryCheck wires the check that a channel can deliver a code
@@ -80,7 +80,7 @@ func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
 // Step-up MFA. A step-up records that one session met a second factor
 // recently, so a factor proved in one browser never unlocks another. Each
-// organisation sets how long it lasts (step_up_window, default 5 minutes) and
+// organization sets how long it lasts (step_up_window, default 5 minutes) and
 // which factor types count (step_up_methods, default any).
 
 // --- OTP factor handlers ---

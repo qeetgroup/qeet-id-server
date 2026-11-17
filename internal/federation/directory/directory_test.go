@@ -19,20 +19,20 @@ import (
 )
 
 type scimFixture struct {
-	config  *scim.ConfigView
-	tenants []uuid.UUID
+	config        *scim.ConfigView
+	organizations []uuid.UUID
 }
 
-func (source *scimFixture) Config(_ context.Context, tenantID uuid.UUID) (*scim.ConfigView, error) {
-	source.tenants = append(source.tenants, tenantID)
+func (source *scimFixture) Config(_ context.Context, organizationID uuid.UUID) (*scim.ConfigView, error) {
+	source.organizations = append(source.organizations, organizationID)
 	return source.config, nil
 }
 
 type ldapFixture struct {
-	records   []ldap.Connection
-	tenants   []uuid.UUID
-	tests     int
-	testError error
+	records       []ldap.Connection
+	organizations []uuid.UUID
+	tests         int
+	testError     error
 }
 
 func (source *ldapFixture) TestConnection(_ context.Context, _ uuid.UUID, _ uuid.UUID) error {
@@ -40,22 +40,22 @@ func (source *ldapFixture) TestConnection(_ context.Context, _ uuid.UUID, _ uuid
 	return source.testError
 }
 
-func (source *ldapFixture) List(_ context.Context, tenantID uuid.UUID) ([]ldap.Connection, error) {
-	source.tenants = append(source.tenants, tenantID)
+func (source *ldapFixture) List(_ context.Context, organizationID uuid.UUID) ([]ldap.Connection, error) {
+	source.organizations = append(source.organizations, organizationID)
 	return source.records, nil
 }
 
 func TestConnectionSnapshotDoesNotInventHealthOrExposeCredentials(test *testing.T) {
-	tenantID := uuid.New()
+	organizationID := uuid.New()
 	usedAt := time.Date(2026, 9, 12, 10, 0, 0, 0, time.UTC)
 	scimSource := &scimFixture{config: &scim.ConfigView{
 		TokenSet: true, TokenPrefix: "private-prefix", LastUsedAt: &usedAt, ProvisionedCount: 128,
 	}}
 	ldapSource := &ldapFixture{records: []ldap.Connection{{
-		ID: uuid.New(), TenantID: tenantID, Name: "Corporate directory", Status: "active",
+		ID: uuid.New(), OrganizationID: organizationID, Name: "Corporate directory", Status: "active",
 		ServerURL: "ldaps://directory.example.test", BindDN: "private-bind-dn", LastLoginAt: &usedAt,
 	}}}
-	records, err := NewService(scimSource, ldapSource).List(context.Background(), tenantID)
+	records, err := NewService(scimSource, ldapSource).List(context.Background(), organizationID)
 	if err != nil {
 		test.Fatal(err)
 	}
@@ -139,27 +139,27 @@ func TestRetryEligibilityNeverReplaysProviderRequestsOrCredentials(test *testing
 	}
 }
 
-func TestConnectionSourcesCannotReturnAnotherTenant(test *testing.T) {
+func TestConnectionSourcesCannotReturnAnotherOrganization(test *testing.T) {
 	scimSource := &scimFixture{config: &scim.ConfigView{}}
-	ldapSource := &ldapFixture{records: []ldap.Connection{{ID: uuid.New(), TenantID: uuid.New()}}}
+	ldapSource := &ldapFixture{records: []ldap.Connection{{ID: uuid.New(), OrganizationID: uuid.New()}}}
 	if records, err := NewService(scimSource, ldapSource).List(context.Background(), uuid.New()); err == nil || records != nil {
 		test.Fatal("cross-tenant source result was not rejected")
 	}
 }
 
-func TestConnectionHandlerRequiresMatchingPrincipalTenant(test *testing.T) {
-	ownTenant := uuid.New()
-	otherTenant := uuid.New()
+func TestConnectionHandlerRequiresMatchingPrincipalOrganization(test *testing.T) {
+	ownOrganization := uuid.New()
+	otherOrganization := uuid.New()
 	cases := []struct {
 		name      string
 		principal *uuid.UUID
 		path      string
 		want      int
 	}{
-		{name: "anonymous", path: ownTenant.String(), want: http.StatusUnauthorized},
-		{name: "foreign path", principal: &ownTenant, path: otherTenant.String(), want: http.StatusForbidden},
-		{name: "invalid path", principal: &ownTenant, path: "invalid", want: http.StatusBadRequest},
-		{name: "own tenant", principal: &ownTenant, path: ownTenant.String(), want: http.StatusOK},
+		{name: "anonymous", path: ownOrganization.String(), want: http.StatusUnauthorized},
+		{name: "foreign path", principal: &ownOrganization, path: otherOrganization.String(), want: http.StatusForbidden},
+		{name: "invalid path", principal: &ownOrganization, path: "invalid", want: http.StatusBadRequest},
+		{name: "own tenant", principal: &ownOrganization, path: ownOrganization.String(), want: http.StatusOK},
 	}
 	for _, scenario := range cases {
 		test.Run(scenario.name, func(test *testing.T) {
@@ -168,10 +168,10 @@ func TestConnectionHandlerRequiresMatchingPrincipalTenant(test *testing.T) {
 			handler := &Handler{Service: NewService(scimSource, ldapSource)}
 			router := chi.NewRouter()
 			handler.Mount(router)
-			request := httptest.NewRequest(http.MethodGet, "/tenants/"+scenario.path+"/directory/connections?tenant_id="+otherTenant.String(), nil)
+			request := httptest.NewRequest(http.MethodGet, "/tenants/"+scenario.path+"/directory/connections?tenant_id="+otherOrganization.String(), nil)
 			if scenario.principal != nil {
 				request = request.WithContext(httpx.WithPrincipal(request.Context(), &httpx.Principal{
-					ActorType: "user", TenantID: scenario.principal,
+					ActorType: "user", OrganizationID: scenario.principal,
 				}))
 			}
 			response := httptest.NewRecorder()
@@ -180,12 +180,12 @@ func TestConnectionHandlerRequiresMatchingPrincipalTenant(test *testing.T) {
 				test.Fatalf("got %d, want %d: %s", response.Code, scenario.want, response.Body.String())
 			}
 			if scenario.want != http.StatusOK {
-				if len(scimSource.tenants) != 0 || len(ldapSource.tenants) != 0 {
+				if len(scimSource.organizations) != 0 || len(ldapSource.organizations) != 0 {
 					test.Fatal("denied request reached a data source")
 				}
 				return
 			}
-			if len(scimSource.tenants) != 1 || scimSource.tenants[0] != ownTenant || ldapSource.tenants[0] != ownTenant {
+			if len(scimSource.organizations) != 1 || scimSource.organizations[0] != ownOrganization || ldapSource.organizations[0] != ownOrganization {
 				test.Fatal("tenant scope did not come from the principal")
 			}
 			if strings.TrimSpace(response.Body.String()) != `{"items":[]}` {

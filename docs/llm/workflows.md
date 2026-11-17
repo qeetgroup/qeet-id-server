@@ -18,7 +18,7 @@ cp .env.example .env  # then set DB_URL's password to `password` for docker-comp
 make db-up            # postgres :5001 · nats :4222 · mailpit :8025
 make dev-secrets      # local JWT + SAML keys into .secrets/
 make migrate-up       # apply all pending migrations, or let `make dev` apply them on startup
-make seed             # demo tenants and users
+make seed             # demo organizations and users
 make dev              # API on :4001
 ```
 
@@ -48,13 +48,13 @@ staging or production.
 > [subsystems.md](subsystems.md) before adding a file.
 
 **Decide first: public or authenticated?** `internal/bootstrap/router.go` has two `/v1` groups. The
-authenticated group applies API-key resolution → `RequireAuth` → `EnforceTenantScope` → rate limits →
+authenticated group applies API-key resolution → `RequireAuth` → `EnforceOrganizationScope` → rate limits →
 `rbac.Enforce`. Authenticated routes take a bearer token or API key only; the hosted login's session
 cookie is accepted just on the short `LoginSessionRoutes()` list in the same file. **Putting a route in the public group opts out of all of it** — do that only for
 genuinely unauthenticated endpoints, and say why in the code.
 
-**If the route is tenant-scoped:** take the tenant from `httpx.RequireTenant(r)`, never from the
-path or body, and carry `WHERE tenant_id = $1` into every query.
+**If the route is organization-scoped:** take the organization from `httpx.RequireOrganization(r)`, never from the
+path or body, and carry `WHERE organization_id = $1` into every query.
 
 **The coverage test will fail** if the route is not in an OpenAPI document —
 `internal/bootstrap/openapi_coverage_test.go`. Add the path file under `api/openapi/src/`, list it
@@ -63,7 +63,7 @@ in that document's `openapi.yaml` next to its tag's other paths, and run `make o
 Verify, which runs the API contract checks but not the other Go test suites.
 
 A new authenticated route **refuses access tokens issued to applications** (they carry `client_id`)
-by default: they are for the application's own use, not account or organisation management. Only routes
+by default: they are for the application's own use, not account or organization management. Only routes
 meant for applications belong in `bootstrap.ApplicationTokenRoutes()` (pinned by a test). Its policy in
 `bootstrap.RoutePolicies()` also names the scope an application's token needs there
 (`ApplicationScope`: the permission on an administrative route, `account.read`/`account.write` on the
@@ -80,7 +80,7 @@ user's own account); a route without one fails `TestEveryRouteNamesAnApplication
 4  queries.sql                     update the affected domain
 5  regenerate                      sqlc → dbgen/
 6  service + handler
-7  tests                           including tenant-scoping coverage
+7  tests                           including organization-scoping coverage
 8  verify down migration           make migrate-down, then make migrate-up
 ```
 
@@ -95,10 +95,10 @@ later release has migrated past the build's newest migration, and a half-applied
 recovery step (`migrations.SchemaError`). So rolling back to a release from before a migration means a
 restore or a roll forward, never an automatic down-migration.
 
-**New tenant-scoped table?** It needs a `tenant_id` column, every query needs the predicate, and its
-migration needs `ENABLE ROW LEVEL SECURITY` and the `tenant_isolation` policy (copy one from 0160),
-unless it holds a person's own data across organisations — then list it in `accountLevelTables`
-with why. `TestTenantTablesHaveRowSecurity` fails otherwise. A new schema needs its grants to
+**New organization-scoped table?** It needs an `organization_id` column, every query needs the predicate, and its
+migration needs `ENABLE ROW LEVEL SECURITY` and the `organization_isolation` policy (copy one from 0011),
+unless it holds a person's own data across organizations — then list it in `accountLevelTables`
+with why. `TestOrganizationTablesHaveRowSecurity` fails otherwise. A new schema needs its grants to
 `qeet_app` too.
 
 ---
@@ -133,9 +133,9 @@ Escalate before implementing.
 1  identify the model              rbac · abac · rebac · authzen
 2  internal/access/authorization/<model>/
 3  route permissions               internal/bootstrap/permissions.go
-4  tenant implications             does it change what crosses a tenant boundary?
+4  organization implications             does it change what crosses an organization boundary?
 5  console impact                  a new permission needs UI work — the console is UX-only
-6  tests                           MUST include a cross-tenant denial test
+6  tests                           MUST include a cross-organization denial test
 7  verify                          make test
 ```
 
@@ -149,25 +149,25 @@ OAuth scope. Check every caller type when a permission changes.
 
 ---
 
-## Change tenant isolation
+## Change organization isolation
 
 **The highest-risk change in this repository. Security review is mandatory.**
 
 ```text
-1  read                            docs/llm/context.md § Tenant isolation
-2  internal/platform/http/httpx/auth.go        RequireTenant, EnforceTenantScope
+1  read                            docs/llm/context.md § Organization isolation
+2  internal/platform/http/httpx/auth.go        RequireOrganization, EnforceOrganizationScope
 3  internal/bootstrap/router.go                where the guard is applied
 4  every affected queries.sql                  the predicate
-5  tests                            cross-tenant denial, at every layer touched
+5  tests                            cross-organization denial, at every layer touched
 6  report, do not resolve           record product-level drift in qeet-id-context and its changelog
 ```
 
-**Restructuring the chi route tree counts as a tenant-isolation change** — the guard depends on
+**Restructuring the chi route tree counts as an organization-isolation change** — the guard depends on
 nested-route matching and fails **open** if the routes are flattened. It looks like a refactor. It
 is not.
 
-**Don't widen `postgres.AcrossTenants` as a side effect of another task.** A request runs across
-organisations only where it must, and checks the caller's right to each organisation itself.
+**Don't widen `postgres.AcrossOrganizations` as a side effect of another task.** A request runs across
+organizations only where it must, and checks the caller's right to each organization itself.
 
 ---
 
@@ -186,8 +186,8 @@ organisations only where it must, and checks the caller's right to each organisa
 
 **Jobs must be idempotent.** Delivery is at-least-once and retries are real.
 
-**Tenant scope does not come for free in a worker.** There is no request principal — carry the
-tenant explicitly through the job payload.
+**Organization scope does not come for free in a worker.** There is no request principal — carry the
+organization explicitly through the job payload.
 
 ---
 
@@ -248,7 +248,7 @@ Additive only, or a deprecation window with direct customer notice. See
 6  git diff                        confirm no behavioural change slipped in
 ```
 
-**Never restructure the route tree as part of a refactor** — see the tenant-isolation workflow.
+**Never restructure the route tree as part of a refactor** — see the organization-isolation workflow.
 
 ---
 
@@ -274,7 +274,7 @@ seed in the same change.
 
    | Step | What it seeds |
    | :--- | :--- |
-   | `census` | Organisations, people, roles, groups (`orgs.go` is the cast: who, where, which plan and features) |
+   | `census` | Organizations, people, roles, groups (`orgs.go` is the cast: who, where, which plan and features) |
    | `accounts` | Branding, domains, policies, invitations, suspensions, data requests, access requests, notifications |
    | `connections` | Applications, single sign-on (SAML, OpenID Connect), group mappings, break-glass, directories, SCIM, social sign-in |
    | `integrations` | API keys, agents, webhooks, secrets, ABAC and ReBAC policies, access decisions, log streaming |
@@ -310,16 +310,16 @@ It replaces everything in DEV. TEST and STAGING never have it.
 go build ./...
 go test -race ./...        # includes the OpenAPI route-coverage gate
 make lint                  # go vet + golangci-lint, as CI runs it
-make test-db               # if you touched SQL, tenant scoping or sign-in
+make test-db               # if you touched SQL, organization scoping or sign-in
 git diff                   # no secrets, no unrelated changes, no dbgen hand-edits
 ```
 
-A query on a tenant-owned table must mention `tenant_id`, or `internal/platform/database/tenantguard` fails `go test`;
+A query on an organization-owned table must mention `organization_id`, or `internal/platform/database/organizationguard` fails `go test`;
 an exception needs an allowlist line with a reason.
 
 ### Ask before proceeding if the change would
 
-- weaken any security control, or bypass `EnforceTenantScope`
+- weaken any security control, or bypass `EnforceOrganizationScope`
 - edit an already-applied migration
 - change JWT claims, signing, or `kid` handling
 - change SCIM, SAML or webhook contracts

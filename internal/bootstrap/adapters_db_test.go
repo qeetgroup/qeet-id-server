@@ -27,11 +27,11 @@ func (c seatCap) Limit(context.Context, uuid.UUID, string) (int, error) { return
 // refused with billing.plan_limit and get no account, the rest go in.
 func TestBulkImportRolesTakeSeats(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	dbtest.Assign(t, admin.ID, tenant, dbtest.Role(t, tenant, "role.write"))
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	dbtest.Assign(t, admin.ID, organization, dbtest.Role(t, organization, "role.write"))
 	var member uuid.UUID
-	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name) VALUES ($1, 'Member') RETURNING id`, tenant).Scan(&member); err != nil {
+	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (organization_id, name) VALUES ($1, 'Member') RETURNING id`, organization).Scan(&member); err != nil {
 		t.Fatal(err)
 	}
 	seats := invite.NewService(pool, nil, 14*24*time.Hour, "https://app.example.test")
@@ -42,7 +42,7 @@ func TestBulkImportRolesTakeSeats(t *testing.T) {
 		rows = append(rows, map[string]any{"email": dbtest.Unique("member") + "@example.test"})
 	}
 
-	rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(admin.ID, tenant), h.Mount), http.MethodPost, "/users/bulk", map[string]any{"users": rows, "role_id": member})
+	rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount), http.MethodPost, "/users/bulk", map[string]any{"users": rows, "role_id": member})
 	var res user.BulkImportResult
 	dbtest.Decode(t, rec, &res)
 	if rec.Code != http.StatusOK || res.Succeeded != 2 || res.Failed != 1 || len(res.Errors) != 1 || res.Errors[0].Code != errs.CodePlanLimit {

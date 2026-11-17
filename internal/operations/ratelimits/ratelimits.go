@@ -1,5 +1,5 @@
-// Package ratelimits exposes per-tenant rate limit overrides over HTTP.
-// The actual enforcement is done by platform/cache/ratelimit.TenantLimiter;
+// Package ratelimits exposes per-organization rate limit overrides over HTTP.
+// The actual enforcement is done by platform/cache/ratelimit.OrganizationLimiter;
 // this package only owns the CRUD surface (GET/PUT) and delegates mutations
 // to the limiter so DB and in-memory cache stay in sync.
 package ratelimits
@@ -22,22 +22,22 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// Limiter is the subset of ratelimit.TenantLimiter used by this package.
+// Limiter is the subset of ratelimit.OrganizationLimiter used by this package.
 type Limiter interface {
-	ApplyOverride(tenantID uuid.UUID, rate float64, capacity int)
-	ClearOverride(tenantID uuid.UUID)
-	GetAll(ctx context.Context, pool *pgxpool.Pool) ([]ratelimit.TenantLimit, error)
+	ApplyOverride(organizationID uuid.UUID, rate float64, capacity int)
+	ClearOverride(organizationID uuid.UUID)
+	GetAll(ctx context.Context, pool *pgxpool.Pool) ([]ratelimit.OrganizationLimit, error)
 }
 
 // Defaults are the platform-level fallback values shown in the UI when no
-// tenant override exists.
+// organization override exists.
 type Defaults struct {
-	TenantRate     float64
-	TenantCapacity int
-	UserRate       float64
-	UserCapacity   int
-	APIKeyRate     float64
-	APIKeyCapacity int
+	OrganizationRate     float64
+	OrganizationCapacity int
+	UserRate             float64
+	UserCapacity         int
+	APIKeyRate           float64
+	APIKeyCapacity       int
 }
 
 // Bucket is a token bucket: Rate requests a second, bursts of Capacity.
@@ -47,7 +47,7 @@ type Bucket struct {
 }
 
 // BuiltInLimit is one of the platform's fixed limits, the same for every
-// organisation: Per says whose requests share a bucket (ip, user or address).
+// organization: Per says whose requests share a bucket (ip, user or address).
 type BuiltInLimit struct {
 	Name    string `json:"name"`
 	Per     string `json:"per"`
@@ -57,12 +57,12 @@ type BuiltInLimit struct {
 
 // Handler serves the rate-limit override HTTP API.
 type Handler struct {
-	Pool      *pgxpool.Pool
-	TenantLim Limiter
-	UserLim   Limiter
-	APIKeyLim Limiter
-	Defaults  Defaults
-	BuiltIn   []BuiltInLimit // reported, read-only
+	Pool            *pgxpool.Pool
+	OrganizationLim Limiter
+	UserLim         Limiter
+	APIKeyLim       Limiter
+	Defaults        Defaults
+	BuiltIn         []BuiltInLimit // reported, read-only
 }
 
 // Mount registers the rate-limit override routes on r.
@@ -72,12 +72,12 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Delete("/tenants/{tenantID}/rate-limits", h.del)
 }
 
-func requireTenant(r *http.Request) (uuid.UUID, error) {
+func requireOrganization(r *http.Request) (uuid.UUID, error) {
 	id, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
 		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid tenantID")
 	}
-	scope, err := httpx.RequireTenant(r)
+	scope, err := httpx.RequireOrganization(r)
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -98,8 +98,8 @@ type LimitConfig struct {
 const MinRate = 0.01
 
 // check refuses an override outside [MinRate, rate] requests a second or
-// [1, capacity] burst: an organisation may tighten its limits, never lift them
-// above the platform's, which protect every organisation sharing it.
+// [1, capacity] burst: an organization may tighten its limits, never lift them
+// above the platform's, which protect every organization sharing it.
 func (c LimitConfig) check(key string, rate float64, capacity int) error {
 	if c.Rate == nil || c.Capacity == nil {
 		return nil
@@ -111,18 +111,18 @@ func (c LimitConfig) check(key string, rate float64, capacity int) error {
 	return nil
 }
 
-// TenantLimits is a tenant's limits per tenant, user and API key.
-type TenantLimits struct {
-	Tenant LimitConfig `json:"tenant"`
-	User   LimitConfig `json:"user"`
-	APIKey LimitConfig `json:"api_key"`
+// OrganizationLimits is an organization's limits per organization, user and API key.
+type OrganizationLimits struct {
+	Organization LimitConfig `json:"tenant"`
+	User         LimitConfig `json:"user"`
+	APIKey       LimitConfig `json:"api_key"`
 }
 
-// limitsView is a tenant's effective limits with what bounds them: the
+// limitsView is an organization's effective limits with what bounds them: the
 // platform defaults, which are also the ceiling an override may reach, the
 // lowest rate an override may set, and the built-in limits.
 type limitsView struct {
-	TenantLimits
+	OrganizationLimits
 	Defaults bucketsView    `json:"defaults"`
 	Ceiling  bucketsView    `json:"ceiling"`
 	MinRate  float64        `json:"min_rate"`
@@ -132,54 +132,54 @@ type limitsView struct {
 // limitsInput is a PUT body: the overrides, and the read-only bounds a body
 // read back from GET carries, which are ignored.
 type limitsInput struct {
-	TenantLimits
+	OrganizationLimits
 	Defaults json.RawMessage `json:"defaults"`
 	Ceiling  json.RawMessage `json:"ceiling"`
 	MinRate  json.RawMessage `json:"min_rate"`
 	BuiltIn  json.RawMessage `json:"built_in"`
 }
 
-// bucketsView is a value per organisation, person and API-key bucket.
+// bucketsView is a value per organization, person and API-key bucket.
 type bucketsView struct {
-	Tenant Bucket `json:"tenant"`
-	User   Bucket `json:"user"`
-	APIKey Bucket `json:"api_key"`
+	Organization Bucket `json:"tenant"`
+	User         Bucket `json:"user"`
+	APIKey       Bucket `json:"api_key"`
 }
 
 // view adds the bounds to limits.
-func (h *Handler) view(limits TenantLimits) limitsView {
+func (h *Handler) view(limits OrganizationLimits) limitsView {
 	d := bucketsView{
-		Tenant: Bucket{Rate: h.Defaults.TenantRate, Capacity: h.Defaults.TenantCapacity},
-		User:   Bucket{Rate: h.Defaults.UserRate, Capacity: h.Defaults.UserCapacity},
-		APIKey: Bucket{Rate: h.Defaults.APIKeyRate, Capacity: h.Defaults.APIKeyCapacity},
+		Organization: Bucket{Rate: h.Defaults.OrganizationRate, Capacity: h.Defaults.OrganizationCapacity},
+		User:         Bucket{Rate: h.Defaults.UserRate, Capacity: h.Defaults.UserCapacity},
+		APIKey:       Bucket{Rate: h.Defaults.APIKeyRate, Capacity: h.Defaults.APIKeyCapacity},
 	}
 	builtIn := h.BuiltIn
 	if builtIn == nil {
 		builtIn = []BuiltInLimit{}
 	}
-	return limitsView{TenantLimits: limits, Defaults: d, Ceiling: d, MinRate: MinRate, BuiltIn: builtIn}
+	return limitsView{OrganizationLimits: limits, Defaults: d, Ceiling: d, MinRate: MinRate, BuiltIn: builtIn}
 }
 
-func (h *Handler) effectiveLimits(ctx context.Context, tenantID uuid.UUID) (TenantLimits, error) {
+func (h *Handler) effectiveLimits(ctx context.Context, organizationID uuid.UUID) (OrganizationLimits, error) {
 	// Create a lightweight Queries instance bound to the pool. This avoids
 	// adding a stored field to Handler (whose struct literal is built in the
 	// router composition root without a constructor call).
 	q := dbgen.New(h.Pool)
-	rows, err := q.GetRateLimitOverrides(ctx, tenantID)
+	rows, err := q.GetRateLimitOverrides(ctx, organizationID)
 	if err != nil {
-		return TenantLimits{}, err
+		return OrganizationLimits{}, err
 	}
 
-	out := TenantLimits{
-		Tenant: LimitConfig{Rate: &h.Defaults.TenantRate, Capacity: &h.Defaults.TenantCapacity},
-		User:   LimitConfig{Rate: &h.Defaults.UserRate, Capacity: &h.Defaults.UserCapacity},
-		APIKey: LimitConfig{Rate: &h.Defaults.APIKeyRate, Capacity: &h.Defaults.APIKeyCapacity},
+	out := OrganizationLimits{
+		Organization: LimitConfig{Rate: &h.Defaults.OrganizationRate, Capacity: &h.Defaults.OrganizationCapacity},
+		User:         LimitConfig{Rate: &h.Defaults.UserRate, Capacity: &h.Defaults.UserCapacity},
+		APIKey:       LimitConfig{Rate: &h.Defaults.APIKeyRate, Capacity: &h.Defaults.APIKeyCapacity},
 	}
 	for _, row := range rows {
 		r, c := row.Rate, int(row.Capacity)
 		switch row.LimitKey {
 		case "tenant":
-			out.Tenant = LimitConfig{Rate: &r, Capacity: &c}
+			out.Organization = LimitConfig{Rate: &r, Capacity: &c}
 		case "user":
 			out.User = LimitConfig{Rate: &r, Capacity: &c}
 		case "api_key":
@@ -190,12 +190,12 @@ func (h *Handler) effectiveLimits(ctx context.Context, tenantID uuid.UUID) (Tena
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requireTenant(r)
+	organizationID, err := requireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	limits, err := h.effectiveLimits(r.Context(), tenantID)
+	limits, err := h.effectiveLimits(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -204,7 +204,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requireTenant(r)
+	organizationID, err := requireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -214,10 +214,10 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	in := body.TenantLimits
+	in := body.OrganizationLimits
 	d := h.Defaults
 	for _, err := range []error{
-		in.Tenant.check("tenant", d.TenantRate, d.TenantCapacity),
+		in.Organization.check("tenant", d.OrganizationRate, d.OrganizationCapacity),
 		in.User.check("user", d.UserRate, d.UserCapacity),
 		in.APIKey.check("api_key", d.APIKeyRate, d.APIKeyCapacity),
 	} {
@@ -246,11 +246,11 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO platform.rate_limit_overrides (tenant_id, limit_key, rate, capacity, updated_at)
+			INSERT INTO platform.rate_limit_overrides (organization_id, limit_key, rate, capacity, updated_at)
 			VALUES ($1, $2, $3, $4, NOW())
-			ON CONFLICT (tenant_id, limit_key) DO UPDATE SET
+			ON CONFLICT (organization_id, limit_key) DO UPDATE SET
 			    rate = EXCLUDED.rate, capacity = EXCLUDED.capacity, updated_at = NOW()
-		`, tenantID, key, *cfg.Rate, *cfg.Capacity); err != nil {
+		`, organizationID, key, *cfg.Rate, *cfg.Capacity); err != nil {
 			return err
 		}
 		applied = append(applied, appliedOverride{key: key, limiter: limiter, rate: *cfg.Rate, capacity: *cfg.Capacity})
@@ -261,17 +261,17 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		key string
 		lim Limiter
 		cfg LimitConfig
-	}{{"tenant", h.TenantLim, in.Tenant}, {"user", h.UserLim, in.User}, {"api_key", h.APIKeyLim, in.APIKey}} {
+	}{{"tenant", h.OrganizationLim, in.Organization}, {"user", h.UserLim, in.User}, {"api_key", h.APIKeyLim, in.APIKey}} {
 		if err := store(item.key, item.lim, item.cfg); err != nil {
 			httpx.WriteError(w, r, err)
 			return
 		}
 	}
-	if err := audit.Record(ctx, tx, audit.ActorOf(r).Event(tenantID, "rate_limits.updated", "tenant", tenantID, metadata)); err != nil {
+	if err := audit.Record(ctx, tx, audit.ActorOf(r).Event(organizationID, "rate_limits.updated", "tenant", organizationID, metadata)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: tenantID, Topic: "rate-limit.events", EventType: "rate_limits.updated", Payload: map[string]any{"tenant_id": tenantID, "overrides": metadata}}); err != nil {
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: organizationID, Topic: "rate-limit.events", EventType: "rate_limits.updated", Payload: map[string]any{"tenant_id": organizationID, "overrides": metadata}}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -280,9 +280,9 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, item := range applied {
-		item.limiter.ApplyOverride(tenantID, item.rate, item.capacity)
+		item.limiter.ApplyOverride(organizationID, item.rate, item.capacity)
 	}
-	limits, err := h.effectiveLimits(ctx, tenantID)
+	limits, err := h.effectiveLimits(ctx, organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -291,7 +291,7 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requireTenant(r)
+	organizationID, err := requireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -303,15 +303,15 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `DELETE FROM platform.rate_limit_overrides WHERE tenant_id = $1`, tenantID); err != nil {
+	if _, err := tx.Exec(ctx, `DELETE FROM platform.rate_limit_overrides WHERE organization_id = $1`, organizationID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := audit.Record(ctx, tx, audit.ActorOf(r).Event(tenantID, "rate_limits.deleted", "tenant", tenantID, nil)); err != nil {
+	if err := audit.Record(ctx, tx, audit.ActorOf(r).Event(organizationID, "rate_limits.deleted", "tenant", organizationID, nil)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: tenantID, Topic: "rate-limit.events", EventType: "rate_limits.deleted", Payload: map[string]any{"tenant_id": tenantID}}); err != nil {
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: organizationID, Topic: "rate-limit.events", EventType: "rate_limits.deleted", Payload: map[string]any{"tenant_id": organizationID}}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -319,8 +319,8 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	for _, lim := range []Limiter{h.TenantLim, h.UserLim, h.APIKeyLim} {
-		lim.ClearOverride(tenantID)
+	for _, lim := range []Limiter{h.OrganizationLim, h.UserLim, h.APIKeyLim} {
+		lim.ClearOverride(organizationID)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

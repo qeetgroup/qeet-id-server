@@ -13,25 +13,25 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// passwordsOff is an organisation that has switched password sign-in off.
+// passwordsOff is an organization that has switched password sign-in off.
 type passwordsOff uuid.UUID
 
-func (p passwordsOff) PasswordEnabled(_ context.Context, tenantID uuid.UUID) (bool, error) {
-	return tenantID != uuid.UUID(p), nil
+func (p passwordsOff) PasswordEnabled(_ context.Context, organizationID uuid.UUID) (bool, error) {
+	return organizationID != uuid.UUID(p), nil
 }
 
-// TestHomeOrganisationPasswordSwitchAppliesThroughAnyClient checks that an
-// organisation that switched passwords off keeps its member from signing in
-// with one through another organisation's application, as through its own or
+// TestHomeOrganizationPasswordSwitchAppliesThroughAnyClient checks that an
+// organization that switched passwords off keeps its member from signing in
+// with one through another organization's application, as through its own or
 // none, and that only the right password learns it.
-func TestHomeOrganisationPasswordSwitchAppliesThroughAnyClient(t *testing.T) {
+func TestHomeOrganizationPasswordSwitchAppliesThroughAnyClient(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := newService(t)
 	a, home := member(t)
 	svc.SetMethodPolicy(passwordsOff(home))
-	elsewhere := dbtest.Tenant(t)
+	elsewhere := dbtest.Organization(t)
 	client := dbtest.Unique("app")
-	if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO auth.oidc_clients (tenant_id, client_id, name) VALUES ($1, $2, $2)`, elsewhere, client); err != nil {
+	if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO auth.oidc_clients (organization_id, client_id, name) VALUES ($1, $2, $2)`, elsewhere, client); err != nil {
 		t.Fatal(err)
 	}
 	hosted := func(password, clientID string) error {

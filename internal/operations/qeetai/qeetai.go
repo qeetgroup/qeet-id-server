@@ -1,6 +1,6 @@
 // Package qeetai serves the Qeet AI assistant for the admin console: it stores
 // each user's conversations, streams model turns over SSE and manages
-// per-tenant provider keys. The server never runs a tool; tool calls go to the
+// per-organization provider keys. The server never runs a tool; tool calls go to the
 // browser, which runs them under the user's own token.
 package qeetai
 
@@ -22,13 +22,13 @@ import (
 
 // Conversation is a named thread between one user and the qeetai.
 type Conversation struct {
-	ID        uuid.UUID `json:"id"`
-	TenantID  uuid.UUID `json:"tenant_id"`
-	UserID    uuid.UUID `json:"user_id"`
-	Title     string    `json:"title"`
-	Pinned    bool      `json:"pinned"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID             uuid.UUID `json:"id"`
+	OrganizationID uuid.UUID `json:"tenant_id"`
+	UserID         uuid.UUID `json:"user_id"`
+	Title          string    `json:"title"`
+	Pinned         bool      `json:"pinned"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // Message is one turn in a conversation. Content is stored as a JSON array of
@@ -36,7 +36,7 @@ type Conversation struct {
 // no secret artifacts are persisted.
 type Message struct {
 	ID             uuid.UUID       `json:"id"`
-	TenantID       uuid.UUID       `json:"tenant_id"`
+	OrganizationID uuid.UUID       `json:"tenant_id"`
 	ConversationID uuid.UUID       `json:"conversation_id"`
 	Role           string          `json:"role"`
 	Content        json.RawMessage `json:"content"`
@@ -76,13 +76,13 @@ type ToolCallError struct {
 // tests substitute a stub.
 type serviceStore interface {
 	Pool() *pgxpool.Pool
-	CreateConversation(ctx context.Context, tenantID, userID uuid.UUID, in CreateConversationInput) (*Conversation, error)
-	ListConversations(ctx context.Context, tenantID, userID uuid.UUID) ([]Conversation, error)
-	GetConversation(ctx context.Context, tenantID, userID, conversationID uuid.UUID) (*Conversation, []Message, error)
-	PatchConversation(ctx context.Context, tenantID, userID, conversationID uuid.UUID, in PatchConversationInput) (*Conversation, error)
-	DeleteConversation(ctx context.Context, tenantID, userID, conversationID uuid.UUID) error
-	AppendMessage(ctx context.Context, tenantID, conversationID uuid.UUID, role string, content json.RawMessage) (*Message, error)
-	BeginTurn(ctx context.Context, tenantID, conversationID uuid.UUID) (release func(), err error)
+	CreateConversation(ctx context.Context, organizationID, userID uuid.UUID, in CreateConversationInput) (*Conversation, error)
+	ListConversations(ctx context.Context, organizationID, userID uuid.UUID) ([]Conversation, error)
+	GetConversation(ctx context.Context, organizationID, userID, conversationID uuid.UUID) (*Conversation, []Message, error)
+	PatchConversation(ctx context.Context, organizationID, userID, conversationID uuid.UUID, in PatchConversationInput) (*Conversation, error)
+	DeleteConversation(ctx context.Context, organizationID, userID, conversationID uuid.UUID) error
+	AppendMessage(ctx context.Context, organizationID, conversationID uuid.UUID, role string, content json.RawMessage) (*Message, error)
+	BeginTurn(ctx context.Context, organizationID, conversationID uuid.UUID) (release func(), err error)
 }
 
 // Service owns conversation and message persistence via sqlc-generated queries.
@@ -100,16 +100,16 @@ func NewService(pool *pgxpool.Pool) *Service {
 // events in their own transaction.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
-// CreateConversation inserts a new conversation for the given tenant+user.
-func (s *Service) CreateConversation(ctx context.Context, tenantID, userID uuid.UUID, in CreateConversationInput) (*Conversation, error) {
+// CreateConversation inserts a new conversation for the given organization+user.
+func (s *Service) CreateConversation(ctx context.Context, organizationID, userID uuid.UUID, in CreateConversationInput) (*Conversation, error) {
 	title := in.Title
 	if title == "" {
 		title = "New conversation"
 	}
 	row, err := s.q.CreateConversation(ctx, dbgen.CreateConversationParams{
-		TenantID: tenantID,
-		UserID:   userID,
-		Title:    title,
+		OrganizationID: organizationID,
+		UserID:         userID,
+		Title:          title,
 	})
 	if err != nil {
 		return nil, err
@@ -117,12 +117,12 @@ func (s *Service) CreateConversation(ctx context.Context, tenantID, userID uuid.
 	return convFromRow(row), nil
 }
 
-// ListConversations returns all conversations for a tenant+user, ordered by
+// ListConversations returns all conversations for an organization+user, ordered by
 // pinned-first then most-recently-updated.
-func (s *Service) ListConversations(ctx context.Context, tenantID, userID uuid.UUID) ([]Conversation, error) {
+func (s *Service) ListConversations(ctx context.Context, organizationID, userID uuid.UUID) ([]Conversation, error) {
 	rows, err := s.q.ListConversations(ctx, dbgen.ListConversationsParams{
-		TenantID: tenantID,
-		UserID:   userID,
+		OrganizationID: organizationID,
+		UserID:         userID,
 	})
 	if err != nil {
 		return nil, err
@@ -136,12 +136,12 @@ func (s *Service) ListConversations(ctx context.Context, tenantID, userID uuid.U
 
 // GetConversation returns a conversation with its messages. Returns
 // errs.ErrNotFound when the conversation does not exist or belongs to a
-// different tenant/user.
-func (s *Service) GetConversation(ctx context.Context, tenantID, userID, conversationID uuid.UUID) (*Conversation, []Message, error) {
+// different organization/user.
+func (s *Service) GetConversation(ctx context.Context, organizationID, userID, conversationID uuid.UUID) (*Conversation, []Message, error) {
 	row, err := s.q.GetConversation(ctx, dbgen.GetConversationParams{
-		ID:       conversationID,
-		TenantID: tenantID,
-		UserID:   userID,
+		ID:             conversationID,
+		OrganizationID: organizationID,
+		UserID:         userID,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -149,7 +149,7 @@ func (s *Service) GetConversation(ctx context.Context, tenantID, userID, convers
 		}
 		return nil, nil, err
 	}
-	msgs, err := s.listMessages(ctx, tenantID, conversationID)
+	msgs, err := s.listMessages(ctx, organizationID, conversationID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -158,13 +158,13 @@ func (s *Service) GetConversation(ctx context.Context, tenantID, userID, convers
 
 // PatchConversation updates title and/or pinned on a conversation. Returns
 // errs.ErrNotFound when the conversation does not exist or is out of scope.
-func (s *Service) PatchConversation(ctx context.Context, tenantID, userID, conversationID uuid.UUID, in PatchConversationInput) (*Conversation, error) {
+func (s *Service) PatchConversation(ctx context.Context, organizationID, userID, conversationID uuid.UUID, in PatchConversationInput) (*Conversation, error) {
 	row, err := s.q.PatchConversation(ctx, dbgen.PatchConversationParams{
-		Title:    in.Title,
-		Pinned:   in.Pinned,
-		ID:       conversationID,
-		TenantID: tenantID,
-		UserID:   userID,
+		Title:          in.Title,
+		Pinned:         in.Pinned,
+		ID:             conversationID,
+		OrganizationID: organizationID,
+		UserID:         userID,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -177,11 +177,11 @@ func (s *Service) PatchConversation(ctx context.Context, tenantID, userID, conve
 
 // DeleteConversation removes a conversation and all its messages (cascade).
 // Returns errs.ErrNotFound when the conversation is out of scope.
-func (s *Service) DeleteConversation(ctx context.Context, tenantID, userID, conversationID uuid.UUID) error {
+func (s *Service) DeleteConversation(ctx context.Context, organizationID, userID, conversationID uuid.UUID) error {
 	n, err := s.q.DeleteConversation(ctx, dbgen.DeleteConversationParams{
-		ID:       conversationID,
-		TenantID: tenantID,
-		UserID:   userID,
+		ID:             conversationID,
+		OrganizationID: organizationID,
+		UserID:         userID,
 	})
 	if err != nil {
 		return err
@@ -195,7 +195,7 @@ func (s *Service) DeleteConversation(ctx context.Context, tenantID, userID, conv
 // AppendMessage inserts a message row and bumps the conversation updated_at
 // in a single transaction. content must be a valid JSON array of Anthropic
 // content blocks.
-func (s *Service) AppendMessage(ctx context.Context, tenantID, conversationID uuid.UUID, role string, content json.RawMessage) (*Message, error) {
+func (s *Service) AppendMessage(ctx context.Context, organizationID, conversationID uuid.UUID, role string, content json.RawMessage) (*Message, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -205,7 +205,7 @@ func (s *Service) AppendMessage(ctx context.Context, tenantID, conversationID uu
 	qtx := s.q.WithTx(tx)
 
 	msgRow, err := qtx.InsertMessage(ctx, dbgen.InsertMessageParams{
-		TenantID:       tenantID,
+		OrganizationID: organizationID,
 		ConversationID: conversationID,
 		Role:           role,
 		Content:        content,
@@ -216,7 +216,7 @@ func (s *Service) AppendMessage(ctx context.Context, tenantID, conversationID uu
 
 	if err := qtx.TouchConversation(ctx, dbgen.TouchConversationParams{
 		ConversationID: conversationID,
-		TenantID:       tenantID,
+		OrganizationID: organizationID,
 	}); err != nil {
 		return nil, err
 	}
@@ -235,9 +235,9 @@ const turnTimeout = 10 * time.Minute
 // BeginTurn starts a turn of the conversation, which answers one at a time: it
 // returns errs.ErrQeetAITurnInProgress while another runs, on any instance.
 // Call release when the turn ends.
-func (s *Service) BeginTurn(ctx context.Context, tenantID, conversationID uuid.UUID) (release func(), err error) {
+func (s *Service) BeginTurn(ctx context.Context, organizationID, conversationID uuid.UUID) (release func(), err error) {
 	startedAt, err := s.q.ClaimConversationTurn(ctx, dbgen.ClaimConversationTurnParams{
-		ConversationID: conversationID, TenantID: tenantID, StaleAfterSeconds: (turnTimeout + time.Minute).Seconds(),
+		ConversationID: conversationID, OrganizationID: organizationID, StaleAfterSeconds: (turnTimeout + time.Minute).Seconds(),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrQeetAITurnInProgress
@@ -249,7 +249,7 @@ func (s *Service) BeginTurn(ctx context.Context, tenantID, conversationID uuid.U
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		if err := s.q.ReleaseConversationTurn(ctx, dbgen.ReleaseConversationTurnParams{
-			ConversationID: conversationID, TenantID: tenantID, StartedAt: startedAt,
+			ConversationID: conversationID, OrganizationID: organizationID, StartedAt: startedAt,
 		}); err != nil {
 			slog.Warn("qeetai: end the turn", "conversation_id", conversationID, "err", err)
 		}
@@ -258,16 +258,16 @@ func (s *Service) BeginTurn(ctx context.Context, tenantID, conversationID uuid.U
 
 // TurnHistory returns the conversation's latest maxMessages messages, oldest
 // first: the most of its history one turn reads. Returns errs.ErrNotFound
-// when the conversation does not exist or belongs to another tenant or user.
-func (s *Service) TurnHistory(ctx context.Context, tenantID, userID, conversationID uuid.UUID, maxMessages int) ([]Message, error) {
-	if _, err := s.q.GetConversation(ctx, dbgen.GetConversationParams{ID: conversationID, TenantID: tenantID, UserID: userID}); err != nil {
+// when the conversation does not exist or belongs to another organization or user.
+func (s *Service) TurnHistory(ctx context.Context, organizationID, userID, conversationID uuid.UUID, maxMessages int) ([]Message, error) {
+	if _, err := s.q.GetConversation(ctx, dbgen.GetConversationParams{ID: conversationID, OrganizationID: organizationID, UserID: userID}); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errs.ErrNotFound
 		}
 		return nil, err
 	}
 	rows, err := s.q.ListRecentMessages(ctx, dbgen.ListRecentMessagesParams{
-		ConversationID: conversationID, TenantID: tenantID, MaxMessages: int32(min(maxMessages, math.MaxInt32)), // #nosec G115 -- clamped
+		ConversationID: conversationID, OrganizationID: organizationID, MaxMessages: int32(min(maxMessages, math.MaxInt32)), // #nosec G115 -- clamped
 	})
 	if err != nil {
 		return nil, err
@@ -280,10 +280,10 @@ func (s *Service) TurnHistory(ctx context.Context, tenantID, userID, conversatio
 }
 
 // listMessages returns all messages for a conversation in chronological order.
-func (s *Service) listMessages(ctx context.Context, tenantID, conversationID uuid.UUID) ([]Message, error) {
+func (s *Service) listMessages(ctx context.Context, organizationID, conversationID uuid.UUID) ([]Message, error) {
 	rows, err := s.q.ListMessages(ctx, dbgen.ListMessagesParams{
 		ConversationID: conversationID,
-		TenantID:       tenantID,
+		OrganizationID: organizationID,
 	})
 	if err != nil {
 		return nil, err
@@ -298,13 +298,13 @@ func (s *Service) listMessages(ctx context.Context, tenantID, conversationID uui
 // convFromRow maps a dbgen.QeetaiConversation to the domain Conversation type.
 func convFromRow(r dbgen.QeetaiConversation) *Conversation {
 	return &Conversation{
-		ID:        r.ID,
-		TenantID:  r.TenantID,
-		UserID:    r.UserID,
-		Title:     r.Title,
-		Pinned:    r.Pinned,
-		CreatedAt: r.CreatedAt,
-		UpdatedAt: r.UpdatedAt,
+		ID:             r.ID,
+		OrganizationID: r.OrganizationID,
+		UserID:         r.UserID,
+		Title:          r.Title,
+		Pinned:         r.Pinned,
+		CreatedAt:      r.CreatedAt,
+		UpdatedAt:      r.UpdatedAt,
 	}
 }
 
@@ -312,7 +312,7 @@ func convFromRow(r dbgen.QeetaiConversation) *Conversation {
 func msgFromRow(r dbgen.QeetaiMessage) *Message {
 	return &Message{
 		ID:             r.ID,
-		TenantID:       r.TenantID,
+		OrganizationID: r.OrganizationID,
 		ConversationID: r.ConversationID,
 		Role:           r.Role,
 		Content:        r.Content,

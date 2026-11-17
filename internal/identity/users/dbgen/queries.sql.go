@@ -13,16 +13,16 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const countTenantEnabledPolicies = `-- name: CountTenantEnabledPolicies :one
+const countOrganizationEnabledPolicies = `-- name: CountOrganizationEnabledPolicies :one
 SELECT count(*)::int AS policies
 FROM auth.abac_policies
-WHERE tenant_id = $1 AND enabled = TRUE
+WHERE organization_id = $1 AND enabled = TRUE
 `
 
-// CountTenantEnabledPolicies counts the tenant's enabled ABAC policies — the
+// CountOrganizationEnabledPolicies counts the organization's enabled ABAC policies — the
 // access rules that can apply to any member, including this user.
-func (q *Queries) CountTenantEnabledPolicies(ctx context.Context, tenantID uuid.UUID) (int32, error) {
-	row := q.db.QueryRow(ctx, countTenantEnabledPolicies, tenantID)
+func (q *Queries) CountOrganizationEnabledPolicies(ctx context.Context, organizationID uuid.UUID) (int32, error) {
+	row := q.db.QueryRow(ctx, countOrganizationEnabledPolicies, organizationID)
 	var policies int32
 	err := row.Scan(&policies)
 	return policies, err
@@ -32,18 +32,18 @@ const countUserApplications = `-- name: CountUserApplications :one
 SELECT count(*)::int AS applications
 FROM auth.oidc_consents c
 JOIN auth.oidc_clients oc ON oc.client_id = c.client_id
-WHERE c.user_id = $1 AND oc.tenant_id = $2
+WHERE c.user_id = $1 AND oc.organization_id = $2
 `
 
 type CountUserApplicationsParams struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 // CountUserApplications counts the OIDC applications a user has consented to,
-// scoped to the applications registered in the given tenant.
+// scoped to the applications registered in the given organization.
 func (q *Queries) CountUserApplications(ctx context.Context, arg CountUserApplicationsParams) (int32, error) {
-	row := q.db.QueryRow(ctx, countUserApplications, arg.UserID, arg.TenantID)
+	row := q.db.QueryRow(ctx, countUserApplications, arg.UserID, arg.OrganizationID)
 	var applications int32
 	err := row.Scan(&applications)
 	return applications, err
@@ -54,18 +54,18 @@ SELECT count(DISTINCT p.key)::int AS direct
 FROM rbac.user_roles ur
 JOIN rbac.role_permissions rp ON rp.role_id = ur.role_id
 JOIN rbac.permissions p ON p.id = rp.permission_id
-WHERE ur.user_id = $1 AND ur.tenant_id = $2
+WHERE ur.user_id = $1 AND ur.organization_id = $2
 `
 
 type CountUserDirectPermissionsParams struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 // CountUserDirectPermissions counts the distinct permissions a user holds via
 // directly-assigned roles (rbac.user_roles) — the "direct" half of the split.
 func (q *Queries) CountUserDirectPermissions(ctx context.Context, arg CountUserDirectPermissionsParams) (int32, error) {
-	row := q.db.QueryRow(ctx, countUserDirectPermissions, arg.UserID, arg.TenantID)
+	row := q.db.QueryRow(ctx, countUserDirectPermissions, arg.UserID, arg.OrganizationID)
 	var direct int32
 	err := row.Scan(&direct)
 	return direct, err
@@ -77,27 +77,27 @@ SELECT count(*)::int AS effective FROM (
   FROM rbac.user_roles ur
   JOIN rbac.role_permissions rp ON rp.role_id = ur.role_id
   JOIN rbac.permissions p ON p.id = rp.permission_id
-  WHERE ur.user_id = $1 AND ur.tenant_id = $2
+  WHERE ur.user_id = $1 AND ur.organization_id = $2
   UNION
   SELECT p.key
-  FROM tenant.group_members gm
-  JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+  FROM organization.group_members gm
+  JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.organization_id = gm.organization_id
   JOIN rbac.role_permissions rp ON rp.role_id = gr.role_id
   JOIN rbac.permissions p ON p.id = rp.permission_id
-  WHERE gm.user_id = $1 AND gm.tenant_id = $2
+  WHERE gm.user_id = $1 AND gm.organization_id = $2
 ) eff
 `
 
 type CountUserEffectivePermissionsParams struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 // CountUserEffectivePermissions counts the distinct effective permissions — the
 // union of directly-assigned roles and group-inherited roles. Mirrors the RBAC
 // ListEffectivePermissions query. "inherited" is derived as effective − direct.
 func (q *Queries) CountUserEffectivePermissions(ctx context.Context, arg CountUserEffectivePermissionsParams) (int32, error) {
-	row := q.db.QueryRow(ctx, countUserEffectivePermissions, arg.UserID, arg.TenantID)
+	row := q.db.QueryRow(ctx, countUserEffectivePermissions, arg.UserID, arg.OrganizationID)
 	var effective int32
 	err := row.Scan(&effective)
 	return effective, err
@@ -124,30 +124,30 @@ const endMemberSession = `-- name: EndMemberSession :one
 UPDATE auth.sessions s SET revoked_at = NOW()
 WHERE s.id = $1 AND s.user_id = $2 AND s.revoked_at IS NULL
   AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
-  AND (s.tenant_id = $3::uuid
-       OR (s.tenant_id IS NULL AND EXISTS (SELECT 1 FROM account.users u WHERE u.id = s.user_id AND u.tenant_id = $3::uuid)))
-RETURNING COALESCE(s.tenant_id, '00000000-0000-0000-0000-000000000000'::uuid)::uuid AS tenant_id
+  AND (s.organization_id = $3::uuid
+       OR (s.organization_id IS NULL AND EXISTS (SELECT 1 FROM account.users u WHERE u.id = s.user_id AND u.organization_id = $3::uuid)))
+RETURNING COALESCE(s.organization_id, '00000000-0000-0000-0000-000000000000'::uuid)::uuid AS organization_id
 `
 
 type EndMemberSessionParams struct {
-	ID       uuid.UUID
-	UserID   uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
 }
 
-// EndMemberSession ends one of a person's live sessions in the tenant, as
-// ListUserActiveSessions shows them, and returns its organisation for the
+// EndMemberSession ends one of a person's live sessions in the organization, as
+// ListUserActiveSessions shows them, and returns its organization for the
 // session.revoked signal (the nil UUID for none). No row: it isn't theirs
 // there, or has already ended.
 func (q *Queries) EndMemberSession(ctx context.Context, arg EndMemberSessionParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, endMemberSession, arg.ID, arg.UserID, arg.TenantID)
-	var tenant_id uuid.UUID
-	err := row.Scan(&tenant_id)
-	return tenant_id, err
+	row := q.db.QueryRow(ctx, endMemberSession, arg.ID, arg.UserID, arg.OrganizationID)
+	var organization_id uuid.UUID
+	err := row.Scan(&organization_id)
+	return organization_id, err
 }
 
 const getAccessOrganization = `-- name: GetAccessOrganization :one
-SELECT id, name, slug FROM tenant.tenants WHERE id = $1
+SELECT id, name, slug FROM organization.organizations WHERE id = $1
 `
 
 type GetAccessOrganizationRow struct {
@@ -156,8 +156,6 @@ type GetAccessOrganizationRow struct {
 	Slug string
 }
 
-// GetUserOrganization returns the tenant (a.k.a. organization) a user belongs to.
-// Each user belongs to exactly one tenant (users.tenant_id is NOT NULL).
 // GetAccessOrganization is the organization an access view is about: the one
 // the admin is viewing the user from, never the user's home elsewhere.
 func (q *Queries) GetAccessOrganization(ctx context.Context, id uuid.UUID) (GetAccessOrganizationRow, error) {
@@ -179,20 +177,20 @@ func (q *Queries) GetPasswordHash(ctx context.Context, userID uuid.UUID) (string
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, tenant_id, email, email_verified_at, phone, phone_verified_at,
+SELECT id, organization_id, email, email_verified_at, phone, phone_verified_at,
        display_name, status, metadata, created_at, updated_at
 FROM account.users
-WHERE tenant_id = $1 AND LOWER(email) = LOWER($2) AND deleted_at IS NULL
+WHERE organization_id = $1 AND LOWER(email) = LOWER($2) AND deleted_at IS NULL
 `
 
 type GetUserByEmailParams struct {
-	TenantID pgtype.UUID
-	Lower    string
+	OrganizationID pgtype.UUID
+	Lower          string
 }
 
 type GetUserByEmailRow struct {
 	ID              uuid.UUID
-	TenantID        pgtype.UUID
+	OrganizationID  pgtype.UUID
 	Email           string
 	EmailVerifiedAt pgtype.Timestamptz
 	Phone           *string
@@ -205,11 +203,11 @@ type GetUserByEmailRow struct {
 }
 
 func (q *Queries) GetUserByEmail(ctx context.Context, arg GetUserByEmailParams) (GetUserByEmailRow, error) {
-	row := q.db.QueryRow(ctx, getUserByEmail, arg.TenantID, arg.Lower)
+	row := q.db.QueryRow(ctx, getUserByEmail, arg.OrganizationID, arg.Lower)
 	var i GetUserByEmailRow
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Email,
 		&i.EmailVerifiedAt,
 		&i.Phone,
@@ -224,7 +222,7 @@ func (q *Queries) GetUserByEmail(ctx context.Context, arg GetUserByEmailParams) 
 }
 
 const getUserByEmailGlobal = `-- name: GetUserByEmailGlobal :one
-SELECT id, tenant_id, email, email_verified_at, phone, phone_verified_at,
+SELECT id, organization_id, email, email_verified_at, phone, phone_verified_at,
        display_name, status, metadata, created_at, updated_at
 FROM account.users
 WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL
@@ -232,7 +230,7 @@ WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL
 
 type GetUserByEmailGlobalRow struct {
 	ID              uuid.UUID
-	TenantID        pgtype.UUID
+	OrganizationID  pgtype.UUID
 	Email           string
 	EmailVerifiedAt pgtype.Timestamptz
 	Phone           *string
@@ -244,14 +242,14 @@ type GetUserByEmailGlobalRow struct {
 	UpdatedAt       time.Time
 }
 
-// GetUserByEmailGlobal looks up a user by email across all tenants (email is
+// GetUserByEmailGlobal looks up a user by email across all organizations (email is
 // globally unique since migration 0022).
 func (q *Queries) GetUserByEmailGlobal(ctx context.Context, lower string) (GetUserByEmailGlobalRow, error) {
 	row := q.db.QueryRow(ctx, getUserByEmailGlobal, lower)
 	var i GetUserByEmailGlobalRow
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Email,
 		&i.EmailVerifiedAt,
 		&i.Phone,
@@ -266,14 +264,14 @@ func (q *Queries) GetUserByEmailGlobal(ctx context.Context, lower string) (GetUs
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, tenant_id, email, email_verified_at, phone, phone_verified_at,
+SELECT id, organization_id, email, email_verified_at, phone, phone_verified_at,
        display_name, status, metadata, created_at, updated_at, avatar_url
 FROM account.users WHERE id = $1 AND deleted_at IS NULL
 `
 
 type GetUserByIDRow struct {
 	ID              uuid.UUID
-	TenantID        pgtype.UUID
+	OrganizationID  pgtype.UUID
 	Email           string
 	EmailVerifiedAt pgtype.Timestamptz
 	Phone           *string
@@ -293,7 +291,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (GetUserByIDRow
 	var i GetUserByIDRow
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Email,
 		&i.EmailVerifiedAt,
 		&i.Phone,
@@ -350,17 +348,17 @@ SELECT
   EXISTS(SELECT 1 FROM auth.password_credentials pc WHERE pc.user_id = u.id)::boolean AS password_set,
   (SELECT count(*) FROM auth.sessions s WHERE s.user_id = u.id AND s.revoked_at IS NULL
      AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
-     AND (s.tenant_id = $1::uuid OR (s.tenant_id IS NULL AND u.tenant_id = $1::uuid)))::int AS active_sessions,
+     AND (s.organization_id = $1::uuid OR (s.organization_id IS NULL AND u.organization_id = $1::uuid)))::int AS active_sessions,
   (SELECT count(DISTINCT s.user_agent) FROM auth.sessions s WHERE s.user_id = u.id AND s.revoked_at IS NULL
      AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
-     AND (s.tenant_id = $1::uuid OR (s.tenant_id IS NULL AND u.tenant_id = $1::uuid)))::int AS distinct_devices
+     AND (s.organization_id = $1::uuid OR (s.organization_id IS NULL AND u.organization_id = $1::uuid)))::int AS distinct_devices
 FROM account.users u
 WHERE u.id = $2 AND u.deleted_at IS NULL
 `
 
 type GetUserSecuritySummaryParams struct {
-	TenantID uuid.UUID
-	ID       uuid.UUID
+	OrganizationID uuid.UUID
+	ID             uuid.UUID
 }
 
 type GetUserSecuritySummaryRow struct {
@@ -377,7 +375,7 @@ type GetUserSecuritySummaryRow struct {
 
 // ── User 360 admin reads ──────────────────────────────────────────────────────
 // These power the console's per-user "identity investigation" workspace. They
-// read cross-schema (auth/rbac/tenant) but are fixed SQL, so they live in the
+// read cross-schema (auth/rbac/organization) but are fixed SQL, so they live in the
 // users package's sqlc set (whose schema path is the shared migrations dir).
 // Every aggregate / correlated subquery is explicitly cast so sqlc infers a
 // concrete Go type instead of interface{} (see the array_agg note above).
@@ -387,9 +385,9 @@ type GetUserSecuritySummaryRow struct {
 // boolean signals live here so sqlc types them concretely; the two nullable
 // timestamps (password last-changed, passkey last-used) are fetched by the
 // dedicated :one queries below, where an absent row cleanly means "never".
-// Sessions are counted as ListUserActiveSessions lists them for @tenant_id.
+// Sessions are counted as ListUserActiveSessions lists them for @organization_id.
 func (q *Queries) GetUserSecuritySummary(ctx context.Context, arg GetUserSecuritySummaryParams) (GetUserSecuritySummaryRow, error) {
-	row := q.db.QueryRow(ctx, getUserSecuritySummary, arg.TenantID, arg.ID)
+	row := q.db.QueryRow(ctx, getUserSecuritySummary, arg.OrganizationID, arg.ID)
 	var i GetUserSecuritySummaryRow
 	err := row.Scan(
 		&i.MfaRequired,
@@ -406,20 +404,20 @@ func (q *Queries) GetUserSecuritySummary(ctx context.Context, arg GetUserSecurit
 }
 
 const getUserStandingIn = `-- name: GetUserStandingIn :one
-SELECT COALESCE(u.tenant_id = $1::uuid, false)::boolean AS home,
+SELECT COALESCE(u.organization_id = $1::uuid, false)::boolean AS home,
        EXISTS (
            SELECT 1 FROM rbac.user_roles membership
            JOIN rbac.roles member_role
-             ON member_role.id = membership.role_id AND member_role.tenant_id = membership.tenant_id
-           WHERE membership.user_id = u.id AND membership.tenant_id = $1::uuid
+             ON member_role.id = membership.role_id AND member_role.organization_id = membership.organization_id
+           WHERE membership.user_id = u.id AND membership.organization_id = $1::uuid
        )::boolean AS member
 FROM account.users u
 WHERE u.id = $2
 `
 
 type GetUserStandingInParams struct {
-	TenantID uuid.UUID
-	ID       uuid.UUID
+	OrganizationID uuid.UUID
+	ID             uuid.UUID
 }
 
 type GetUserStandingInRow struct {
@@ -427,12 +425,12 @@ type GetUserStandingInRow struct {
 	Member bool
 }
 
-// GetUserStandingIn is how a user relates to a tenant: whether the tenant is
+// GetUserStandingIn is how a user relates to an organization: whether the organization is
 // their home, the one that manages the account, and whether they hold one of
-// its roles. A user who is neither isn't the tenant's to see. Soft-deleted
-// users are included so the home tenant can restore or purge them.
+// its roles. A user who is neither isn't the organization's to see. Soft-deleted
+// users are included so the home organization can restore or purge them.
 func (q *Queries) GetUserStandingIn(ctx context.Context, arg GetUserStandingInParams) (GetUserStandingInRow, error) {
-	row := q.db.QueryRow(ctx, getUserStandingIn, arg.TenantID, arg.ID)
+	row := q.db.QueryRow(ctx, getUserStandingIn, arg.OrganizationID, arg.ID)
 	var i GetUserStandingInRow
 	err := row.Scan(&i.Home, &i.Member)
 	return i, err
@@ -443,8 +441,8 @@ WITH members AS (
   SELECT u.id, u.status, u.created_at
   FROM account.users u
   WHERE u.deleted_at IS NULL
-    AND u.id IN (SELECT h.id FROM account.users h WHERE h.tenant_id = $1::uuid AND h.deleted_at IS NULL
-                 UNION SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.tenant_id = $1)
+    AND u.id IN (SELECT h.id FROM account.users h WHERE h.organization_id = $1::uuid AND h.deleted_at IS NULL
+                 UNION SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.organization_id = $1)
 ),
 mfa AS (
   SELECT m.id,
@@ -474,7 +472,7 @@ type GetUserStatsRow struct {
 	NewLast30d     int32
 }
 
-// GetUserStats returns the tenant-wide member counts for the Users admin summary
+// GetUserStats returns the organization-wide member counts for the Users admin summary
 // strip: total, active, suspended, invited, and MFA enabled/missing. Membership
 // is defined the same way the list is (home users and role holders), and "MFA
 // enabled" matches the list's OR-logic (confirmed TOTP / verified OTP /
@@ -513,8 +511,8 @@ members AS (
      ) e) AS mfa_at
   FROM account.users u
   WHERE u.deleted_at IS NULL
-    AND u.id IN (SELECT h.id FROM account.users h WHERE h.tenant_id = $1::uuid AND h.deleted_at IS NULL
-                 UNION SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.tenant_id = $1)
+    AND u.id IN (SELECT h.id FROM account.users h WHERE h.organization_id = $1::uuid AND h.deleted_at IS NULL
+                 UNION SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.organization_id = $1)
 )
 SELECT
   (SELECT count(*) FROM members m WHERE m.created_at < days.day + interval '1 day')::int AS total,
@@ -572,23 +570,23 @@ func (q *Queries) InsertPasswordCredential(ctx context.Context, arg InsertPasswo
 
 const insertUser = `-- name: InsertUser :one
 
-INSERT INTO account.users (tenant_id, email, phone, display_name, metadata)
+INSERT INTO account.users (organization_id, email, phone, display_name, metadata)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, tenant_id, email, email_verified_at, phone, phone_verified_at,
+RETURNING id, organization_id, email, email_verified_at, phone, phone_verified_at,
           display_name, status, metadata, created_at, updated_at
 `
 
 type InsertUserParams struct {
-	TenantID    pgtype.UUID
-	Email       string
-	Phone       *string
-	DisplayName *string
-	Metadata    []byte
+	OrganizationID pgtype.UUID
+	Email          string
+	Phone          *string
+	DisplayName    *string
+	Metadata       []byte
 }
 
 type InsertUserRow struct {
 	ID              uuid.UUID
-	TenantID        pgtype.UUID
+	OrganizationID  pgtype.UUID
 	Email           string
 	EmailVerifiedAt pgtype.Timestamptz
 	Phone           *string
@@ -609,7 +607,7 @@ type InsertUserRow struct {
 // password credential is inserted by InsertPasswordCredential on the same tx.
 func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) (InsertUserRow, error) {
 	row := q.db.QueryRow(ctx, insertUser,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Email,
 		arg.Phone,
 		arg.DisplayName,
@@ -618,7 +616,7 @@ func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) (InsertU
 	var i InsertUserRow
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Email,
 		&i.EmailVerifiedAt,
 		&i.Phone,
@@ -635,26 +633,26 @@ func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) (InsertU
 const integrationsCreatedBy = `-- name: IntegrationsCreatedBy :many
 
 SELECT 'service_principal'::text AS kind, sp.id, sp.name FROM auth.service_principals sp
-WHERE sp.tenant_id = $1 AND sp.created_by = $2::uuid AND sp.disabled_at IS NULL
+WHERE sp.organization_id = $1 AND sp.created_by = $2::uuid AND sp.disabled_at IS NULL
 UNION ALL
-SELECT 'scim_token', st.id, st.name FROM tenant.scim_tokens st
-WHERE st.tenant_id = $1 AND st.created_by = $2::uuid AND st.revoked_at IS NULL
+SELECT 'scim_token', st.id, st.name FROM organization.scim_tokens st
+WHERE st.organization_id = $1 AND st.created_by = $2::uuid AND st.revoked_at IS NULL
   AND (st.expires_at IS NULL OR st.expires_at > NOW())
 UNION ALL
-SELECT 'webhook', ws.id, ws.url FROM tenant.webhook_subscriptions ws
-WHERE ws.tenant_id = $1 AND ws.created_by = $2::uuid AND ws.disabled_at IS NULL
+SELECT 'webhook', ws.id, ws.url FROM organization.webhook_subscriptions ws
+WHERE ws.organization_id = $1 AND ws.created_by = $2::uuid AND ws.disabled_at IS NULL
 UNION ALL
-SELECT 'auth_hook', ah.id, ah.url FROM tenant.auth_hooks ah
-WHERE ah.tenant_id = $1 AND ah.created_by = $2::uuid
+SELECT 'auth_hook', ah.id, ah.url FROM organization.auth_hooks ah
+WHERE ah.organization_id = $1 AND ah.created_by = $2::uuid
 UNION ALL
 SELECT 'oidc_client', oc.id, oc.name FROM auth.oidc_clients oc
-WHERE oc.tenant_id = $1 AND oc.created_by = $2::uuid
+WHERE oc.organization_id = $1 AND oc.created_by = $2::uuid
 ORDER BY 1, 3
 `
 
 type IntegrationsCreatedByParams struct {
-	TenantID uuid.UUID
-	UserID   uuid.UUID
+	OrganizationID uuid.UUID
+	UserID         uuid.UUID
 }
 
 type IntegrationsCreatedByRow struct {
@@ -665,10 +663,10 @@ type IntegrationsCreatedByRow struct {
 
 // ---- Offboarding ----
 // IntegrationsCreatedBy lists the integrations user_id created in the
-// organisation that still work: service principals, SCIM tokens, webhooks,
+// organization that still work: service principals, SCIM tokens, webhooks,
 // auth hooks and OpenID Connect applications.
 func (q *Queries) IntegrationsCreatedBy(ctx context.Context, arg IntegrationsCreatedByParams) ([]IntegrationsCreatedByRow, error) {
-	rows, err := q.db.Query(ctx, integrationsCreatedBy, arg.TenantID, arg.UserID)
+	rows, err := q.db.Query(ctx, integrationsCreatedBy, arg.OrganizationID, arg.UserID)
 	if err != nil {
 		return nil, err
 	}
@@ -690,7 +688,7 @@ func (q *Queries) IntegrationsCreatedBy(ctx context.Context, arg IntegrationsCre
 const listDeletedUsers = `-- name: ListDeletedUsers :many
 SELECT id, email, display_name, deleted_at, created_at, deleted_by
 FROM account.users
-WHERE tenant_id = $1 AND deleted_at IS NOT NULL
+WHERE organization_id = $1 AND deleted_at IS NOT NULL
   AND ($2::timestamptz IS NULL OR deleted_at < $2
        OR (deleted_at = $2 AND id < $3::uuid))
 ORDER BY deleted_at DESC, id DESC
@@ -698,10 +696,10 @@ LIMIT $4
 `
 
 type ListDeletedUsersParams struct {
-	TenantID pgtype.UUID
-	BeforeTs pgtype.Timestamptz
-	BeforeID pgtype.UUID
-	RowLimit int32
+	OrganizationID pgtype.UUID
+	BeforeTs       pgtype.Timestamptz
+	BeforeID       pgtype.UUID
+	RowLimit       int32
 }
 
 type ListDeletedUsersRow struct {
@@ -713,11 +711,11 @@ type ListDeletedUsersRow struct {
 	DeletedBy   pgtype.UUID
 }
 
-// The tenant's deleted users, newest deletion first, after the cursor's
+// The organization's deleted users, newest deletion first, after the cursor's
 // (deleted_at, id) when before_ts is set.
 func (q *Queries) ListDeletedUsers(ctx context.Context, arg ListDeletedUsersParams) ([]ListDeletedUsersRow, error) {
 	rows, err := q.db.Query(ctx, listDeletedUsers,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.BeforeTs,
 		arg.BeforeID,
 		arg.RowLimit,
@@ -754,14 +752,14 @@ FROM auth.sessions s
 JOIN account.users u ON u.id = s.user_id
 WHERE s.user_id = $1 AND s.revoked_at IS NULL
   AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
-  AND (s.tenant_id = $2::uuid OR (s.tenant_id IS NULL AND u.tenant_id = $2::uuid))
+  AND (s.organization_id = $2::uuid OR (s.organization_id IS NULL AND u.organization_id = $2::uuid))
 ORDER BY s.last_seen_at DESC
 LIMIT 1001
 `
 
 type ListUserActiveSessionsParams struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type ListUserActiveSessionsRow struct {
@@ -774,13 +772,13 @@ type ListUserActiveSessionsRow struct {
 	City       string
 }
 
-// ListUserActiveSessions lists a user's live sessions in @tenant_id (most
+// ListUserActiveSessions lists a user's live sessions in @organization_id (most
 // recently seen first): not revoked and not past their maximum age or idle
-// timeout. Sessions in no tenant belong to the account, so only its home tenant
+// timeout. Sessions in no organization belong to the account, so only its home organization
 // sees them. ip goes through host() and COALESCE to scan as a plain string.
 // At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListUserActiveSessions(ctx context.Context, arg ListUserActiveSessionsParams) ([]ListUserActiveSessionsRow, error) {
-	rows, err := q.db.Query(ctx, listUserActiveSessions, arg.UserID, arg.TenantID)
+	rows, err := q.db.Query(ctx, listUserActiveSessions, arg.UserID, arg.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -807,35 +805,35 @@ func (q *Queries) ListUserActiveSessions(ctx context.Context, arg ListUserActive
 	return items, nil
 }
 
-const listUserGroupsInTenant = `-- name: ListUserGroupsInTenant :many
+const listUserGroupsInOrganization = `-- name: ListUserGroupsInOrganization :many
 SELECT g.id, g.name, g.description
-FROM tenant.group_members gm
-JOIN tenant.groups g ON g.id = gm.group_id
-WHERE gm.user_id = $1 AND gm.tenant_id = $2
+FROM organization.group_members gm
+JOIN organization.groups g ON g.id = gm.group_id
+WHERE gm.user_id = $1 AND gm.organization_id = $2
 ORDER BY g.name
 `
 
-type ListUserGroupsInTenantParams struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
+type ListUserGroupsInOrganizationParams struct {
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
 }
 
-type ListUserGroupsInTenantRow struct {
+type ListUserGroupsInOrganizationRow struct {
 	ID          uuid.UUID
 	Name        string
 	Description string
 }
 
-// ListUserGroupsInTenant returns the groups a user belongs to within a tenant.
-func (q *Queries) ListUserGroupsInTenant(ctx context.Context, arg ListUserGroupsInTenantParams) ([]ListUserGroupsInTenantRow, error) {
-	rows, err := q.db.Query(ctx, listUserGroupsInTenant, arg.UserID, arg.TenantID)
+// ListUserGroupsInOrganization returns the groups a user belongs to within an organization.
+func (q *Queries) ListUserGroupsInOrganization(ctx context.Context, arg ListUserGroupsInOrganizationParams) ([]ListUserGroupsInOrganizationRow, error) {
+	rows, err := q.db.Query(ctx, listUserGroupsInOrganization, arg.UserID, arg.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ListUserGroupsInTenantRow{}
+	items := []ListUserGroupsInOrganizationRow{}
 	for rows.Next() {
-		var i ListUserGroupsInTenantRow
+		var i ListUserGroupsInOrganizationRow
 		if err := rows.Scan(&i.ID, &i.Name, &i.Description); err != nil {
 			return nil, err
 		}
@@ -886,36 +884,36 @@ func (q *Queries) ListUserPasskeys(ctx context.Context, userID uuid.UUID) ([]Lis
 	return items, nil
 }
 
-const listUserRolesInTenant = `-- name: ListUserRolesInTenant :many
+const listUserRolesInOrganization = `-- name: ListUserRolesInOrganization :many
 SELECT ro.id, ro.name, ro.description
 FROM rbac.user_roles ur
 JOIN rbac.roles ro ON ro.id = ur.role_id
-WHERE ur.user_id = $1 AND ur.tenant_id = $2
+WHERE ur.user_id = $1 AND ur.organization_id = $2
 ORDER BY ro.name
 `
 
-type ListUserRolesInTenantParams struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
+type ListUserRolesInOrganizationParams struct {
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
 }
 
-type ListUserRolesInTenantRow struct {
+type ListUserRolesInOrganizationRow struct {
 	ID          uuid.UUID
 	Name        string
 	Description string
 }
 
-// ListUserRolesInTenant returns the roles directly assigned to a user within a
-// tenant (group-inherited roles are reflected in effective permissions elsewhere).
-func (q *Queries) ListUserRolesInTenant(ctx context.Context, arg ListUserRolesInTenantParams) ([]ListUserRolesInTenantRow, error) {
-	rows, err := q.db.Query(ctx, listUserRolesInTenant, arg.UserID, arg.TenantID)
+// ListUserRolesInOrganization returns the roles directly assigned to a user within a
+// organization (group-inherited roles are reflected in effective permissions elsewhere).
+func (q *Queries) ListUserRolesInOrganization(ctx context.Context, arg ListUserRolesInOrganizationParams) ([]ListUserRolesInOrganizationRow, error) {
+	rows, err := q.db.Query(ctx, listUserRolesInOrganization, arg.UserID, arg.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ListUserRolesInTenantRow{}
+	items := []ListUserRolesInOrganizationRow{}
 	for rows.Next() {
-		var i ListUserRolesInTenantRow
+		var i ListUserRolesInOrganizationRow
 		if err := rows.Scan(&i.ID, &i.Name, &i.Description); err != nil {
 			return nil, err
 		}
@@ -950,35 +948,35 @@ func (q *Queries) PurgeUser(ctx context.Context, id uuid.UUID) (int64, error) {
 	return result.RowsAffected(), nil
 }
 
-const removeUserGroupsInTenant = `-- name: RemoveUserGroupsInTenant :exec
-DELETE FROM tenant.group_members WHERE user_id = $1 AND tenant_id = $2
+const removeUserGroupsInOrganization = `-- name: RemoveUserGroupsInOrganization :exec
+DELETE FROM organization.group_members WHERE user_id = $1 AND organization_id = $2
 `
 
-type RemoveUserGroupsInTenantParams struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
+type RemoveUserGroupsInOrganizationParams struct {
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
 }
 
-func (q *Queries) RemoveUserGroupsInTenant(ctx context.Context, arg RemoveUserGroupsInTenantParams) error {
-	_, err := q.db.Exec(ctx, removeUserGroupsInTenant, arg.UserID, arg.TenantID)
+func (q *Queries) RemoveUserGroupsInOrganization(ctx context.Context, arg RemoveUserGroupsInOrganizationParams) error {
+	_, err := q.db.Exec(ctx, removeUserGroupsInOrganization, arg.UserID, arg.OrganizationID)
 	return err
 }
 
-const removeUserRolesInTenant = `-- name: RemoveUserRolesInTenant :execrows
+const removeUserRolesInOrganization = `-- name: RemoveUserRolesInOrganization :execrows
 
-DELETE FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2
+DELETE FROM rbac.user_roles WHERE user_id = $1 AND organization_id = $2
 `
 
-type RemoveUserRolesInTenantParams struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
+type RemoveUserRolesInOrganizationParams struct {
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
 }
 
-// The writes that remove a member from one tenant, leaving their account and
-// every other tenant alone: their roles and groups there, and the application
+// The writes that remove a member from one organization, leaving their account and
+// every other organization alone: their roles and groups there, and the application
 // grants and API keys they hold there.
-func (q *Queries) RemoveUserRolesInTenant(ctx context.Context, arg RemoveUserRolesInTenantParams) (int64, error) {
-	result, err := q.db.Exec(ctx, removeUserRolesInTenant, arg.UserID, arg.TenantID)
+func (q *Queries) RemoveUserRolesInOrganization(ctx context.Context, arg RemoveUserRolesInOrganizationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, removeUserRolesInOrganization, arg.UserID, arg.OrganizationID)
 	if err != nil {
 		return 0, err
 	}
@@ -1000,17 +998,17 @@ func (q *Queries) RestoreUser(ctx context.Context, id uuid.UUID) (int64, error) 
 }
 
 const revokeAdminPortalLinksCreatedBy = `-- name: RevokeAdminPortalLinksCreatedBy :execrows
-UPDATE tenant.admin_portal_links SET revoked_at = NOW()
-WHERE tenant_id = $1 AND created_by = $2::uuid AND revoked_at IS NULL AND expires_at > NOW()
+UPDATE organization.admin_portal_links SET revoked_at = NOW()
+WHERE organization_id = $1 AND created_by = $2::uuid AND revoked_at IS NULL AND expires_at > NOW()
 `
 
 type RevokeAdminPortalLinksCreatedByParams struct {
-	TenantID uuid.UUID
-	UserID   uuid.UUID
+	OrganizationID uuid.UUID
+	UserID         uuid.UUID
 }
 
 func (q *Queries) RevokeAdminPortalLinksCreatedBy(ctx context.Context, arg RevokeAdminPortalLinksCreatedByParams) (int64, error) {
-	result, err := q.db.Exec(ctx, revokeAdminPortalLinksCreatedBy, arg.TenantID, arg.UserID)
+	result, err := q.db.Exec(ctx, revokeAdminPortalLinksCreatedBy, arg.OrganizationID, arg.UserID)
 	if err != nil {
 		return 0, err
 	}
@@ -1018,50 +1016,50 @@ func (q *Queries) RevokeAdminPortalLinksCreatedBy(ctx context.Context, arg Revok
 }
 
 const revokeInvitesSentBy = `-- name: RevokeInvitesSentBy :execrows
-UPDATE tenant.invites SET status = 'revoked'
-WHERE tenant_id = $1 AND invited_by = $2::uuid AND status = 'pending'
+UPDATE organization.invites SET status = 'revoked'
+WHERE organization_id = $1 AND invited_by = $2::uuid AND status = 'pending'
 `
 
 type RevokeInvitesSentByParams struct {
-	TenantID uuid.UUID
-	UserID   uuid.UUID
+	OrganizationID uuid.UUID
+	UserID         uuid.UUID
 }
 
 func (q *Queries) RevokeInvitesSentBy(ctx context.Context, arg RevokeInvitesSentByParams) (int64, error) {
-	result, err := q.db.Exec(ctx, revokeInvitesSentBy, arg.TenantID, arg.UserID)
+	result, err := q.db.Exec(ctx, revokeInvitesSentBy, arg.OrganizationID, arg.UserID)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
 }
 
-const revokeUserAPIKeysInTenant = `-- name: RevokeUserAPIKeysInTenant :exec
+const revokeUserAPIKeysInOrganization = `-- name: RevokeUserAPIKeysInOrganization :exec
 UPDATE auth.api_keys SET revoked_at = NOW()
-WHERE user_id = $1 AND tenant_id = $2 AND revoked_at IS NULL
+WHERE user_id = $1 AND organization_id = $2 AND revoked_at IS NULL
 `
 
-type RevokeUserAPIKeysInTenantParams struct {
-	UserID   pgtype.UUID
-	TenantID uuid.UUID
+type RevokeUserAPIKeysInOrganizationParams struct {
+	UserID         pgtype.UUID
+	OrganizationID uuid.UUID
 }
 
-func (q *Queries) RevokeUserAPIKeysInTenant(ctx context.Context, arg RevokeUserAPIKeysInTenantParams) error {
-	_, err := q.db.Exec(ctx, revokeUserAPIKeysInTenant, arg.UserID, arg.TenantID)
+func (q *Queries) RevokeUserAPIKeysInOrganization(ctx context.Context, arg RevokeUserAPIKeysInOrganizationParams) error {
+	_, err := q.db.Exec(ctx, revokeUserAPIKeysInOrganization, arg.UserID, arg.OrganizationID)
 	return err
 }
 
-const revokeUserAppGrantsInTenant = `-- name: RevokeUserAppGrantsInTenant :exec
+const revokeUserAppGrantsInOrganization = `-- name: RevokeUserAppGrantsInOrganization :exec
 UPDATE auth.oidc_refresh_tokens SET revoked_at = NOW()
-WHERE user_id = $1 AND tenant_id = $2 AND revoked_at IS NULL
+WHERE user_id = $1 AND organization_id = $2 AND revoked_at IS NULL
 `
 
-type RevokeUserAppGrantsInTenantParams struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
+type RevokeUserAppGrantsInOrganizationParams struct {
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
 }
 
-func (q *Queries) RevokeUserAppGrantsInTenant(ctx context.Context, arg RevokeUserAppGrantsInTenantParams) error {
-	_, err := q.db.Exec(ctx, revokeUserAppGrantsInTenant, arg.UserID, arg.TenantID)
+func (q *Queries) RevokeUserAppGrantsInOrganization(ctx context.Context, arg RevokeUserAppGrantsInOrganizationParams) error {
+	_, err := q.db.Exec(ctx, revokeUserAppGrantsInOrganization, arg.UserID, arg.OrganizationID)
 	return err
 }
 
@@ -1109,7 +1107,7 @@ SET deleted_at = NOW(), status = 'deleted', updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
 `
 
-// ListUsersByTenant and ListUsersByTenantAfter are left hand-written in
+// ListUsersByOrganization and ListUsersByOrganizationAfter are left hand-written in
 // repository.go because the COALESCE(array_agg(...), '{}'::text[]) expression
 // causes sqlc to infer Roles as interface{}, making the generated scan
 // unusable. Those two methods continue to use pool.Query with the original SQL.

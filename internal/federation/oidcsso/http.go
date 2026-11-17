@@ -56,7 +56,7 @@ func (h *Handler) binding() httpx.BindingCookie {
 }
 
 // redirectURI is where connection id's provider sends the browser back; the
-// organisation registers it with its provider.
+// organization registers it with its provider.
 func (h *Handler) redirectURI(r *http.Request, id uuid.UUID) string {
 	return httpx.PublicOrigin(r, h.PublicBaseURL) + "/v1/oidc-connections/" + id.String() + "/callback"
 }
@@ -75,33 +75,33 @@ func connectionID(r *http.Request) (uuid.UUID, error) {
 	return id, nil
 }
 
-func (h *Handler) recordAudit(ctx context.Context, tx pgx.Tx, r *http.Request, tenantID, resourceID uuid.UUID, action string, meta map[string]any) error {
+func (h *Handler) recordAudit(ctx context.Context, tx pgx.Tx, r *http.Request, organizationID, resourceID uuid.UUID, action string, meta map[string]any) error {
 	actorID, actorType := audit.ActorOf(r).Identity()
-	tid := tenantID
+	tid := organizationID
 	rid := resourceID
 	return audit.Record(ctx, tx, audit.Event{
-		TenantID:     &tid,
-		ActorUserID:  actorID,
-		ActorType:    actorType,
-		Action:       action,
-		ResourceType: "oidc_connection",
-		ResourceID:   &rid,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
-		Metadata:     meta,
+		OrganizationID: &tid,
+		ActorUserID:    actorID,
+		ActorType:      actorType,
+		Action:         action,
+		ResourceType:   "oidc_connection",
+		ResourceID:     &rid,
+		IP:             httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
+		RequestID:      httpx.RequestID(r),
+		Metadata:       meta,
 	})
 }
 
 // --- administration ---
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out, err := h.Service.List(r.Context(), tenantID)
+	out, err := h.Service.List(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -113,7 +113,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -128,7 +128,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	if err := h.Service.RequireSSO(ctx, tenantID); err != nil {
+	if err := h.Service.RequireSSO(ctx, organizationID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -138,13 +138,13 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	conn, err := h.Service.Create(ctx, tx, tenantID, in)
+	conn, err := h.Service.Create(ctx, tx, organizationID, in)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	meta := map[string]any{"name": conn.Name, "issuer": conn.Issuer, "status": conn.Status}
-	if err := h.recordAudit(ctx, tx, r, tenantID, conn.ID, "oidc_connection.created", meta); err != nil {
+	if err := h.recordAudit(ctx, tx, r, organizationID, conn.ID, "oidc_connection.created", meta); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -156,7 +156,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -166,7 +166,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	conn, err := h.Service.Get(r.Context(), id, tenantID)
+	conn, err := h.Service.Get(r.Context(), id, organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -175,7 +175,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -193,13 +193,13 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	// A connection signs its linked accounts in on what it trusts, so changing
 	// that acts on each of them.
-	current, err := h.Service.Get(ctx, id, tenantID)
+	current, err := h.Service.Get(ctx, id, organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	if in.ChangesTrust(current) {
-		if err := identitylink.CheckTrustChange(ctx, h.Service.Pool(), httpx.PrincipalFromCtx(ctx), h.ActOnCheck, tenantID, id, ""); err != nil {
+		if err := identitylink.CheckTrustChange(ctx, h.Service.Pool(), httpx.PrincipalFromCtx(ctx), h.ActOnCheck, organizationID, id, ""); err != nil {
 			httpx.WriteError(w, r, err)
 			return
 		}
@@ -210,13 +210,13 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	conn, err := h.Service.Update(ctx, tx, id, tenantID, in)
+	conn, err := h.Service.Update(ctx, tx, id, organizationID, in)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	meta := map[string]any{"fields": in.changed(), "status": conn.Status}
-	if err := h.recordAudit(ctx, tx, r, tenantID, conn.ID, "oidc_connection.updated", meta); err != nil {
+	if err := h.recordAudit(ctx, tx, r, organizationID, conn.ID, "oidc_connection.updated", meta); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -228,7 +228,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -245,11 +245,11 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	if err := h.Service.Delete(ctx, tx, id, tenantID); err != nil {
+	if err := h.Service.Delete(ctx, tx, id, organizationID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.recordAudit(ctx, tx, r, tenantID, id, "oidc_connection.deleted", nil); err != nil {
+	if err := h.recordAudit(ctx, tx, r, organizationID, id, "oidc_connection.deleted", nil); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -307,7 +307,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		h.binding().Remove(w, r, state)
 	}
 	if err != nil && returnTo != "" && h.Service.loginBaseURL != "" {
-		// Recorded for the organisation; the hosted login says only that it didn't work.
+		// Recorded for the organization; the hosted login says only that it didn't work.
 		http.Redirect(w, r, returnto.Failed(h.Service.loginBaseURL, returnTo, err), http.StatusFound)
 		return
 	}
@@ -334,12 +334,12 @@ func (h *Handler) session(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	userID, tenantID, err := h.Service.consumeLoginCode(r.Context(), body.Code)
+	userID, organizationID, err := h.Service.consumeLoginCode(r.Context(), body.Code)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	raw, err := h.Service.auth.BeginSSOLoginSession(r.Context(), userID, tenantID, provider, httpx.ClientIP(r), r.UserAgent())
+	raw, err := h.Service.auth.BeginSSOLoginSession(r.Context(), userID, organizationID, provider, httpx.ClientIP(r), r.UserAgent())
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

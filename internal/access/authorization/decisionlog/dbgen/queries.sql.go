@@ -18,7 +18,7 @@ const listDecisions = `-- name: ListDecisions :many
 SELECT id, decided_at, source, caller_type, caller_id, caller_client, subject, resource, action,
        allowed, model, rule, reason_code
 FROM auth.authz_decisions
-WHERE tenant_id = $1
+WHERE organization_id = $1
   AND ($2::text IS NULL OR subject = $2)
   AND ($3::text IS NULL OR source = $3)
   AND ($4::boolean IS NULL OR allowed = $4)
@@ -29,14 +29,14 @@ LIMIT $8
 `
 
 type ListDecisionsParams struct {
-	TenantID uuid.UUID
-	Subject  *string
-	Source   *string
-	Allowed  *bool
-	Since    time.Time
-	BeforeTs time.Time
-	BeforeID uuid.UUID
-	RowLimit int32
+	OrganizationID uuid.UUID
+	Subject        *string
+	Source         *string
+	Allowed        *bool
+	Since          time.Time
+	BeforeTs       time.Time
+	BeforeID       uuid.UUID
+	RowLimit       int32
 }
 
 type ListDecisionsRow struct {
@@ -57,11 +57,11 @@ type ListDecisionsRow struct {
 
 // Queries for the decision-log domain. Batches are written by insertDecisions
 // (decisionlog.go): sqlc cannot type an unnest of many arrays.
-// ListDecisions returns a page of the tenant's decisions, newest first,
+// ListDecisions returns a page of the organization's decisions, newest first,
 // before the cursor, of the subject, source and answer when given.
 func (q *Queries) ListDecisions(ctx context.Context, arg ListDecisionsParams) ([]ListDecisionsRow, error) {
 	rows, err := q.db.Query(ctx, listDecisions,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Subject,
 		arg.Source,
 		arg.Allowed,

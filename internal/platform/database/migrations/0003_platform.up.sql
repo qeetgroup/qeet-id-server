@@ -1,4 +1,4 @@
--- 0003_platform — what the platform itself keeps, for no one organisation:
+-- 0003_platform — what the platform itself keeps, for no one organization:
 -- signing keys, jobs, the outbox, billing plans, audit checkpoints.
 --
 -- Each table is headed by the package that owns it. A column marked (0010) is a
@@ -6,7 +6,7 @@
 
 -- internal/operations/audit
 CREATE TABLE platform.audit_chain_checkpoints (
-    tenant_id        UUID, -- tenant.tenants (0010)
+    organization_id  UUID, -- organization.organizations (0010)
     event_id         UUID PRIMARY KEY,
     event_created_at TIMESTAMPTZ NOT NULL,
     row_hash         CHAR(64) NOT NULL,
@@ -15,12 +15,12 @@ CREATE TABLE platform.audit_chain_checkpoints (
     chain_shard      SMALLINT NOT NULL DEFAULT 0,
     key_id           TEXT,
     mac              BYTEA,
-    CONSTRAINT audit_chain_checkpoints_tenant_id_chain_shard_key UNIQUE NULLS NOT DISTINCT (tenant_id, chain_shard)
+    CONSTRAINT audit_chain_checkpoints_organization_id_chain_shard_key UNIQUE NULLS NOT DISTINCT (organization_id, chain_shard)
 );
 
 -- internal/operations/audit
 CREATE TABLE platform.audit_purge_checkpoints (
-    tenant_id        UUID PRIMARY KEY, -- tenant.tenants (0010)
+    organization_id  UUID PRIMARY KEY, -- organization.organizations (0010)
     event_id         UUID NOT NULL,
     event_created_at TIMESTAMPTZ NOT NULL,
     row_hash         CHAR(64) NOT NULL,
@@ -32,17 +32,17 @@ CREATE TABLE platform.audit_purge_checkpoints (
 
 -- internal/operations/audit
 CREATE TABLE platform.audit_verification_runs (
-    id                UUID PRIMARY KEY,
-    started_at        TIMESTAMPTZ NOT NULL,
-    finished_at       TIMESTAMPTZ NOT NULL,
-    scope             TEXT NOT NULL DEFAULT 'all',
-    tenants_walked    INTEGER NOT NULL,
-    rows_checked      BIGINT NOT NULL,
-    outcome           TEXT NOT NULL,
-    broken_tenant_id  UUID,
-    first_broken_link UUID,
-    broken_reason     TEXT,
-    error             TEXT,
+    id                     UUID PRIMARY KEY,
+    started_at             TIMESTAMPTZ NOT NULL,
+    finished_at            TIMESTAMPTZ NOT NULL,
+    scope                  TEXT NOT NULL DEFAULT 'all',
+    organizations_walked   INTEGER NOT NULL,
+    rows_checked           BIGINT NOT NULL,
+    outcome                TEXT NOT NULL,
+    broken_organization_id UUID,
+    first_broken_link      UUID,
+    broken_reason          TEXT,
+    error                  TEXT,
     CONSTRAINT audit_verification_runs_outcome_check CHECK (outcome IN ('intact', 'broken', 'error'))
 );
 CREATE INDEX audit_verification_runs_started_idx ON platform.audit_verification_runs (started_at DESC);
@@ -74,7 +74,7 @@ CREATE TABLE platform.billing_plan_prices (
 -- internal/platform/messaging/delivery
 CREATE TABLE platform.email_messages (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id           UUID, -- tenant.tenants (0010)
+    organization_id     UUID, -- organization.organizations (0010)
     to_hash             TEXT NOT NULL,
     to_hint             TEXT NOT NULL,
     template            TEXT NOT NULL DEFAULT '',
@@ -90,25 +90,25 @@ CREATE TABLE platform.email_messages (
 CREATE UNIQUE INDEX email_messages_provider_id_idx ON platform.email_messages (provider, provider_message_id)
     WHERE provider_message_id IS NOT NULL;
 CREATE INDEX email_messages_sent_at_idx ON platform.email_messages (sent_at);
-CREATE INDEX email_messages_tenant_to_idx ON platform.email_messages (tenant_id, to_hash, sent_at DESC);
+CREATE INDEX email_messages_organization_to_idx ON platform.email_messages (organization_id, to_hash, sent_at DESC);
 
 -- internal/platform/messaging/delivery
 CREATE TABLE platform.email_suppressions (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id    UUID, -- tenant.tenants (0010)
-    address_hash TEXT NOT NULL,
-    address_hint TEXT NOT NULL,
-    reason       TEXT NOT NULL,
-    detail       TEXT NOT NULL DEFAULT '',
-    message_id   UUID REFERENCES platform.email_messages (id) ON DELETE SET NULL,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    cleared_at   TIMESTAMPTZ,
-    cleared_by   UUID,
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID, -- organization.organizations (0010)
+    address_hash    TEXT NOT NULL,
+    address_hint    TEXT NOT NULL,
+    reason          TEXT NOT NULL,
+    detail          TEXT NOT NULL DEFAULT '',
+    message_id      UUID REFERENCES platform.email_messages (id) ON DELETE SET NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    cleared_at      TIMESTAMPTZ,
+    cleared_by      UUID,
     CONSTRAINT email_suppressions_reason_check CHECK (reason IN ('bounce', 'complaint'))
 );
 CREATE UNIQUE INDEX email_suppressions_active_idx ON platform.email_suppressions (address_hash)
     WHERE cleared_at IS NULL;
-CREATE INDEX email_suppressions_tenant_idx ON platform.email_suppressions (tenant_id, created_at DESC);
+CREATE INDEX email_suppressions_organization_idx ON platform.email_suppressions (organization_id, created_at DESC);
 
 -- internal/platform/http/idempotency
 CREATE TABLE platform.idempotency_keys (
@@ -207,13 +207,13 @@ CREATE INDEX idx_outbox_dlq_dead_lettered_at ON platform.outbox_dead_letter (dea
 
 -- internal/operations/ratelimits
 CREATE TABLE platform.rate_limit_overrides (
-    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id  UUID NOT NULL, -- tenant.tenants (0010)
-    limit_key  TEXT NOT NULL,
-    rate       DOUBLE PRECISION NOT NULL,
-    capacity   INTEGER NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (tenant_id, limit_key),
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID NOT NULL, -- organization.organizations (0010)
+    limit_key       TEXT NOT NULL,
+    rate            DOUBLE PRECISION NOT NULL,
+    capacity        INTEGER NOT NULL,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (organization_id, limit_key),
     CONSTRAINT rate_limit_overrides_capacity_check CHECK (capacity > 0),
     CONSTRAINT rate_limit_overrides_limit_key_check CHECK (limit_key IN ('tenant', 'user', 'api_key')),
     CONSTRAINT rate_limit_overrides_rate_check CHECK (rate > (0)::double precision)
@@ -221,20 +221,20 @@ CREATE TABLE platform.rate_limit_overrides (
 
 -- internal/operations/sales
 CREATE TABLE platform.sales_leads (
-    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id  UUID, -- tenant.tenants (0010)
-    user_id    UUID,
-    name       TEXT NOT NULL DEFAULT '',
-    email      TEXT NOT NULL,
-    company    TEXT NOT NULL DEFAULT '',
-    team_size  TEXT NOT NULL DEFAULT '',
-    message    TEXT NOT NULL DEFAULT '',
-    source     TEXT NOT NULL DEFAULT '',
-    status     TEXT NOT NULL DEFAULT 'new',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID, -- organization.organizations (0010)
+    user_id         UUID,
+    name            TEXT NOT NULL DEFAULT '',
+    email           TEXT NOT NULL,
+    company         TEXT NOT NULL DEFAULT '',
+    team_size       TEXT NOT NULL DEFAULT '',
+    message         TEXT NOT NULL DEFAULT '',
+    source          TEXT NOT NULL DEFAULT '',
+    status          TEXT NOT NULL DEFAULT 'new',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX idx_sales_leads_created ON platform.sales_leads (created_at DESC);
-CREATE INDEX sales_leads_tenant_id_idx ON platform.sales_leads (tenant_id);
+CREATE INDEX sales_leads_organization_id_idx ON platform.sales_leads (organization_id);
 
 -- internal/platform/worker
 CREATE TABLE platform.scheduled_job_runs (
@@ -246,10 +246,10 @@ CREATE TABLE platform.scheduled_job_runs (
 );
 
 -- internal/operations/gdpr
--- The record of a purged organisation, kept after it is gone: tenant_id has
+-- The record of a purged organization, kept after it is gone: organization_id has
 -- no foreign key.
-CREATE TABLE platform.tenant_purges (
-    tenant_id         UUID PRIMARY KEY,
+CREATE TABLE platform.organization_purges (
+    organization_id   UUID PRIMARY KEY,
     slug              TEXT NOT NULL,
     deleted_at        TIMESTAMPTZ NOT NULL,
     purged_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),

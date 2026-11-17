@@ -9,7 +9,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/gdpr"
 )
 
-// controlOwnerPlans are, for each organisation that tracks a framework, which
+// controlOwnerPlans are, for each organization that tracks a framework, which
 // part of it answers for each control: security, access (who grants roles),
 // engineering (who runs the platform) or audit.
 var controlOwnerPlans = map[string]map[string]string{
@@ -31,7 +31,7 @@ var controlOwnerPlans = map[string]map[string]string{
 }
 
 // controlOwners names who answers for each control, the week the
-// organisation started tracking its framework, through the evidence service.
+// organization started tracking its framework, through the evidence service.
 func controlOwners(w *world.World) {
 	for _, slug := range slices.Sorted(maps.Keys(controlOwnerPlans)) {
 		plan := controlOwnerPlans[slug]
@@ -77,14 +77,14 @@ func controlOwner(o *world.Org, t time.Time, area string) *world.Person {
 	return first(o, t, withRole(world.RoleAdmin))
 }
 
-// externalAudit is an audit report or certificate an organisation recorded.
+// externalAudit is an audit report or certificate an organization recorded.
 type externalAudit struct {
 	slug, framework, kind, body, scope, reference string
 	issued                                        string
 	expires                                       string // "" for none
 }
 
-// externalAudits are the organisations' external audits. The firms are
+// externalAudits are the organizations' external audits. The firms are
 // invented; their names belong to no real auditor or certification body.
 var externalAudits = []externalAudit{
 	{"qeet", "iso27001", "certificate", "Indus Certification Services Pvt. Ltd.",
@@ -99,7 +99,7 @@ var externalAudits = []externalAudit{
 		"SOC 2 Type II, security, availability and confidentiality, 1 January to 30 June 2026: the staff portal and clinical integrations.", "MH-2026-0630", "2026-08-28", "2027-08-27"},
 }
 
-// recordAudits records each organisation's external audits, the week after
+// recordAudits records each organization's external audits, the week after
 // each was issued, as its security or GRC lead.
 func recordAudits(w *world.World) {
 	for _, a := range externalAudits {
@@ -125,7 +125,7 @@ func recordAudits(w *world.World) {
 	}
 }
 
-// incident is a service incident the operator posted for every organisation.
+// incident is a service incident the operator posted for every organization.
 type incident struct {
 	component, impact, title, detail string
 	ago                              float64 // days since it started

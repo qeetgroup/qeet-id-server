@@ -88,10 +88,10 @@ func (l Lockout) noLooserThan(base Lockout) Lockout {
 	return Lockout{Threshold: min(l.Threshold, base.Threshold), Window: max(l.Window, base.Window), Duration: max(l.Duration, base.Duration)}
 }
 
-// LockoutSource returns the lockout a tenant applies (uuid.Nil: no tenant —
+// LockoutSource returns the lockout an organization applies (uuid.Nil: no organization —
 // the platform defaults). Satisfied in bootstrap by the auth-policy service;
 // a func so auth doesn't import authpolicy.
-type LockoutSource func(ctx context.Context, tenantID uuid.UUID) (Lockout, error)
+type LockoutSource func(ctx context.Context, organizationID uuid.UUID) (Lockout, error)
 
 // LockoutConfig is the platform-wide part of the sign-in protections (env).
 type LockoutConfig struct {
@@ -125,7 +125,7 @@ func DefaultLockoutConfig() LockoutConfig {
 // LOGIN_LOCKOUT_* and LOGIN_SPRAY_*).
 func (s *Service) SetLockoutConfig(c LockoutConfig) { s.lockout = c }
 
-// SetLockoutSource wires the per-tenant lockout settings.
+// SetLockoutSource wires the per-organization lockout settings.
 func (s *Service) SetLockoutSource(f LockoutSource) { s.lockoutSource = f }
 
 // AccountLock describes a lock at the moment it is set, for security monitoring.
@@ -157,19 +157,19 @@ type signInAttempt struct {
 	now     time.Time
 }
 
-// SignInTenant returns the tenant whose authentication policy governs a sign-in
-// before the credential is verified: the hosted login's OAuth client's tenant,
-// or uuid.Nil for the platform defaults. It never uses the account's own tenant,
+// SignInOrganization returns the organization whose authentication policy governs a sign-in
+// before the credential is verified: the hosted login's OAuth client's organization,
+// or uuid.Nil for the platform defaults. It never uses the account's own organization,
 // which would reveal whether the address has an account.
-func (s *Service) SignInTenant(ctx context.Context, clientID string) (uuid.UUID, error) {
+func (s *Service) SignInOrganization(ctx context.Context, clientID string) (uuid.UUID, error) {
 	if clientID == "" {
 		return uuid.Nil, nil
 	}
-	tenantID, err := s.q.GetClientTenant(ctx, clientID)
+	organizationID, err := s.q.GetClientOrganization(ctx, clientID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, nil
 	}
-	return tenantID, err
+	return organizationID, err
 }
 
 // newSignInAttempt resolves the lockout an attempt is held to.
@@ -179,18 +179,18 @@ func (s *Service) newSignInAttempt(ctx context.Context, in SignInAttempt) (signI
 	}
 	lctx, cancel := lockoutContext(ctx)
 	defer cancel()
-	tenantID, err := s.SignInTenant(lctx, in.ClientID)
+	organizationID, err := s.SignInOrganization(lctx, in.ClientID)
 	if err != nil {
 		return signInAttempt{}, lockoutFailed(stageSettings, err)
 	}
-	return s.signInAttemptIn(ctx, tenantID, in.Email, in.IP)
+	return s.signInAttemptIn(ctx, organizationID, in.Email, in.IP)
 }
 
 // signInAttemptIn is an attempt to sign in as account from ip, held to
-// tenantID's lockout (uuid.Nil: the platform defaults). A sign-in may name any
-// organisation's application, so its lockout can tighten the platform's but
+// organizationID's lockout (uuid.Nil: the platform defaults). A sign-in may name any
+// organization's application, so its lockout can tighten the platform's but
 // never loosen it for someone else's account.
-func (s *Service) signInAttemptIn(ctx context.Context, tenantID uuid.UUID, account, ip string) (signInAttempt, error) {
+func (s *Service) signInAttemptIn(ctx context.Context, organizationID uuid.UUID, account, ip string) (signInAttempt, error) {
 	a := signInAttempt{
 		network: httpx.SourceNetwork(ip),
 		lockout: s.lockout.Defaults,
@@ -209,7 +209,7 @@ func (s *Service) signInAttemptIn(ctx context.Context, tenantID uuid.UUID, accou
 		return a, nil
 	}
 	var err error
-	if a.lockout, err = s.lockoutSource(ctx, tenantID); err != nil {
+	if a.lockout, err = s.lockoutSource(ctx, organizationID); err != nil {
 		return a, lockoutFailed(stageSettings, err)
 	}
 	a.lockout = a.lockout.noLooserThan(s.lockout.Defaults)
@@ -321,7 +321,7 @@ func (s *Service) countFailure(ctx context.Context, a signInAttempt) ([]AccountL
 			Window: a.lockout.Window, LockedUntil: lockUntil,
 		})
 	}
-	// The lock on every network is the platform's alone: an organisation's
+	// The lock on every network is the platform's alone: an organization's
 	// stricter settings would let its application lock anyone out everywhere.
 	platform := s.lockout.Defaults
 	accountCap := platform.Threshold * max(s.lockout.AccountMultiplier, 1)

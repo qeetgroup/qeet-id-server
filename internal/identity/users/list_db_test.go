@@ -15,12 +15,12 @@ import (
 // TestTheMembersListIsSearchedAndCountedOnTheServer checks that each of the
 // members list's filters narrows it, that they combine, that the total is how
 // many match, that the summary's counts agree with the list, that a
-// malformed filter is refused, and that another organisation's people never
+// malformed filter is refused, and that another organization's people never
 // appear.
 func TestTheMembersListIsSearchedAndCountedOnTheServer(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
 	exec := func(q string, args ...any) {
 		t.Helper()
 		if _, err := pool.Exec(ctx, q, args...); err != nil {
@@ -28,26 +28,26 @@ func TestTheMembersListIsSearchedAndCountedOnTheServer(t *testing.T) {
 		}
 	}
 	var admin uuid.UUID
-	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name, is_system) VALUES ($1, 'admin', TRUE) RETURNING id`, tenant).Scan(&admin); err != nil {
+	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (organization_id, name, is_system) VALUES ($1, 'admin', TRUE) RETURNING id`, organization).Scan(&admin); err != nil {
 		t.Fatal(err)
 	}
-	alice := dbtest.UserAt(t, dbtest.Unique("alice")+"@example.test", tenant)
-	dbtest.Assign(t, alice.ID, tenant, admin)
+	alice := dbtest.UserAt(t, dbtest.Unique("alice")+"@example.test", organization)
+	dbtest.Assign(t, alice.ID, organization, admin)
 	exec(`UPDATE account.users SET display_name = 'Alice Arden', email_verified_at = NOW(), metadata = '{"department":"Sales"}' WHERE id = $1`, alice.ID)
-	exec(`INSERT INTO auth.sessions (user_id, tenant_id, last_seen_at) VALUES ($1, $2, NOW())`, alice.ID, tenant)
+	exec(`INSERT INTO auth.sessions (user_id, organization_id, last_seen_at) VALUES ($1, $2, NOW())`, alice.ID, organization)
 
-	bob := dbtest.UserAt(t, dbtest.Unique("bob")+"@example.test", tenant, tenant)
+	bob := dbtest.UserAt(t, dbtest.Unique("bob")+"@example.test", organization, organization)
 	exec(`UPDATE account.users SET display_name = 'Bob Brook', metadata = '{"department":"Engineering"}' WHERE id = $1`, bob.ID)
 	exec(`INSERT INTO auth.mfa_totp (user_id, secret_ct, secret_nonce, confirmed_at) VALUES ($1, '\x00', '\x00', NOW())`, bob.ID)
 
-	carol := dbtest.UserAt(t, dbtest.Unique("carol")+"@example.test", tenant, tenant)
+	carol := dbtest.UserAt(t, dbtest.Unique("carol")+"@example.test", organization, organization)
 	exec(`UPDATE account.users SET display_name = 'Carol Cole', email_verified_at = NOW(), status = 'suspended' WHERE id = $1`, carol.ID)
-	exec(`INSERT INTO auth.sessions (user_id, tenant_id, last_seen_at) VALUES ($1, $2, NOW() - INTERVAL '3 days')`, carol.ID, tenant)
+	exec(`INSERT INTO auth.sessions (user_id, organization_id, last_seen_at) VALUES ($1, $2, NOW() - INTERVAL '3 days')`, carol.ID, organization)
 
-	visitor := dbtest.User(t, other, tenant) // managed by another organisation
+	visitor := dbtest.User(t, other, organization) // managed by another organization
 	stranger := dbtest.User(t, other, other)
 
-	h := dbtest.Serve(dbtest.Principal(alice.ID, tenant), (&Handler{Repo: NewRepository(pool), Validate: jsonNamedValidator()}).Mount)
+	h := dbtest.Serve(dbtest.Principal(alice.ID, organization), (&Handler{Repo: NewRepository(pool), Validate: jsonNamedValidator()}).Mount)
 	type page struct {
 		Items []User `json:"items"`
 		Total int    `json:"total"`
@@ -149,35 +149,35 @@ func TestTheMembersListIsSearchedAndCountedOnTheServer(t *testing.T) {
 }
 
 // TestAMembersRecordSaysWhereTheyStand checks that a member's own record has
-// their roles with IDs, second factor, last sight, the organisation managing
-// them and, for the organisation's own suspended people, the suspension.
+// their roles with IDs, second factor, last sight, the organization managing
+// them and, for the organization's own suspended people, the suspension.
 func TestAMembersRecordSaysWhereTheyStand(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	visitor := dbtest.User(t, other, tenant)
-	suspended := dbtest.User(t, tenant, tenant)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	visitor := dbtest.User(t, other, organization)
+	suspended := dbtest.User(t, organization, organization)
 	if _, err := pool.Exec(ctx, `UPDATE account.users SET status = 'suspended' WHERE id = $1`, suspended.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO audit.events (tenant_id, actor_user_id, actor_type, action, resource_type, resource_id)
-		VALUES ($1, $2, 'user', 'user.suspended', 'user', $3)`, tenant, admin.ID, suspended.ID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO audit.events (organization_id, actor_user_id, actor_type, action, resource_type, resource_id)
+		VALUES ($1, $2, 'user', 'user.suspended', 'user', $3)`, organization, admin.ID, suspended.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO auth.sessions (user_id, tenant_id, last_seen_at, ip) VALUES ($1, $2, NOW(), '198.51.100.4')`, visitor.ID, tenant); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO auth.sessions (user_id, organization_id, last_seen_at, ip) VALUES ($1, $2, NOW(), '198.51.100.4')`, visitor.ID, organization); err != nil {
 		t.Fatal(err)
 	}
-	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Repo: NewRepository(pool), Validate: jsonNamedValidator()}).Mount)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Repo: NewRepository(pool), Validate: jsonNamedValidator()}).Mount)
 
 	var got User
 	dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, "/users/"+visitor.ID.String(), nil), &got)
 	var otherName string
-	if err := pool.QueryRow(ctx, `SELECT name FROM tenant.tenants WHERE id = $1`, other).Scan(&otherName); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT name FROM organization.organizations WHERE id = $1`, other).Scan(&otherName); err != nil {
 		t.Fatal(err)
 	}
 	if len(got.AssignedRoles) != 1 || got.AssignedRoles[0].ID == uuid.Nil || len(got.Roles) != 1 || got.MfaEnabled == nil || *got.MfaEnabled ||
-		got.LastSeenAt == nil || got.LastSeenIP == nil || *got.LastSeenIP != "198.51.100.4" || got.HomeTenantName == nil || *got.HomeTenantName != otherName {
+		got.LastSeenAt == nil || got.LastSeenIP == nil || *got.LastSeenIP != "198.51.100.4" || got.HomeOrganizationName == nil || *got.HomeOrganizationName != otherName {
 		t.Errorf("a visiting member's record: %+v", got)
 	}
 	if got.Suspension != nil {

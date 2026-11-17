@@ -54,7 +54,7 @@ func registerClientWith(t *testing.T, svc *Service, in CreateClientInput) (*Clie
 	return client, secret
 }
 
-func registerResources(t *testing.T, svc *Service, tenant uuid.UUID, identifiers ...string) {
+func registerResources(t *testing.T, svc *Service, organization uuid.UUID, identifiers ...string) {
 	t.Helper()
 	ctx := dbtest.Context(t)
 	tx, err := dbtest.Pool(t).Begin(ctx)
@@ -63,7 +63,7 @@ func registerResources(t *testing.T, svc *Service, tenant uuid.UUID, identifiers
 	}
 	defer tx.Rollback(ctx)
 	for _, id := range identifiers {
-		if _, err := svc.CreateResource(ctx, tx, tenant, CreateResourceInput{Identifier: id, Name: id}); err != nil {
+		if _, err := svc.CreateResource(ctx, tx, organization, CreateResourceInput{Identifier: id, Name: id}); err != nil {
 			t.Fatalf("create resource %s: %v", id, err)
 		}
 	}
@@ -107,10 +107,10 @@ func TestRefreshKeepsTheGrantsResource(t *testing.T) {
 	ctx := dbtest.Context(t)
 	issuer := dbtest.Issuer(t)
 	svc := NewService(dbtest.Pool(t), issuer)
-	tenant := dbtest.Tenant(t)
-	user := dbtest.User(t, tenant, tenant)
-	client, secret := registerClient(t, svc, tenant)
-	registerResources(t, svc, tenant, resourceA, resourceB)
+	organization := dbtest.Organization(t)
+	user := dbtest.User(t, organization, organization)
+	client, secret := registerClient(t, svc, organization)
+	registerResources(t, svc, organization, resourceA, resourceB)
 
 	bound := redeemCode(t, svc, client, secret, user.ID, resourceA)
 	_, err := svc.RefreshToken(ctx, client.ClientID, secret, bound.RefreshToken, resourceB)
@@ -146,7 +146,7 @@ func TestRefreshKeepsTheGrantsResource(t *testing.T) {
 
 	// Once the bound resource is removed, a refresh carrying it forward is
 	// refused like one naming it.
-	if _, err := dbtest.Pool(t).Exec(ctx, `DELETE FROM auth.oidc_resources WHERE tenant_id = $1 AND identifier = $2`, tenant, resourceA); err != nil {
+	if _, err := dbtest.Pool(t).Exec(ctx, `DELETE FROM auth.oidc_resources WHERE organization_id = $1 AND identifier = $2`, organization, resourceA); err != nil {
 		t.Fatal(err)
 	}
 	_, err = svc.RefreshToken(ctx, client.ClientID, secret, repeated.RefreshToken, "")
@@ -161,9 +161,9 @@ func TestRefreshDropsScopesTheClientNoLongerHas(t *testing.T) {
 	ctx := dbtest.Context(t)
 	issuer := dbtest.Issuer(t)
 	svc := NewService(dbtest.Pool(t), issuer)
-	tenant := dbtest.Tenant(t)
-	person := dbtest.User(t, tenant, tenant)
-	client, secret := registerClient(t, svc, tenant)
+	organization := dbtest.Organization(t)
+	person := dbtest.User(t, organization, organization)
+	client, secret := registerClient(t, svc, organization)
 	register := func(scopes ...string) {
 		t.Helper()
 		if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE auth.oidc_clients SET scopes = $2 WHERE client_id = $1`, client.ClientID, scopes); err != nil {
@@ -218,8 +218,8 @@ func TestRefreshDropsScopesTheClientNoLongerHas(t *testing.T) {
 func TestDevicePollingAuthenticatesConfidentialClients(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
-	tenant := dbtest.Tenant(t)
-	user := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	user := dbtest.User(t, organization, organization)
 	grants := []string{"urn:ietf:params:oauth:grant-type:device_code"}
 
 	approved := func(clientID string) string {
@@ -234,7 +234,7 @@ func TestDevicePollingAuthenticatesConfidentialClients(t *testing.T) {
 		return raw
 	}
 
-	confidential, secret := registerClientWith(t, svc, CreateClientInput{TenantID: tenant, GrantTypes: grants})
+	confidential, secret := registerClientWith(t, svc, CreateClientInput{OrganizationID: organization, GrantTypes: grants})
 	deviceCode := approved(confidential.ClientID)
 	for name, presented := range map[string]string{"no secret": "", "a wrong secret": "wrong-secret"} {
 		if _, err := svc.DeviceToken(ctx, confidential.ClientID, presented, deviceCode, deviceIP); !errors.Is(err, errs.ErrOIDCClientAuthFailed) {
@@ -245,7 +245,7 @@ func TestDevicePollingAuthenticatesConfidentialClients(t *testing.T) {
 		t.Fatalf("confidential client polling with its secret: %+v, %v", issued, err)
 	}
 
-	public, _ := registerClientWith(t, svc, CreateClientInput{TenantID: tenant, Type: "public", GrantTypes: grants})
+	public, _ := registerClientWith(t, svc, CreateClientInput{OrganizationID: organization, Type: "public", GrantTypes: grants})
 	if issued, err := svc.DeviceToken(ctx, public.ClientID, "", approved(public.ClientID), deviceIP); err != nil || issued.AccessToken == "" {
 		t.Fatalf("public client polling: %+v, %v", issued, err)
 	}
@@ -256,9 +256,9 @@ func TestDevicePollingAuthenticatesConfidentialClients(t *testing.T) {
 func TestBackchannelPollingAuthenticatesTheClient(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
-	tenant := dbtest.Tenant(t)
-	user := dbtest.User(t, tenant, tenant)
-	client, secret := registerClientWith(t, svc, CreateClientInput{TenantID: tenant, GrantTypes: []string{grantTypeCIBA}})
+	organization := dbtest.Organization(t)
+	user := dbtest.User(t, organization, organization)
+	client, secret := registerClientWith(t, svc, CreateClientInput{OrganizationID: organization, GrantTypes: []string{grantTypeCIBA}})
 
 	started, err := svc.BackchannelAuthorize(ctx, client.ClientID, secret, user.Email, "openid", "")
 	if err != nil {
@@ -289,11 +289,11 @@ func TestGrantsRunOnTheirTransaction(t *testing.T) {
 	pool := dbtest.Pool(t)
 	dbtest.LeaveOneConnection(t)
 	svc := NewService(pool, dbtest.Issuer(t))
-	tenant := dbtest.Tenant(t)
-	user := dbtest.User(t, tenant, tenant)
-	server, _ := registerClient(t, svc, tenant)
+	organization := dbtest.Organization(t)
+	user := dbtest.User(t, organization, organization)
+	server, _ := registerClient(t, svc, organization)
 	client, secret := registerClientWith(t, svc, CreateClientInput{
-		TenantID: tenant, GrantTypes: []string{"authorization_code", "refresh_token", grantTypeDeviceCode},
+		OrganizationID: organization, GrantTypes: []string{"authorization_code", "refresh_token", grantTypeDeviceCode},
 	})
 
 	tx, err := pool.Begin(ctx)
@@ -301,7 +301,7 @@ func TestGrantsRunOnTheirTransaction(t *testing.T) {
 		t.Fatalf("begin: %v", err)
 	}
 	defer tx.Rollback(ctx)
-	if _, err := svc.CreateResource(ctx, tx, tenant, CreateResourceInput{Identifier: resourceA, Name: "A", ServerClientID: server.ClientID}); err != nil {
+	if _, err := svc.CreateResource(ctx, tx, organization, CreateResourceInput{Identifier: resourceA, Name: "A", ServerClientID: server.ClientID}); err != nil {
 		t.Fatalf("create resource: %v", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -339,9 +339,9 @@ func postToken(t *testing.T, h http.Handler, form url.Values, user, pass string)
 // answers to refused client authentication and grants.
 func TestTokenEndpointAnswersGrantErrorsInOAuthShape(t *testing.T) {
 	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
-	tenant := dbtest.Tenant(t)
-	user := dbtest.User(t, tenant, tenant)
-	client, secret := registerClient(t, svc, tenant)
+	organization := dbtest.Organization(t)
+	user := dbtest.User(t, organization, organization)
+	client, secret := registerClient(t, svc, organization)
 	issued := redeemCode(t, svc, client, secret, user.ID, "")
 	router := chi.NewRouter()
 	(&Handler{Service: svc}).MountToken(router)
@@ -394,7 +394,7 @@ func TestTokenEndpointAnswersGrantErrorsInOAuthShape(t *testing.T) {
 }
 
 // TestDeviceFlowAddressRulesWithOneConnection checks, with only one connection
-// free, that the organisation's address rules decide device approval and token
+// free, that the organization's address rules decide device approval and token
 // collection: a refusal is recorded, leaves the device pending when approving,
 // and spends the device code when collecting.
 func TestDeviceFlowAddressRulesWithOneConnection(t *testing.T) {
@@ -402,23 +402,23 @@ func TestDeviceFlowAddressRulesWithOneConnection(t *testing.T) {
 	pool := dbtest.Pool(t)
 	svc := NewService(pool, dbtest.Issuer(t))
 	svc.SetAddressPolicy(ipallow.NewService(pool))
-	tenant := dbtest.Tenant(t)
-	user := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	user := dbtest.User(t, organization, organization)
 	if _, err := pool.Exec(ctx, `
-		WITH rule AS (INSERT INTO tenant.ip_rules (tenant_id, cidr, label, action) VALUES ($1, '192.0.2.0/24', 'office', 'allow'))
-		INSERT INTO tenant.ip_rules_config (tenant_id, enabled) VALUES ($1, TRUE)
-	`, tenant); err != nil {
+		WITH rule AS (INSERT INTO organization.ip_rules (organization_id, cidr, label, action) VALUES ($1, '192.0.2.0/24', 'office', 'allow'))
+		INSERT INTO organization.ip_rules_config (organization_id, enabled) VALUES ($1, TRUE)
+	`, organization); err != nil {
 		t.Fatalf("address rules: %v", err)
 	}
-	client, secret := registerClientWith(t, svc, CreateClientInput{TenantID: tenant, GrantTypes: []string{grantTypeDeviceCode}})
+	client, secret := registerClientWith(t, svc, CreateClientInput{OrganizationID: organization, GrantTypes: []string{grantTypeDeviceCode}})
 	deviceCode, userCode, _, err := svc.DeviceAuthorize(ctx, client.ClientID, nil)
 	if err != nil {
 		t.Fatalf("device authorize: %v", err)
 	}
 	const refusedIP = "198.51.100.7"
 	refusals := func(path string) int {
-		return dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'auth.address_refused' AND tenant_id = $1
-			AND metadata->>'path' = $2 AND metadata->>'address' = $3`, tenant, path, refusedIP)
+		return dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'auth.address_refused' AND organization_id = $1
+			AND metadata->>'path' = $2 AND metadata->>'address' = $3`, organization, path, refusedIP)
 	}
 
 	dbtest.LeaveOneConnection(t)
@@ -460,20 +460,20 @@ func TestClientRegistrationPlanCapWithOneConnection(t *testing.T) {
 	pool := dbtest.Pool(t)
 	svc := NewService(pool, dbtest.Issuer(t))
 	svc.SetPlanLimiter(poolLimiter{pool: pool, limit: 2})
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: svc}).Mount)
-	inTenant := "/tenants/" + tenant.String() + "/oidc/clients"
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: svc}).Mount)
+	inOrganization := "/tenants/" + organization.String() + "/oidc/clients"
 	app := map[string]any{"name": "App", "redirect_uris": []string{testRedirect}}
 
 	dbtest.LeaveOneConnection(t)
-	for _, path := range []string{inTenant, "/oidc/clients"} {
+	for _, path := range []string{inOrganization, "/oidc/clients"} {
 		if rec := dbtest.Do(t, h, http.MethodPost, path, app); rec.Code != http.StatusCreated {
 			t.Errorf("POST %s under the cap = %d %s, want 201", path, rec.Code, rec.Body.String())
 		}
 	}
 	invalid := map[string]any{"name": "App", "type": "neither"}
-	for _, path := range []string{inTenant, "/oidc/clients"} {
+	for _, path := range []string{inOrganization, "/oidc/clients"} {
 		for _, body := range []map[string]any{app, invalid} {
 			if rec := dbtest.Do(t, h, http.MethodPost, path, body); rec.Code != http.StatusPaymentRequired {
 				t.Errorf("POST %s %v at the cap = %d %s, want 402", path, body, rec.Code, rec.Body.String())
@@ -484,13 +484,13 @@ func TestClientRegistrationPlanCapWithOneConnection(t *testing.T) {
 
 // TestCodeRedemptionRefusedAfterRemoval checks that an authorization code is
 // re-judged when it is redeemed: once its person has left the application's
-// organisation, or the application no longer has the authorization_code
+// organization, or the application no longer has the authorization_code
 // grant, it buys no token, and it is spent.
 func TestCodeRedemptionRefusedAfterRemoval(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
-	tenant := dbtest.Tenant(t)
-	client, secret := registerClient(t, svc, tenant)
+	organization := dbtest.Organization(t)
+	client, secret := registerClient(t, svc, organization)
 	code := func(userID uuid.UUID) (string, string) {
 		t.Helper()
 		verifier, challenge, err := codes.URLToken()
@@ -504,19 +504,19 @@ func TestCodeRedemptionRefusedAfterRemoval(t *testing.T) {
 		return c, verifier
 	}
 
-	leaver := dbtest.User(t, dbtest.Tenant(t), tenant)
+	leaver := dbtest.User(t, dbtest.Organization(t), organization)
 	c, verifier := code(leaver.ID)
-	if _, err := dbtest.Pool(t).Exec(ctx, `DELETE FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2`, leaver.ID, tenant); err != nil {
+	if _, err := dbtest.Pool(t).Exec(ctx, `DELETE FROM rbac.user_roles WHERE user_id = $1 AND organization_id = $2`, leaver.ID, organization); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, c, testRedirect, verifier, ""); !errors.Is(err, errs.ErrOIDCUserTenantMismatch) {
-		t.Errorf("redeem the code of someone removed since: %v, want %v", err, errs.ErrOIDCUserTenantMismatch)
+	if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, c, testRedirect, verifier, ""); !errors.Is(err, errs.ErrOIDCUserOrganizationMismatch) {
+		t.Errorf("redeem the code of someone removed since: %v, want %v", err, errs.ErrOIDCUserOrganizationMismatch)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM auth.oidc_authorization_codes WHERE code_hash = $1 AND used_at IS NOT NULL`, codes.Hash(c)); n != 1 {
 		t.Error("the refused code was not spent")
 	}
 
-	member := dbtest.User(t, tenant, tenant)
+	member := dbtest.User(t, organization, organization)
 	c, verifier = code(member.ID)
 	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE auth.oidc_clients SET grant_types = '{refresh_token}' WHERE client_id = $1`, client.ClientID); err != nil {
 		t.Fatal(err)

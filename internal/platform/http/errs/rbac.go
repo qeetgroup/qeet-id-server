@@ -17,7 +17,7 @@ const (
 )
 
 // RBAC errors. ErrRBACUserOrRoleNotFound gives the same answer for missing and
-// other-tenant IDs, ErrRBACGrantExceedsCaller and ErrRBACTargetOutranks name
+// other-organization IDs, ErrRBACGrantExceedsCaller and ErrRBACTargetOutranks name
 // the permission in their metadata, and ErrRBACRoleInUse counts the holders.
 var (
 	ErrRBACRoleNameExists      = New(CodeRBACRoleNameExists, "A role with that name already exists.")

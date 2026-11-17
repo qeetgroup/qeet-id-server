@@ -27,7 +27,7 @@ type hookChange struct {
 	enabled, failOpen bool
 }
 
-// hookSpecs are each organisation's post-login hooks, on hosts that do not
+// hookSpecs are each organization's post-login hooks, on hosts that do not
 // resolve.
 var hookSpecs = map[string][]hookSpec{
 	"qeet": {
@@ -51,7 +51,7 @@ var hookSpecs = map[string][]hookSpec{
 	},
 }
 
-// authHooks creates the organisation's post-login hooks through the auth
+// authHooks creates the organization's post-login hooks through the auth
 // hook service, then changes them as their story goes.
 func (d *dev) authHooks(o *world.Org) {
 	w := d.w
@@ -89,8 +89,8 @@ type sinkSpec struct {
 	disabled      float64 // days ago; 0 still streaming
 }
 
-// sinkSpecs are each organisation's log streams. No endpoint is a vendor's
-// own intake host: each goes through a relay on the organisation's domain,
+// sinkSpecs are each organization's log streams. No endpoint is a vendor's
+// own intake host: each goes through a relay on the organization's domain,
 // which does not resolve.
 var sinkSpecs = map[string][]sinkSpec{
 	"qeet": {
@@ -110,7 +110,7 @@ var sinkSpecs = map[string][]sinkSpec{
 	},
 }
 
-// logSinks creates the organisation's log streams through the SIEM service
+// logSinks creates the organization's log streams through the SIEM service
 // and sets how far each has forwarded.
 func (d *dev) logSinks(o *world.Org) {
 	w := d.w
@@ -134,7 +134,7 @@ func (d *dev) logSinks(o *world.Org) {
 		// The cursor is at the story's present, so the API forwards only what
 		// happens from now on, and a seeded error stands until then.
 		w.Exec("log sink progress", `
-			UPDATE tenant.log_sinks SET last_forwarded_at = $3, last_error = $4, cursor_created_at = $5, cursor_id = $6
-			WHERE id = $1 AND tenant_id = $2`, sk.ID, o.ID, w.Days(s.forwarded), s.lastError, w.Now, uuid.Max)
+			UPDATE organization.log_sinks SET last_forwarded_at = $3, last_error = $4, cursor_created_at = $5, cursor_id = $6
+			WHERE id = $1 AND organization_id = $2`, sk.ID, o.ID, w.Days(s.forwarded), s.lastError, w.Now, uuid.Max)
 	}
 }

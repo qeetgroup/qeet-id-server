@@ -141,8 +141,8 @@ func (noFactors) LoginFactors(context.Context, uuid.UUID) ([]auth.LoginFactor, e
 func TestLapsedPlanStopsLDAPSignIn(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	tenant := dbtest.Tenant(t)
-	a := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	a := dbtest.User(t, organization, organization)
 	if _, err := pool.Exec(ctx, `UPDATE account.users SET email_verified_at = NOW() WHERE id = $1`, a.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestLapsedPlanStopsLDAPSignIn(t *testing.T) {
 		binds:   map[string]string{"cn=service,dc=example,dc=test": "service-secret", userDN: "alice-secret"},
 		entries: map[string]dirEntry{"alice": {dn: userDN, attrs: map[string]string{"mail": a.Email, "cn": "Alice"}}},
 	}
-	connID := storedConnection(t, tenant, dir.start(t), "cn=service,dc=example,dc=test")
+	connID := storedConnection(t, organization, dir.start(t), "cn=service,dc=example,dc=test")
 	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
 	authSvc.SetMFA(noFactors{})
 	svc := serviceOver(t, authSvc)
@@ -173,14 +173,14 @@ func TestLapsedPlanStopsLDAPSignIn(t *testing.T) {
 func TestLoginAppliesSignInChecks(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	tenant := dbtest.Tenant(t)
-	a := dbtest.UserAt(t, dbtest.Unique("alice")+"@"+dbtest.Domain(t, tenant), tenant, tenant)
+	organization := dbtest.Organization(t)
+	a := dbtest.UserAt(t, dbtest.Unique("alice")+"@"+dbtest.Domain(t, organization), organization, organization)
 	const userDN = "uid=alice,dc=example,dc=test"
 	dir := &directory{
 		binds:   map[string]string{"cn=service,dc=example,dc=test": "service-secret", userDN: "alice-secret"},
 		entries: map[string]dirEntry{"alice": {dn: userDN, attrs: map[string]string{"mail": a.Email, "cn": "Alice"}}},
 	}
-	connID := storedConnection(t, tenant, dir.start(t), "cn=service,dc=example,dc=test")
+	connID := storedConnection(t, organization, dir.start(t), "cn=service,dc=example,dc=test")
 	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
 	authSvc.SetMFA(noFactors{})
 	svc := serviceOver(t, authSvc)
@@ -192,7 +192,7 @@ func TestLoginAppliesSignInChecks(t *testing.T) {
 		t.Fatalf("verify the address: %v", err)
 	}
 	res, err := svc.Login(ctx, connID, "alice", "alice-secret", "192.0.2.20", "test")
-	if err != nil || res.Pair == nil || res.Pair.UserID != a.ID || res.Pair.TenantID == nil || *res.Pair.TenantID != tenant {
+	if err != nil || res.Pair == nil || res.Pair.UserID != a.ID || res.Pair.OrganizationID == nil || *res.Pair.OrganizationID != organization {
 		t.Fatalf("sign in: %+v, %v", res, err)
 	}
 
@@ -220,27 +220,27 @@ func TestLoginAppliesSignInChecks(t *testing.T) {
 	}
 }
 
-// TestLoginSpeaksOnlyForTheOrganisation checks that a directory sign-in
-// creates or adopts an account only on a domain the organisation has
+// TestLoginSpeaksOnlyForTheOrganization checks that a directory sign-in
+// creates or adopts an account only on a domain the organization has
 // verified, adopts no administrator by address, that a DN linked through one
 // connection signs nobody in through another, and that a draft connection
 // signs nobody in.
-func TestLoginSpeaksOnlyForTheOrganisation(t *testing.T) {
+func TestLoginSpeaksOnlyForTheOrganization(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	tenant := dbtest.Tenant(t)
-	domain := dbtest.Domain(t, tenant)
-	admin := dbtest.UserAt(t, dbtest.Unique("root")+"@"+domain, tenant)
+	organization := dbtest.Organization(t)
+	domain := dbtest.Domain(t, organization)
+	admin := dbtest.UserAt(t, dbtest.Unique("root")+"@"+domain, organization)
 	if _, err := pool.Exec(ctx, `UPDATE account.users SET email_verified_at = NOW() WHERE id = $1`, admin.ID); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.Assign(t, admin.ID, tenant, dbtest.Role(t, tenant, "policy.write"))
+	dbtest.Assign(t, admin.ID, organization, dbtest.Role(t, organization, "policy.write"))
 	newcomer := dbtest.Unique("alice") + "@" + domain
 	const service, aliceDN, bobDN, rootDN = "cn=service,dc=example,dc=test", "uid=alice,dc=example,dc=test", "uid=bob,dc=example,dc=test", "uid=root,dc=example,dc=test"
 	binds := map[string]string{service: "service-secret", aliceDN: "alice-secret", bobDN: "bob-secret", rootDN: "root-secret"}
 	connect := func(entries map[string]dirEntry) uuid.UUID {
 		dir := &directory{binds: binds, entries: entries}
-		id := storedConnection(t, tenant, dir.start(t), service)
+		id := storedConnection(t, organization, dir.start(t), service)
 		return id
 	}
 	conn := connect(map[string]dirEntry{
@@ -256,7 +256,7 @@ func TestLoginSpeaksOnlyForTheOrganisation(t *testing.T) {
 	svc := serviceOver(t, authSvc)
 
 	res, err := svc.Login(ctx, conn, "alice", "alice-secret", "192.0.2.21", "test")
-	if err != nil || res.Pair == nil || dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND tenant_id = $2 AND email = $3`, res.Pair.UserID, tenant, newcomer) != 1 {
+	if err != nil || res.Pair == nil || dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND organization_id = $2 AND email = $3`, res.Pair.UserID, organization, newcomer) != 1 {
 		t.Fatalf("a newcomer on the organisation's domain: %+v, %v; want an account in it", res, err)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE user_id = $1 AND connection_id = $2 AND subject = $3`, res.Pair.UserID, conn, aliceDN); n != 1 {
@@ -280,7 +280,7 @@ func TestLoginSpeaksOnlyForTheOrganisation(t *testing.T) {
 		t.Errorf("the administrator was linked to the directory")
 	}
 
-	if _, err := pool.Exec(ctx, `UPDATE tenant.ldap_connections SET status = 'draft' WHERE id = $1`, conn); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE organization.ldap_connections SET status = 'draft' WHERE id = $1`, conn); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.Login(ctx, conn, "alice", "alice-secret", "192.0.2.21", "test"); !errors.Is(err, errs.ErrLDAPConnectionDraft) {
@@ -289,13 +289,13 @@ func TestLoginSpeaksOnlyForTheOrganisation(t *testing.T) {
 }
 
 // TestLoginAdoptsADirectoryProvisionedAccount checks that an account the
-// organisation's directory provisioned over SCIM, its address never proved,
-// signs in through the organisation's LDAP connection.
+// organization's directory provisioned over SCIM, its address never proved,
+// signs in through the organization's LDAP connection.
 func TestLoginAdoptsADirectoryProvisionedAccount(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	tenant := dbtest.Tenant(t)
-	a := dbtest.UserAt(t, dbtest.Unique("alice")+"@"+dbtest.Domain(t, tenant), tenant, tenant)
+	organization := dbtest.Organization(t)
+	a := dbtest.UserAt(t, dbtest.Unique("alice")+"@"+dbtest.Domain(t, organization), organization, organization)
 	if _, err := pool.Exec(ctx, `UPDATE account.users SET provisioned_via = 'scim', email_verified_at = NULL WHERE id = $1`, a.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +304,7 @@ func TestLoginAdoptsADirectoryProvisionedAccount(t *testing.T) {
 		binds:   map[string]string{"cn=service,dc=example,dc=test": "service-secret", userDN: "alice-secret"},
 		entries: map[string]dirEntry{"alice": {dn: userDN, attrs: map[string]string{"mail": a.Email, "cn": "Alice"}}},
 	}
-	connID := storedConnection(t, tenant, dir.start(t), "cn=service,dc=example,dc=test")
+	connID := storedConnection(t, organization, dir.start(t), "cn=service,dc=example,dc=test")
 	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
 	authSvc.SetMFA(noFactors{})
 	res, err := serviceOver(t, authSvc).Login(ctx, connID, "alice", "alice-secret", "192.0.2.22", "test")
@@ -320,20 +320,20 @@ func TestLoginAdoptsADirectoryProvisionedAccount(t *testing.T) {
 func TestLoginSyncsGroupsAndName(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	tenant := dbtest.Tenant(t)
-	email := dbtest.Unique("alice") + "@" + dbtest.Domain(t, tenant)
+	organization := dbtest.Organization(t)
+	email := dbtest.Unique("alice") + "@" + dbtest.Domain(t, organization)
 	const service, userDN = "cn=service,dc=example,dc=test", "uid=alice,dc=example,dc=test"
 	serve := func(entry dirEntry) string {
 		dir := &directory{binds: map[string]string{service: "service-secret", userDN: "alice-secret"}, entries: map[string]dirEntry{"alice": entry}}
 		return dir.start(t)
 	}
-	connID := storedConnection(t, tenant, serve(dirEntry{dn: userDN, attrs: map[string]string{"mail": email, "cn": "Alice"},
+	connID := storedConnection(t, organization, serve(dirEntry{dn: userDN, attrs: map[string]string{"mail": email, "cn": "Alice"},
 		multi: map[string][]string{"memberOf": {"CN=Engineering,OU=Groups,DC=example,DC=test", "CN=Unmapped,OU=Groups,DC=example,DC=test"}}}), service)
 	var engineering uuid.UUID
-	if err := pool.QueryRow(ctx, `INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, 'Engineering') RETURNING id`, tenant).Scan(&engineering); err != nil {
+	if err := pool.QueryRow(ctx, `INSERT INTO organization.groups (organization_id, name) VALUES ($1, 'Engineering') RETURNING id`, organization).Scan(&engineering); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO tenant.sso_group_mappings (tenant_id, connection_id, idp_group, group_id) VALUES ($1, $2, 'cn=engineering,ou=groups,dc=example,dc=test', $3)`, tenant, connID, engineering); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO organization.sso_group_mappings (organization_id, connection_id, idp_group, group_id) VALUES ($1, $2, 'cn=engineering,ou=groups,dc=example,dc=test', $3)`, organization, connID, engineering); err != nil {
 		t.Fatal(err)
 	}
 	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
@@ -346,18 +346,18 @@ func TestLoginSyncsGroupsAndName(t *testing.T) {
 	}
 	alice := res.Pair.UserID
 	synced := func() int {
-		return dbtest.Count(t, `SELECT count(*) FROM tenant.group_members WHERE tenant_id = $1 AND group_id = $2 AND user_id = $3 AND source_connection_id = $4`,
-			tenant, engineering, alice, connID)
+		return dbtest.Count(t, `SELECT count(*) FROM organization.group_members WHERE organization_id = $1 AND group_id = $2 AND user_id = $3 AND source_connection_id = $4`,
+			organization, engineering, alice, connID)
 	}
 	if synced() != 1 {
 		t.Fatal("the sign-in didn't put the person in the group their memberOf is mapped to")
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'group.member_added' AND resource_id = $2 AND actor_type = 'ldap'`, tenant, engineering); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'group.member_added' AND resource_id = $2 AND actor_type = 'ldap'`, organization, engineering); n != 1 {
 		t.Errorf("%d member_added events by the sign-in, want 1", n)
 	}
 
 	// The directory renames her and drops the group.
-	if _, err := pool.Exec(ctx, `UPDATE tenant.ldap_connections SET server_url = $2 WHERE id = $1`, connID,
+	if _, err := pool.Exec(ctx, `UPDATE organization.ldap_connections SET server_url = $2 WHERE id = $1`, connID,
 		serve(dirEntry{dn: userDN, attrs: map[string]string{"mail": email, "cn": "Alice Smith"}})); err != nil {
 		t.Fatal(err)
 	}
@@ -373,21 +373,21 @@ func TestLoginSyncsGroupsAndName(t *testing.T) {
 }
 
 // TestLoginProvisionsOnlyWithJIT checks that a directory sign-in creates an
-// account only while the organisation's domain has just-in-time provisioning
+// account only while the organization's domain has just-in-time provisioning
 // on, and adopts an existing member's account either way.
 func TestLoginProvisionsOnlyWithJIT(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	tenant := dbtest.Tenant(t)
-	domain := dbtest.Domain(t, tenant)
+	organization := dbtest.Organization(t)
+	domain := dbtest.Domain(t, organization)
 	setJIT := func(on bool) {
 		t.Helper()
-		if _, err := pool.Exec(ctx, `UPDATE tenant.domains SET jit_enabled = $2 WHERE tenant_id = $1`, tenant, on); err != nil {
+		if _, err := pool.Exec(ctx, `UPDATE organization.domains SET jit_enabled = $2 WHERE organization_id = $1`, organization, on); err != nil {
 			t.Fatal(err)
 		}
 	}
 	setJIT(false)
-	member := dbtest.UserAt(t, dbtest.Unique("alice")+"@"+domain, tenant, tenant)
+	member := dbtest.UserAt(t, dbtest.Unique("alice")+"@"+domain, organization, organization)
 	if _, err := pool.Exec(ctx, `UPDATE account.users SET email_verified_at = NOW() WHERE id = $1`, member.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -400,7 +400,7 @@ func TestLoginProvisionsOnlyWithJIT(t *testing.T) {
 			"bob":   {dn: bobDN, attrs: map[string]string{"mail": newcomer, "cn": "Bob"}},
 		},
 	}
-	connID := storedConnection(t, tenant, dir.start(t), service)
+	connID := storedConnection(t, organization, dir.start(t), service)
 	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
 	authSvc.SetMFA(noFactors{})
 	svc := serviceOver(t, authSvc)
@@ -416,7 +416,7 @@ func TestLoginProvisionsOnlyWithJIT(t *testing.T) {
 	}
 	setJIT(true)
 	res, err := svc.Login(ctx, connID, "bob", "bob-secret", "192.0.2.23", "test")
-	if err != nil || res.Pair == nil || dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND tenant_id = $2 AND email = $3`, res.Pair.UserID, tenant, newcomer) != 1 {
+	if err != nil || res.Pair == nil || dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND organization_id = $2 AND email = $3`, res.Pair.UserID, organization, newcomer) != 1 {
 		t.Errorf("a newcomer while the domain has JIT on: %+v, %v; want an account in the organisation", res, err)
 	}
 }
@@ -428,17 +428,17 @@ func TestLoginProvisionsOnlyWithJIT(t *testing.T) {
 // renaming it isn't.
 func TestLDAPTrustChangeMustOutrankLinkedAdministrators(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	h := &Handler{Service: directoryService(t), ActOnCheck: rbac.NewRepository(pool).CheckActOn}
 	var ownerRole uuid.UUID
-	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, tenant).Scan(&ownerRole); err != nil {
+	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (organization_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, organization).Scan(&ownerRole); err != nil {
 		t.Fatal(err)
 	}
-	owner, editor := dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant)
-	dbtest.Assign(t, owner.ID, tenant, ownerRole)
-	dbtest.Assign(t, editor.ID, tenant, dbtest.Role(t, tenant, "connection.write", "connection.read"))
-	base := "/tenants/" + tenant.String() + "/ldap"
-	rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(owner.ID, tenant), h.Mount), http.MethodPost, base, map[string]any{
+	owner, editor := dbtest.User(t, organization, organization), dbtest.User(t, organization, organization)
+	dbtest.Assign(t, owner.ID, organization, ownerRole)
+	dbtest.Assign(t, editor.ID, organization, dbtest.Role(t, organization, "connection.write", "connection.read"))
+	base := "/tenants/" + organization.String() + "/ldap"
+	rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(owner.ID, organization), h.Mount), http.MethodPost, base, map[string]any{
 		"name": "Directory", "server_url": "ldap://directory.example.test", "bind_dn": "cn=service,dc=example,dc=test",
 		"bind_password": "service-secret", "base_dn": "dc=example,dc=test", "status": "active",
 	})
@@ -447,11 +447,11 @@ func TestLDAPTrustChangeMustOutrankLinkedAdministrators(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO account.external_identities (user_id, tenant_id, provider, connection_id, subject) VALUES ($1, $2, 'ldap', $3, 'uid=owner')`,
-		owner.ID, tenant, conn.ID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO account.external_identities (user_id, organization_id, provider, connection_id, subject) VALUES ($1, $2, 'ldap', $3, 'uid=owner')`,
+		owner.ID, organization, conn.ID); err != nil {
 		t.Fatal(err)
 	}
-	asEditor := dbtest.Serve(dbtest.Principal(editor.ID, tenant), h.Mount)
+	asEditor := dbtest.Serve(dbtest.Principal(editor.ID, organization), h.Mount)
 
 	for name, body := range map[string]map[string]any{
 		"server":      {"server_url": "ldap://directory.attacker.example"},

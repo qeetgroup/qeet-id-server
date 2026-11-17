@@ -64,9 +64,9 @@ func TestSendActivityWritesCursorAsID(t *testing.T) {
 func TestStreamEndsWhenTheHubShutsDown(t *testing.T) {
 	hub := NewHub(nil)
 	h := NewHandler(nil, hub)
-	tenantID, userID := uuid.New(), uuid.New()
+	organizationID, userID := uuid.New(), uuid.New()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p := &httpx.Principal{TenantID: &tenantID, UserID: &userID}
+		p := &httpx.Principal{OrganizationID: &organizationID, UserID: &userID}
 		h.stream(w, r.WithContext(httpx.WithPrincipal(r.Context(), p)))
 	}))
 	defer srv.Close()
@@ -92,7 +92,7 @@ func TestStreamEndsWhenTheHubShutsDown(t *testing.T) {
 	}()
 	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
 		hub.mu.RLock()
-		subscribed := len(hub.subs[tenantID]) > 0
+		subscribed := len(hub.subs[organizationID]) > 0
 		hub.mu.RUnlock()
 		if subscribed {
 			break
@@ -136,7 +136,7 @@ func openStream(t *testing.T, h *Handler, reader *httpx.Principal) (<-chan strin
 		t.Helper()
 		for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
 			h.Hub.mu.RLock()
-			n := len(h.Hub.subs[*reader.TenantID])
+			n := len(h.Hub.subs[*reader.OrganizationID])
 			h.Hub.mu.RUnlock()
 			if n > 0 {
 				return
@@ -173,7 +173,7 @@ func TestStreamEndsWhenAccessEnds(t *testing.T) {
 		{"access can't be checked", func() (bool, error) { return false, errors.New("store down") }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			tenantID, userID := uuid.New(), uuid.New()
+			organizationID, userID := uuid.New(), uuid.New()
 			var allowed atomic.Bool
 			allowed.Store(true)
 			h := NewHandler(nil, NewHub(nil))
@@ -184,7 +184,7 @@ func TestStreamEndsWhenAccessEnds(t *testing.T) {
 				}
 				return tc.answer()
 			}
-			got, subscribed := openStream(t, h, &httpx.Principal{TenantID: &tenantID, UserID: &userID})
+			got, subscribed := openStream(t, h, &httpx.Principal{OrganizationID: &organizationID, UserID: &userID})
 			subscribed()
 			time.Sleep(100 * time.Millisecond)
 			select {
@@ -194,7 +194,7 @@ func TestStreamEndsWhenAccessEnds(t *testing.T) {
 			}
 			allowed.Store(false)
 			body := ended(t, got, 2*time.Second, tc.name)
-			h.Hub.fanOut(tenantID, newTestEvent("user.created", SeverityInfo))
+			h.Hub.fanOut(organizationID, newTestEvent("user.created", SeverityInfo))
 			if strings.Contains(body, "event: activity") || strings.Contains(body, "retry:") {
 				t.Errorf("%s: the stream sent %q, want it to end with nothing more", tc.name, body)
 			}
@@ -205,9 +205,9 @@ func TestStreamEndsWhenAccessEnds(t *testing.T) {
 // TestStreamEndsWhenTheCredentialExpires checks that a stream ends when the
 // credential it was opened with expires, though nothing else ends it.
 func TestStreamEndsWhenTheCredentialExpires(t *testing.T) {
-	tenantID, userID := uuid.New(), uuid.New()
+	organizationID, userID := uuid.New(), uuid.New()
 	expires := time.Now().Add(150 * time.Millisecond)
-	got, _ := openStream(t, NewHandler(nil, NewHub(nil)), &httpx.Principal{TenantID: &tenantID, UserID: &userID, ExpiresAt: &expires})
+	got, _ := openStream(t, NewHandler(nil, NewHub(nil)), &httpx.Principal{OrganizationID: &organizationID, UserID: &userID, ExpiresAt: &expires})
 	ended(t, got, 2*time.Second, "an expired credential")
 	if time.Now().Before(expires) {
 		t.Error("the stream ended before its credential expired")
@@ -218,12 +218,12 @@ func TestStreamEndsWhenTheCredentialExpires(t *testing.T) {
 // overflowed ends with a reconnect hint, so the client catches up from the
 // audit log instead of silently missing events.
 func TestStreamReconnectsWhenItFallsBehind(t *testing.T) {
-	tenantID, userID := uuid.New(), uuid.New()
+	organizationID, userID := uuid.New(), uuid.New()
 	h := NewHandler(nil, NewHub(nil))
-	got, subscribed := openStream(t, h, &httpx.Principal{TenantID: &tenantID, UserID: &userID})
+	got, subscribed := openStream(t, h, &httpx.Principal{OrganizationID: &organizationID, UserID: &userID})
 	subscribed()
 	h.Hub.mu.RLock()
-	sub := h.Hub.subs[tenantID][0]
+	sub := h.Hub.subs[organizationID][0]
 	h.Hub.mu.RUnlock()
 	// The hub tells a subscriber it lost an event as fanOut does on a full
 	// channel (TestHubSlowConsumerIsToldItLostAnEvent).

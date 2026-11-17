@@ -44,7 +44,7 @@ const (
 // Connection is the API-facing view — bind_password is deliberately omitted.
 type Connection struct {
 	ID             uuid.UUID  `json:"id"`
-	TenantID       uuid.UUID  `json:"tenant_id"`
+	OrganizationID uuid.UUID  `json:"tenant_id"`
 	Name           string     `json:"name"`
 	ServerURL      string     `json:"server_url"`
 	StartTLS       bool       `json:"start_tls"`
@@ -105,9 +105,9 @@ func (s *Service) checkTLSVerify(skip bool) error {
 }
 
 // PlanGate reports whether a plan-gated boolean feature is included in the
-// tenant's plan. Satisfied by *entitlements.Service.
+// organization's plan. Satisfied by *entitlements.Service.
 type PlanGate interface {
-	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
+	FeatureAllowed(ctx context.Context, organizationID uuid.UUID, feature string) (bool, error)
 }
 
 // SetPlanGate wires the plan-feature gate (nil allows all features).
@@ -117,12 +117,12 @@ func (s *Service) SetPlanGate(g PlanGate) { s.gate = g }
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
 // requireLDAP refuses with errs.ErrUpgradeRequired when the gate, if set,
-// finds that the tenant's plan doesn't include LDAP.
-func (s *Service) requireLDAP(ctx context.Context, tenantID uuid.UUID) error {
+// finds that the organization's plan doesn't include LDAP.
+func (s *Service) requireLDAP(ctx context.Context, organizationID uuid.UUID) error {
 	if s.gate == nil {
 		return nil
 	}
-	ok, err := s.gate.FeatureAllowed(ctx, tenantID, "ldap")
+	ok, err := s.gate.FeatureAllowed(ctx, organizationID, "ldap")
 	if err != nil {
 		return err
 	}
@@ -143,11 +143,11 @@ func pgLastLogin(t pgtype.Timestamptz) *time.Time {
 
 // connFields fills in a Connection from the shared columns returned by all
 // ldap_connections queries (pubCols — no bind_password).
-func connFields(c *Connection, id, tenantID uuid.UUID, name, serverURL string, startTLS, skipTLSVerify bool,
+func connFields(c *Connection, id, organizationID uuid.UUID, name, serverURL string, startTLS, skipTLSVerify bool,
 	bindDN, baseDN, userFilter, emailAttribute, nameAttribute, status string,
 	createdAt, updatedAt time.Time, lastLoginAt pgtype.Timestamptz) {
 	c.ID = id
-	c.TenantID = tenantID
+	c.OrganizationID = organizationID
 	c.Name = name
 	c.ServerURL = serverURL
 	c.StartTLS = startTLS
@@ -185,8 +185,8 @@ func defaulted(v, def string) string {
 	return v
 }
 
-// Create adds an LDAP connection to the tenant.
-func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in CreateInput) (*Connection, error) {
+// Create adds an LDAP connection to the organization.
+func (s *Service) Create(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, in CreateInput) (*Connection, error) {
 	if _, err := s.egress.ValidateLDAPURL(in.ServerURL); err != nil {
 		return nil, errs.ErrLDAPServerURLInvalid
 	}
@@ -194,20 +194,20 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in 
 		return nil, err
 	}
 	// Plan gate: LDAP/AD directory sync is an Enterprise feature.
-	if err := s.requireLDAP(ctx, tenantID); err != nil {
+	if err := s.requireLDAP(ctx, organizationID); err != nil {
 		return nil, err
 	}
 	if s.box == nil {
 		return nil, errs.ErrInternalServer.WithDetail("LDAP secret encryption is unavailable")
 	}
 	id := uuid.New()
-	ciphertext, nonce, err := s.box.Seal(tenantID, "ldap-bind", id.String(), []byte(in.BindPassword))
+	ciphertext, nonce, err := s.box.Seal(organizationID, "ldap-bind", id.String(), []byte(in.BindPassword))
 	if err != nil {
 		return nil, err
 	}
 	var r struct {
 		ID             uuid.UUID
-		TenantID       uuid.UUID
+		OrganizationID uuid.UUID
 		Name           string
 		ServerUrl      string
 		StartTls       bool
@@ -223,18 +223,18 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in 
 		LastLoginAt    pgtype.Timestamptz
 	}
 	err = tx.QueryRow(ctx, `
-		INSERT INTO tenant.ldap_connections
-		    (id, tenant_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
+		INSERT INTO organization.ldap_connections
+		    (id, organization_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
 		     bind_password_ct, bind_password_nonce,
 		     base_dn, user_filter, email_attribute, name_attribute, status)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-		RETURNING id, tenant_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
+		RETURNING id, organization_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
 		          base_dn, user_filter, email_attribute, name_attribute, status,
 		          created_at, updated_at, last_login_at
-	`, id, tenantID, in.Name, in.ServerURL, in.StartTLS, in.SkipTLSVerify, in.BindDN,
+	`, id, organizationID, in.Name, in.ServerURL, in.StartTLS, in.SkipTLSVerify, in.BindDN,
 		ciphertext, nonce, in.BaseDN, defaulted(in.UserFilter, "(uid=%s)"),
 		defaulted(in.EmailAttribute, "mail"), defaulted(in.NameAttribute, "cn"), defaulted(in.Status, "draft")).Scan(
-		&r.ID, &r.TenantID, &r.Name, &r.ServerUrl, &r.StartTls, &r.SkipTlsVerify, &r.BindDn,
+		&r.ID, &r.OrganizationID, &r.Name, &r.ServerUrl, &r.StartTls, &r.SkipTlsVerify, &r.BindDn,
 		&r.BaseDn, &r.UserFilter, &r.EmailAttribute, &r.NameAttribute, &r.Status,
 		&r.CreatedAt, &r.UpdatedAt, &r.LastLoginAt,
 	)
@@ -242,30 +242,30 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in 
 		return nil, err
 	}
 	var c Connection
-	connFields(&c, r.ID, r.TenantID, r.Name, r.ServerUrl, r.StartTls, r.SkipTlsVerify,
+	connFields(&c, r.ID, r.OrganizationID, r.Name, r.ServerUrl, r.StartTls, r.SkipTlsVerify,
 		r.BindDn, r.BaseDn, r.UserFilter, r.EmailAttribute, r.NameAttribute, r.Status,
 		r.CreatedAt, r.UpdatedAt, r.LastLoginAt)
 	return &c, nil
 }
 
-// List returns the tenant's LDAP connections.
-func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Connection, error) {
-	rows, err := s.q.ListLdapConnections(ctx, tenantID)
+// List returns the organization's LDAP connections.
+func (s *Service) List(ctx context.Context, organizationID uuid.UUID) ([]Connection, error) {
+	rows, err := s.q.ListLdapConnections(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]Connection, len(rows))
 	for i, r := range rows {
-		connFields(&out[i], r.ID, r.TenantID, r.Name, r.ServerUrl, r.StartTls, r.SkipTlsVerify,
+		connFields(&out[i], r.ID, r.OrganizationID, r.Name, r.ServerUrl, r.StartTls, r.SkipTlsVerify,
 			r.BindDn, r.BaseDn, r.UserFilter, r.EmailAttribute, r.NameAttribute, r.Status,
 			r.CreatedAt, r.UpdatedAt, r.LastLoginAt)
 	}
 	return out, nil
 }
 
-// Get returns one of the tenant's LDAP connections.
-func (s *Service) Get(ctx context.Context, id, tenantID uuid.UUID) (*Connection, error) {
-	r, err := s.q.GetLdapConnection(ctx, dbgen.GetLdapConnectionParams{ID: id, TenantID: tenantID})
+// Get returns one of the organization's LDAP connections.
+func (s *Service) Get(ctx context.Context, id, organizationID uuid.UUID) (*Connection, error) {
+	r, err := s.q.GetLdapConnection(ctx, dbgen.GetLdapConnectionParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
 	}
@@ -273,30 +273,30 @@ func (s *Service) Get(ctx context.Context, id, tenantID uuid.UUID) (*Connection,
 		return nil, err
 	}
 	var c Connection
-	connFields(&c, r.ID, r.TenantID, r.Name, r.ServerUrl, r.StartTls, r.SkipTlsVerify,
+	connFields(&c, r.ID, r.OrganizationID, r.Name, r.ServerUrl, r.StartTls, r.SkipTlsVerify,
 		r.BindDn, r.BaseDn, r.UserFilter, r.EmailAttribute, r.NameAttribute, r.Status,
 		r.CreatedAt, r.UpdatedAt, r.LastLoginAt)
 	return &c, nil
 }
 
-// getFull loads a connection including its bind secret. tenantID may be uuid.Nil
-// to skip tenant scoping (the public authenticate path keys off the connection
+// getFull loads a connection including its bind secret. organizationID may be uuid.Nil
+// to skip organization scoping (the public authenticate path keys off the connection
 // UUID in the URL). Dynamic WHERE — stays hand-written.
-func (s *Service) getFull(ctx context.Context, id, tenantID uuid.UUID) (*connFull, error) {
-	const base = `SELECT id, tenant_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
+func (s *Service) getFull(ctx context.Context, id, organizationID uuid.UUID) (*connFull, error) {
+	const base = `SELECT id, organization_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
 	              base_dn, user_filter, email_attribute, name_attribute, status,
 	              created_at, updated_at, last_login_at,
 	              bind_password_ct, bind_password_nonce
-	              FROM tenant.ldap_connections WHERE id = $1`
+	              FROM organization.ldap_connections WHERE id = $1`
 	q := base
 	args := []any{id}
-	if tenantID != uuid.Nil {
-		q += ` AND tenant_id = $2`
-		args = append(args, tenantID)
+	if organizationID != uuid.Nil {
+		q += ` AND organization_id = $2`
+		args = append(args, organizationID)
 	}
 	var c connFull
 	var ciphertext, nonce []byte
-	err := s.pool.QueryRow(ctx, q, args...).Scan(&c.ID, &c.TenantID, &c.Name, &c.ServerURL, &c.StartTLS,
+	err := s.pool.QueryRow(ctx, q, args...).Scan(&c.ID, &c.OrganizationID, &c.Name, &c.ServerURL, &c.StartTLS,
 		&c.SkipTLSVerify, &c.BindDN, &c.BaseDN, &c.UserFilter, &c.EmailAttribute, &c.NameAttribute,
 		&c.Status, &c.CreatedAt, &c.UpdatedAt, &c.LastLoginAt, &ciphertext, &nonce)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -308,7 +308,7 @@ func (s *Service) getFull(ctx context.Context, id, tenantID uuid.UUID) (*connFul
 	if s.box == nil {
 		return nil, errors.New("LDAP secret encryption is unavailable")
 	}
-	plain, err := s.box.Open(c.TenantID, "ldap-bind", c.ID.String(), ciphertext, nonce)
+	plain, err := s.box.Open(c.OrganizationID, "ldap-bind", c.ID.String(), ciphertext, nonce)
 	if err != nil {
 		return nil, err
 	}
@@ -341,8 +341,8 @@ func (in UpdateInput) ChangesTrust(c *Connection) bool {
 	return (in.StartTLS != nil && *in.StartTLS != c.StartTLS) || (in.SkipTLSVerify != nil && *in.SkipTLSVerify != c.SkipTLSVerify)
 }
 
-// Update changes one of the tenant's LDAP connections.
-func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID, in UpdateInput) (*Connection, error) {
+// Update changes one of the organization's LDAP connections.
+func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, organizationID uuid.UUID, in UpdateInput) (*Connection, error) {
 	if in.ServerURL != nil {
 		if _, err := s.egress.ValidateLDAPURL(*in.ServerURL); err != nil {
 			return nil, errs.ErrLDAPServerURLInvalid
@@ -356,7 +356,7 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID,
 	bindPassword := in.BindPassword
 	r, err := s.q.WithTx(tx).UpdateLdapConnection(ctx, dbgen.UpdateLdapConnectionParams{
 		ID:             id,
-		TenantID:       tenantID,
+		OrganizationID: organizationID,
 		Name:           in.Name,
 		ServerUrl:      in.ServerURL,
 		StartTls:       in.StartTLS,
@@ -383,28 +383,28 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID,
 		if s.box == nil {
 			return nil, errs.ErrInternalServer.WithDetail("LDAP secret encryption is unavailable")
 		}
-		ciphertext, nonce, sealErr := s.box.Seal(tenantID, "ldap-bind", id.String(), []byte(*bindPassword))
+		ciphertext, nonce, sealErr := s.box.Seal(organizationID, "ldap-bind", id.String(), []byte(*bindPassword))
 		if sealErr != nil {
 			return nil, sealErr
 		}
 		if _, updateErr := tx.Exec(ctx, `
-			UPDATE tenant.ldap_connections
+			UPDATE organization.ldap_connections
 			SET bind_password_ct = $3, bind_password_nonce = $4, updated_at = NOW()
-			WHERE id = $1 AND tenant_id = $2
-		`, id, tenantID, ciphertext, nonce); updateErr != nil {
+			WHERE id = $1 AND organization_id = $2
+		`, id, organizationID, ciphertext, nonce); updateErr != nil {
 			return nil, updateErr
 		}
 	}
 	var c Connection
-	connFields(&c, r.ID, r.TenantID, r.Name, r.ServerUrl, r.StartTls, r.SkipTlsVerify,
+	connFields(&c, r.ID, r.OrganizationID, r.Name, r.ServerUrl, r.StartTls, r.SkipTlsVerify,
 		r.BindDn, r.BaseDn, r.UserFilter, r.EmailAttribute, r.NameAttribute, r.Status,
 		r.CreatedAt, r.UpdatedAt, r.LastLoginAt)
 	return &c, nil
 }
 
-// Delete removes one of the tenant's LDAP connections.
-func (s *Service) Delete(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID) error {
-	n, err := s.q.WithTx(tx).DeleteLdapConnection(ctx, dbgen.DeleteLdapConnectionParams{ID: id, TenantID: tenantID})
+// Delete removes one of the organization's LDAP connections.
+func (s *Service) Delete(ctx context.Context, tx pgx.Tx, id, organizationID uuid.UUID) error {
+	n, err := s.q.WithTx(tx).DeleteLdapConnection(ctx, dbgen.DeleteLdapConnectionParams{ID: id, OrganizationID: organizationID})
 	if err != nil {
 		return err
 	}
@@ -501,7 +501,7 @@ func (s *Service) authenticate(ctx context.Context, c *connFull, username, passw
 	filter := strings.ReplaceAll(c.UserFilter, "%s", goldap.EscapeFilter(username))
 	attributes := []string{c.EmailAttribute, c.NameAttribute, groupsAttr}
 	if s.mapper != nil {
-		mapped, err := s.mapper.SourceAttributes(ctx, c.TenantID, c.ID.String())
+		mapped, err := s.mapper.SourceAttributes(ctx, c.OrganizationID, c.ID.String())
 		if err != nil {
 			return nil, err
 		}
@@ -544,7 +544,7 @@ func (s *Service) authenticate(ctx context.Context, c *connFull, username, passw
 				source[attribute] = values
 			}
 		}
-		profile, err = s.mapper.MapProfile(ctx, c.TenantID, c.ID.String(), source, false)
+		profile, err = s.mapper.MapProfile(ctx, c.OrganizationID, c.ID.String(), source, false)
 		if err != nil {
 			return nil, err
 		}
@@ -569,17 +569,17 @@ func (s *Service) authenticate(ctx context.Context, c *connFull, username, passw
 // the DN to the connection, brings the account's profile and groups in step
 // with the directory (ssosync.Apply, recorded as actor's) and stores the
 // mapped profile, in one transaction. An address is adopted or given an
-// account only on a domain the organisation manages, a new account only where
+// account only on a domain the organization manages, a new account only where
 // that domain has just-in-time provisioning on, and an adopted account must
-// have tenantID as its home, a verified address, and not administer the
-// organisation.
-func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UUID, u *ldapUser, actor audit.Actor) (uuid.UUID, error) {
-	// Read before the transaction: it reads every organisation's domains.
-	domain, managed, err := domainverify.ManagingDomain(postgres.AcrossTenants(ctx), s.pool, u.Email)
+// have organizationID as its home, a verified address, and not administer the
+// organization.
+func (s *Service) findOrCreateUser(ctx context.Context, organizationID, connID uuid.UUID, u *ldapUser, actor audit.Actor) (uuid.UUID, error) {
+	// Read before the transaction: it reads every organization's domains.
+	domain, managed, err := domainverify.ManagingDomain(postgres.AcrossOrganizations(ctx), s.pool, u.Email)
 	if err != nil {
 		return uuid.Nil, err
 	}
-	manager := domain.TenantID
+	manager := domain.OrganizationID
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return uuid.Nil, err
@@ -588,30 +588,30 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UU
 	q := s.q.WithTx(tx)
 	sync := func(userID uuid.UUID) error {
 		if err := ssosync.Apply(ctx, tx, ssosync.SignIn{
-			TenantID: tenantID, UserID: userID, ConnectionID: connID, Provider: provider,
-			DisplayName: u.Name, Email: u.Email, EmailManaged: managed && manager == tenantID,
+			OrganizationID: organizationID, UserID: userID, ConnectionID: connID, Provider: provider,
+			DisplayName: u.Name, Email: u.Email, EmailManaged: managed && manager == organizationID,
 			Groups: u.Groups, Actor: actor,
 		}); err != nil {
 			return err
 		}
-		return s.storeMappedProfile(ctx, tx, tenantID, userID, u)
+		return s.storeMappedProfile(ctx, tx, organizationID, userID, u)
 	}
 
 	userID, err := q.GetExternalIdentityUser(ctx, dbgen.GetExternalIdentityUserParams{
-		TenantID:     tenantID,
-		Provider:     provider,
-		ConnectionID: connID,
-		Subject:      u.DN,
+		OrganizationID: organizationID,
+		Provider:       provider,
+		ConnectionID:   connID,
+		Subject:        u.DN,
 	})
 	if err == nil {
-		// A linked DN signs in only while this organisation is still the
+		// A linked DN signs in only while this organization is still the
 		// account's home.
-		home, herr := identitylink.HomeIn(ctx, tx, userID, tenantID)
+		home, herr := identitylink.HomeIn(ctx, tx, userID, organizationID)
 		if herr != nil {
 			return uuid.Nil, herr
 		}
 		if !home {
-			return uuid.Nil, errs.ErrLDAPAccountNotInTenant
+			return uuid.Nil, errs.ErrLDAPAccountNotInOrganization
 		}
 		if err := sync(userID); err != nil {
 			return uuid.Nil, err
@@ -623,8 +623,8 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UU
 	}
 	// A bind proves only that this connection's directory accepted the
 	// credentials. Anyone who can configure a connection can point it at a
-	// directory they run, so it speaks only for the organisation's own domains.
-	if !managed || manager != tenantID {
+	// directory they run, so it speaks only for the organization's own domains.
+	if !managed || manager != organizationID {
 		return uuid.Nil, errs.ErrLDAPEmailDomainUnverified
 	}
 
@@ -638,9 +638,9 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UU
 			displayName = &u.Name
 		}
 		userID, err = q.InsertUserWithEmail(ctx, dbgen.InsertUserWithEmailParams{
-			TenantID:    pgtype.UUID{Bytes: tenantID, Valid: true},
-			Email:       u.Email,
-			DisplayName: displayName,
+			OrganizationID: pgtype.UUID{Bytes: organizationID, Valid: true},
+			Email:          u.Email,
+			DisplayName:    displayName,
 		})
 		if err != nil {
 			return uuid.Nil, err
@@ -648,15 +648,15 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UU
 	} else if err != nil {
 		return uuid.Nil, err
 	} else {
-		// Emails are globally unique, so the address may be another tenant's
+		// Emails are globally unique, so the address may be another organization's
 		// user's; and an administrator keeps the credentials they have, or the
 		// connection's directory could take over an owner.
-		home, herr := identitylink.HomeIn(ctx, tx, userID, tenantID)
+		home, herr := identitylink.HomeIn(ctx, tx, userID, organizationID)
 		if herr != nil {
 			return uuid.Nil, herr
 		}
 		if !home {
-			return uuid.Nil, errs.ErrLDAPAccountNotInTenant
+			return uuid.Nil, errs.ErrLDAPAccountNotInOrganization
 		}
 		verified, verr := identitylink.AddressVerified(ctx, tx, userID)
 		if verr != nil {
@@ -668,7 +668,7 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UU
 		if err := identitylink.MarkAddressVerified(ctx, tx, userID); err != nil {
 			return uuid.Nil, err
 		}
-		admin, aerr := identitylink.Administers(ctx, tx, userID, tenantID)
+		admin, aerr := identitylink.Administers(ctx, tx, userID, organizationID)
 		if aerr != nil {
 			return uuid.Nil, aerr
 		}
@@ -679,12 +679,12 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UU
 
 	email := u.Email
 	if err := q.LinkExternalIdentity(ctx, dbgen.LinkExternalIdentityParams{
-		UserID:       userID,
-		TenantID:     tenantID,
-		Provider:     provider,
-		ConnectionID: connID,
-		Subject:      u.DN,
-		Email:        &email,
+		UserID:         userID,
+		OrganizationID: organizationID,
+		Provider:       provider,
+		ConnectionID:   connID,
+		Subject:        u.DN,
+		Email:          &email,
 	}); err != nil {
 		return uuid.Nil, err
 	}
@@ -695,7 +695,7 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UU
 }
 
 // Login checks the password with the directory and signs the person in as a
-// password sign-in to the connection's organisation is (auth.SignInExternal):
+// password sign-in to the connection's organization is (auth.SignInExternal):
 // under its address, lockout, hook, risk and second-factor rules. The result
 // is a token pair, or a challenge to complete at /v1/auth/mfa.
 func (s *Service) Login(ctx context.Context, connID uuid.UUID, username, password, ip, ua string) (res *auth.LoginResult, resultError error) {
@@ -717,24 +717,24 @@ func (s *Service) Login(ctx context.Context, connID uuid.UUID, username, passwor
 	}
 	// The plan is checked at every sign-in, not only when the connection was
 	// set up, so one set up on a plan that has since lapsed signs no one in.
-	if err := s.requireLDAP(ctx, c.TenantID); err != nil {
+	if err := s.requireLDAP(ctx, c.OrganizationID); err != nil {
 		return nil, err
 	}
 	if username == "" || password == "" {
 		return nil, errs.ErrLDAPCredentialsRequired
 	}
 	res, err = s.auth.SignInExternal(ctx, auth.ExternalSignIn{
-		TenantID:  c.TenantID,
-		Account:   provider + ":" + connID.String() + ":" + lockoutName(username),
-		Method:    provider,
-		IP:        ip,
-		UserAgent: ua,
+		OrganizationID: c.OrganizationID,
+		Account:        provider + ":" + connID.String() + ":" + lockoutName(username),
+		Method:         provider,
+		IP:             ip,
+		UserAgent:      ua,
 	}, func(ctx context.Context) (uuid.UUID, bool, error) {
 		du, err := s.authenticate(ctx, c, username, password)
 		if err != nil {
 			return uuid.Nil, errors.Is(err, errs.ErrLDAPInvalidCredentials), err
 		}
-		userID, err := s.findOrCreateUser(ctx, c.TenantID, connID, du,
+		userID, err := s.findOrCreateUser(ctx, c.OrganizationID, connID, du,
 			audit.Actor{Type: provider, IP: ip, UserAgent: ua, RequestID: middleware.GetReqID(ctx)})
 		if err == nil {
 			signedIn = &userID
@@ -769,24 +769,24 @@ func (s *Service) LoginSession(ctx context.Context, connID uuid.UUID, username, 
 	}
 	// The plan is checked at every sign-in, not only when the connection was
 	// set up, so one set up on a plan that has since lapsed signs no one in.
-	if err := s.requireLDAP(ctx, c.TenantID); err != nil {
+	if err := s.requireLDAP(ctx, c.OrganizationID); err != nil {
 		return nil, err
 	}
 	if username == "" || password == "" {
 		return nil, errs.ErrLDAPCredentialsRequired
 	}
 	res, err = s.auth.SignInExternalSession(ctx, auth.ExternalSignIn{
-		TenantID:  c.TenantID,
-		Account:   provider + ":" + connID.String() + ":" + lockoutName(username),
-		Method:    provider,
-		IP:        ip,
-		UserAgent: ua,
+		OrganizationID: c.OrganizationID,
+		Account:        provider + ":" + connID.String() + ":" + lockoutName(username),
+		Method:         provider,
+		IP:             ip,
+		UserAgent:      ua,
 	}, func(ctx context.Context) (uuid.UUID, bool, error) {
 		du, err := s.authenticate(ctx, c, username, password)
 		if err != nil {
 			return uuid.Nil, errors.Is(err, errs.ErrLDAPInvalidCredentials), err
 		}
-		userID, err := s.findOrCreateUser(ctx, c.TenantID, connID, du,
+		userID, err := s.findOrCreateUser(ctx, c.OrganizationID, connID, du,
 			audit.Actor{Type: provider, IP: ip, UserAgent: ua, RequestID: middleware.GetReqID(ctx)})
 		if err == nil {
 			signedIn = &userID
@@ -864,31 +864,31 @@ func (h *Handler) sessionHTTP(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"user_id": res.UserID})
 }
 
-func (h *Handler) recordAudit(ctx context.Context, tx pgx.Tx, r *http.Request, tenantID, resourceID uuid.UUID, action string, meta map[string]any) error {
+func (h *Handler) recordAudit(ctx context.Context, tx pgx.Tx, r *http.Request, organizationID, resourceID uuid.UUID, action string, meta map[string]any) error {
 	actorID, actorType := audit.ActorOf(r).Identity()
-	tid := tenantID
+	tid := organizationID
 	rid := resourceID
 	return audit.Record(ctx, tx, audit.Event{
-		TenantID:     &tid,
-		ActorUserID:  actorID,
-		ActorType:    actorType,
-		Action:       action,
-		ResourceType: "ldap_connection",
-		ResourceID:   &rid,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
-		Metadata:     meta,
+		OrganizationID: &tid,
+		ActorUserID:    actorID,
+		ActorType:      actorType,
+		Action:         action,
+		ResourceType:   "ldap_connection",
+		ResourceID:     &rid,
+		IP:             httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
+		RequestID:      httpx.RequestID(r),
+		Metadata:       meta,
 	})
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out, err := h.Service.List(r.Context(), tenantID)
+	out, err := h.Service.List(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -897,7 +897,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -925,12 +925,12 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	conn, err := h.Service.Create(ctx, tx, tenantID, in)
+	conn, err := h.Service.Create(ctx, tx, organizationID, in)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.recordAudit(ctx, tx, r, tenantID, conn.ID, "ldap.connection_created", map[string]any{"name": conn.Name, "server": conn.ServerURL}); err != nil {
+	if err := h.recordAudit(ctx, tx, r, organizationID, conn.ID, "ldap.connection_created", map[string]any{"name": conn.Name, "server": conn.ServerURL}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -942,7 +942,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -952,7 +952,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	conn, err := h.Service.Get(r.Context(), id, tenantID)
+	conn, err := h.Service.Get(r.Context(), id, organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -961,7 +961,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -983,13 +983,13 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	// A connection signs its linked accounts in on what it trusts, so changing
 	// that acts on each of them.
-	current, err := h.Service.Get(ctx, id, tenantID)
+	current, err := h.Service.Get(ctx, id, organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	if in.ChangesTrust(current) {
-		if err := identitylink.CheckTrustChange(ctx, h.Service.Pool(), httpx.PrincipalFromCtx(ctx), h.ActOnCheck, tenantID, id, ""); err != nil {
+		if err := identitylink.CheckTrustChange(ctx, h.Service.Pool(), httpx.PrincipalFromCtx(ctx), h.ActOnCheck, organizationID, id, ""); err != nil {
 			httpx.WriteError(w, r, err)
 			return
 		}
@@ -1000,12 +1000,12 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	conn, err := h.Service.Update(ctx, tx, id, tenantID, in)
+	conn, err := h.Service.Update(ctx, tx, id, organizationID, in)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.recordAudit(ctx, tx, r, tenantID, conn.ID, "ldap.connection_updated", map[string]any{"status": conn.Status}); err != nil {
+	if err := h.recordAudit(ctx, tx, r, organizationID, conn.ID, "ldap.connection_updated", map[string]any{"status": conn.Status}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -1017,7 +1017,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1034,11 +1034,11 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	if err := h.Service.Delete(ctx, tx, id, tenantID); err != nil {
+	if err := h.Service.Delete(ctx, tx, id, organizationID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.recordAudit(ctx, tx, r, tenantID, id, "ldap.connection_deleted", nil); err != nil {
+	if err := h.recordAudit(ctx, tx, r, organizationID, id, "ldap.connection_deleted", nil); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -1050,7 +1050,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) test(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1060,7 +1060,7 @@ func (h *Handler) test(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	if err := h.Service.TestConnection(r.Context(), tenantID, id); err != nil {
+	if err := h.Service.TestConnection(r.Context(), organizationID, id); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

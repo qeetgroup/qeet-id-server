@@ -1,8 +1,8 @@
 package qeetai
 
-// Per-tenant "bring your own key" (BYOK) provider configuration. A tenant's API
-// key is sealed with the deployment data key, bound to that tenant, and never
-// returned; only a last-4 hint is. A tenant without a key falls back to the
+// Per-organization "bring your own key" (BYOK) provider configuration. An organization's API
+// key is sealed with the deployment data key, bound to that organization, and never
+// returned; only a last-4 hint is. An organization without a key falls back to the
 // deployment's QEETAI_* provider.
 
 import (
@@ -30,22 +30,22 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
-// ConfigSource identifies which provider config a tenant's qeetai resolves to.
+// ConfigSource identifies which provider config an organization's qeetai resolves to.
 type ConfigSource string
 
 const (
-	SourceNone     ConfigSource = "none"     // no tenant or platform key
-	SourcePlatform ConfigSource = "platform" // the deployment's QEETAI_* key
-	SourceTenant   ConfigSource = "tenant"   // the tenant's own (BYOK) key
+	SourceNone         ConfigSource = "none"     // no organization or platform key
+	SourcePlatform     ConfigSource = "platform" // the deployment's QEETAI_* key
+	SourceOrganization ConfigSource = "tenant"   // the organization's own (BYOK) key
 )
 
 // supportedProviders is the set of provider identifiers accepted on write.
 // "azure" is routed through the OpenAI-compatible client and requires base_url.
 var supportedProviders = map[string]bool{"anthropic": true, "openai": true, "azure": true}
 
-// EffectiveConfig is the non-secret view of a tenant's resolved provider. It is
+// EffectiveConfig is the non-secret view of an organization's resolved provider. It is
 // safe to return to the client: it never carries key material, only a last-4
-// hint of the tenant's own key.
+// hint of the organization's own key.
 type EffectiveConfig struct {
 	Source    ConfigSource `json:"source"`
 	Provider  string       `json:"provider,omitempty"`
@@ -56,7 +56,7 @@ type EffectiveConfig struct {
 }
 
 // PlatformProvider is the deployment-level (env) fallback provider config used
-// when a tenant hasn't configured its own key.
+// when an organization hasn't configured its own key.
 type PlatformProvider struct {
 	Provider  string
 	APIKey    string
@@ -69,8 +69,8 @@ func (p PlatformProvider) configured() bool {
 	return strings.TrimSpace(p.Provider) != "" && strings.TrimSpace(p.APIKey) != ""
 }
 
-// ProviderConfig resolves and manages per-tenant BYOK provider settings and
-// implements ProviderResolver. A tenant admin chooses base_url, so both HTTP
+// ProviderConfig resolves and manages per-organization BYOK provider settings and
+// implements ProviderResolver. An organization admin chooses base_url, so both HTTP
 // clients are bounded by egress: httpClient, with a whole-request timeout, for
 // the Test probe, and streamClient for model calls.
 type ProviderConfig struct {
@@ -100,7 +100,7 @@ func newStreamClient(policy *egress.Policy, headerTimeout time.Duration) *http.C
 	return client
 }
 
-// NewProviderConfig builds the service, sealing tenant keys with box, the
+// NewProviderConfig builds the service, sealing organization keys with box, the
 // deployment's envelope cipher (the one the secrets vault uses).
 func NewProviderConfig(pool *pgxpool.Pool, box *envelope.Cipher, platform PlatformProvider, policies ...*egress.Policy) *ProviderConfig {
 	policy := egress.PublicPolicy(policies...)
@@ -118,28 +118,28 @@ func NewProviderConfig(pool *pgxpool.Pool, box *envelope.Cipher, platform Platfo
 // PlatformConfigured reports whether a deployment-level fallback key is set.
 func (c *ProviderConfig) PlatformConfigured() bool { return c.platform.configured() }
 
-// qeetaiKeyPurpose and qeetaiKeyResource bind a provider key to its tenant, so
-// ciphertext copied into another tenant's row won't decrypt. The resource is
-// constant because each tenant has one provider row.
+// qeetaiKeyPurpose and qeetaiKeyResource bind a provider key to its organization, so
+// ciphertext copied into another organization's row won't decrypt. The resource is
+// constant because each organization has one provider row.
 const (
 	qeetaiKeyPurpose  = "qeetai-provider"
 	qeetaiKeyResource = "api-key"
 )
 
-func (c *ProviderConfig) encrypt(tenantID uuid.UUID, plaintext string) (ciphertext, nonce []byte, err error) {
+func (c *ProviderConfig) encrypt(organizationID uuid.UUID, plaintext string) (ciphertext, nonce []byte, err error) {
 	if c.box == nil {
 		return nil, nil, errs.ErrInternalServer.WithDetail("Qeet AI key encryption is unavailable")
 	}
-	return c.box.Seal(tenantID, qeetaiKeyPurpose, qeetaiKeyResource, []byte(plaintext))
+	return c.box.Seal(organizationID, qeetaiKeyPurpose, qeetaiKeyResource, []byte(plaintext))
 }
 
-// decrypt opens a tenant's provider key. envelope.Open also reads legacy rows
-// sealed without the tenant context; ProviderFor then reseals them.
-func (c *ProviderConfig) decrypt(tenantID uuid.UUID, ciphertext, nonce []byte) (string, error) {
+// decrypt opens an organization's provider key. envelope.Open also reads legacy rows
+// sealed without the organization context; ProviderFor then reseals them.
+func (c *ProviderConfig) decrypt(organizationID uuid.UUID, ciphertext, nonce []byte) (string, error) {
 	if c.box == nil {
 		return "", errs.ErrInternalServer.WithDetail("Qeet AI key encryption is unavailable")
 	}
-	plaintext, err := c.box.Open(tenantID, qeetaiKeyPurpose, qeetaiKeyResource, ciphertext, nonce)
+	plaintext, err := c.box.Open(organizationID, qeetaiKeyPurpose, qeetaiKeyResource, ciphertext, nonce)
 	if err != nil {
 		return "", err
 	}
@@ -149,19 +149,19 @@ func (c *ProviderConfig) decrypt(tenantID uuid.UUID, ciphertext, nonce []byte) (
 // reseal seals a row again with the current key and scheme when it was sealed
 // otherwise. Best-effort: a failure here must not break the inference path
 // that just decrypted fine.
-func (c *ProviderConfig) reseal(ctx context.Context, tenantID uuid.UUID, plaintext string, existing []byte) {
+func (c *ProviderConfig) reseal(ctx context.Context, organizationID uuid.UUID, plaintext string, existing []byte) {
 	if c.box == nil || c.box.IsCurrent(existing) {
 		return
 	}
-	ct, nonce, err := c.encrypt(tenantID, plaintext)
+	ct, nonce, err := c.encrypt(organizationID, plaintext)
 	if err != nil {
 		return
 	}
 	_, _ = c.pool.Exec(ctx, `
 		UPDATE qeetai.provider_settings
 		SET key_ciphertext = $2, key_nonce = $3
-		WHERE tenant_id = $1
-	`, tenantID, ct, nonce)
+		WHERE organization_id = $1
+	`, organizationID, ct, nonce)
 }
 
 // hint returns the last 4 characters of a key, but only when it is long enough
@@ -174,9 +174,9 @@ func hint(value string) string {
 	return string(r[len(r)-4:])
 }
 
-// tenantRow loads the tenant's raw settings row, if any.
-func (c *ProviderConfig) tenantRow(ctx context.Context, tenantID uuid.UUID) (dbgen.QeetaiProviderSetting, bool, error) {
-	row, err := c.q.GetProviderSettings(ctx, tenantID)
+// organizationRow loads the organization's raw settings row, if any.
+func (c *ProviderConfig) organizationRow(ctx context.Context, organizationID uuid.UUID) (dbgen.QeetaiProviderSetting, bool, error) {
+	row, err := c.q.GetProviderSettings(ctx, organizationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return dbgen.QeetaiProviderSetting{}, false, nil
 	}
@@ -186,17 +186,17 @@ func (c *ProviderConfig) tenantRow(ctx context.Context, tenantID uuid.UUID) (dbg
 	return row, true, nil
 }
 
-// Resolve returns the effective (non-secret) provider config for a tenant:
-// the tenant's own enabled key if present, else the platform fallback, else
+// Resolve returns the effective (non-secret) provider config for an organization:
+// the organization's own enabled key if present, else the platform fallback, else
 // SourceNone.
-func (c *ProviderConfig) Resolve(ctx context.Context, tenantID uuid.UUID) (EffectiveConfig, error) {
-	row, ok, err := c.tenantRow(ctx, tenantID)
+func (c *ProviderConfig) Resolve(ctx context.Context, organizationID uuid.UUID) (EffectiveConfig, error) {
+	row, ok, err := c.organizationRow(ctx, organizationID)
 	if err != nil {
 		return EffectiveConfig{}, err
 	}
 	if ok && row.Enabled {
 		return EffectiveConfig{
-			Source:    SourceTenant,
+			Source:    SourceOrganization,
 			Provider:  row.Provider,
 			Model:     row.Model,
 			BaseURL:   row.BaseUrl,
@@ -210,26 +210,26 @@ func (c *ProviderConfig) Resolve(ctx context.Context, tenantID uuid.UUID) (Effec
 	return EffectiveConfig{Source: SourceNone}, nil
 }
 
-// view is what an organisation is shown of the deployment's provider: which
+// view is what an organization is shown of the deployment's provider: which
 // provider and model answer, never where the deployment reaches it.
 func (p PlatformProvider) view() EffectiveConfig {
 	return EffectiveConfig{Source: SourcePlatform, Provider: p.Provider, Model: p.Model, MaxTokens: p.MaxTokens}
 }
 
-// ProviderFor builds the ai.Provider a turn should stream through for a tenant.
-// Returns errs.ErrQeetAIUnconfigured when neither a tenant nor a platform key is
+// ProviderFor builds the ai.Provider a turn should stream through for an organization.
+// Returns errs.ErrQeetAIUnconfigured when neither an organization nor a platform key is
 // available.
-func (c *ProviderConfig) ProviderFor(ctx context.Context, tenantID uuid.UUID) (ai.Provider, error) {
-	row, ok, err := c.tenantRow(ctx, tenantID)
+func (c *ProviderConfig) ProviderFor(ctx context.Context, organizationID uuid.UUID) (ai.Provider, error) {
+	row, ok, err := c.organizationRow(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
 	if ok && row.Enabled {
-		key, derr := c.decrypt(tenantID, row.KeyCiphertext, row.KeyNonce)
+		key, derr := c.decrypt(organizationID, row.KeyCiphertext, row.KeyNonce)
 		if derr != nil {
 			return nil, fmt.Errorf("qeetai: decrypt tenant provider key: %w", derr)
 		}
-		c.reseal(ctx, tenantID, key, row.KeyCiphertext)
+		c.reseal(ctx, organizationID, key, row.KeyCiphertext)
 		return c.buildProvider(row.Provider, key, row.BaseUrl, row.Model, int(row.MaxTokens)), nil
 	}
 	if c.platform.configured() {
@@ -240,7 +240,7 @@ func (c *ProviderConfig) ProviderFor(ctx context.Context, tenantID uuid.UUID) (a
 
 // buildProvider returns the ai.Provider for provider; "azure" uses the
 // OpenAI-compatible client with the admin's base_url. The HTTP client is
-// egress-bounded, so a tenant's base_url can't reach the internal network.
+// egress-bounded, so an organization's base_url can't reach the internal network.
 func (c *ProviderConfig) buildProvider(provider, apiKey, baseURL, model string, maxTokens int) ai.Provider {
 	client := c.streamClient
 	switch strings.ToLower(provider) {
@@ -251,7 +251,7 @@ func (c *ProviderConfig) buildProvider(provider, apiKey, baseURL, model string, 
 	}
 }
 
-// SetProviderInput carries a write to the tenant's provider config. APIKey is
+// SetProviderInput carries a write to the organization's provider config. APIKey is
 // the plaintext key (encrypted before it touches the DB).
 type SetProviderInput struct {
 	Provider  string
@@ -293,33 +293,33 @@ func (in *SetProviderInput) normalize(policy *egress.Policy) error {
 	return nil
 }
 
-// Set validates and upserts the tenant's provider config, encrypting the key.
+// Set validates and upserts the organization's provider config, encrypting the key.
 // Returns the effective (non-secret) config.
-func (c *ProviderConfig) Set(ctx context.Context, tenantID uuid.UUID, in SetProviderInput) (EffectiveConfig, error) {
+func (c *ProviderConfig) Set(ctx context.Context, organizationID uuid.UUID, in SetProviderInput) (EffectiveConfig, error) {
 	if err := in.normalize(c.egress); err != nil {
 		return EffectiveConfig{}, err
 	}
-	ct, nonce, err := c.encrypt(tenantID, in.APIKey)
+	ct, nonce, err := c.encrypt(organizationID, in.APIKey)
 	if err != nil {
 		return EffectiveConfig{}, err
 	}
 	row, err := c.q.UpsertProviderSettings(ctx, dbgen.UpsertProviderSettingsParams{
-		TenantID:      tenantID,
-		Provider:      in.Provider,
-		Model:         in.Model,
-		BaseUrl:       in.BaseURL,
-		MaxTokens:     int32(in.MaxTokens), // #nosec G115 -- clamped to 200000 above
-		KeyCiphertext: ct,
-		KeyNonce:      nonce,
-		KeyLast4:      hint(in.APIKey),
-		Enabled:       true,
-		UpdatedBy:     toPgUUID(in.UpdatedBy),
+		OrganizationID: organizationID,
+		Provider:       in.Provider,
+		Model:          in.Model,
+		BaseUrl:        in.BaseURL,
+		MaxTokens:      int32(in.MaxTokens), // #nosec G115 -- clamped to 200000 above
+		KeyCiphertext:  ct,
+		KeyNonce:       nonce,
+		KeyLast4:       hint(in.APIKey),
+		Enabled:        true,
+		UpdatedBy:      toPgUUID(in.UpdatedBy),
 	})
 	if err != nil {
 		return EffectiveConfig{}, err
 	}
 	return EffectiveConfig{
-		Source:    SourceTenant,
+		Source:    SourceOrganization,
 		Provider:  row.Provider,
 		Model:     row.Model,
 		BaseURL:   row.BaseUrl,
@@ -328,10 +328,10 @@ func (c *ProviderConfig) Set(ctx context.Context, tenantID uuid.UUID, in SetProv
 	}, nil
 }
 
-// Clear removes the tenant's provider config, reverting it to the platform
+// Clear removes the organization's provider config, reverting it to the platform
 // fallback (or unconfigured). Idempotent.
-func (c *ProviderConfig) Clear(ctx context.Context, tenantID uuid.UUID) error {
-	_, err := c.q.DeleteProviderSettings(ctx, tenantID)
+func (c *ProviderConfig) Clear(ctx context.Context, organizationID uuid.UUID) error {
+	_, err := c.q.DeleteProviderSettings(ctx, organizationID)
 	return err
 }
 

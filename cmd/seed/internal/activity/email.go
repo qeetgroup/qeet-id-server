@@ -16,7 +16,7 @@ import (
 // keep it (platform.email_messages).
 type mail struct {
 	id             uuid.UUID
-	tenant         *uuid.UUID // nil for mail sent for no organisation: resets, codes
+	organization   *uuid.UUID // nil for mail sent for no organization: resets, codes
 	to, template   string
 	status, reason string
 	sent, updated  time.Time
@@ -26,22 +26,22 @@ type mail struct {
 // suppression is an address no mail goes to after a hard bounce or a
 // complaint.
 type suppression struct {
-	id        uuid.UUID
-	tenant    uuid.UUID
-	address   string
-	reason    string
-	detail    string
-	message   uuid.UUID
-	created   time.Time
-	cleared   time.Time
-	clearedBy *world.Person
+	id           uuid.UUID
+	organization uuid.UUID
+	address      string
+	reason       string
+	detail       string
+	message      uuid.UUID
+	created      time.Time
+	cleared      time.Time
+	clearedBy    *world.Person
 }
 
 // mail queues an email sent at t; SES reports it delivered seconds later,
 // except for the last few minutes', not yet reported.
-func (h *history) mail(tenant *uuid.UUID, to, template string, t time.Time) *mail {
+func (h *history) mail(organization *uuid.UUID, to, template string, t time.Time) *mail {
 	w := h.w
-	m := &mail{id: uuid.New(), tenant: tenant, to: to, template: template, status: "delivered", sent: t,
+	m := &mail{id: uuid.New(), organization: organization, to: to, template: template, status: "delivered", sent: t,
 		updated: t.Add(time.Duration(2+w.Rand.IntN(8)) * time.Second), providerID: sesID(w)}
 	if t.After(w.Now.Add(-3 * time.Minute)) {
 		m.status, m.updated = "sent", t
@@ -105,7 +105,7 @@ func (h *history) mailStories() []suppression {
 			at := p.Joined.Add(-26 * time.Hour)
 			m := h.mail(ptr(o.ID), typo, "invite", at)
 			failed(m, "bounced", "Permanent/General: smtp; 550 5.1.1 <"+typo+">: Recipient address rejected: User unknown in virtual mailbox table", 4*time.Second)
-			out = append(out, suppression{id: uuid.New(), tenant: o.ID, address: typo, reason: "bounce", detail: m.reason, message: m.id, created: m.updated})
+			out = append(out, suppression{id: uuid.New(), organization: o.ID, address: typo, reason: "bounce", detail: m.reason, message: m.id, created: m.updated})
 			again := h.mail(ptr(o.ID), typo, "invite", at.Add(9*time.Minute))
 			again.status, again.reason, again.providerID, again.updated = "suppressed", "address suppressed after a bounce", "", again.sent
 			h.mail(ptr(o.ID), p.Email, "invite", at.Add(21*time.Minute))
@@ -121,12 +121,12 @@ func (h *history) mailStories() []suppression {
 				continue
 			}
 			at := h.workTime(p, w.Days(19))
-			h.audit(at.Add(-time.Second), audit.Event{TenantID: ptr(o.ID), ActorType: "anonymous", Action: "auth.magic_link_requested",
+			h.audit(at.Add(-time.Second), audit.Event{OrganizationID: ptr(o.ID), ActorType: "anonymous", Action: "auth.magic_link_requested",
 				ResourceType: "user", ResourceID: ptr(p.ID), IP: p.Mobile.IP, UserAgent: p.Mobile.UserAgent,
 				Metadata: map[string]any{"app": "hosted_login"}})
 			m := h.mail(ptr(o.ID), p.Email, "magic_link", at)
 			failed(m, "complained", "abuse", 3*time.Hour)
-			out = append(out, suppression{id: uuid.New(), tenant: o.ID, address: p.Email, reason: "complaint", detail: "abuse", message: m.id, created: m.updated})
+			out = append(out, suppression{id: uuid.New(), organization: o.ID, address: p.Email, reason: "complaint", detail: "abuse", message: m.id, created: m.updated})
 			h.noMagic[p] = window{from: at}
 		case f.MagicLink && f.SelfSignup:
 			// A mailbox missing during a Google Workspace migration; the owner
@@ -138,11 +138,11 @@ func (h *history) mailStories() []suppression {
 			at := h.workTime(p, w.Days(27))
 			m := h.mail(ptr(o.ID), p.Email, "magic_link", at)
 			failed(m, "bounced", "Permanent/General: smtp; 550 5.1.1 The email account that you tried to reach does not exist", 3*time.Second)
-			sup := suppression{id: uuid.New(), tenant: o.ID, address: p.Email, reason: "bounce", detail: m.reason, message: m.id,
+			sup := suppression{id: uuid.New(), organization: o.ID, address: p.Email, reason: "bounce", detail: m.reason, message: m.id,
 				created: m.updated, cleared: h.workDayAfter(o.Owner, at.Add(24*time.Hour)), clearedBy: o.Owner}
 			out = append(out, sup)
 			h.noMagic[p] = window{from: at, to: sup.cleared}
-			h.audit(sup.cleared, audit.Event{TenantID: ptr(o.ID), ActorUserID: ptr(o.Owner.ID), ActorType: "user",
+			h.audit(sup.cleared, audit.Event{OrganizationID: ptr(o.ID), ActorUserID: ptr(o.Owner.ID), ActorType: "user",
 				Action: "email.suppression_cleared", ResourceType: "email_suppression", ResourceID: ptr(sup.id),
 				IP: officeIP(o.Owner), UserAgent: o.Owner.Device.UserAgent, RequestID: h.requestID(),
 				Metadata: map[string]any{"address": delivery.Hint(p.Email), "reason": "bounce"}})

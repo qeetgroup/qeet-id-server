@@ -10,9 +10,9 @@ import (
 )
 
 // DomainCapture decides whether an address must sign in through its
-// organisation's identity provider. RefuseCaptured returns
+// organization's identity provider. RefuseCaptured returns
 // errs.ErrAuthSSORequired for an address on a captured domain that isn't one of
-// the organisation's break-glass members, deciding without asking whether the
+// the organization's break-glass members, deciding without asking whether the
 // address has an account. Satisfied by *domainverify.Service.
 type DomainCapture interface {
 	RefuseCaptured(ctx context.Context, email string) error
@@ -31,10 +31,10 @@ func (s *Service) refuseCaptured(ctx context.Context, email string) error {
 	return s.capture.RefuseCaptured(ctx, email)
 }
 
-// refuseSwitchIntoCapture refuses switching userID into tenantID when tenantID
+// refuseSwitchIntoCapture refuses switching userID into organizationID when organizationID
 // requires single sign-on on the account's domain: its identity provider signs
 // its people in there directly, so no other session is switched into it.
-func (s *Service) refuseSwitchIntoCapture(ctx context.Context, userID, tenantID uuid.UUID) error {
+func (s *Service) refuseSwitchIntoCapture(ctx context.Context, userID, organizationID uuid.UUID) error {
 	if s.capture == nil {
 		return nil
 	}
@@ -42,8 +42,8 @@ func (s *Service) refuseSwitchIntoCapture(ctx context.Context, userID, tenantID 
 	if err != nil {
 		return err
 	}
-	managed, ok, err := domainverify.ManagingDomain(postgres.AcrossTenants(ctx), s.pool, u.Email)
-	if err != nil || !ok || managed.TenantID != tenantID {
+	managed, ok, err := domainverify.ManagingDomain(postgres.AcrossOrganizations(ctx), s.pool, u.Email)
+	if err != nil || !ok || managed.OrganizationID != organizationID {
 		return err
 	}
 	return s.capture.RefuseCaptured(ctx, u.Email)

@@ -14,21 +14,21 @@ import (
 func TestMain(m *testing.M) { dbtest.Main(m) }
 
 // TestRiskSettingsChangesAreAudited checks that saving the risk settings is
-// recorded in the organisation, as the administrator's, with each setting that
+// recorded in the organization, as the administrator's, with each setting that
 // changed from what was in force.
 func TestRiskSettingsChangesAreAudited(t *testing.T) {
 	ctx := dbtest.Context(t)
 	h := &Handler{Service: NewService(dbtest.Pool(t))}
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), h.Mount)
-	path := "/tenants/" + tenant.String() + "/security/risk-settings"
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	as := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)
+	path := "/tenants/" + organization.String() + "/security/risk-settings"
 	changes := func() []map[string]map[string]any {
 		t.Helper()
 		rows, err := dbtest.Pool(t).Query(ctx, `
 			SELECT metadata->'changes' FROM audit.events
-			WHERE tenant_id = $1 AND action = 'risk.settings_updated' AND resource_id = $1 AND actor_user_id = $2
-			ORDER BY created_at`, tenant, admin.ID)
+			WHERE organization_id = $1 AND action = 'risk.settings_updated' AND resource_id = $1 AND actor_user_id = $2
+			ORDER BY created_at`, organization, admin.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -72,20 +72,20 @@ func TestRiskSettingsChangesAreAudited(t *testing.T) {
 func TestAssessDoesNotRecord(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := NewService(dbtest.Pool(t))
-	tenant := dbtest.Tenant(t)
-	u := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	u := dbtest.User(t, organization, organization)
 	history := func() int {
-		return dbtest.Count(t, `SELECT count(*) FROM auth.login_context_history WHERE tenant_id = $1 AND user_id = $2`, tenant, u.ID)
+		return dbtest.Count(t, `SELECT count(*) FROM auth.login_context_history WHERE organization_id = $1 AND user_id = $2`, organization, u.ID)
 	}
 
-	first := svc.Assess(ctx, tenant, u.ID, "192.0.2.1", "Mozilla/5.0 (X11; Linux x86_64) Firefox/130.0", "IN")
-	if again := svc.Assess(ctx, tenant, u.ID, "192.0.2.1", "Mozilla/5.0 (X11; Linux x86_64) Firefox/130.0", "IN"); again != first {
+	first := svc.Assess(ctx, organization, u.ID, "192.0.2.1", "Mozilla/5.0 (X11; Linux x86_64) Firefox/130.0", "IN")
+	if again := svc.Assess(ctx, organization, u.ID, "192.0.2.1", "Mozilla/5.0 (X11; Linux x86_64) Firefox/130.0", "IN"); again != first {
 		t.Errorf("the same sign-in assessed again = %v, first %v", again, first)
 	}
 	if n := history(); n != 0 {
 		t.Fatalf("assessing recorded %d sign-ins", n)
 	}
-	svc.RecordSignIn(ctx, tenant, u.ID, "Mozilla/5.0 (X11; Linux x86_64) Firefox/130.0", "IN")
+	svc.RecordSignIn(ctx, organization, u.ID, "Mozilla/5.0 (X11; Linux x86_64) Firefox/130.0", "IN")
 	if n := history(); n != 1 {
 		t.Errorf("RecordSignIn recorded %d sign-ins, want 1", n)
 	}

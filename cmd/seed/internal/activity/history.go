@@ -21,10 +21,10 @@ const historyDays = 90
 type session struct {
 	id       uuid.UUID
 	p        *world.Person
-	org      *world.Org // the organisation signed in to
+	org      *world.Org // the organization signed in to
 	dev      world.Device
 	method   string // the sign-in method recorded on auth.login_succeeded
-	first    string // its first factor: password, saml, ldap, social, magic_link, passkey, tenant_switch
+	first    string // its first factor: password, saml, ldap, social, magic_link, passkey, organization_switch
 	factor   string // second_factor: mfa, passkey or ""
 	created  time.Time
 	lastSeen time.Time
@@ -32,16 +32,16 @@ type session struct {
 	expires  time.Time
 	idle     time.Duration
 	// superseded is the session that replaced this one when its person
-	// switched organisation.
+	// switched organization.
 	superseded uuid.UUID
 	// typos is how many wrong passwords preceded the sign-in.
 	typos int
-	// previous is the session a switch of organisation came from.
+	// previous is the session a switch of organization came from.
 	previous *session
 }
 
 // signedIn is when the sign-in s continues happened: a switch of
-// organisation carries its first session's.
+// organization carries its first session's.
 func (s *session) signedIn() time.Time {
 	for s.previous != nil {
 		s = s.previous
@@ -80,13 +80,13 @@ type event struct {
 // signInContext is a sign-in's device and country, as the risk engine keeps
 // them (auth.login_context_history).
 type signInContext struct {
-	tenant, user uuid.UUID
-	deviceKey    string
-	country      string
-	seen         time.Time
+	organization, user uuid.UUID
+	deviceKey          string
+	country            string
+	seen               time.Time
 }
 
-// policy is an organisation's session bounds and limit.
+// policy is an organization's session bounds and limit.
 type policy struct {
 	maxAge, idle time.Duration
 	maxSessions  int
@@ -98,7 +98,7 @@ type history struct {
 	w        *world.World
 	policies map[uuid.UUID]policy
 	// social marks people with a linked social account; socialSeeded marks the
-	// organisations where any is linked, so the others fall back to a share
+	// organizations where any is linked, so the others fall back to a share
 	// of their people.
 	social       map[uuid.UUID]bool
 	socialSeeded map[uuid.UUID]bool

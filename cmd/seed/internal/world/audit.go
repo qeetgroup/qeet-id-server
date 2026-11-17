@@ -18,7 +18,7 @@ import (
 const chainSeed = "0000000000000000000000000000000000000000000000000000000000000000"
 
 // Audit writes the audit row e at t, unhashed. Rechain hashes every chain once
-// the story is written, so rows may be written in any order. A nil e.TenantID
+// the story is written, so rows may be written in any order. A nil e.OrganizationID
 // puts the row on the platform chain; an empty ActorType means "user". The row
 // is marked scored, so the anomaly worker leaves seeded history alone.
 func (w *World) Audit(t time.Time, e audit.Event) uuid.UUID {
@@ -32,10 +32,10 @@ func (w *World) Audit(t time.Time, e audit.Event) uuid.UUID {
 	}
 	id := uuid.New()
 	w.Exec("audit "+e.Action, `
-		INSERT INTO audit.events (id, tenant_id, actor_user_id, actor_type, action, resource_type, resource_id,
+		INSERT INTO audit.events (id, organization_id, actor_user_id, actor_type, action, resource_type, resource_id,
 		                          ip, user_agent, request_id, metadata, created_at, scored_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, '')::inet, NULLIF($9, ''), NULLIF($10, ''), $11, $12, $12)`,
-		id, e.TenantID, e.ActorUserID, e.ActorType, e.Action, e.ResourceType, e.ResourceID,
+		id, e.OrganizationID, e.ActorUserID, e.ActorType, e.Action, e.ResourceType, e.ResourceID,
 		e.IP, e.UserAgent, e.RequestID, meta, t.UTC().Truncate(time.Microsecond))
 	return id
 }
@@ -43,20 +43,20 @@ func (w *World) Audit(t time.Time, e audit.Event) uuid.UUID {
 // canonicalRow is audit's hashed serialisation (audit.canonicalRow): the same
 // fields in the same order. Verify proves the two still agree.
 type canonicalRow struct {
-	ID           string          `json:"id"`
-	TenantID     string          `json:"tenant_id"`
-	ActorUserID  string          `json:"actor_user_id"`
-	ActorType    string          `json:"actor_type"`
-	Action       string          `json:"action"`
-	ResourceType string          `json:"resource_type"`
-	ResourceID   string          `json:"resource_id"`
-	IP           string          `json:"ip"`
-	UserAgent    string          `json:"user_agent"`
-	RequestID    string          `json:"request_id"`
-	Metadata     json.RawMessage `json:"metadata"`
-	CreatedAt    string          `json:"created_at"`
-	PrevHash     string          `json:"prev_hash"`
-	ChainShard   int16           `json:"chain_shard,omitempty"`
+	ID             string          `json:"id"`
+	OrganizationID string          `json:"tenant_id"`
+	ActorUserID    string          `json:"actor_user_id"`
+	ActorType      string          `json:"actor_type"`
+	Action         string          `json:"action"`
+	ResourceType   string          `json:"resource_type"`
+	ResourceID     string          `json:"resource_id"`
+	IP             string          `json:"ip"`
+	UserAgent      string          `json:"user_agent"`
+	RequestID      string          `json:"request_id"`
+	Metadata       json.RawMessage `json:"metadata"`
+	CreatedAt      string          `json:"created_at"`
+	PrevHash       string          `json:"prev_hash"`
+	ChainShard     int16           `json:"chain_shard,omitempty"`
 }
 
 // Rechain rehashes every audit chain in time order, after At moved rows back
@@ -64,36 +64,36 @@ type canonicalRow struct {
 // yet, as the API does when it starts, and drops the chains' checkpoints, so
 // the next scheduled verification walks each from the start.
 func (w *World) Rechain() {
-	rows, err := w.Admin.Query(w.Ctx, `SELECT DISTINCT tenant_id, chain_shard FROM audit.events`)
+	rows, err := w.Admin.Query(w.Ctx, `SELECT DISTINCT organization_id, chain_shard FROM audit.events`)
 	Must(err, "list audit chains")
 	type chain struct {
-		tenant pgtype.UUID
-		shard  int16
+		organization pgtype.UUID
+		shard        int16
 	}
 	var chains []chain
 	for rows.Next() {
 		var c chain
-		Must(rows.Scan(&c.tenant, &c.shard), "scan audit chain")
+		Must(rows.Scan(&c.organization, &c.shard), "scan audit chain")
 		chains = append(chains, c)
 	}
 	rows.Close()
 	Must(rows.Err(), "list audit chains")
 	for _, c := range chains {
-		w.rechain(c.tenant, c.shard)
+		w.rechain(c.organization, c.shard)
 	}
 	Must(audit.OpenPlatformChains(w.Ctx, w.Pool), "open the platform audit chains")
 	w.Exec("drop the audit chain checkpoints", `DELETE FROM platform.audit_chain_checkpoints`)
 }
 
-// rechain rehashes one chain: tenant's, or with no tenant platform chain shard.
-func (w *World) rechain(tenant pgtype.UUID, shard int16) {
+// rechain rehashes one chain: organization's, or with no organization platform chain shard.
+func (w *World) rechain(organization pgtype.UUID, shard int16) {
 	rows, err := w.Admin.Query(w.Ctx, `
-		SELECT id, COALESCE(tenant_id::text, ''), COALESCE(actor_user_id::text, ''), actor_type, action,
+		SELECT id, COALESCE(organization_id::text, ''), COALESCE(actor_user_id::text, ''), actor_type, action,
 		       resource_type, COALESCE(resource_id::text, ''), COALESCE(host(ip), ''),
 		       COALESCE(user_agent, ''), COALESCE(request_id, ''), metadata, created_at
 		FROM audit.events
-		WHERE tenant_id IS NOT DISTINCT FROM $1 AND chain_shard = $2
-		ORDER BY created_at, id`, tenant, shard)
+		WHERE organization_id IS NOT DISTINCT FROM $1 AND chain_shard = $2
+		ORDER BY created_at, id`, organization, shard)
 	Must(err, "read audit chain")
 	type link struct {
 		id         uuid.UUID
@@ -108,7 +108,7 @@ func (w *World) rechain(tenant pgtype.UUID, shard int16) {
 			meta    []byte
 			created time.Time
 		)
-		Must(rows.Scan(&id, &r.TenantID, &r.ActorUserID, &r.ActorType, &r.Action, &r.ResourceType, &r.ResourceID,
+		Must(rows.Scan(&id, &r.OrganizationID, &r.ActorUserID, &r.ActorType, &r.Action, &r.ResourceType, &r.ResourceID,
 			&r.IP, &r.UserAgent, &r.RequestID, &meta, &created), "scan audit row")
 		var m map[string]any
 		Must(json.Unmarshal(meta, &m), "decode audit metadata")
@@ -138,7 +138,7 @@ func (w *World) rechain(tenant pgtype.UUID, shard int16) {
 // VerifyChains checks every chain with the API's own verifier, so the console's
 // "verify" shows intact chains; the platform chains are checked together.
 func (w *World) VerifyChains() int {
-	rows, err := w.Admin.Query(w.Ctx, `SELECT DISTINCT tenant_id FROM audit.events`)
+	rows, err := w.Admin.Query(w.Ctx, `SELECT DISTINCT organization_id FROM audit.events`)
 	Must(err, "list audit chains")
 	var chains []pgtype.UUID
 	for rows.Next() {

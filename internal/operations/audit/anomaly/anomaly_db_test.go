@@ -19,18 +19,18 @@ func TestMain(m *testing.M) { dbtest.Main(m) }
 func TestScoreOneUsesOneConnection(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	tenant := dbtest.Tenant(t)
-	actor := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	actor := dbtest.User(t, organization, organization)
 	svc := NewService(pool)
-	if _, err := svc.UpdateSettings(ctx, tenant, Settings{Enabled: true, ScoreThreshold: 0.6, MinBaselineEvents: 5}); err != nil {
+	if _, err := svc.UpdateSettings(ctx, organization, Settings{Enabled: true, ScoreThreshold: 0.6, MinBaselineEvents: 5}); err != nil {
 		t.Fatalf("save settings: %v", err)
 	}
-	e := unscoredEvent{ID: uuid.New(), TenantID: &tenant, ActorUserID: &actor.ID, Action: "user.updated",
+	e := unscoredEvent{ID: uuid.New(), OrganizationID: &organization, ActorUserID: &actor.ID, Action: "user.updated",
 		CreatedAt: time.Now().UTC().Truncate(time.Microsecond)}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO audit.events (id, tenant_id, actor_user_id, actor_type, action, resource_type, created_at)
+		INSERT INTO audit.events (id, organization_id, actor_user_id, actor_type, action, resource_type, created_at)
 		VALUES ($1, $2, $3, 'user', $4, 'user', $5)
-	`, e.ID, tenant, actor.ID, e.Action, e.CreatedAt); err != nil {
+	`, e.ID, organization, actor.ID, e.Action, e.CreatedAt); err != nil {
 		t.Fatalf("insert event: %v", err)
 	}
 
@@ -45,9 +45,9 @@ func TestScoreOneUsesOneConnection(t *testing.T) {
 	if err := pool.QueryRow(ctx, `
 		SELECT e.scored_at IS NOT NULL, b.event_count
 		FROM audit.events e
-		JOIN audit.actor_baselines b ON b.tenant_id = e.tenant_id AND b.actor_user_id = e.actor_user_id
-		WHERE e.id = $1 AND e.tenant_id = $2
-	`, e.ID, tenant).Scan(&scored, &baseline); err != nil {
+		JOIN audit.actor_baselines b ON b.organization_id = e.organization_id AND b.actor_user_id = e.actor_user_id
+		WHERE e.id = $1 AND e.organization_id = $2
+	`, e.ID, organization).Scan(&scored, &baseline); err != nil {
 		t.Fatalf("read back: %v", err)
 	}
 	if !scored || baseline != 1 {
@@ -62,23 +62,23 @@ func TestSweepKeepsUpAndSkipsHeldEvents(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	svc := NewService(pool)
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO audit.events (id, tenant_id, actor_type, action, resource_type, created_at)
+		INSERT INTO audit.events (id, organization_id, actor_type, action, resource_type, created_at)
 		SELECT gen_random_uuid(), $1, 'system', 'tenant.updated', 'tenant', NOW() - make_interval(secs => g)
 		FROM generate_series(1, $2::int) g
-	`, tenant, 2*sweepBatch+5); err != nil {
+	`, organization, 2*sweepBatch+5); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.tick(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND scored_at IS NULL`, tenant); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND scored_at IS NULL`, organization); n != 0 {
 		t.Errorf("%d events left unscored after one sweep", n)
 	}
 
-	held := unscoredEvent{ID: uuid.New(), TenantID: &tenant, Action: "tenant.updated", CreatedAt: time.Now()}
-	if _, err := pool.Exec(ctx, `INSERT INTO audit.events (id, tenant_id, actor_type, action, resource_type) VALUES ($1, $2, 'system', 'tenant.updated', 'tenant')`, held.ID, tenant); err != nil {
+	held := unscoredEvent{ID: uuid.New(), OrganizationID: &organization, Action: "tenant.updated", CreatedAt: time.Now()}
+	if _, err := pool.Exec(ctx, `INSERT INTO audit.events (id, organization_id, actor_type, action, resource_type) VALUES ($1, $2, 'system', 'tenant.updated', 'tenant')`, held.ID, organization); err != nil {
 		t.Fatal(err)
 	}
 	other, err := pool.Begin(ctx)

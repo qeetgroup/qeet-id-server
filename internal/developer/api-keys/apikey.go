@@ -33,16 +33,16 @@ import (
 
 // Key is an API key, without its secret.
 type Key struct {
-	ID         uuid.UUID  `json:"id"`
-	TenantID   uuid.UUID  `json:"tenant_id"`
-	UserID     *uuid.UUID `json:"user_id"`
-	Name       string     `json:"name"`
-	Prefix     string     `json:"prefix"`
-	Scopes     []string   `json:"scopes"`
-	ExpiresAt  *time.Time `json:"expires_at"`
-	LastUsedAt *time.Time `json:"last_used_at"`
-	RevokedAt  *time.Time `json:"revoked_at"`
-	CreatedAt  time.Time  `json:"created_at"`
+	ID             uuid.UUID  `json:"id"`
+	OrganizationID uuid.UUID  `json:"tenant_id"`
+	UserID         *uuid.UUID `json:"user_id"`
+	Name           string     `json:"name"`
+	Prefix         string     `json:"prefix"`
+	Scopes         []string   `json:"scopes"`
+	ExpiresAt      *time.Time `json:"expires_at"`
+	LastUsedAt     *time.Time `json:"last_used_at"`
+	RevokedAt      *time.Time `json:"revoked_at"`
+	CreatedAt      time.Time  `json:"created_at"`
 	// CreatedBy is who created it, and RotatedFrom the key it replaced.
 	CreatedBy   *uuid.UUID `json:"created_by"`
 	RotatedFrom *uuid.UUID `json:"rotated_from"`
@@ -53,7 +53,7 @@ type Key struct {
 // injected via SetPlanLimiter, so this context needn't import the billing/plan
 // packages (keeping the dependency direction clean).
 type PlanLimiter interface {
-	Limit(ctx context.Context, tenantID uuid.UUID, resource string) (int, error)
+	Limit(ctx context.Context, organizationID uuid.UUID, resource string) (int, error)
 }
 
 // Service manages the API keys.
@@ -72,10 +72,10 @@ func NewService(pool *pgxpool.Pool) *Service {
 // gate — every create is allowed.
 func (s *Service) SetPlanLimiter(l PlanLimiter) { s.limits = l }
 
-// CountActive returns the tenant's number of non-revoked API keys — the
+// CountActive returns the organization's number of non-revoked API keys — the
 // "api_keys" limit value, surfaced as usage in billing.
-func (s *Service) CountActive(ctx context.Context, tenantID uuid.UUID) (int, error) {
-	n, err := s.q.CountActiveAPIKeys(ctx, tenantID)
+func (s *Service) CountActive(ctx context.Context, organizationID uuid.UUID) (int, error) {
+	n, err := s.q.CountActiveAPIKeys(ctx, organizationID)
 	return int(n), err
 }
 
@@ -129,19 +129,19 @@ func pgUUID(id *uuid.UUID) pgtype.UUID {
 }
 
 // rowToKey maps a generated row (with pgtype nullable fields) to the domain Key.
-func rowToKey(id uuid.UUID, tenantID uuid.UUID, userID pgtype.UUID, name, prefix string,
+func rowToKey(id uuid.UUID, organizationID uuid.UUID, userID pgtype.UUID, name, prefix string,
 	scopes []string, expiresAt, lastUsedAt, revokedAt pgtype.Timestamptz, createdAt time.Time) Key {
 	return Key{
-		ID:         id,
-		TenantID:   tenantID,
-		UserID:     uuidPtr(userID),
-		Name:       name,
-		Prefix:     prefix,
-		Scopes:     scopes,
-		ExpiresAt:  tsPtr(expiresAt),
-		LastUsedAt: tsPtr(lastUsedAt),
-		RevokedAt:  tsPtr(revokedAt),
-		CreatedAt:  createdAt,
+		ID:             id,
+		OrganizationID: organizationID,
+		UserID:         uuidPtr(userID),
+		Name:           name,
+		Prefix:         prefix,
+		Scopes:         scopes,
+		ExpiresAt:      tsPtr(expiresAt),
+		LastUsedAt:     tsPtr(lastUsedAt),
+		RevokedAt:      tsPtr(revokedAt),
+		CreatedAt:      createdAt,
 	}
 }
 
@@ -150,11 +150,11 @@ const maxNameLength = 200
 
 // CreateInput is what Create takes.
 type CreateInput struct {
-	TenantID  uuid.UUID  `json:"tenant_id" validate:"required"`
-	UserID    *uuid.UUID `json:"user_id"`
-	Name      string     `json:"name" validate:"required,min=1,max=200"`
-	Scopes    []string   `json:"scopes"`
-	ExpiresAt *time.Time `json:"expires_at"`
+	OrganizationID uuid.UUID  `json:"tenant_id" validate:"required"`
+	UserID         *uuid.UUID `json:"user_id"`
+	Name           string     `json:"name" validate:"required,min=1,max=200"`
+	Scopes         []string   `json:"scopes"`
+	ExpiresAt      *time.Time `json:"expires_at"`
 	// Actor is who is creating the key, set by the handler from the caller and
 	// never from the body. A key may act only for Actor.UserID, or for no one.
 	Actor audit.Actor `json:"-"`
@@ -177,15 +177,15 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Key, string, err
 	if err := rbac.ValidateMachineScopes(in.Scopes); err != nil {
 		return nil, "", err
 	}
-	// Plan gate: refuse once the tenant's plan cap for API keys is reached. The
+	// Plan gate: refuse once the organization's plan cap for API keys is reached. The
 	// resource key ("api_keys") matches the entitlements catalog.
 	if s.limits != nil {
-		lim, err := s.limits.Limit(ctx, in.TenantID, "api_keys")
+		lim, err := s.limits.Limit(ctx, in.OrganizationID, "api_keys")
 		if err != nil {
 			return nil, "", err
 		}
 		if lim >= 0 {
-			n, err := s.q.CountActiveAPIKeys(ctx, in.TenantID)
+			n, err := s.q.CountActiveAPIKeys(ctx, in.OrganizationID)
 			if err != nil {
 				return nil, "", err
 			}
@@ -210,26 +210,26 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Key, string, err
 	}
 	defer tx.Rollback(ctx)
 	row, err := s.q.WithTx(tx).CreateAPIKey(ctx, dbgen.CreateAPIKeyParams{
-		TenantID:  in.TenantID,
-		UserID:    pgUUID(in.UserID),
-		Name:      in.Name,
-		Prefix:    prefix,
-		KeyHash:   secretHash,
-		Scopes:    in.Scopes,
-		ExpiresAt: pgtTS(in.ExpiresAt),
-		CreatedBy: pgUUID(in.Actor.UserID),
+		OrganizationID: in.OrganizationID,
+		UserID:         pgUUID(in.UserID),
+		Name:           in.Name,
+		Prefix:         prefix,
+		KeyHash:        secretHash,
+		Scopes:         in.Scopes,
+		ExpiresAt:      pgtTS(in.ExpiresAt),
+		CreatedBy:      pgUUID(in.Actor.UserID),
 	})
 	if err != nil {
 		return nil, "", err
 	}
-	k := rowToKey(row.ID, row.TenantID, row.UserID, row.Name, row.Prefix,
+	k := rowToKey(row.ID, row.OrganizationID, row.UserID, row.Name, row.Prefix,
 		row.Scopes, row.ExpiresAt, row.LastUsedAt, row.RevokedAt, row.CreatedAt)
 	k.CreatedBy, k.RotatedFrom = uuidPtr(row.CreatedBy), uuidPtr(row.RotatedFrom)
 	meta := map[string]any{"name": k.Name, "scopes": k.Scopes}
 	if k.UserID != nil {
 		meta["user_id"] = k.UserID.String()
 	}
-	if err := audit.Record(ctx, tx, in.Actor.Event(in.TenantID, "apikey.created", "api_key", k.ID, meta)); err != nil {
+	if err := audit.Record(ctx, tx, in.Actor.Event(in.OrganizationID, "apikey.created", "api_key", k.ID, meta)); err != nil {
 		return nil, "", err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -238,15 +238,15 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Key, string, err
 	return &k, full, nil
 }
 
-// List returns the tenant's API keys.
-func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Key, error) {
-	rows, err := s.q.ListAPIKeys(ctx, tenantID)
+// List returns the organization's API keys.
+func (s *Service) List(ctx context.Context, organizationID uuid.UUID) ([]Key, error) {
+	rows, err := s.q.ListAPIKeys(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]Key, 0, len(rows))
 	for _, row := range rows {
-		k := rowToKey(row.ID, row.TenantID, row.UserID, row.Name, row.Prefix,
+		k := rowToKey(row.ID, row.OrganizationID, row.UserID, row.Name, row.Prefix,
 			row.Scopes, row.ExpiresAt, row.LastUsedAt, row.RevokedAt, row.CreatedAt)
 		k.CreatedBy, k.RotatedFrom = uuidPtr(row.CreatedBy), uuidPtr(row.RotatedFrom)
 		out = append(out, k)
@@ -254,27 +254,27 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Key, error) {
 	return out, nil
 }
 
-// Revoke revokes one of the tenant's API keys, recorded as actor's.
-func (s *Service) Revoke(ctx context.Context, tenantID, id uuid.UUID, actor audit.Actor) error {
+// Revoke revokes one of the organization's API keys, recorded as actor's.
+func (s *Service) Revoke(ctx context.Context, organizationID, id uuid.UUID, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	n, err := s.q.WithTx(tx).RevokeAPIKey(ctx, dbgen.RevokeAPIKeyParams{ID: id, TenantID: tenantID})
+	n, err := s.q.WithTx(tx).RevokeAPIKey(ctx, dbgen.RevokeAPIKeyParams{ID: id, OrganizationID: organizationID})
 	if err != nil {
 		return err
 	}
 	if n == 0 {
 		return errs.ErrAPIKeyNotFound
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "apikey.revoked", "api_key", id, map[string]any{})); err != nil {
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "apikey.revoked", "api_key", id, map[string]any{})); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
 
-// Verify resolves a presented `<prefix>.<secret>` to its tenant + scopes,
+// Verify resolves a presented `<prefix>.<secret>` to its organization + scopes,
 // or returns an error if the key is unknown, expired, or revoked.
 func (s *Service) Verify(ctx context.Context, raw string) (*Key, error) {
 	parts := strings.SplitN(raw, ".", 2)
@@ -297,31 +297,31 @@ func (s *Service) Verify(ctx context.Context, raw string) (*Key, error) {
 	if !ok {
 		return nil, errs.ErrAPIKeyInvalid
 	}
-	k := rowToKey(row.ID, row.TenantID, row.UserID, row.Name, row.Prefix,
+	k := rowToKey(row.ID, row.OrganizationID, row.UserID, row.Name, row.Prefix,
 		row.Scopes, row.ExpiresAt, row.LastUsedAt, row.RevokedAt, row.CreatedAt)
 	if k.ExpiresAt != nil && time.Now().After(*k.ExpiresAt) {
 		return nil, errs.ErrAPIKeyExpired
 	}
 	// Best-effort, detached from the request but time-bounded so it can't leak.
-	go func(id, tenantID uuid.UUID, oldHash string) { // #nosec G118 -- detached on purpose, with its own timeout
+	go func(id, organizationID uuid.UUID, oldHash string) { // #nosec G118 -- detached on purpose, with its own timeout
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := s.q.TouchAPIKeyLastUsed(ctx, id); err != nil {
 			slog.Warn("apikey last_used_at update failed", "err", err, "api_key_id", id)
 		}
 		if rehash {
-			if err := s.q.UpgradeAPIKeyHash(ctx, dbgen.UpgradeAPIKeyHashParams{NewHash: password.HashSecret(secret), ID: id, TenantID: tenantID, OldHash: oldHash}); err != nil {
+			if err := s.q.UpgradeAPIKeyHash(ctx, dbgen.UpgradeAPIKeyHashParams{NewHash: password.HashSecret(secret), ID: id, OrganizationID: organizationID, OldHash: oldHash}); err != nil {
 				slog.Warn("apikey hash upgrade failed", "err", err, "api_key_id", id)
 			}
 		}
-	}(k.ID, k.TenantID, row.KeyHash)
+	}(k.ID, k.OrganizationID, row.KeyHash)
 	return &k, nil
 }
 
-// Live reports whether tenantID's key id would still authenticate a request:
+// Live reports whether organizationID's key id would still authenticate a request:
 // it isn't revoked or expired, and the person it acts for, if any, is active.
-func (s *Service) Live(ctx context.Context, tenantID, id uuid.UUID) (bool, error) {
-	return s.q.APIKeyLive(ctx, dbgen.APIKeyLiveParams{ID: id, TenantID: tenantID})
+func (s *Service) Live(ctx context.Context, organizationID, id uuid.UUID) (bool, error) {
+	return s.q.APIKeyLive(ctx, dbgen.APIKeyLiveParams{ID: id, OrganizationID: organizationID})
 }
 
 // Middleware authenticates the request if it carries `Authorization:
@@ -343,8 +343,8 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 				Scopes:    k.Scopes,
 				ExpiresAt: k.ExpiresAt,
 			}
-			tenant := k.TenantID
-			p.TenantID = &tenant
+			organization := k.OrganizationID
+			p.OrganizationID = &organization
 			if k.UserID != nil {
 				uid := *k.UserID
 				p.UserID = &uid
@@ -361,7 +361,7 @@ type Handler struct {
 	Service *Service
 	// GrantCheck refuses a credential carrying a scope the caller doesn't hold
 	// (rbac.Repository.CheckGrantScopes). Without it creating one is refused.
-	GrantCheck func(ctx context.Context, caller *httpx.Principal, tenantID uuid.UUID, scopes []string) error
+	GrantCheck func(ctx context.Context, caller *httpx.Principal, organizationID uuid.UUID, scopes []string) error
 }
 
 // Mount registers the API key routes on r.
@@ -373,7 +373,7 @@ func (h *Handler) Mount(r chi.Router) {
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
-	tid, err := httpx.RequireTenant(r)
+	tid, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -383,7 +383,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	in.TenantID = tid
+	in.OrganizationID = tid
 	in.Actor = audit.ActorOf(r)
 	if in.Name == "" {
 		httpx.WriteError(w, r, errs.ErrAPIKeyNameRequired)
@@ -429,7 +429,7 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrAPIKeyInvalidID)
 		return
 	}
-	tid, err := httpx.RequireTenant(r)
+	tid, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

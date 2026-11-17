@@ -1,4 +1,4 @@
-// Package accounts seeds each organisation's own settings and its people's
+// Package accounts seeds each organization's own settings and its people's
 // account states: profile and logo, branding, domains, email templates,
 // security, sign-in and retention policies, invitations, suspended and deleted
 // accounts, group roles and templates, notifications, data requests and access
@@ -21,7 +21,7 @@ import (
 type seeder struct {
 	w   *world.World
 	api *api
-	// events are what happened in each organisation that its administrators
+	// events are what happened in each organization that its administrators
 	// were told about, for the notification bell.
 	events map[uuid.UUID][]event
 	// links are pending invitations' accept links, for the summary.
@@ -36,7 +36,7 @@ type enrolment struct {
 	at         time.Time
 }
 
-// event is something an organisation's administrators were notified of. The
+// event is something an organization's administrators were notified of. The
 // flags also tell billing admins, security analysts and auditors, or helpdesk.
 type event struct {
 	at                          time.Time
@@ -44,7 +44,7 @@ type event struct {
 	billing, security, helpdesk bool
 }
 
-// Seed applies every organisation's settings and account states.
+// Seed applies every organization's settings and account states.
 func Seed(w *world.World) {
 	// With no mail server the invitation emails are logged, a line each; the
 	// summary prints the links worth having.
@@ -100,8 +100,8 @@ func (s *seeder) actorOn(o *world.Org, target *world.Person, t time.Time, roles 
 			if p.Role != role || p.ID == uuid.Nil || p.ID == target.ID || t.Sub(p.Joined) <= 7*24*time.Hour || !activeAt(p, t) {
 				continue
 			}
-			tenant, id := o.ID, p.ID
-			if check(s.w.Ctx, &httpx.Principal{TenantID: &tenant, UserID: &id, ActorType: "user"}, o.ID, target.ID) == nil {
+			organization, id := o.ID, p.ID
+			if check(s.w.Ctx, &httpx.Principal{OrganizationID: &organization, UserID: &id, ActorType: "user"}, o.ID, target.ID) == nil {
 				return p
 			}
 		}
@@ -116,7 +116,7 @@ func activeAt(p *world.Person, t time.Time) bool {
 }
 
 // after returns t, or a minute past not when t is no later: nothing happens
-// before the organisation or the people involved existed.
+// before the organization or the people involved existed.
 func after(t, not time.Time) time.Time {
 	if t.After(not) {
 		return t

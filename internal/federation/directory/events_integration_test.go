@@ -29,33 +29,33 @@ import (
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
 
-func TestEventStoreTenantIsolationAndAlerts(test *testing.T) {
+func TestEventStoreOrganizationIsolationAndAlerts(test *testing.T) {
 	pool := dbtest.Pool(test)
 	ctx := dbtest.Context(test)
-	tenantID, foreignTenant, userID := uuid.New(), uuid.New(), uuid.New()
-	for _, tenant := range []uuid.UUID{tenantID, foreignTenant} {
-		if _, err := pool.Exec(ctx, `INSERT INTO tenant.tenants(id,slug,name) VALUES($1,$2,'Directory test')`, tenant, tenant.String()); err != nil {
+	organizationID, foreignOrganization, userID := uuid.New(), uuid.New(), uuid.New()
+	for _, organization := range []uuid.UUID{organizationID, foreignOrganization} {
+		if _, err := pool.Exec(ctx, `INSERT INTO organization.organizations(id,slug,name) VALUES($1,$2,'Directory test')`, organization, organization.String()); err != nil {
 			test.Fatal(err)
 		}
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO account.users(id,tenant_id,email,status) VALUES($1,$2,$3,'active')`, userID, tenantID, userID.String()+"@example.test"); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO account.users(id,organization_id,email,status) VALUES($1,$2,$3,'active')`, userID, organizationID, userID.String()+"@example.test"); err != nil {
 		test.Fatal(err)
 	}
 	service := NewService(&scimFixture{config: &scim.ConfigView{TokenSet: true}}, &ldapFixture{})
 	service.SetEventStore(pool)
-	if _, err := pool.Exec(ctx, `INSERT INTO tenant.directory_alerts(id,tenant_id,user_id,name,threshold) VALUES($1,$2,$3,'Directory failures',1)`, uuid.New(), tenantID, userID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO organization.directory_alerts(id,organization_id,user_id,name,threshold) VALUES($1,$2,$3,'Directory failures',1)`, uuid.New(), organizationID, userID); err != nil {
 		test.Fatal(err)
 	}
 	started := time.Now().Add(-time.Minute)
 	for _, status := range []int{201, 409, 502} {
-		if err := service.RecordOperation(ctx, tenantID, "scim:"+tenantID.String(), "post", "user", "", status, started, 1500*time.Millisecond); err != nil {
+		if err := service.RecordOperation(ctx, organizationID, "scim:"+organizationID.String(), "post", "user", "", status, started, 1500*time.Millisecond); err != nil {
 			test.Fatal(err)
 		}
 	}
-	if err := service.RecordOperation(ctx, foreignTenant, "scim:"+foreignTenant.String(), "post", "user", "", 201, started, time.Second); err != nil {
+	if err := service.RecordOperation(ctx, foreignOrganization, "scim:"+foreignOrganization.String(), "post", "user", "", 201, started, time.Second); err != nil {
 		test.Fatal(err)
 	}
-	page, err := service.Events(ctx, tenantID, eventFilter{Since: time.Now().Add(-time.Hour), Limit: 25})
+	page, err := service.Events(ctx, organizationID, eventFilter{Since: time.Now().Add(-time.Hour), Limit: 25})
 	if err != nil {
 		test.Fatal(err)
 	}
@@ -63,25 +63,25 @@ func TestEventStoreTenantIsolationAndAlerts(test *testing.T) {
 		test.Fatalf("incorrect scoped summary: %+v", page)
 	}
 	var notifications int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM auth.notifications WHERE tenant_id=$1 AND user_id=$2`, tenantID, userID).Scan(&notifications); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM auth.notifications WHERE organization_id=$1 AND user_id=$2`, organizationID, userID).Scan(&notifications); err != nil {
 		test.Fatal(err)
 	}
 	if notifications != 1 {
 		test.Fatalf("alert throttle produced %d notifications, want 1", notifications)
 	}
 	filter := eventFilter{Since: time.Now().Add(-time.Hour), Status: "failed", Limit: 1}
-	first, err := service.Events(ctx, tenantID, filter)
+	first, err := service.Events(ctx, organizationID, filter)
 	if err != nil || first.Total != 2 || len(first.Items) != 1 || first.NextCursor == "" {
 		test.Fatalf("first page: %+v %v", first, err)
 	}
 	if filter.After, err = paging.ParseCursor(url.Values{"cursor": {first.NextCursor}}); err != nil {
 		test.Fatal(err)
 	}
-	page, err = service.Events(ctx, tenantID, filter)
+	page, err = service.Events(ctx, organizationID, filter)
 	if err != nil || page.Total != 2 || len(page.Items) != 1 || page.Items[0].ID == first.Items[0].ID || page.NextCursor != "" {
 		test.Fatalf("second page: %+v %v; want the other failed event and no further page", page, err)
 	}
-	connections, err := service.List(ctx, tenantID)
+	connections, err := service.List(ctx, organizationID)
 	if err != nil {
 		test.Fatal(err)
 	}
@@ -89,47 +89,47 @@ func TestEventStoreTenantIsolationAndAlerts(test *testing.T) {
 		test.Fatalf("missing successful sync metadata: %+v", connections)
 	}
 
-	errorsPage, err := service.Errors(ctx, tenantID, errorFilter{eventFilter: eventFilter{Since: time.Now().Add(-time.Hour), Limit: 25}})
+	errorsPage, err := service.Errors(ctx, organizationID, errorFilter{eventFilter: eventFilter{Since: time.Now().Add(-time.Hour), Limit: 25}})
 	if err != nil || errorsPage.Total != 2 || errorsPage.Summary.Open != 2 || errorsPage.Summary.ImpactedUsers != nil {
 		test.Fatalf("incorrect error summary: %+v %v", errorsPage, err)
 	}
 	tester := &ldapFixture{}
 	service.ldap = tester
 	checkID := uuid.New()
-	if err := service.RecordOperation(ctx, tenantID, checkID.String(), "test", "connection", "", 502, time.Now(), time.Second); err != nil {
+	if err := service.RecordOperation(ctx, organizationID, checkID.String(), "test", "connection", "", 502, time.Now(), time.Second); err != nil {
 		test.Fatal(err)
 	}
-	errorsPage, err = service.Errors(ctx, tenantID, errorFilter{eventFilter: eventFilter{Since: time.Now().Add(-time.Hour), ConnectionID: checkID.String(), Limit: 25}})
+	errorsPage, err = service.Errors(ctx, organizationID, errorFilter{eventFilter: eventFilter{Since: time.Now().Add(-time.Hour), ConnectionID: checkID.String(), Limit: 25}})
 	if err != nil || len(errorsPage.Items) != 1 {
 		test.Fatalf("missing failed check: %+v %v", errorsPage, err)
 	}
 	handler := &Handler{Service: service}
 	router := chi.NewRouter()
 	handler.Mount(router)
-	call := func(tenant uuid.UUID, id uuid.UUID, action string) int {
-		request := httptest.NewRequest(http.MethodPost, "/tenants/"+tenant.String()+"/directory/errors/"+id.String()+"/"+action, nil)
-		request = request.WithContext(httpx.WithPrincipal(ctx, &httpx.Principal{ActorType: "user", UserID: &userID, TenantID: &tenant}))
+	call := func(organization uuid.UUID, id uuid.UUID, action string) int {
+		request := httptest.NewRequest(http.MethodPost, "/tenants/"+organization.String()+"/directory/errors/"+id.String()+"/"+action, nil)
+		request = request.WithContext(httpx.WithPrincipal(ctx, &httpx.Principal{ActorType: "user", UserID: &userID, OrganizationID: &organization}))
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, request)
 		return response.Code
 	}
 	eventID := errorsPage.Items[0].ID
-	if got := call(foreignTenant, eventID, "retry"); got != http.StatusNotFound {
+	if got := call(foreignOrganization, eventID, "retry"); got != http.StatusNotFound {
 		test.Fatalf("foreign error retry status=%d", got)
 	}
 	if tester.tests != 0 {
 		test.Fatal("foreign error reached LDAP")
 	}
-	if got := call(tenantID, eventID, "retry"); got != http.StatusOK {
+	if got := call(organizationID, eventID, "retry"); got != http.StatusOK {
 		test.Fatalf("retry status=%d", got)
 	}
-	if got := call(tenantID, eventID, "retry"); got != http.StatusConflict {
+	if got := call(organizationID, eventID, "retry"); got != http.StatusConflict {
 		test.Fatalf("repeat retry status=%d", got)
 	}
 	if tester.tests != 1 {
 		test.Fatalf("replayed LDAP test %d times", tester.tests)
 	}
-	errorsPage, err = service.Errors(ctx, tenantID, errorFilter{eventFilter: eventFilter{Since: time.Now().Add(-time.Hour), ConnectionID: checkID.String(), Limit: 25}})
+	errorsPage, err = service.Errors(ctx, organizationID, errorFilter{eventFilter: eventFilter{Since: time.Now().Add(-time.Hour), ConnectionID: checkID.String(), Limit: 25}})
 	if err != nil || errorsPage.Summary.Retried != 1 || errorsPage.Items[0].Resolution != "retried" {
 		test.Fatalf("retry not persisted: %+v %v", errorsPage, err)
 	}
@@ -138,11 +138,11 @@ func TestEventStoreTenantIsolationAndAlerts(test *testing.T) {
 func TestSavedMappingAppliesToSCIMAndRejectsStaleOrForeignWrites(test *testing.T) {
 	pool := dbtest.Pool(test)
 	ctx := dbtest.Context(test)
-	tenantID, actorID := uuid.New(), uuid.New()
-	if _, err := pool.Exec(ctx, `INSERT INTO tenant.tenants(id,slug,name) VALUES($1,$2,'Mapping test')`, tenantID, tenantID.String()); err != nil {
+	organizationID, actorID := uuid.New(), uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO organization.organizations(id,slug,name) VALUES($1,$2,'Mapping test')`, organizationID, organizationID.String()); err != nil {
 		test.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO account.users(id,tenant_id,email,status) VALUES($1,$2,$3,'active')`, actorID, tenantID, actorID.String()+"@example.test"); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO account.users(id,organization_id,email,status) VALUES($1,$2,$3,'active')`, actorID, organizationID, actorID.String()+"@example.test"); err != nil {
 		test.Fatal(err)
 	}
 	scimService := scim.NewService(pool, user.NewRepository(pool))
@@ -153,7 +153,7 @@ func TestSavedMappingAppliesToSCIMAndRejectsStaleOrForeignWrites(test *testing.T
 	if err != nil {
 		test.Fatal(err)
 	}
-	token, err := scimService.Rotate(ctx, tx, tenantID)
+	token, err := scimService.Rotate(ctx, tx, organizationID)
 	if err != nil {
 		test.Fatal(err)
 	}
@@ -162,26 +162,26 @@ func TestSavedMappingAppliesToSCIMAndRejectsStaleOrForeignWrites(test *testing.T
 	}
 	router := chi.NewRouter()
 	(&Handler{Service: service}).Mount(router)
-	connectionID := "scim:" + tenantID.String()
-	base := "/tenants/" + tenantID.String() + "/directory/connections/" + connectionID + "/mappings"
-	call := func(method, path string, body any, principalTenant uuid.UUID) *httptest.ResponseRecorder {
+	connectionID := "scim:" + organizationID.String()
+	base := "/tenants/" + organizationID.String() + "/directory/connections/" + connectionID + "/mappings"
+	call := func(method, path string, body any, principalOrganization uuid.UUID) *httptest.ResponseRecorder {
 		raw, _ := json.Marshal(body)
 		request := httptest.NewRequest(method, path, bytes.NewReader(raw))
 		request.Header.Set("Content-Type", "application/json")
-		request = request.WithContext(httpx.WithPrincipal(ctx, &httpx.Principal{ActorType: "user", UserID: &actorID, TenantID: &principalTenant}))
+		request = request.WithContext(httpx.WithPrincipal(ctx, &httpx.Principal{ActorType: "user", UserID: &actorID, OrganizationID: &principalOrganization}))
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, request)
 		return response
 	}
 	rule := Mapping{Source: "department", Target: "department", ValueType: "string", Transform: "uppercase", Enabled: true}
-	created := call(http.MethodPost, base, rule, tenantID)
+	created := call(http.MethodPost, base, rule, organizationID)
 	if created.Code != http.StatusCreated {
 		test.Fatalf("create mapping: %d %s", created.Code, created.Body.String())
 	}
 	if err := json.Unmarshal(created.Body.Bytes(), &rule); err != nil {
 		test.Fatal(err)
 	}
-	preview := call(http.MethodPost, base+"/preview", map[string]any{"source": map[string]any{"department": "engineering"}}, tenantID)
+	preview := call(http.MethodPost, base+"/preview", map[string]any{"source": map[string]any{"department": "engineering"}}, organizationID)
 	var mapped MappingPreview
 	if err := json.Unmarshal(preview.Body.Bytes(), &mapped); err != nil || !mapped.Valid || mapped.Profile["department"] != "ENGINEERING" {
 		test.Fatalf("preview mismatch: %s %v", preview.Body.String(), err)
@@ -189,11 +189,11 @@ func TestSavedMappingAppliesToSCIMAndRejectsStaleOrForeignWrites(test *testing.T
 	if response := call(http.MethodPut, base+"/"+rule.ID.String(), rule, uuid.New()); response.Code != http.StatusForbidden {
 		test.Fatalf("foreign write accepted: %d", response.Code)
 	}
-	updated := call(http.MethodPut, base+"/"+rule.ID.String(), rule, tenantID)
+	updated := call(http.MethodPut, base+"/"+rule.ID.String(), rule, organizationID)
 	if updated.Code != http.StatusOK {
 		test.Fatalf("update mapping: %s", updated.Body.String())
 	}
-	if response := call(http.MethodPut, base+"/"+rule.ID.String(), rule, tenantID); response.Code != http.StatusConflict {
+	if response := call(http.MethodPut, base+"/"+rule.ID.String(), rule, organizationID); response.Code != http.StatusConflict {
 		test.Fatalf("stale update accepted: %d", response.Code)
 	}
 	protocol := chi.NewRouter()
@@ -214,7 +214,7 @@ func TestSavedMappingAppliesToSCIMAndRejectsStaleOrForeignWrites(test *testing.T
 		test.Fatal(err)
 	}
 	var department string
-	if err := pool.QueryRow(ctx, `SELECT profile->>'department' FROM tenant.directory_profiles WHERE tenant_id=$1 AND user_id=$2 AND connection_id=$3`, tenantID, resource.ID, connectionID).Scan(&department); err != nil || department != "ENGINEERING" {
+	if err := pool.QueryRow(ctx, `SELECT profile->>'department' FROM organization.directory_profiles WHERE organization_id=$1 AND user_id=$2 AND connection_id=$3`, organizationID, resource.ID, connectionID).Scan(&department); err != nil || department != "ENGINEERING" {
 		test.Fatalf("preview and persisted profile diverged: %q %v", department, err)
 	}
 	foreignMappings, err := service.Mappings(ctx, uuid.New(), uuid.New().String())
@@ -226,34 +226,34 @@ func TestSavedMappingAppliesToSCIMAndRejectsStaleOrForeignWrites(test *testing.T
 func TestSuspendedDirectoryPrivacyReviewAndReactivation(test *testing.T) {
 	pool := dbtest.Pool(test)
 	ctx := dbtest.Context(test)
-	tenantID, foreignTenant, actorID, ownedID, foreignID, roleID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
-	for _, tenant := range []uuid.UUID{tenantID, foreignTenant} {
-		if _, err := pool.Exec(ctx, `INSERT INTO tenant.tenants(id,slug,name) VALUES($1,$2,'Suspension test')`, tenant, tenant.String()); err != nil {
+	organizationID, foreignOrganization, actorID, ownedID, foreignID, roleID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	for _, organization := range []uuid.UUID{organizationID, foreignOrganization} {
+		if _, err := pool.Exec(ctx, `INSERT INTO organization.organizations(id,slug,name) VALUES($1,$2,'Suspension test')`, organization, organization.String()); err != nil {
 			test.Fatal(err)
 		}
 	}
 	for _, record := range []struct {
-		id, tenant uuid.UUID
-		status     string
-	}{{actorID, tenantID, "active"}, {ownedID, tenantID, "suspended"}, {foreignID, foreignTenant, "suspended"}} {
-		if _, err := pool.Exec(ctx, `INSERT INTO account.users(id,tenant_id,email,status) VALUES($1,$2,$3,$4)`, record.id, record.tenant, record.id.String()+"@example.test", record.status); err != nil {
+		id, organization uuid.UUID
+		status           string
+	}{{actorID, organizationID, "active"}, {ownedID, organizationID, "suspended"}, {foreignID, foreignOrganization, "suspended"}} {
+		if _, err := pool.Exec(ctx, `INSERT INTO account.users(id,organization_id,email,status) VALUES($1,$2,$3,$4)`, record.id, record.organization, record.id.String()+"@example.test", record.status); err != nil {
 			test.Fatal(err)
 		}
 	}
 	if _, err := pool.Exec(ctx, `UPDATE account.users SET suspension_risk='high',suspension_reason='account_compromise' WHERE id=$1`, foreignID); err != nil {
 		test.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO rbac.roles(id,tenant_id,name) VALUES($1,$2,'directory-reader')`, roleID, tenantID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO rbac.roles(id,organization_id,name) VALUES($1,$2,'directory-reader')`, roleID, organizationID); err != nil {
 		test.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO rbac.user_roles(user_id,tenant_id,role_id) VALUES($1,$2,$3)`, foreignID, tenantID, roleID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO rbac.user_roles(user_id,organization_id,role_id) VALUES($1,$2,$3)`, foreignID, organizationID, roleID); err != nil {
 		test.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO auth.sessions(user_id,tenant_id) VALUES($1,$2)`, ownedID, tenantID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO auth.sessions(user_id,organization_id) VALUES($1,$2)`, ownedID, organizationID); err != nil {
 		test.Fatal(err)
 	}
 	repository := user.NewRepository(pool)
-	page, err := repository.ListSuspended(ctx, tenantID, user.SuspensionFilters{Limit: 25})
+	page, err := repository.ListSuspended(ctx, organizationID, user.SuspensionFilters{Limit: 25})
 	if err != nil || page.Total != 2 || page.Summary.HighRisk != 0 {
 		test.Fatalf("suspension scope: %+v %v", page, err)
 	}
@@ -268,19 +268,19 @@ func TestSuspendedDirectoryPrivacyReviewAndReactivation(test *testing.T) {
 		raw, _ := json.Marshal(body)
 		request := httptest.NewRequest(method, path, bytes.NewReader(raw))
 		request.Header.Set("Content-Type", "application/json")
-		request = request.WithContext(httpx.WithPrincipal(ctx, &httpx.Principal{ActorType: "user", UserID: &actorID, TenantID: &tenantID}))
+		request = request.WithContext(httpx.WithPrincipal(ctx, &httpx.Principal{ActorType: "user", UserID: &actorID, OrganizationID: &organizationID}))
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, request)
 		return response
 	}
 	selfRequest := httptest.NewRequest(http.MethodPost, "/users/"+ownedID.String()+"/reactivate", nil)
-	selfRequest = selfRequest.WithContext(httpx.WithPrincipal(ctx, &httpx.Principal{ActorType: "user", UserID: &ownedID, TenantID: &tenantID}))
+	selfRequest = selfRequest.WithContext(httpx.WithPrincipal(ctx, &httpx.Principal{ActorType: "user", UserID: &ownedID, OrganizationID: &organizationID}))
 	selfResponse := httptest.NewRecorder()
 	router.ServeHTTP(selfResponse, selfRequest)
 	if selfResponse.Code != http.StatusForbidden {
 		test.Fatalf("self reactivation accepted: %d", selfResponse.Code)
 	}
-	// foreignID's home is another tenant, so this one may not manage the account.
+	// foreignID's home is another organization, so this one may not manage the account.
 	if response := call(http.MethodPost, "/users/"+foreignID.String()+"/reactivate", nil); response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), errs.CodeUserManagedElsewhere) {
 		test.Fatalf("foreign reactivation: %d %s, want 403 %s", response.Code, response.Body.String(), errs.CodeUserManagedElsewhere)
 	}
@@ -297,7 +297,7 @@ func TestSuspendedDirectoryPrivacyReviewAndReactivation(test *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM auth.sessions WHERE user_id=$1 AND revoked_at IS NULL`, ownedID).Scan(&liveSessions); err != nil || liveSessions != 0 {
 		test.Fatalf("old sessions remained active: %d %v", liveSessions, err)
 	}
-	page, err = repository.ListSuspended(ctx, tenantID, user.SuspensionFilters{Limit: 25})
+	page, err = repository.ListSuspended(ctx, organizationID, user.SuspensionFilters{Limit: 25})
 	if err != nil || page.Total != 1 || page.Items[0].ID != foreignID {
 		test.Fatalf("reactivated user remained listed: %+v %v", page, err)
 	}
@@ -309,48 +309,48 @@ func TestSuspendedDirectoryPrivacyReviewAndReactivation(test *testing.T) {
 func TestRefusedSignInIsNotASyncError(test *testing.T) {
 	pool := dbtest.Pool(test)
 	ctx := dbtest.Context(test)
-	tenantID, userID, connection := uuid.New(), uuid.New(), uuid.New()
-	if _, err := pool.Exec(ctx, `INSERT INTO tenant.tenants(id,slug,name) VALUES($1,$2,'Directory test')`, tenantID, tenantID.String()); err != nil {
+	organizationID, userID, connection := uuid.New(), uuid.New(), uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO organization.organizations(id,slug,name) VALUES($1,$2,'Directory test')`, organizationID, organizationID.String()); err != nil {
 		test.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO account.users(id,tenant_id,email,status) VALUES($1,$2,$3,'active')`, userID, tenantID, userID.String()+"@example.test"); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO account.users(id,organization_id,email,status) VALUES($1,$2,$3,'active')`, userID, organizationID, userID.String()+"@example.test"); err != nil {
 		test.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO tenant.directory_alerts(id,tenant_id,user_id,name,threshold) VALUES($1,$2,$3,'Directory failures',1)`, uuid.New(), tenantID, userID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO organization.directory_alerts(id,organization_id,user_id,name,threshold) VALUES($1,$2,$3,'Directory failures',1)`, uuid.New(), organizationID, userID); err != nil {
 		test.Fatal(err)
 	}
 	service := NewService(&scimFixture{config: &scim.ConfigView{}}, &ldapFixture{})
 	service.SetEventStore(pool)
 	notifications := func() int {
-		return dbtest.Count(test, `SELECT count(*) FROM auth.notifications WHERE tenant_id=$1 AND user_id=$2`, tenantID, userID)
+		return dbtest.Count(test, `SELECT count(*) FROM auth.notifications WHERE organization_id=$1 AND user_id=$2`, organizationID, userID)
 	}
 	since := eventFilter{Since: time.Now().Add(-time.Hour), Limit: 25}
 
-	if err := service.RecordOperation(ctx, tenantID, connection.String(), "sign-in", "user", "", http.StatusUnauthorized, time.Now(), time.Second); err != nil {
+	if err := service.RecordOperation(ctx, organizationID, connection.String(), "sign-in", "user", "", http.StatusUnauthorized, time.Now(), time.Second); err != nil {
 		test.Fatal(err)
 	}
-	page, err := service.Events(ctx, tenantID, since)
+	page, err := service.Events(ctx, organizationID, since)
 	if err != nil || page.Total != 1 || page.Summary.Warnings != 1 || page.Summary.Failed != 0 {
 		test.Fatalf("a refused password in Sync activity: %+v %v, want one warning", page.Summary, err)
 	}
-	errorsPage, err := service.Errors(ctx, tenantID, errorFilter{eventFilter: since})
+	errorsPage, err := service.Errors(ctx, organizationID, errorFilter{eventFilter: since})
 	if err != nil || errorsPage.Total != 0 || notifications() != 0 {
 		test.Fatalf("a refused password: %d sync errors, %d alerts (%v); want none", errorsPage.Total, notifications(), err)
 	}
 
-	if err := service.RecordOperation(ctx, tenantID, connection.String(), "sign-in", "user", "", http.StatusForbidden, time.Now(), time.Second); err != nil {
+	if err := service.RecordOperation(ctx, organizationID, connection.String(), "sign-in", "user", "", http.StatusForbidden, time.Now(), time.Second); err != nil {
 		test.Fatal(err)
 	}
-	errorsPage, err = service.Errors(ctx, tenantID, errorFilter{eventFilter: since})
+	errorsPage, err = service.Errors(ctx, organizationID, errorFilter{eventFilter: since})
 	if err != nil || errorsPage.Total != 1 || errorsPage.Summary.Critical != 1 || notifications() != 1 {
 		test.Fatalf("the service account refused: %+v, %d alerts (%v); want one critical error and an alert", errorsPage.Summary, notifications(), err)
 	}
-	if err := service.RecordLDAPOperation(ctx, ldap.Operation{TenantID: tenantID, ConnectionID: connection, Operation: "sign-in", Resource: "user",
+	if err := service.RecordLDAPOperation(ctx, ldap.Operation{OrganizationID: organizationID, ConnectionID: connection, Operation: "sign-in", Resource: "user",
 		Status: http.StatusBadGateway, Started: time.Now(), Duration: time.Second, Reason: "ldap.dial_failed",
 		Params: map[string]string{"host": "ldap.example.test:636"}, Subject: "asha", UserID: &userID}); err != nil {
 		test.Fatal(err)
 	}
-	errorsPage, err = service.Errors(ctx, tenantID, errorFilter{eventFilter: eventFilter{Since: since.Since, Limit: 25, Search: "dial_failed"}})
+	errorsPage, err = service.Errors(ctx, organizationID, errorFilter{eventFilter: eventFilter{Since: since.Since, Limit: 25, Search: "dial_failed"}})
 	if err != nil || errorsPage.Total != 1 {
 		test.Fatalf("errors searched by their reason: %+v %v; want the unreachable directory", errorsPage, err)
 	}
@@ -363,10 +363,10 @@ func TestRefusedSignInIsNotASyncError(test *testing.T) {
 // check as an operation, within two seconds, carrying the retried error.
 type recordingTester struct{ service *Service }
 
-func (r *recordingTester) TestConnection(ctx context.Context, tenantID, connectionID uuid.UUID) error {
+func (r *recordingTester) TestConnection(ctx context.Context, organizationID, connectionID uuid.UUID) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	return r.service.RecordOperation(ctx, tenantID, connectionID.String(), "test", "connection", "", http.StatusOK, time.Now(), time.Second)
+	return r.service.RecordOperation(ctx, organizationID, connectionID.String(), "test", "connection", "", http.StatusOK, time.Now(), time.Second)
 }
 
 func (*recordingTester) List(context.Context, uuid.UUID) ([]ldap.Connection, error) { return nil, nil }
@@ -377,37 +377,37 @@ func (*recordingTester) List(context.Context, uuid.UUID) ([]ldap.Connection, err
 func TestRetryRecordsItsOwnCheck(test *testing.T) {
 	pool := dbtest.Pool(test)
 	ctx := dbtest.Context(test)
-	tenantID, userID, connection := uuid.New(), uuid.New(), uuid.New()
-	if _, err := pool.Exec(ctx, `INSERT INTO tenant.tenants(id,slug,name) VALUES($1,$2,'Directory test')`, tenantID, tenantID.String()); err != nil {
+	organizationID, userID, connection := uuid.New(), uuid.New(), uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO organization.organizations(id,slug,name) VALUES($1,$2,'Directory test')`, organizationID, organizationID.String()); err != nil {
 		test.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO account.users(id,tenant_id,email,status) VALUES($1,$2,$3,'active')`, userID, tenantID, userID.String()+"@example.test"); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO account.users(id,organization_id,email,status) VALUES($1,$2,$3,'active')`, userID, organizationID, userID.String()+"@example.test"); err != nil {
 		test.Fatal(err)
 	}
 	service := NewService(&scimFixture{config: &scim.ConfigView{}}, &ldapFixture{})
 	service.SetEventStore(pool)
 	service.ldap = &recordingTester{service: service}
-	if err := service.RecordOperation(ctx, tenantID, connection.String(), "test", "connection", "", http.StatusBadGateway, time.Now(), time.Second); err != nil {
+	if err := service.RecordOperation(ctx, organizationID, connection.String(), "test", "connection", "", http.StatusBadGateway, time.Now(), time.Second); err != nil {
 		test.Fatal(err)
 	}
 	var failed uuid.UUID
-	if err := pool.QueryRow(ctx, `SELECT id FROM tenant.directory_events WHERE tenant_id=$1 AND status='failed'`, tenantID).Scan(&failed); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id FROM organization.directory_events WHERE organization_id=$1 AND status='failed'`, organizationID).Scan(&failed); err != nil {
 		test.Fatal(err)
 	}
 
 	router := chi.NewRouter()
 	(&Handler{Service: service}).Mount(router)
-	request := httptest.NewRequest(http.MethodPost, "/tenants/"+tenantID.String()+"/directory/errors/"+failed.String()+"/retry", nil)
-	request = request.WithContext(httpx.WithPrincipal(ctx, &httpx.Principal{ActorType: "user", UserID: &userID, TenantID: &tenantID}))
+	request := httptest.NewRequest(http.MethodPost, "/tenants/"+organizationID.String()+"/directory/errors/"+failed.String()+"/retry", nil)
+	request = request.WithContext(httpx.WithPrincipal(ctx, &httpx.Principal{ActorType: "user", UserID: &userID, OrganizationID: &organizationID}))
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"succeeded":true`) {
 		test.Fatalf("retry: %d %s, want the check to succeed", response.Code, response.Body.String())
 	}
-	if n := dbtest.Count(test, `SELECT count(*) FROM tenant.directory_events WHERE tenant_id=$1 AND retry_of=$2 AND status='success'`, tenantID, failed); n != 1 {
+	if n := dbtest.Count(test, `SELECT count(*) FROM organization.directory_events WHERE organization_id=$1 AND retry_of=$2 AND status='success'`, organizationID, failed); n != 1 {
 		test.Errorf("%d checks recorded for the retry, want 1", n)
 	}
-	if n := dbtest.Count(test, `SELECT count(*) FROM tenant.directory_events WHERE tenant_id=$1 AND id=$2 AND resolution='retried'`, tenantID, failed); n != 1 {
+	if n := dbtest.Count(test, `SELECT count(*) FROM organization.directory_events WHERE organization_id=$1 AND id=$2 AND resolution='retried'`, organizationID, failed); n != 1 {
 		test.Error("the failure was not marked retried")
 	}
 }
@@ -418,15 +418,15 @@ func TestRetryRecordsItsOwnCheck(test *testing.T) {
 func TestSuccessResolvesTheConnectionsFailures(test *testing.T) {
 	pool := dbtest.Pool(test)
 	ctx := dbtest.Context(test)
-	tenantID := uuid.New()
-	if _, err := pool.Exec(ctx, `INSERT INTO tenant.tenants(id,slug,name) VALUES($1,$2,'Directory test')`, tenantID, tenantID.String()); err != nil {
+	organizationID := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO organization.organizations(id,slug,name) VALUES($1,$2,'Directory test')`, organizationID, organizationID.String()); err != nil {
 		test.Fatal(err)
 	}
 	service := NewService(&scimFixture{config: &scim.ConfigView{}}, &ldapFixture{})
 	service.SetEventStore(pool)
 	connection, other := uuid.New().String(), uuid.New().String()
 	record := func(conn, operation string, status int) {
-		if err := service.RecordOperation(ctx, tenantID, conn, operation, "connection", "", status, time.Now(), time.Second); err != nil {
+		if err := service.RecordOperation(ctx, organizationID, conn, operation, "connection", "", status, time.Now(), time.Second); err != nil {
 			test.Fatal(err)
 		}
 	}
@@ -435,43 +435,43 @@ func TestSuccessResolvesTheConnectionsFailures(test *testing.T) {
 	record(connection, "sync", http.StatusUnprocessableEntity)
 	record(other, "test", http.StatusBadGateway)
 	open := func(conn string) int {
-		return dbtest.Count(test, `SELECT count(*) FROM tenant.directory_events WHERE tenant_id=$1 AND connection_id=$2 AND status='failed' AND resolution='open'`, tenantID, conn)
+		return dbtest.Count(test, `SELECT count(*) FROM organization.directory_events WHERE organization_id=$1 AND connection_id=$2 AND status='failed' AND resolution='open'`, organizationID, conn)
 	}
 
 	record(connection, "test", http.StatusOK)
 	if n := open(connection); n != 1 {
 		test.Errorf("%d open failures left on the connection, want only the validation one", n)
 	}
-	if n := dbtest.Count(test, `SELECT count(*) FROM tenant.directory_events WHERE tenant_id=$1 AND connection_id=$2 AND resolution='resolved' AND resolved_by IS NULL`, tenantID, connection); n != 2 {
+	if n := dbtest.Count(test, `SELECT count(*) FROM organization.directory_events WHERE organization_id=$1 AND connection_id=$2 AND resolution='resolved' AND resolved_by IS NULL`, organizationID, connection); n != 2 {
 		test.Errorf("%d failures resolved by the system, want 2", n)
 	}
 	if n := open(other); n != 1 {
 		test.Errorf("another connection's failure was resolved: %d open, want 1", n)
 	}
-	if n := dbtest.Count(test, `SELECT count(*) FROM audit.events WHERE tenant_id=$1 AND action='directory.errors_resolved' AND actor_type='system' AND metadata->>'connection_id'=$2`, tenantID, connection); n != 1 {
+	if n := dbtest.Count(test, `SELECT count(*) FROM audit.events WHERE organization_id=$1 AND action='directory.errors_resolved' AND actor_type='system' AND metadata->>'connection_id'=$2`, organizationID, connection); n != 1 {
 		test.Errorf("%d audit records of the resolution, want 1", n)
 	}
 	record(connection, "test", http.StatusOK)
-	if n := dbtest.Count(test, `SELECT count(*) FROM audit.events WHERE tenant_id=$1 AND action='directory.errors_resolved'`, tenantID); n != 1 {
+	if n := dbtest.Count(test, `SELECT count(*) FROM audit.events WHERE organization_id=$1 AND action='directory.errors_resolved'`, organizationID); n != 1 {
 		test.Errorf("a success with nothing to resolve was audited: %d records, want 1", n)
 	}
 }
 
 // TestAlertsCanBeListedChangedPausedAndRemoved checks the directory alert
 // routes: a paused alert notifies nobody, changes and removals stay in the
-// organisation, and each is audited.
+// organization, and each is audited.
 func TestAlertsCanBeListedChangedPausedAndRemoved(test *testing.T) {
 	pool := dbtest.Pool(test)
 	ctx := dbtest.Context(test)
-	tenantID, other := dbtest.Tenant(test), dbtest.Tenant(test)
-	admin, otherAdmin := dbtest.User(test, tenantID, tenantID), dbtest.User(test, other, other)
+	organizationID, other := dbtest.Organization(test), dbtest.Organization(test)
+	admin, otherAdmin := dbtest.User(test, organizationID, organizationID), dbtest.User(test, other, other)
 	service := NewService(&scimFixture{config: &scim.ConfigView{}}, &ldapFixture{})
 	service.SetEventStore(pool)
-	as := func(user, tenant uuid.UUID) http.Handler {
-		return dbtest.Serve(dbtest.Principal(user, tenant), (&Handler{Service: service}).Mount)
+	as := func(user, organization uuid.UUID) http.Handler {
+		return dbtest.Serve(dbtest.Principal(user, organization), (&Handler{Service: service}).Mount)
 	}
-	h := as(admin.ID, tenantID)
-	base := "/tenants/" + tenantID.String() + "/directory/alerts"
+	h := as(admin.ID, organizationID)
+	base := "/tenants/" + organizationID.String() + "/directory/alerts"
 	var alert Alert
 	dbtest.Decode(test, dbtest.Do(test, h, http.MethodPost, base, map[string]any{"name": "Any failure", "threshold": 1}), &alert)
 	var list struct {
@@ -485,10 +485,10 @@ func TestAlertsCanBeListedChangedPausedAndRemoved(test *testing.T) {
 	if rec := dbtest.Do(test, h, http.MethodPatch, base+"/"+alert.ID.String(), map[string]any{"enabled": false}); rec.Code != http.StatusOK {
 		test.Fatalf("pause: %d %s", rec.Code, rec.Body.String())
 	}
-	if err := service.RecordOperation(ctx, tenantID, uuid.NewString(), "test", "connection", "", http.StatusBadGateway, time.Now(), time.Second); err != nil {
+	if err := service.RecordOperation(ctx, organizationID, uuid.NewString(), "test", "connection", "", http.StatusBadGateway, time.Now(), time.Second); err != nil {
 		test.Fatal(err)
 	}
-	if n := dbtest.Count(test, `SELECT count(*) FROM auth.notifications WHERE tenant_id=$1`, tenantID); n != 0 {
+	if n := dbtest.Count(test, `SELECT count(*) FROM auth.notifications WHERE organization_id=$1`, organizationID); n != 0 {
 		test.Errorf("a paused alert sent %d notifications, want none", n)
 	}
 	dbtest.Decode(test, dbtest.Do(test, h, http.MethodPatch, base+"/"+alert.ID.String(), map[string]any{"threshold": 5, "name": "Bursts"}), &alert)
@@ -510,7 +510,7 @@ func TestAlertsCanBeListedChangedPausedAndRemoved(test *testing.T) {
 		test.Errorf("after removing: %+v, want none", list.Items)
 	}
 	for action, want := range map[string]int{"directory.alert_created": 1, "directory.alert_updated": 2, "directory.alert_deleted": 1} {
-		if n := dbtest.Count(test, `SELECT count(*) FROM audit.events WHERE tenant_id=$1 AND action=$2`, tenantID, action); n != want {
+		if n := dbtest.Count(test, `SELECT count(*) FROM audit.events WHERE organization_id=$1 AND action=$2`, organizationID, action); n != want {
 			test.Errorf("%d %s records, want %d", n, action, want)
 		}
 	}
@@ -518,41 +518,41 @@ func TestAlertsCanBeListedChangedPausedAndRemoved(test *testing.T) {
 
 // TestConnectionsCountTheirPeopleAndGroups checks that each LDAP connection
 // counts the people it signed in, not deleted ones or another connection's,
-// and that SCIM counts the groups it provisioned, in this organisation only.
+// and that SCIM counts the groups it provisioned, in this organization only.
 func TestConnectionsCountTheirPeopleAndGroups(test *testing.T) {
 	pool := dbtest.Pool(test)
 	ctx := dbtest.Context(test)
-	tenantID, other := dbtest.Tenant(test), dbtest.Tenant(test)
+	organizationID, other := dbtest.Organization(test), dbtest.Organization(test)
 	first, second := uuid.New(), uuid.New()
 	service := NewService(&scimFixture{config: &scim.ConfigView{TokenSet: true}}, &ldapFixture{records: []ldap.Connection{
-		{ID: first, TenantID: tenantID, Name: "Head office"}, {ID: second, TenantID: tenantID, Name: "Branch"},
+		{ID: first, OrganizationID: organizationID, Name: "Head office"}, {ID: second, OrganizationID: organizationID, Name: "Branch"},
 	}})
 	service.SetEventStore(pool)
-	link := func(tenant uuid.UUID, connection uuid.UUID) uuid.UUID {
-		person := dbtest.User(test, tenant, tenant)
-		if _, err := pool.Exec(ctx, `INSERT INTO account.external_identities (user_id, tenant_id, provider, subject, connection_id) VALUES ($1, $2, 'ldap', $3, $4)`,
-			person.ID, tenant, uuid.NewString(), connection); err != nil {
+	link := func(organization uuid.UUID, connection uuid.UUID) uuid.UUID {
+		person := dbtest.User(test, organization, organization)
+		if _, err := pool.Exec(ctx, `INSERT INTO account.external_identities (user_id, organization_id, provider, subject, connection_id) VALUES ($1, $2, 'ldap', $3, $4)`,
+			person.ID, organization, uuid.NewString(), connection); err != nil {
 			test.Fatal(err)
 		}
 		return person.ID
 	}
-	link(tenantID, first)
-	link(tenantID, first)
-	gone := link(tenantID, first)
+	link(organizationID, first)
+	link(organizationID, first)
+	gone := link(organizationID, first)
 	if _, err := pool.Exec(ctx, `UPDATE account.users SET deleted_at = NOW() WHERE id = $1`, gone); err != nil {
 		test.Fatal(err)
 	}
-	link(other, first) // another organisation's identity naming the same id
-	for _, tenant := range []uuid.UUID{tenantID, tenantID, other} {
-		if _, err := pool.Exec(ctx, `INSERT INTO tenant.groups (tenant_id, name, provisioned_via) VALUES ($1, $2, 'scim')`, tenant, uuid.NewString()); err != nil {
+	link(other, first) // another organization's identity naming the same id
+	for _, organization := range []uuid.UUID{organizationID, organizationID, other} {
+		if _, err := pool.Exec(ctx, `INSERT INTO organization.groups (organization_id, name, provisioned_via) VALUES ($1, $2, 'scim')`, organization, uuid.NewString()); err != nil {
 			test.Fatal(err)
 		}
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, 'Made by an admin')`, tenantID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO organization.groups (organization_id, name) VALUES ($1, 'Made by an admin')`, organizationID); err != nil {
 		test.Fatal(err)
 	}
 
-	connections, err := service.List(ctx, tenantID)
+	connections, err := service.List(ctx, organizationID)
 	if err != nil {
 		test.Fatal(err)
 	}
@@ -573,33 +573,33 @@ func TestConnectionsCountTheirPeopleAndGroups(test *testing.T) {
 }
 
 // TestPersonsDirectoryProfileIsReturned checks that a person's mapped profile
-// comes back per connection, named, and that another organisation's person
+// comes back per connection, named, and that another organization's person
 // has none here.
 func TestPersonsDirectoryProfileIsReturned(test *testing.T) {
 	pool := dbtest.Pool(test)
 	ctx := dbtest.Context(test)
-	tenantID, other := dbtest.Tenant(test), dbtest.Tenant(test)
-	admin, person, elsewhere := dbtest.User(test, tenantID, tenantID), dbtest.User(test, tenantID, tenantID), dbtest.User(test, other, other)
+	organizationID, other := dbtest.Organization(test), dbtest.Organization(test)
+	admin, person, elsewhere := dbtest.User(test, organizationID, organizationID), dbtest.User(test, organizationID, organizationID), dbtest.User(test, other, other)
 	connection := uuid.New()
-	service := NewService(&scimFixture{config: &scim.ConfigView{}}, &ldapFixture{records: []ldap.Connection{{ID: connection, TenantID: tenantID, Name: "Head office"}}})
+	service := NewService(&scimFixture{config: &scim.ConfigView{}}, &ldapFixture{records: []ldap.Connection{{ID: connection, OrganizationID: organizationID, Name: "Head office"}}})
 	service.SetEventStore(pool)
 	for _, row := range []struct {
-		tenant, user uuid.UUID
-	}{{tenantID, person.ID}, {other, elsewhere.ID}} {
-		if _, err := pool.Exec(ctx, `INSERT INTO tenant.directory_profiles (tenant_id, user_id, connection_id, profile) VALUES ($1, $2, $3, '{"title": "Engineer", "groups": ["eng"]}')`,
-			row.tenant, row.user, connection.String()); err != nil {
+		organization, user uuid.UUID
+	}{{organizationID, person.ID}, {other, elsewhere.ID}} {
+		if _, err := pool.Exec(ctx, `INSERT INTO organization.directory_profiles (organization_id, user_id, connection_id, profile) VALUES ($1, $2, $3, '{"title": "Engineer", "groups": ["eng"]}')`,
+			row.organization, row.user, connection.String()); err != nil {
 			test.Fatal(err)
 		}
 	}
-	h := dbtest.Serve(dbtest.Principal(admin.ID, tenantID), (&Handler{Service: service}).Mount)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organizationID), (&Handler{Service: service}).Mount)
 	var got struct {
 		Items []Profile `json:"items"`
 	}
-	dbtest.Decode(test, dbtest.Do(test, h, http.MethodGet, "/tenants/"+tenantID.String()+"/directory/profiles/"+person.ID.String(), nil), &got)
+	dbtest.Decode(test, dbtest.Do(test, h, http.MethodGet, "/tenants/"+organizationID.String()+"/directory/profiles/"+person.ID.String(), nil), &got)
 	if len(got.Items) != 1 || got.Items[0].ConnectionName != "Head office" || got.Items[0].Fields["title"] != "Engineer" {
 		test.Errorf("profile %+v; want one from Head office with the title", got.Items)
 	}
-	dbtest.Decode(test, dbtest.Do(test, h, http.MethodGet, "/tenants/"+tenantID.String()+"/directory/profiles/"+elsewhere.ID.String(), nil), &got)
+	dbtest.Decode(test, dbtest.Do(test, h, http.MethodGet, "/tenants/"+organizationID.String()+"/directory/profiles/"+elsewhere.ID.String(), nil), &got)
 	if len(got.Items) != 0 {
 		test.Errorf("another organisation's person: %+v, want nothing", got.Items)
 	}
@@ -610,10 +610,10 @@ func TestPersonsDirectoryProfileIsReturned(test *testing.T) {
 func TestDirectorySearchTakesWildcardsLiterally(test *testing.T) {
 	pool := dbtest.Pool(test)
 	ctx := dbtest.Context(test)
-	tenantID := dbtest.Tenant(test)
+	organizationID := dbtest.Organization(test)
 	for _, message := range []string{"qa_b refused", "qaXb refused", "100% refused", "plain refused"} {
-		if _, err := pool.Exec(ctx, `INSERT INTO tenant.directory_events (id, tenant_id, connection_id, operation, trigger_type, resource_type, started_at, duration_ms, http_status, status, message)
-			VALUES ($1, $2, 'scim', 'post', 'push', 'user', NOW(), 1, 502, 'failed', $3)`, uuid.New(), tenantID, message); err != nil {
+		if _, err := pool.Exec(ctx, `INSERT INTO organization.directory_events (id, organization_id, connection_id, operation, trigger_type, resource_type, started_at, duration_ms, http_status, status, message)
+			VALUES ($1, $2, 'scim', 'post', 'push', 'user', NOW(), 1, 502, 'failed', $3)`, uuid.New(), organizationID, message); err != nil {
 			test.Fatal(err)
 		}
 	}
@@ -621,14 +621,14 @@ func TestDirectorySearchTakesWildcardsLiterally(test *testing.T) {
 	service.SetEventStore(pool)
 	for search, want := range map[string]string{"qa_b": "qa_b refused", "%": "100% refused"} {
 		filter := eventFilter{Since: time.Now().Add(-time.Hour), Search: search, Limit: 25}
-		events, err := service.Events(ctx, tenantID, filter)
+		events, err := service.Events(ctx, organizationID, filter)
 		if err != nil {
 			test.Fatal(err)
 		}
 		if len(events.Items) != 1 || events.Items[0].Message != want {
 			test.Errorf("events matching %q: %d, want only %q", search, len(events.Items), want)
 		}
-		failures, err := service.Errors(ctx, tenantID, errorFilter{eventFilter: filter})
+		failures, err := service.Errors(ctx, organizationID, errorFilter{eventFilter: filter})
 		if err != nil {
 			test.Fatal(err)
 		}

@@ -15,7 +15,7 @@ import (
 // update handles PATCH /v1/tenants/{tenantID}/webhooks/{id}: a new URL, new
 // events, or both, audited with what changed.
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	tenantID, id, err := pathSubscription(r)
+	organizationID, id, err := pathSubscription(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -32,7 +32,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	before, after, err := h.Service.Update(ctx, tx, id, tenantID, in)
+	before, after, err := h.Service.Update(ctx, tx, id, organizationID, in)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -44,7 +44,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	if !slices.Equal(before.Events, after.Events) {
 		changes["events"] = map[string]any{"from": before.Events, "to": after.Events}
 	}
-	if err := h.audit(r, tx, tenantID, id, "webhook.subscription_updated", map[string]any{"changes": changes}); err != nil {
+	if err := h.audit(r, tx, organizationID, id, "webhook.subscription_updated", map[string]any{"changes": changes}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -58,13 +58,13 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 // retryDead handles POST /v1/tenants/{tenantID}/webhooks/{id}/deliveries/retry:
 // the subscription's given-up deliveries are sent again.
 func (h *Handler) retryDead(w http.ResponseWriter, r *http.Request) {
-	tenantID, id, err := pathSubscription(r)
+	organizationID, id, err := pathSubscription(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	ctx := r.Context()
-	n, err := h.Service.RetryDead(ctx, id, tenantID)
+	n, err := h.Service.RetryDead(ctx, id, organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -75,7 +75,7 @@ func (h *Handler) retryDead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	if err := h.audit(r, tx, tenantID, id, "webhook.deliveries_retried", map[string]any{"requeued": n}); err != nil {
+	if err := h.audit(r, tx, organizationID, id, "webhook.deliveries_retried", map[string]any{"requeued": n}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -89,7 +89,7 @@ func (h *Handler) retryDead(w http.ResponseWriter, r *http.Request) {
 // attempts handles GET /v1/tenants/{tenantID}/webhooks/{id}/deliveries/
 // {deliveryID}/attempts: every try at one delivery.
 func (h *Handler) attempts(w http.ResponseWriter, r *http.Request) {
-	tenantID, id, err := pathSubscription(r)
+	organizationID, id, err := pathSubscription(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -99,7 +99,7 @@ func (h *Handler) attempts(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrWebhookInvalidID)
 		return
 	}
-	out, err := h.Service.Attempts(r.Context(), id, deliveryID, tenantID)
+	out, err := h.Service.Attempts(r.Context(), id, deliveryID, organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

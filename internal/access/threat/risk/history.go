@@ -56,10 +56,10 @@ func deviceKey(ua string) string {
 // lastCountry returns the most recent country recorded for this user (across
 // any device), and whether one was found at all. Rows with no country ("")
 // are skipped — they carry no geo signal to compare against.
-func (s *Service) lastCountry(ctx context.Context, tenantID, userID uuid.UUID) (country string, seenAt time.Time, ok bool) {
+func (s *Service) lastCountry(ctx context.Context, organizationID, userID uuid.UUID) (country string, seenAt time.Time, ok bool) {
 	row, err := s.q.GetLastCountry(ctx, dbgen.GetLastCountryParams{
-		TenantID: tenantID,
-		UserID:   userID,
+		OrganizationID: organizationID,
+		UserID:         userID,
 	})
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
@@ -75,27 +75,27 @@ func (s *Service) lastCountry(ctx context.Context, tenantID, userID uuid.UUID) (
 
 // deviceSeenBefore reports whether device key dk is in the user's sign-in
 // history, which keeps entries for SignInHistoryRetention.
-func (s *Service) deviceSeenBefore(ctx context.Context, tenantID, userID uuid.UUID, dk string) (bool, error) {
+func (s *Service) deviceSeenBefore(ctx context.Context, organizationID, userID uuid.UUID, dk string) (bool, error) {
 	return s.q.DeviceSeenBefore(ctx, dbgen.DeviceSeenBeforeParams{
-		TenantID:  tenantID,
-		UserID:    userID,
-		DeviceKey: dk,
+		OrganizationID: organizationID,
+		UserID:         userID,
+		DeviceKey:      dk,
 	})
 }
 
 // recordLogin appends this login's device/country to the user's history.
 // Best-effort: a failure here shouldn't fail the login it's describing, so
 // errors are logged, not returned.
-func (s *Service) recordLogin(ctx context.Context, tenantID, userID uuid.UUID, dk, country string) {
+func (s *Service) recordLogin(ctx context.Context, organizationID, userID uuid.UUID, dk, country string) {
 	var c *string
 	if country != "" {
 		c = &country
 	}
 	if err := s.q.InsertLoginContext(ctx, dbgen.InsertLoginContextParams{
-		TenantID:  tenantID,
-		UserID:    userID,
-		DeviceKey: dk,
-		Country:   c,
+		OrganizationID: organizationID,
+		UserID:         userID,
+		DeviceKey:      dk,
+		Country:        c,
 	}); err != nil {
 		slog.Warn("risk: record login context", "err", err)
 	}
@@ -107,7 +107,7 @@ func (s *Service) recordLogin(ctx context.Context, tenantID, userID uuid.UUID, d
 const SignInHistoryRetention = 90 * 24 * time.Hour
 
 // PurgeSignInHistory deletes sign-in history older than retention and returns
-// how many entries. Run on a schedule; a person's or organisation's history
+// how many entries. Run on a schedule; a person's or organization's history
 // also goes when they are deleted.
 func PurgeSignInHistory(ctx context.Context, pool *pgxpool.Pool, retention time.Duration) (int64, error) {
 	return postgres.PurgeInBatches(ctx, pool, `DELETE FROM auth.login_context_history WHERE ctid = ANY(ARRAY(

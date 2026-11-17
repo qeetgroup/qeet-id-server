@@ -20,11 +20,11 @@ import (
 func TestNativeAppLinkAndTokenRotation(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc, _ := pushServices(t, newExpo(t))
-	a, tenant := member(t)
+	a, organization := member(t)
 
 	link := func(pushToken string) PushPairingClaim {
 		t.Helper()
-		_, code, err := svc.CreatePushPairing(ctx, a.ID, &tenant, "192.0.2.1", "test")
+		_, code, err := svc.CreatePushPairing(ctx, a.ID, &organization, "192.0.2.1", "test")
 		if err != nil {
 			t.Fatalf("pairing: %v", err)
 		}

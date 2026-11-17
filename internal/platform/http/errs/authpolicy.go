@@ -1,6 +1,6 @@
 package errs
 
-// Auth policy error codes: a tenant's password rules and the breached-password check.
+// Auth policy error codes: an organization's password rules and the breached-password check.
 const (
 	CodeAuthPolicyPasswordTooShort    = "authpolicy.password_too_short"
 	CodeAuthPolicyPasswordNoUppercase = "authpolicy.password_no_uppercase"
@@ -10,7 +10,7 @@ const (
 )
 
 // Auth-policy errors. The Message is what an end user (or admin setting a
-// password) sees when the password fails the tenant's policy.
+// password) sees when the password fails the organization's policy.
 var (
 	ErrAuthPolicyPasswordTooShort    = New(CodeAuthPolicyPasswordTooShort, "Your password is too short. Please choose a longer one.")
 	ErrAuthPolicyPasswordNoUppercase = New(CodeAuthPolicyPasswordNoUppercase, "Your password must contain an uppercase letter.")

@@ -39,10 +39,10 @@ type Service struct {
 	deliverable func(channel string) bool // whether a channel can deliver (nil = assume it can)
 }
 
-// PlanGate reports whether an organisation's plan includes a feature.
+// PlanGate reports whether an organization's plan includes a feature.
 // Satisfied by *entitlements.Service.
 type PlanGate interface {
-	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
+	FeatureAllowed(ctx context.Context, organizationID uuid.UUID, feature string) (bool, error)
 }
 
 // SetPlan wires the plan gate for SMS codes, which cost per message.
@@ -57,13 +57,13 @@ func (s *Service) SetDeliveryCheck(deliverable func(channel string) bool) {
 // Requester is who asked, for the audit trail: the actor, and the organization
 // their session is in (nil before they belong to one).
 type Requester struct {
-	Actor    audit.Actor
-	TenantID *uuid.UUID
+	Actor          audit.Actor
+	OrganizationID *uuid.UUID
 }
 
 func (r Requester) event(action string, userID uuid.UUID, metadata map[string]any) audit.Event {
 	e := r.Actor.PlatformEvent(action, "user", userID, metadata)
-	e.TenantID = r.TenantID
+	e.OrganizationID = r.OrganizationID
 	return e
 }
 
@@ -491,10 +491,10 @@ func (s *Service) StartEmailChange(ctx context.Context, userID uuid.UUID, newEma
 }
 
 // checkEmailChange refuses, with ErrVerifyEmailManaged, moving userID's address
-// to newEmail where an organisation decides it: its directory or single
+// to newEmail where an organization decides it: its directory or single
 // sign-on provides the address, the address is on a domain the account's
-// organisation manages and newEmail isn't, or newEmail is on a domain another
-// organisation manages. db is the pool, or the confirming transaction.
+// organization manages and newEmail isn't, or newEmail is on a domain another
+// organization manages. db is the pool, or the confirming transaction.
 func checkEmailChange(ctx context.Context, db dbgen.DBTX, userID uuid.UUID, newEmail string) error {
 	holder, err := dbgen.New(db).AddressHolder(ctx, userID)
 	if err != nil {
@@ -503,13 +503,13 @@ func checkEmailChange(ctx context.Context, db dbgen.DBTX, userID uuid.UUID, newE
 	if holder.Provided {
 		return errs.ErrVerifyEmailManaged.WithMessage("Your organization's directory or single sign-on provides your email address, so it changes there.")
 	}
-	home := uuid.UUID(holder.TenantID.Bytes)
-	ctx = postgres.AcrossTenants(ctx)
+	home := uuid.UUID(holder.OrganizationID.Bytes)
+	ctx = postgres.AcrossOrganizations(ctx)
 	next, ok, err := domainverify.ManagingDomain(ctx, db, newEmail)
 	if err != nil {
 		return err
 	}
-	if ok && next.TenantID != home {
+	if ok && next.OrganizationID != home {
 		return errs.ErrVerifyEmailManaged.WithMessage("That address is on a domain another organization manages.")
 	}
 	if ok {
@@ -519,7 +519,7 @@ func checkEmailChange(ctx context.Context, db dbgen.DBTX, userID uuid.UUID, newE
 	if err != nil {
 		return err
 	}
-	if ok && current.TenantID == home {
+	if ok && current.OrganizationID == home {
 		return errs.ErrVerifyEmailManaged.WithMessage("Your organization manages your email address's domain, so it can change only to another address on its domains.")
 	}
 	return nil
@@ -576,7 +576,7 @@ func (s *Service) confirmEmailChange(ctx context.Context, userID uuid.UUID, code
 	if err := chargeFailure(ctx, tx, "email_verifications", row, code, budget); err != nil {
 		return "", "", err
 	}
-	// Checked again: an organisation may have verified a domain since the start.
+	// Checked again: an organization may have verified a domain since the start.
 	if err := checkEmailChange(ctx, tx, userID, row.value); err != nil {
 		return "", "", err
 	}
@@ -628,7 +628,7 @@ func (s *Service) noticeEmailChanged(ctx context.Context, userID uuid.UUID, oldE
 
 // StartPhone sends a verification code to the user's phone number, recorded as
 // who's with the number masked. As for MFA codes, the number must be in E.164
-// form, and SMS deliverable and in the plan of the organisation who's session
+// form, and SMS deliverable and in the plan of the organization who's session
 // is in (none: refused).
 func (s *Service) StartPhone(ctx context.Context, userID uuid.UUID, phone string, who Requester) error {
 	// Default to the number on file when the body omits it.
@@ -645,7 +645,7 @@ func (s *Service) StartPhone(ctx context.Context, userID uuid.UUID, phone string
 		}
 		phone = *stored
 	}
-	if err := s.canSendSMS(ctx, phone, who.TenantID); err != nil {
+	if err := s.canSendSMS(ctx, phone, who.OrganizationID); err != nil {
 		return err
 	}
 	code, err := codes.Numeric(6)
@@ -693,8 +693,8 @@ func (s *Service) StartPhone(ctx context.Context, userID uuid.UUID, phone string
 }
 
 // canSendSMS refuses a code to phone unless it is in E.164 form, a provider
-// can deliver SMS, and the plan of tenantID (nil: refused) includes SMS.
-func (s *Service) canSendSMS(ctx context.Context, phone string, tenantID *uuid.UUID) error {
+// can deliver SMS, and the plan of organizationID (nil: refused) includes SMS.
+func (s *Service) canSendSMS(ctx context.Context, phone string, organizationID *uuid.UUID) error {
 	if !e164.MatchString(phone) {
 		return errVerifyPhoneInvalid
 	}
@@ -705,10 +705,10 @@ func (s *Service) canSendSMS(ctx context.Context, phone string, tenantID *uuid.U
 		return nil
 	}
 	refused := errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": smsFeature})
-	if tenantID == nil {
+	if organizationID == nil {
 		return refused
 	}
-	ok, err := s.plan.FeatureAllowed(ctx, *tenantID, smsFeature)
+	ok, err := s.plan.FeatureAllowed(ctx, *organizationID, smsFeature)
 	if err != nil {
 		return err
 	}

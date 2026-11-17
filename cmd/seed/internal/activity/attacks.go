@@ -7,7 +7,7 @@ import (
 )
 
 // attack is a credential-stuffing run from one source against an
-// organisation's sign-in page: addresses from a leaked list, most of which
+// organization's sign-in page: addresses from a leaked list, most of which
 // have no account there. The security step writes the password sprays and
 // the account lockouts.
 type attack struct {
@@ -18,8 +18,8 @@ type attack struct {
 
 // attacks plans the runs against o since it opened: a few over the last
 // fortnight, and fresh ones in the last 24 hours at the larger
-// organisations, so failed sign-ins are well up on the day before and the
-// dashboard's insight fires. An organisation open to self-registration was
+// organizations, so failed sign-ins are well up on the day before and the
+// dashboard's insight fires. An organization open to self-registration was
 // probed the day before too, so its rise is milder. Where only the office
 // network may sign in, outside attempts are refused before any password is
 // checked, so there are none.

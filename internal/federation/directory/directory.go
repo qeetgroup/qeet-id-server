@@ -1,4 +1,4 @@
-// Package directory gives administrators one view of a tenant's directory
+// Package directory gives administrators one view of an organization's directory
 // connections (its SCIM endpoint and LDAP connections): sync activity and
 // errors, failure alerts, and the attribute mappings applied to the profiles
 // they provision.
@@ -38,17 +38,17 @@ type Connection struct {
 	ServerURL      *string    `json:"server_url"`
 }
 
-// SCIMSource lists a tenant's SCIM connection.
+// SCIMSource lists an organization's SCIM connection.
 type SCIMSource interface {
 	Config(context.Context, uuid.UUID) (*scim.ConfigView, error)
 }
 
-// LDAPSource lists a tenant's LDAP connections.
+// LDAPSource lists an organization's LDAP connections.
 type LDAPSource interface {
 	List(context.Context, uuid.UUID) ([]ldap.Connection, error)
 }
 
-// Service gives one view of a tenant's directory connections, their events
+// Service gives one view of an organization's directory connections, their events
 // and their mappings.
 type Service struct {
 	scim SCIMSource
@@ -61,19 +61,19 @@ func NewService(scimSource SCIMSource, ldapSource LDAPSource) *Service {
 	return &Service{scim: scimSource, ldap: ldapSource}
 }
 
-// List returns the tenant's connections.
-func (service *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Connection, error) {
-	if tenantID == uuid.Nil {
+// List returns the organization's connections.
+func (service *Service) List(ctx context.Context, organizationID uuid.UUID) ([]Connection, error) {
+	if organizationID == uuid.Nil {
 		return nil, errs.ErrUnauthorized
 	}
-	config, err := service.scim.Config(ctx, tenantID)
+	config, err := service.scim.Config(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
 	if config == nil {
 		return nil, errs.ErrInternalServer
 	}
-	ldapConnections, err := service.ldap.List(ctx, tenantID)
+	ldapConnections, err := service.ldap.List(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -81,13 +81,13 @@ func (service *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Connect
 	if config.TokenSet {
 		count := config.ProvisionedCount
 		records = append(records, Connection{
-			ID: "scim:" + tenantID.String(), Name: "SCIM", Reference: "/scim/v2",
+			ID: "scim:" + organizationID.String(), Name: "SCIM", Reference: "/scim/v2",
 			Type: "scim", Status: "configured", Health: "unknown", Scope: "users-and-groups",
 			CreatedAt: config.CreatedAt, LastActivityAt: config.LastUsedAt, UserCount: &count,
 		})
 	}
 	for _, source := range ldapConnections {
-		if source.TenantID != tenantID {
+		if source.OrganizationID != organizationID {
 			return nil, errs.ErrInternalServer
 		}
 		records = append(records, Connection{
@@ -96,10 +96,10 @@ func (service *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Connect
 			CreatedAt: &source.CreatedAt, LastActivityAt: source.LastLoginAt, ServerURL: &source.ServerURL,
 		})
 	}
-	if err := service.enrichConnections(ctx, tenantID, records); err != nil {
+	if err := service.enrichConnections(ctx, organizationID, records); err != nil {
 		return nil, err
 	}
-	if err := service.countConnections(ctx, tenantID, records); err != nil {
+	if err := service.countConnections(ctx, organizationID, records); err != nil {
 		return nil, err
 	}
 	return records, nil
@@ -107,7 +107,7 @@ func (service *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Connect
 
 // countConnections sets each LDAP connection's user count, the people with an
 // identity it signed in, and SCIM's group count, the groups it provisioned.
-func (service *Service) countConnections(ctx context.Context, tenantID uuid.UUID, records []Connection) error {
+func (service *Service) countConnections(ctx context.Context, organizationID uuid.UUID, records []Connection) error {
 	if service.pool == nil {
 		return nil
 	}
@@ -116,8 +116,8 @@ func (service *Service) countConnections(ctx context.Context, tenantID uuid.UUID
 		SELECT ei.connection_id::text, count(DISTINCT ei.user_id)::int
 		FROM account.external_identities ei
 		JOIN account.users u ON u.id = ei.user_id AND u.deleted_at IS NULL
-		WHERE ei.tenant_id = $1 AND ei.provider = 'ldap' AND ei.connection_id IS NOT NULL
-		GROUP BY ei.connection_id`, tenantID)
+		WHERE ei.organization_id = $1 AND ei.provider = 'ldap' AND ei.connection_id IS NOT NULL
+		GROUP BY ei.connection_id`, organizationID)
 	if err != nil {
 		return err
 	}
@@ -135,7 +135,7 @@ func (service *Service) countConnections(ctx context.Context, tenantID uuid.UUID
 		return err
 	}
 	var groups int
-	if err := service.pool.QueryRow(ctx, `SELECT count(*)::int FROM tenant.groups WHERE tenant_id = $1 AND provisioned_via = 'scim'`, tenantID).Scan(&groups); err != nil {
+	if err := service.pool.QueryRow(ctx, `SELECT count(*)::int FROM organization.groups WHERE organization_id = $1 AND provisioned_via = 'scim'`, organizationID).Scan(&groups); err != nil {
 		return err
 	}
 	for i := range records {
@@ -175,31 +175,31 @@ func (handler *Handler) Mount(router chi.Router) {
 	router.Delete("/tenants/{tenantID}/directory/connections/{connectionID}/mappings/{mappingID}", handler.deleteMapping)
 }
 
-func requireTenant(request *http.Request) (uuid.UUID, error) {
-	tenantID, err := httpx.RequireTenant(request)
+func requireOrganization(request *http.Request) (uuid.UUID, error) {
+	organizationID, err := httpx.RequireOrganization(request)
 	if err != nil {
 		return uuid.Nil, err
 	}
-	if tenantID == uuid.Nil {
+	if organizationID == uuid.Nil {
 		return uuid.Nil, errs.ErrUnauthorized
 	}
-	pathTenant, err := uuid.Parse(chi.URLParam(request, "tenantID"))
+	pathOrganization, err := uuid.Parse(chi.URLParam(request, "tenantID"))
 	if err != nil {
 		return uuid.Nil, errs.ErrBadRequest
 	}
-	if pathTenant != tenantID {
+	if pathOrganization != organizationID {
 		return uuid.Nil, errs.ErrForbidden
 	}
-	return tenantID, nil
+	return organizationID, nil
 }
 
 func (handler *Handler) list(response http.ResponseWriter, request *http.Request) {
-	tenantID, err := requireTenant(request)
+	organizationID, err := requireOrganization(request)
 	if err != nil {
 		httpx.WriteError(response, request, err)
 		return
 	}
-	records, err := handler.Service.List(request.Context(), tenantID)
+	records, err := handler.Service.List(request.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(response, request, err)
 		return

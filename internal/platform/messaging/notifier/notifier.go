@@ -14,7 +14,7 @@ import (
 type Message struct {
 	TemplateKey       string            // the template to render
 	TemplateVariables map[string]string // values for the template
-	TenantID          string            // the message's organisation ("" for none)
+	OrganizationID    string            // the message's organization ("" for none)
 	FromName          string            // the sender's display name
 	ReplyTo           string            // the Reply-To address
 	To                string            // the recipient's address or phone number

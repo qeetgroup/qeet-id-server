@@ -14,34 +14,34 @@ import (
 )
 
 const deleteGroup = `-- name: DeleteGroup :one
-DELETE FROM tenant.groups WHERE id = $1 AND tenant_id = $2 RETURNING name
+DELETE FROM organization.groups WHERE id = $1 AND organization_id = $2 RETURNING name
 `
 
 type DeleteGroupParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) DeleteGroup(ctx context.Context, arg DeleteGroupParams) (string, error) {
-	row := q.db.QueryRow(ctx, deleteGroup, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, deleteGroup, arg.ID, arg.OrganizationID)
 	var name string
 	err := row.Scan(&name)
 	return name, err
 }
 
 const deleteGroupMember = `-- name: DeleteGroupMember :execrows
-DELETE FROM tenant.group_members
-WHERE group_id = $1 AND user_id = $2 AND tenant_id = $3
+DELETE FROM organization.group_members
+WHERE group_id = $1 AND user_id = $2 AND organization_id = $3
 `
 
 type DeleteGroupMemberParams struct {
-	GroupID  uuid.UUID
-	UserID   uuid.UUID
-	TenantID uuid.UUID
+	GroupID        uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) DeleteGroupMember(ctx context.Context, arg DeleteGroupMemberParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteGroupMember, arg.GroupID, arg.UserID, arg.TenantID)
+	result, err := q.db.Exec(ctx, deleteGroupMember, arg.GroupID, arg.UserID, arg.OrganizationID)
 	if err != nil {
 		return 0, err
 	}
@@ -49,16 +49,16 @@ func (q *Queries) DeleteGroupMember(ctx context.Context, arg DeleteGroupMemberPa
 }
 
 const groupExists = `-- name: GroupExists :one
-SELECT EXISTS(SELECT 1 FROM tenant.groups WHERE id = $1 AND tenant_id = $2)
+SELECT EXISTS(SELECT 1 FROM organization.groups WHERE id = $1 AND organization_id = $2)
 `
 
 type GroupExistsParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) GroupExists(ctx context.Context, arg GroupExistsParams) (bool, error) {
-	row := q.db.QueryRow(ctx, groupExists, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, groupExists, arg.ID, arg.OrganizationID)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
@@ -66,25 +66,25 @@ func (q *Queries) GroupExists(ctx context.Context, arg GroupExistsParams) (bool,
 
 const insertGroup = `-- name: InsertGroup :one
 
-INSERT INTO tenant.groups (tenant_id, parent_id, name, description)
+INSERT INTO organization.groups (organization_id, parent_id, name, description)
 VALUES ($1, $2, $3, $4)
-RETURNING id, tenant_id, parent_id, name, description, created_at
+RETURNING id, organization_id, parent_id, name, description, created_at
 `
 
 type InsertGroupParams struct {
-	TenantID    uuid.UUID
-	ParentID    pgtype.UUID
-	Name        string
-	Description string
+	OrganizationID uuid.UUID
+	ParentID       pgtype.UUID
+	Name           string
+	Description    string
 }
 
 type InsertGroupRow struct {
-	ID          uuid.UUID
-	TenantID    uuid.UUID
-	ParentID    pgtype.UUID
-	Name        string
-	Description string
-	CreatedAt   time.Time
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	ParentID       pgtype.UUID
+	Name           string
+	Description    string
+	CreatedAt      time.Time
 }
 
 // Queries for the groups domain.
@@ -92,7 +92,7 @@ type InsertGroupRow struct {
 // stay hand-written on the same pgx.Tx.
 func (q *Queries) InsertGroup(ctx context.Context, arg InsertGroupParams) (InsertGroupRow, error) {
 	row := q.db.QueryRow(ctx, insertGroup,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.ParentID,
 		arg.Name,
 		arg.Description,
@@ -100,7 +100,7 @@ func (q *Queries) InsertGroup(ctx context.Context, arg InsertGroupParams) (Inser
 	var i InsertGroupRow
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.ParentID,
 		&i.Name,
 		&i.Description,
@@ -115,44 +115,44 @@ WITH allowed AS (
         SELECT 1 FROM account.users account
         WHERE account.id = $1 AND account.deleted_at IS NULL
           AND (
-              account.tenant_id = $2::uuid
+              account.organization_id = $2::uuid
               OR EXISTS (
                   SELECT 1 FROM rbac.user_roles membership
                   JOIN rbac.roles member_role
-                    ON member_role.id = membership.role_id AND member_role.tenant_id = membership.tenant_id
-                  WHERE membership.user_id = $1 AND membership.tenant_id = $2
+                    ON member_role.id = membership.role_id AND member_role.organization_id = membership.organization_id
+                  WHERE membership.user_id = $1 AND membership.organization_id = $2
               )
           )
     ) AS ok
 ),
 ins AS (
-    INSERT INTO tenant.group_members AS gm (group_id, user_id, tenant_id)
+    INSERT INTO organization.group_members AS gm (group_id, user_id, organization_id)
     SELECT $3, $1, $2
     FROM allowed
     WHERE allowed.ok
     ON CONFLICT (group_id, user_id) DO UPDATE SET source_connection_id = NULL
-    WHERE gm.tenant_id = EXCLUDED.tenant_id AND gm.source_connection_id IS NOT NULL
+    WHERE gm.organization_id = EXCLUDED.organization_id AND gm.source_connection_id IS NOT NULL
 )
 SELECT allowed.ok AS valid FROM allowed
 `
 
 type InsertGroupMemberParams struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
-	GroupID  uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
+	GroupID        uuid.UUID
 }
 
 // InsertGroupMember adds a user to a group only when the user is a live member
-// of the tenant, checked in the same statement as the write; the caller has
-// already checked that the group is the tenant's. Membership is the rule role
-// assignment uses: a user_roles row in the tenant whose role is the tenant's
-// own, or the tenant being the account's home (an admin-created account has no
+// of the organization, checked in the same statement as the write; the caller has
+// already checked that the group is the organization's. Membership is the rule role
+// assignment uses: a user_roles row in the organization whose role is the organization's
+// own, or the organization being the account's home (an admin-created account has no
 // membership row until its first role). valid is false for a missing, deleted
 // or foreign user alike, and true for someone already in the group. Adding
 // someone a single sign-on put in the group makes the membership the
 // administrator's, so their sign-ins no longer remove it.
 func (q *Queries) InsertGroupMember(ctx context.Context, arg InsertGroupMemberParams) (bool, error) {
-	row := q.db.QueryRow(ctx, insertGroupMember, arg.UserID, arg.TenantID, arg.GroupID)
+	row := q.db.QueryRow(ctx, insertGroupMember, arg.UserID, arg.OrganizationID, arg.GroupID)
 	var valid bool
 	err := row.Scan(&valid)
 	return valid, err
@@ -160,27 +160,27 @@ func (q *Queries) InsertGroupMember(ctx context.Context, arg InsertGroupMemberPa
 
 const isGroupOrDescendant = `-- name: IsGroupOrDescendant :one
 WITH RECURSIVE subtree (id) AS (
-    SELECT g.id FROM tenant.groups g
-    WHERE g.id = $2 AND g.tenant_id = $3
+    SELECT g.id FROM organization.groups g
+    WHERE g.id = $2 AND g.organization_id = $3
     UNION
-    SELECT child.id FROM tenant.groups child
+    SELECT child.id FROM organization.groups child
     JOIN subtree AS above ON child.parent_id = above.id
-    WHERE child.tenant_id = $3
+    WHERE child.organization_id = $3
 )
 SELECT (count(*) > 0)::boolean AS is_descendant FROM subtree WHERE subtree.id = $1::uuid
 `
 
 type IsGroupOrDescendantParams struct {
-	CandidateID uuid.UUID
-	GroupID     uuid.UUID
-	TenantID    uuid.UUID
+	CandidateID    uuid.UUID
+	GroupID        uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 // IsGroupOrDescendant reports whether candidate is the group itself or one of
 // its subgroups, at any depth: making it the group's parent would loop. UNION
 // (not UNION ALL) keeps the walk finite even over a loop already in the data.
 func (q *Queries) IsGroupOrDescendant(ctx context.Context, arg IsGroupOrDescendantParams) (bool, error) {
-	row := q.db.QueryRow(ctx, isGroupOrDescendant, arg.CandidateID, arg.GroupID, arg.TenantID)
+	row := q.db.QueryRow(ctx, isGroupOrDescendant, arg.CandidateID, arg.GroupID, arg.OrganizationID)
 	var is_descendant bool
 	err := row.Scan(&is_descendant)
 	return is_descendant, err
@@ -188,16 +188,16 @@ func (q *Queries) IsGroupOrDescendant(ctx context.Context, arg IsGroupOrDescenda
 
 const listGroupMembers = `-- name: ListGroupMembers :many
 SELECT gm.user_id, u.email, u.display_name
-FROM tenant.group_members gm
+FROM organization.group_members gm
 JOIN account.users u ON u.id = gm.user_id
-WHERE gm.group_id = $1 AND gm.tenant_id = $2 AND u.deleted_at IS NULL
+WHERE gm.group_id = $1 AND gm.organization_id = $2 AND u.deleted_at IS NULL
   AND (
-      u.tenant_id = gm.tenant_id
+      u.organization_id = gm.organization_id
       OR EXISTS (
           SELECT 1 FROM rbac.user_roles membership
           JOIN rbac.roles member_role
-            ON member_role.id = membership.role_id AND member_role.tenant_id = membership.tenant_id
-          WHERE membership.user_id = gm.user_id AND membership.tenant_id = gm.tenant_id
+            ON member_role.id = membership.role_id AND member_role.organization_id = membership.organization_id
+          WHERE membership.user_id = gm.user_id AND membership.organization_id = gm.organization_id
       )
   )
 ORDER BY u.email
@@ -205,8 +205,8 @@ LIMIT 1001
 `
 
 type ListGroupMembersParams struct {
-	GroupID  uuid.UUID
-	TenantID uuid.UUID
+	GroupID        uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type ListGroupMembersRow struct {
@@ -215,12 +215,12 @@ type ListGroupMembersRow struct {
 	DisplayName *string
 }
 
-// ListGroupMembers lists only people who are members of the group's tenant, by
+// ListGroupMembers lists only people who are members of the group's organization, by
 // the same rule as InsertGroupMember, so a row written for someone outside it
 // never shows their email or name.
 // At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListGroupMembers(ctx context.Context, arg ListGroupMembersParams) ([]ListGroupMembersRow, error) {
-	rows, err := q.db.Query(ctx, listGroupMembers, arg.GroupID, arg.TenantID)
+	rows, err := q.db.Query(ctx, listGroupMembers, arg.GroupID, arg.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -240,30 +240,30 @@ func (q *Queries) ListGroupMembers(ctx context.Context, arg ListGroupMembersPara
 }
 
 const updateGroup = `-- name: UpdateGroup :one
-UPDATE tenant.groups
+UPDATE organization.groups
 SET name        = COALESCE($1, name),
     description = COALESCE($2, description),
     parent_id   = CASE WHEN $3::boolean THEN $4::uuid ELSE parent_id END
-WHERE id = $5 AND tenant_id = $6
-RETURNING id, tenant_id, parent_id, name, description, created_at
+WHERE id = $5 AND organization_id = $6
+RETURNING id, organization_id, parent_id, name, description, created_at
 `
 
 type UpdateGroupParams struct {
-	Name        *string
-	Description *string
-	SetParent   bool
-	ParentID    pgtype.UUID
-	ID          uuid.UUID
-	TenantID    uuid.UUID
+	Name           *string
+	Description    *string
+	SetParent      bool
+	ParentID       pgtype.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type UpdateGroupRow struct {
-	ID          uuid.UUID
-	TenantID    uuid.UUID
-	ParentID    pgtype.UUID
-	Name        string
-	Description string
-	CreatedAt   time.Time
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	ParentID       pgtype.UUID
+	Name           string
+	Description    string
+	CreatedAt      time.Time
 }
 
 // UpdateGroup changes only what the caller sent: a NULL name or description
@@ -276,12 +276,12 @@ func (q *Queries) UpdateGroup(ctx context.Context, arg UpdateGroupParams) (Updat
 		arg.SetParent,
 		arg.ParentID,
 		arg.ID,
-		arg.TenantID,
+		arg.OrganizationID,
 	)
 	var i UpdateGroupRow
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.ParentID,
 		&i.Name,
 		&i.Description,

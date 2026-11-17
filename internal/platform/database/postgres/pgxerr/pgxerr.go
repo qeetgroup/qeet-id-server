@@ -15,7 +15,7 @@ func IsUnique(err error) bool { return code(err) == "23505" }
 func IsForeignKey(err error) bool { return code(err) == "23503" }
 
 // IsLastOwner reports whether err is the database refusing to take away an
-// organisation's last active owner (SQLSTATE QI409, migration 0151).
+// organization's last active owner (SQLSTATE QI409, migration 0151).
 func IsLastOwner(err error) bool { return code(err) == "QI409" }
 
 func code(err error) string {

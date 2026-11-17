@@ -1,33 +1,33 @@
 -- Queries for the agents domain.
 
--- GetAgentStatusByID finds no agent of a suspended or deleted organisation.
+-- GetAgentStatusByID finds no agent of a suspended or deleted organization.
 -- name: GetAgentStatusByID :one
 SELECT a.status FROM auth.agents a
-JOIN tenant.tenants t ON t.id = a.tenant_id AND t.status = 'active' AND t.deleted_at IS NULL
+JOIN organization.organizations t ON t.id = a.organization_id AND t.status = 'active' AND t.deleted_at IS NULL
 WHERE a.id = $1;
 
 -- name: GetAgentStatus :one
-SELECT status FROM auth.agents WHERE id = @id AND tenant_id = @tenant_id;
+SELECT status FROM auth.agents WHERE id = @id AND organization_id = @organization_id;
 
--- SponsorBelongsToTenant reports whether the user is a member of the tenant:
+-- SponsorBelongsToOrganization reports whether the user is a member of the organization:
 -- its own account, or holding a role there.
--- name: SponsorBelongsToTenant :one
+-- name: SponsorBelongsToOrganization :one
 SELECT EXISTS (
-    SELECT 1 FROM account.users WHERE id = @user_id AND tenant_id = @tenant_id::uuid AND deleted_at IS NULL
+    SELECT 1 FROM account.users WHERE id = @user_id AND organization_id = @organization_id::uuid AND deleted_at IS NULL
     UNION ALL
-    SELECT 1 FROM rbac.user_roles WHERE tenant_id = @tenant_id::uuid AND user_id = @user_id
+    SELECT 1 FROM rbac.user_roles WHERE organization_id = @organization_id::uuid AND user_id = @user_id
 );
 
 -- name: CreateAgent :one
-INSERT INTO auth.agents (tenant_id, name, secret_hash, scopes, token_ttl_seconds, sponsor_user_id)
-VALUES (@tenant_id, @name, @secret_hash, @scopes, @token_ttl_seconds, @sponsor_user_id)
+INSERT INTO auth.agents (organization_id, name, secret_hash, scopes, token_ttl_seconds, sponsor_user_id)
+VALUES (@organization_id, @name, @secret_hash, @scopes, @token_ttl_seconds, @sponsor_user_id)
 RETURNING id, name, scopes, token_ttl_seconds, sponsor_user_id, created_at;
 
 -- name: ListAgents :many
 -- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT id, name, scopes, token_ttl_seconds, status, sponsor_user_id, created_at, last_used_at, previous_secret_expires_at
 FROM auth.agents
-WHERE tenant_id = $1 AND status <> 'decommissioned'
+WHERE organization_id = $1 AND status <> 'decommissioned'
 ORDER BY created_at DESC
 LIMIT 1001;
 
@@ -35,55 +35,55 @@ LIMIT 1001;
 -- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT id, name, scopes, token_ttl_seconds, status, sponsor_user_id, created_at
 FROM auth.agents
-WHERE tenant_id = @tenant_id AND sponsor_user_id = @user_id AND status <> 'decommissioned'
+WHERE organization_id = @organization_id AND sponsor_user_id = @user_id AND status <> 'decommissioned'
 ORDER BY created_at DESC
 LIMIT 1001;
 
 -- name: TransferAgentSponsor :execrows
 UPDATE auth.agents SET sponsor_user_id = @to_user_id
-WHERE tenant_id = @tenant_id AND sponsor_user_id = @from_user_id AND status <> 'decommissioned';
+WHERE organization_id = @organization_id AND sponsor_user_id = @from_user_id AND status <> 'decommissioned';
 
 -- name: DeleteAgent :execrows
-DELETE FROM auth.agents WHERE id = @id AND tenant_id = @tenant_id;
+DELETE FROM auth.agents WHERE id = @id AND organization_id = @organization_id;
 
 -- name: KillAllAgents :execrows
 UPDATE auth.agents SET status = 'suspended'
-WHERE tenant_id = $1 AND status = 'active';
+WHERE organization_id = $1 AND status = 'active';
 
--- GetAgentForToken finds no agent of a suspended or deleted organisation.
+-- GetAgentForToken finds no agent of a suspended or deleted organization.
 -- name: GetAgentForToken :one
-SELECT a.tenant_id, a.secret_hash, a.scopes, a.token_ttl_seconds, a.status, a.previous_secret_hash, a.previous_secret_expires_at
+SELECT a.organization_id, a.secret_hash, a.scopes, a.token_ttl_seconds, a.status, a.previous_secret_hash, a.previous_secret_expires_at
 FROM auth.agents a
-JOIN tenant.tenants t ON t.id = a.tenant_id AND t.status = 'active' AND t.deleted_at IS NULL
+JOIN organization.organizations t ON t.id = a.organization_id AND t.status = 'active' AND t.deleted_at IS NULL
 WHERE a.id = $1;
 
 -- TouchAgent notes a token issued to the agent, at most once a minute.
 -- name: TouchAgent :exec
 UPDATE auth.agents SET last_used_at = NOW()
-WHERE id = @id AND tenant_id = @tenant_id AND (last_used_at IS NULL OR last_used_at < NOW() - INTERVAL '1 minute');
+WHERE id = @id AND organization_id = @organization_id AND (last_used_at IS NULL OR last_used_at < NOW() - INTERVAL '1 minute');
 
 -- RotateAgentSecret makes the new secret current and keeps the old one
 -- working until previous_expires_at.
 -- name: RotateAgentSecret :one
 UPDATE auth.agents
 SET previous_secret_hash = secret_hash, previous_secret_expires_at = @previous_expires_at, secret_hash = @secret_hash
-WHERE id = @id AND tenant_id = @tenant_id AND status <> 'decommissioned'
+WHERE id = @id AND organization_id = @organization_id AND status <> 'decommissioned'
 RETURNING name;
 
 -- name: ResumeAllAgents :execrows
 UPDATE auth.agents SET status = 'active'
-WHERE tenant_id = $1 AND status = 'suspended';
+WHERE organization_id = $1 AND status = 'suspended';
 
 -- name: SetAgentStatus :exec
 UPDATE auth.agents SET status = @status
-WHERE id = @id AND tenant_id = @tenant_id;
+WHERE id = @id AND organization_id = @organization_id;
 
 -- UpgradeAgentSecretHash replaces an Argon2id secret hash from before with its
 -- SHA-256 form, once the secret has verified.
 -- name: UpgradeAgentSecretHash :exec
 UPDATE auth.agents SET secret_hash = @new_hash
-WHERE id = @id AND tenant_id = @tenant_id AND secret_hash = @old_hash;
+WHERE id = @id AND organization_id = @organization_id AND secret_hash = @old_hash;
 
--- AgentScopes returns the scopes of one of the tenant's agents still in service.
+-- AgentScopes returns the scopes of one of the organization's agents still in service.
 -- name: AgentScopes :one
-SELECT scopes FROM auth.agents WHERE id = @id AND tenant_id = @tenant_id AND status <> 'decommissioned';
+SELECT scopes FROM auth.agents WHERE id = @id AND organization_id = @organization_id AND status <> 'decommissioned';

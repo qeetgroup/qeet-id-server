@@ -1,6 +1,6 @@
 package social
 
-// An organisation's provider named github, facebook, x, discord or apple isn't
+// An organization's provider named github, facebook, x, discord or apple isn't
 // OpenID Connect: each has its own authorize, token and user calls, mapped onto
 // the same userInfo. Any other name is an OpenID Connect provider found by its
 // discovery document.

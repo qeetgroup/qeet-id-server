@@ -56,18 +56,18 @@ func (h *Handler) Mount(r chi.Router) {
 }
 
 // scopedRole returns the path's {roleID} if the role belongs to the caller's
-// tenant. These routes carry no tenant, so another tenant's role is
+// organization. These routes carry no organization, so another organization's role is
 // ErrNotFound, the same as a missing one, and role IDs can't be probed.
 func (h *Handler) scopedRole(r *http.Request) (uuid.UUID, error) {
 	roleID, err := uuid.Parse(chi.URLParam(r, "roleID"))
 	if err != nil {
 		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid roleID")
 	}
-	scope, err := httpx.RequireTenant(r)
+	scope, err := httpx.RequireOrganization(r)
 	if err != nil {
 		return uuid.Nil, err
 	}
-	owner, err := h.Repo.RoleTenant(r.Context(), roleID)
+	owner, err := h.Repo.RoleOrganization(r.Context(), roleID)
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -90,7 +90,7 @@ func (h *Handler) listPermissions(w http.ResponseWriter, r *http.Request) {
 // the people holding the role (directly or through which groups) and every
 // group granted it. limit is 1–500 (default 100); cursor is the next page's.
 func (h *Handler) holders(w http.ResponseWriter, r *http.Request) {
-	tid, err := httpx.PathTenant(r)
+	tid, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -100,7 +100,7 @@ func (h *Handler) holders(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid roleID"))
 		return
 	}
-	if owner, err := h.Repo.RoleTenant(r.Context(), roleID); err != nil || owner != tid {
+	if owner, err := h.Repo.RoleOrganization(r.Context(), roleID); err != nil || owner != tid {
 		httpx.WriteError(w, r, errs.ErrNotFound)
 		return
 	}
@@ -126,7 +126,7 @@ func (h *Handler) holders(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listRoles(w http.ResponseWriter, r *http.Request) {
-	tid, err := httpx.PathTenant(r)
+	tid, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -149,7 +149,7 @@ type createRoleInput struct {
 }
 
 func (h *Handler) createRole(w http.ResponseWriter, r *http.Request) {
-	tid, err := httpx.PathTenant(r)
+	tid, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -215,15 +215,15 @@ func (h *Handler) deleteRole(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// pathRole is the path's tenant and {roleID}.
-func pathRole(r *http.Request) (tenantID, roleID uuid.UUID, err error) {
-	if tenantID, err = httpx.PathTenant(r); err != nil {
+// pathRole is the path's organization and {roleID}.
+func pathRole(r *http.Request) (organizationID, roleID uuid.UUID, err error) {
+	if organizationID, err = httpx.PathOrganization(r); err != nil {
 		return uuid.Nil, uuid.Nil, err
 	}
 	if roleID, err = uuid.Parse(chi.URLParam(r, "roleID")); err != nil {
 		return uuid.Nil, uuid.Nil, errs.ErrBadRequest.WithDetail("invalid roleID")
 	}
-	return tenantID, roleID, nil
+	return organizationID, roleID, nil
 }
 
 type setPermissionsInput struct {
@@ -291,7 +291,7 @@ func (h *Handler) grant(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid permID"))
 		return
 	}
-	scope, err := httpx.RequireTenant(r)
+	scope, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -322,7 +322,7 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid permID"))
 		return
 	}
-	scope, err := httpx.RequireTenant(r)
+	scope, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -350,7 +350,7 @@ func (h *Handler) assign(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid userID"))
 		return
 	}
-	tid, err := httpx.PathTenant(r)
+	tid, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -378,7 +378,7 @@ func (h *Handler) unassign(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid userID"))
 		return
 	}
-	tid, err := httpx.PathTenant(r)
+	tid, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -412,7 +412,7 @@ func (h *Handler) effective(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid userID"))
 		return
 	}
-	tid, err := httpx.PathTenant(r)
+	tid, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -446,9 +446,9 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenant_id"))
 		return
 	}
-	// tenant_id comes from the query, so it must be the caller's own tenant, or
-	// /check would be a cross-tenant permission oracle.
-	if scope, serr := httpx.RequireTenant(r); serr != nil {
+	// tenant_id comes from the query, so it must be the caller's own organization, or
+	// /check would be a cross-organization permission oracle.
+	if scope, serr := httpx.RequireOrganization(r); serr != nil {
 		httpx.WriteError(w, r, serr)
 		return
 	} else if tid != scope {
@@ -465,7 +465,7 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	h.Decisions.Record(r.Context(), decisionlog.Entry{TenantID: tid, Source: decisionlog.SourceCheck, Subject: uid.String(),
+	h.Decisions.Record(r.Context(), decisionlog.Entry{OrganizationID: tid, Source: decisionlog.SourceCheck, Subject: uid.String(),
 		Resource: "permission", Action: perm, Allowed: dec.Allow, Model: dec.Model, Rule: dec.Rule, ReasonCode: dec.ReasonCode})
 	dec = h.Decider.ForViewer(r.Context(), httpx.PrincipalFromCtx(r.Context()), tid, dec)
 	out := map[string]any{"allowed": dec.Allow, "decided_by": dec.DecidedBy()}
@@ -491,7 +491,7 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listGroupRoles(w http.ResponseWriter, r *http.Request) {
-	tid, err := httpx.PathTenant(r)
+	tid, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -510,7 +510,7 @@ func (h *Handler) listGroupRoles(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) assignGroupRole(w http.ResponseWriter, r *http.Request) {
-	tid, err := httpx.PathTenant(r)
+	tid, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -538,7 +538,7 @@ func (h *Handler) assignGroupRole(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) unassignGroupRole(w http.ResponseWriter, r *http.Request) {
-	tid, err := httpx.PathTenant(r)
+	tid, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

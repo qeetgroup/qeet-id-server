@@ -31,7 +31,7 @@ The checks came out of an independent review of the backend in October 2026.
 - Set up a staging copy of production from that image.
 - Run G-02 to G-06 there, and book the independent review (G-07).
 - Write down the features supported for the first customers.
-- Go live with one or two friendly organisations first, and widen only after the checks pass.
+- Go live with one or two friendly organizations first, and widen only after the checks pass.
 
 **Done when:**
 
@@ -54,7 +54,7 @@ completion or from a large feature count.
 **Why we need it.** CI is our proof that the released code builds and passes every test and security scan, and that the image we deploy is the one that was tested.
 
 On PR #533 and the October `release/1.0.0` merges, GitHub refused to start any CI job because the
-qeetgroup organisation's Actions billing failed. Later workflow attempts exist, but the latest
+qeetgroup organization's Actions billing failed. Later workflow attempts exist, but the latest
 server Verify run checked on 15 Nov 2026 failed before recording a step. Neither that attempt nor an
 earlier green run on a laptop proves the current candidate, and this repository does not establish
 that a release image exists.
@@ -67,7 +67,7 @@ that a release image exists.
 
 **Steps:**
 
-- Fix GitHub Actions billing or the spending limit for the qeetgroup organisation (Settings, Billing & plans).
+- Fix GitHub Actions billing or the spending limit for the qeetgroup organization (Settings, Billing & plans).
 - Set `info.version` to `1.0.0` in the five `api/openapi/src/*/openapi.yaml` files and in qeet-repo.yml, then run `make openapi` (see Versioning in `api/openapi/README.md`).
 - Run CI on the exact current release-candidate commit.
 - Fix anything that fails on a branch from develop and merge it the normal way.
@@ -81,7 +81,7 @@ that a release image exists.
 
 **Depends on:**
 
-- Owner: a GitHub organisation admin for billing; the server team for any fixes.
+- Owner: a GitHub organization admin for billing; the server team for any fixes.
 - Blocks G-02 to G-06, which all deploy this image.
 
 **From the review:** One immutable release candidate with full `make ci`, each accepted regression, resolved or explicitly accepted release risks, and a recorded feature/configuration matrix. Earlier partial green runs do not cover later commits. *Owner and dependencies:* Server team; existing programme
@@ -96,12 +96,12 @@ Social sign-in (GitHub, Facebook, X, Discord and Apple) has only been tested aga
 
 **What Qeet ID has today:**
 
-- The server supports passkeys, passwords, magic links, MFA, account recovery, OIDC for apps, SAML and LDAP sign-in, SCIM provisioning and social sign-in per organisation.
+- The server supports passkeys, passwords, magic links, MFA, account recovery, OIDC for apps, SAML and LDAP sign-in, SCIM provisioning and social sign-in per organization.
 - The console, hosted login and SDKs need their updates for the 1.0 server before this can run.
 
 **Steps:**
 
-- Set up two separate customer organisations, plus one person who belongs to the first and is a guest in the second.
+- Set up two separate customer organizations, plus one person who belongs to the first and is a guest in the second.
 - Passkey, password and account-recovery sign-in, including MFA.
 - A sample app using the SDK: OIDC authorisation code with PKCE, token refresh and logout.
 - SAML sign-in and SCIM provisioning with a real identity provider, for example Microsoft Entra ID or Okta.
@@ -111,13 +111,13 @@ Social sign-in (GitHub, Facebook, X, Discord and Apple) has only been tested aga
 **Done when:**
 
 - Each journey passes in the deployed environment, with the results recorded on this ticket.
-- At no step can either organisation see the other's people, apps or settings.
+- At no step can either organization see the other's people, apps or settings.
 - Each problem found gets its own bug ticket.
 
 **Depends on:**
 
 - Needs G-01's release image and a staging environment.
-- Needs the console, hosted-login and SDK updates, a real app registered with each social provider, and a test tenant at an identity provider.
+- Needs the console, hosted-login and SDK updates, a real app registered with each social provider, and a test organization at an identity provider.
 
 **From the review:** Two isolated customer orgs plus a home/guest account; passkey/password/recovery, OIDC code/refresh/logout, actual supported SAML/SCIM IdP fixtures, offboarding and key rotation. Exercise deployed browser/SDK paths, not only direct handlers. *Owner and dependencies:* Server + kit + client owners; phases 1-4
 
@@ -141,7 +141,7 @@ build can leave an invalid index that has to be cleaned up before retrying.
 **Steps:**
 
 - Restore a backup into an isolated environment with the encryption and signing key versions it needs.
-- After the restore, check sign-in, reading stored secrets (for example SAML keys and webhook secrets), organisation isolation and audit-chain verification.
+- After the restore, check sign-in, reading stored secrets (for example SAML keys and webhook secrets), organization isolation and audit-chain verification.
 - Measure how much data could be lost (recovery point objective, RPO) and how long recovery takes (recovery time objective, RTO).
 - Run every migration newer than the last production schema on a copy of production data;
   interrupt one concurrent index build and recover from it. Read the highest migration when
@@ -159,7 +159,7 @@ build can leave an invalid index that has to be cleaned up before retrying.
 - Owners: deploy and kit (the backups live in the infrastructure), with the server team.
 - Needs G-01's image and the staging environment.
 
-**From the review:** Restore a backup into an isolated environment with the required encryption/signing key versions; verify sign-in, secrets, tenant isolation and audit-chain verification. Record measured RPO/RTO. Rehearse interrupted concurrent-index migration and a supported rollback/roll-forward path; never fake schema version records to boot an incompatible binary. *Owner and dependencies:* Deploy/kit + server; 2.9, 5.4
+**From the review:** Restore a backup into an isolated environment with the required encryption/signing key versions; verify sign-in, secrets, organization isolation and audit-chain verification. Record measured RPO/RTO. Rehearse interrupted concurrent-index migration and a supported rollback/roll-forward path; never fake schema version records to boot an incompatible binary. *Owner and dependencies:* Deploy/kit + server; 2.9, 5.4
 
 ## G-04: Load and failure test
 
@@ -179,7 +179,7 @@ We also need to know how many users one instance can serve, and what happens whe
 
 - Two server replicas sharing one rate-limiter store, with Postgres sized like production.
 - A sign-in surge at twice one instance's capacity, alongside normal token refresh, admin API and health traffic.
-- One noisy organisation, a slow live-activity reader, a stalled AI provider and database contention.
+- One noisy organization, a slow live-activity reader, a stalled AI provider and database contention.
 - Outages of NATS, the email provider and the SIEM destination, then their recovery.
 - Measure p95 and p99 latency, memory, database pool use, error rates and recovery time.
 
@@ -195,7 +195,7 @@ We also need to know how many users one instance can serve, and what happens whe
 - Needs G-01's image and the staging environment.
 - Related: overload shedding and instance sizing.
 
-**From the review:** Two replicas, shared limiter store, noisy tenant, slow SSE consumer, stalled AI provider, database contention and NATS/mail/SIEM outages. Measure p95/p99, bounded memory/pool use and recovery lag against chosen targets. Preserve deliberate failure policies. *Owner and dependencies:* Server + operations; 2.10, 5.7, R-01/R-02
+**From the review:** Two replicas, shared limiter store, noisy organization, slow SSE consumer, stalled AI provider, database contention and NATS/mail/SIEM outages. Measure p95/p99, bounded memory/pool use and recovery lag against chosen targets. Preserve deliberate failure policies. *Owner and dependencies:* Server + operations; 2.10, 5.7, R-01/R-02
 
 ## G-05: Revoked access really stops
 
@@ -238,7 +238,7 @@ Support work must not leak secrets or personal data, and someone has to own an i
 **What Qeet ID has today:**
 
 - Data export and erasure exist; erasure covers passkeys, OTP destinations, linked identities, directory profiles, vault grants, devices and notifications.
-- A deleted organisation's data is purged after a restore window.
+- A deleted organization's data is purged after a restore window.
 - Qeet AI runs only with the customer's own model key in production for 1.0.
 
 **Steps:**
@@ -260,7 +260,7 @@ Support work must not leak secrets or personal data, and someone has to own an i
 
 ## G-07: Independent security review
 
-**In short.** Have someone outside the team test Qeet ID's sign-in and organisation isolation, and map our controls to a recognised security standard before we make any compliance claim.
+**In short.** Have someone outside the team test Qeet ID's sign-in and organization isolation, and map our controls to a recognised security standard before we make any compliance claim.
 
 **Why we need it.** Our own reviews and scanners find a lot, but an identity provider is a high-value target and enterprise buyers ask for independent evidence.
 
@@ -278,7 +278,7 @@ Claims such as "NIST AAL2" or "ASVS compliant" need test evidence behind them; w
 
 - Map the in-scope requirements of OWASP ASVS 5.0.0 (the Application Security Verification Standard) to tests or manual evidence.
 - Run the OpenID Foundation conformance tests for the OIDC profiles we support.
-- Commission an independent penetration test of sign-in, tokens and organisation isolation.
+- Commission an independent penetration test of sign-in, tokens and organization isolation.
 - Decide which NIST SP 800-63B authentication assurance level, if any, we will claim. Email codes are not NIST out-of-band authentication, and synced passkeys don't give AAL3.
 
 **Done when:**
@@ -290,4 +290,4 @@ Claims such as "NIST AAL2" or "ASVS compliant" need test evidence behind them; w
 
 - Owner: security and product; a budget for an outside tester; the staging environment.
 
-**From the review:** Map scoped ASVS 5.0.0 requirements to actual tests/manual evidence; run protocol conformance and an independent auth/tenant security review. Define the intended authentication assurance before making NIST claims. Email OTP is not NIST out-of-band authentication; syncable passkeys do not establish AAL3. *Owner and dependencies:* Security/product; standards below
+**From the review:** Map scoped ASVS 5.0.0 requirements to actual tests/manual evidence; run protocol conformance and an independent auth/organization security review. Define the intended authentication assurance before making NIST claims. Email OTP is not NIST out-of-band authentication; syncable passkeys do not establish AAL3. *Owner and dependencies:* Security/product; standards below

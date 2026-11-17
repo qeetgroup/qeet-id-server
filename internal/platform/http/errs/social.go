@@ -2,43 +2,43 @@ package errs
 
 // Social login (external OIDC provider) error codes.
 const (
-	CodeSocialTenantRequired        = "social.tenant_required"
-	CodeSocialTenantNotFound        = "social.tenant_not_found"
-	CodeSocialProviderNotConfigured = "social.provider_not_configured"
-	CodeSocialProviderDisabled      = "social.provider_disabled"
-	CodeSocialProviderNoDiscovery   = "social.provider_no_discovery"
-	CodeSocialDiscoveryFailed       = "social.discovery_failed"
-	CodeSocialCallbackParamsMissing = "social.callback_params_missing"
-	CodeSocialStateInvalid          = "social.state_invalid"
-	CodeSocialProviderMismatch      = "social.provider_mismatch"
-	CodeSocialStateExpired          = "social.state_expired"
-	CodeSocialTokenExchangeFailed   = "social.token_exchange_failed"
-	CodeSocialUserinfoFailed        = "social.userinfo_failed"
-	CodeSocialEmailMissing          = "social.email_missing"
-	CodeSocialAccountNotInTenant    = "social.account_not_in_tenant"
-	CodeSocialReturnToInvalid       = "social.return_to_invalid"
-	CodeSocialEmailUnverified       = "social.email_unverified"
-	CodeSocialAccountUnverified     = "social.account_unverified"
-	CodeSocialAccountAdministers    = "social.account_administers"
-	CodeSocialCodeRequired          = "social.code_required"
-	CodeSocialLoginCodeInvalid      = "social.login_code_invalid"
-	CodeSocialLoginCodeUsed         = "social.login_code_used"
-	CodeSocialLoginCodeExpired      = "social.login_code_expired"
-	CodeSocialAlreadyLinked         = "social.already_linked"
-	CodeSocialNoAccount             = "social.no_account"
-	CodeSocialProviderInUse         = "social.provider_in_use"
-	CodeSocialBrowserMismatch       = "social.browser_mismatch"
-	CodeSocialLinkCodeInvalid       = "social.link_code_invalid"
-	CodeSocialLinkAccountMismatch   = "social.link_account_mismatch"
+	CodeSocialOrganizationRequired     = "social.tenant_required"
+	CodeSocialOrganizationNotFound     = "social.tenant_not_found"
+	CodeSocialProviderNotConfigured    = "social.provider_not_configured"
+	CodeSocialProviderDisabled         = "social.provider_disabled"
+	CodeSocialProviderNoDiscovery      = "social.provider_no_discovery"
+	CodeSocialDiscoveryFailed          = "social.discovery_failed"
+	CodeSocialCallbackParamsMissing    = "social.callback_params_missing"
+	CodeSocialStateInvalid             = "social.state_invalid"
+	CodeSocialProviderMismatch         = "social.provider_mismatch"
+	CodeSocialStateExpired             = "social.state_expired"
+	CodeSocialTokenExchangeFailed      = "social.token_exchange_failed"
+	CodeSocialUserinfoFailed           = "social.userinfo_failed"
+	CodeSocialEmailMissing             = "social.email_missing"
+	CodeSocialAccountNotInOrganization = "social.account_not_in_tenant"
+	CodeSocialReturnToInvalid          = "social.return_to_invalid"
+	CodeSocialEmailUnverified          = "social.email_unverified"
+	CodeSocialAccountUnverified        = "social.account_unverified"
+	CodeSocialAccountAdministers       = "social.account_administers"
+	CodeSocialCodeRequired             = "social.code_required"
+	CodeSocialLoginCodeInvalid         = "social.login_code_invalid"
+	CodeSocialLoginCodeUsed            = "social.login_code_used"
+	CodeSocialLoginCodeExpired         = "social.login_code_expired"
+	CodeSocialAlreadyLinked            = "social.already_linked"
+	CodeSocialNoAccount                = "social.no_account"
+	CodeSocialProviderInUse            = "social.provider_in_use"
+	CodeSocialBrowserMismatch          = "social.browser_mismatch"
+	CodeSocialLinkCodeInvalid          = "social.link_code_invalid"
+	CodeSocialLinkAccountMismatch      = "social.link_account_mismatch"
 )
 
 // Social login errors; ceremony and upstream failures are retryable.
 // ErrSocialProviderNotConfigured also covers a switched-off provider, and
-// ErrSocialAccountNotInTenant is vague so it reveals no other tenant's address.
+// ErrSocialAccountNotInOrganization is vague so it reveals no other organization's address.
 // ErrSocialProviderDisabled is no longer returned; its code stays reserved.
 var (
-	ErrSocialTenantRequired        = New(CodeSocialTenantRequired, "We couldn't determine which organization to sign you in to.")
-	ErrSocialTenantNotFound        = New(CodeSocialTenantNotFound, "We couldn't find that organization.")
+	ErrSocialOrganizationRequired  = New(CodeSocialOrganizationRequired, "We couldn't determine which organization to sign you in to.")
+	ErrSocialOrganizationNotFound  = New(CodeSocialOrganizationNotFound, "We couldn't find that organization.")
 	ErrSocialProviderNotConfigured = New(CodeSocialProviderNotConfigured, "That sign-in option isn't available for this organization.")
 	ErrSocialProviderDisabled      = New(CodeSocialProviderDisabled, "That sign-in provider is currently disabled.")
 	ErrSocialProviderInUse         = New(CodeSocialProviderInUse, "Some people can sign in only with this provider. Switch it off instead, or give them another way to sign in first.")
@@ -54,7 +54,7 @@ var (
 	ErrSocialReturnToInvalid       = New(CodeSocialReturnToInvalid,
 		"That sign-in link has an invalid return address.")
 
-	ErrSocialAccountNotInTenant = New(CodeSocialAccountNotInTenant,
+	ErrSocialAccountNotInOrganization = New(CodeSocialAccountNotInOrganization,
 		"That account can't sign in with this provider.")
 	ErrSocialEmailUnverified   = New(CodeSocialEmailUnverified, "The sign-in provider did not verify ownership of that email address. Link it from a signed-in account instead.")
 	ErrSocialAccountUnverified = New(CodeSocialAccountUnverified,

@@ -13,48 +13,48 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const adoptHomeTenant = `-- name: AdoptHomeTenant :exec
-UPDATE account.users SET tenant_id = $1::uuid, updated_at = NOW()
-WHERE id = $2 AND tenant_id IS NULL AND deleted_at IS NULL
+const adoptHomeOrganization = `-- name: AdoptHomeOrganization :exec
+UPDATE account.users SET organization_id = $1::uuid, updated_at = NOW()
+WHERE id = $2 AND organization_id IS NULL AND deleted_at IS NULL
 `
 
-type AdoptHomeTenantParams struct {
-	TenantID uuid.UUID
-	ID       uuid.UUID
+type AdoptHomeOrganizationParams struct {
+	OrganizationID uuid.UUID
+	ID             uuid.UUID
 }
 
-func (q *Queries) AdoptHomeTenant(ctx context.Context, arg AdoptHomeTenantParams) error {
-	_, err := q.db.Exec(ctx, adoptHomeTenant, arg.TenantID, arg.ID)
+func (q *Queries) AdoptHomeOrganization(ctx context.Context, arg AdoptHomeOrganizationParams) error {
+	_, err := q.db.Exec(ctx, adoptHomeOrganization, arg.OrganizationID, arg.ID)
 	return err
 }
 
-const cancelTenantDeletion = `-- name: CancelTenantDeletion :execrows
-UPDATE tenant.tenants SET deletion_due_at = NULL, updated_at = NOW()
+const cancelOrganizationDeletion = `-- name: CancelOrganizationDeletion :execrows
+UPDATE organization.organizations SET deletion_due_at = NULL, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL AND deletion_due_at IS NOT NULL
 `
 
-// CancelTenantDeletion calls off an organisation's scheduled deletion. 0
+// CancelOrganizationDeletion calls off an organization's scheduled deletion. 0
 // rows: none was scheduled.
-func (q *Queries) CancelTenantDeletion(ctx context.Context, id uuid.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, cancelTenantDeletion, id)
+func (q *Queries) CancelOrganizationDeletion(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, cancelOrganizationDeletion, id)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
 }
 
-const getTenant = `-- name: GetTenant :one
+const getOrganization = `-- name: GetOrganization :one
 
-SELECT id, slug, name, status, plan, region, metadata, created_at, updated_at, deleted_at, logo_url, deletion_due_at FROM tenant.tenants
+SELECT id, slug, name, status, plan, region, metadata, created_at, updated_at, deleted_at, logo_url, deletion_due_at FROM organization.organizations
 WHERE id = $1 AND deleted_at IS NULL
 `
 
-// Queries for the organizations (tenant) domain.
-// Static queries against tenant.tenants live here and are compiled by sqlc into ./dbgen.
+// Queries for the organization domain.
+// Static queries against organization.organizations live here and are compiled by sqlc into ./dbgen.
 // Dynamic queries (partial UPDATE) intentionally remain hand-written in repository.go.
-func (q *Queries) GetTenant(ctx context.Context, id uuid.UUID) (TenantTenant, error) {
-	row := q.db.QueryRow(ctx, getTenant, id)
-	var i TenantTenant
+func (q *Queries) GetOrganization(ctx context.Context, id uuid.UUID) (OrganizationOrganization, error) {
+	row := q.db.QueryRow(ctx, getOrganization, id)
+	var i OrganizationOrganization
 	err := row.Scan(
 		&i.ID,
 		&i.Slug,
@@ -72,14 +72,14 @@ func (q *Queries) GetTenant(ctx context.Context, id uuid.UUID) (TenantTenant, er
 	return i, err
 }
 
-const getTenantBySlug = `-- name: GetTenantBySlug :one
-SELECT id, slug, name, status, plan, region, metadata, created_at, updated_at, deleted_at, logo_url, deletion_due_at FROM tenant.tenants
+const getOrganizationBySlug = `-- name: GetOrganizationBySlug :one
+SELECT id, slug, name, status, plan, region, metadata, created_at, updated_at, deleted_at, logo_url, deletion_due_at FROM organization.organizations
 WHERE LOWER(slug) = LOWER($1) AND deleted_at IS NULL
 `
 
-func (q *Queries) GetTenantBySlug(ctx context.Context, slug string) (TenantTenant, error) {
-	row := q.db.QueryRow(ctx, getTenantBySlug, slug)
-	var i TenantTenant
+func (q *Queries) GetOrganizationBySlug(ctx context.Context, slug string) (OrganizationOrganization, error) {
+	row := q.db.QueryRow(ctx, getOrganizationBySlug, slug)
+	var i OrganizationOrganization
 	err := row.Scan(
 		&i.ID,
 		&i.Slug,
@@ -108,24 +108,24 @@ func (q *Queries) GrantAllPermissionsToRole(ctx context.Context, roleID uuid.UUI
 }
 
 const grantRoleToUser = `-- name: GrantRoleToUser :exec
-INSERT INTO rbac.user_roles (user_id, tenant_id, role_id, granted_by)
+INSERT INTO rbac.user_roles (user_id, organization_id, role_id, granted_by)
 VALUES ($1, $2, $3, $1)
 `
 
 type GrantRoleToUserParams struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
-	RoleID   uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
+	RoleID         uuid.UUID
 }
 
 func (q *Queries) GrantRoleToUser(ctx context.Context, arg GrantRoleToUserParams) error {
-	_, err := q.db.Exec(ctx, grantRoleToUser, arg.UserID, arg.TenantID, arg.RoleID)
+	_, err := q.db.Exec(ctx, grantRoleToUser, arg.UserID, arg.OrganizationID, arg.RoleID)
 	return err
 }
 
 const insertBuiltinRoles = `-- name: InsertBuiltinRoles :exec
 WITH builtin AS (
-    INSERT INTO rbac.roles (tenant_id, name, description, is_system)
+    INSERT INTO rbac.roles (organization_id, name, description, is_system)
     VALUES ($1, 'admin', 'Administrator — everything but deleting the organisation', TRUE),
            ($1, 'member', 'Member — signs in to the organisation''s apps, no administration', TRUE),
            ($1, 'viewer', 'Viewer — reads everything, changes nothing', TRUE)
@@ -137,39 +137,21 @@ JOIN rbac.permissions p ON (b.name = 'admin' AND p.key <> 'tenant.delete')
                         OR (b.name = 'viewer' AND p.key LIKE '%.read' AND p.key <> 'secret.read')
 `
 
-// A new organisation's built-in roles, read-only like owner: admin holds
-// everything but deleting the organisation, viewer every read but secrets'
+// A new organization's built-in roles, read-only like owner: admin holds
+// everything but deleting the organization, viewer every read but secrets'
 // (whose read reveals them), member nothing.
-func (q *Queries) InsertBuiltinRoles(ctx context.Context, tenantID uuid.UUID) error {
-	_, err := q.db.Exec(ctx, insertBuiltinRoles, tenantID)
+func (q *Queries) InsertBuiltinRoles(ctx context.Context, organizationID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, insertBuiltinRoles, organizationID)
 	return err
 }
 
-const insertOwnerRole = `-- name: InsertOwnerRole :one
-
-INSERT INTO rbac.roles (tenant_id, name, description, is_system)
-VALUES ($1, 'owner', 'Tenant owner — full access', TRUE)
-RETURNING id
-`
-
-// The next four queries are the static, cross-context writes of CreateWithOwner.
-// They target other bounded contexts (rbac.*, account.users) but are fixed SQL with
-// positional binds, so they compile under the shared migration schema and run on the
-// caller's shared pgx.Tx via r.q.WithTx(tx).X(...).
-func (q *Queries) InsertOwnerRole(ctx context.Context, tenantID uuid.UUID) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, insertOwnerRole, tenantID)
-	var id uuid.UUID
-	err := row.Scan(&id)
-	return id, err
-}
-
-const insertTenant = `-- name: InsertTenant :one
-INSERT INTO tenant.tenants (slug, name, plan, region, logo_url, metadata)
+const insertOrganization = `-- name: InsertOrganization :one
+INSERT INTO organization.organizations (slug, name, plan, region, logo_url, metadata)
 VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, slug, name, status, plan, region, metadata, created_at, updated_at, deleted_at, logo_url, deletion_due_at
 `
 
-type InsertTenantParams struct {
+type InsertOrganizationParams struct {
 	Slug     string
 	Name     string
 	Plan     string
@@ -178,8 +160,8 @@ type InsertTenantParams struct {
 	Metadata []byte
 }
 
-func (q *Queries) InsertTenant(ctx context.Context, arg InsertTenantParams) (TenantTenant, error) {
-	row := q.db.QueryRow(ctx, insertTenant,
+func (q *Queries) InsertOrganization(ctx context.Context, arg InsertOrganizationParams) (OrganizationOrganization, error) {
+	row := q.db.QueryRow(ctx, insertOrganization,
 		arg.Slug,
 		arg.Name,
 		arg.Plan,
@@ -187,7 +169,7 @@ func (q *Queries) InsertTenant(ctx context.Context, arg InsertTenantParams) (Ten
 		arg.LogoUrl,
 		arg.Metadata,
 	)
-	var i TenantTenant
+	var i OrganizationOrganization
 	err := row.Scan(
 		&i.ID,
 		&i.Slug,
@@ -203,6 +185,24 @@ func (q *Queries) InsertTenant(ctx context.Context, arg InsertTenantParams) (Ten
 		&i.DeletionDueAt,
 	)
 	return i, err
+}
+
+const insertOwnerRole = `-- name: InsertOwnerRole :one
+
+INSERT INTO rbac.roles (organization_id, name, description, is_system)
+VALUES ($1, 'owner', 'Tenant owner — full access', TRUE)
+RETURNING id
+`
+
+// The next four queries are the static, cross-context writes of CreateWithOwner.
+// They target other bounded contexts (rbac.*, account.users) but are fixed SQL with
+// positional binds, so they compile under the shared migration schema and run on the
+// caller's shared pgx.Tx via r.q.WithTx(tx).X(...).
+func (q *Queries) InsertOwnerRole(ctx context.Context, organizationID uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, insertOwnerRole, organizationID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const isEmailVerified = `-- name: IsEmailVerified :one
@@ -221,27 +221,27 @@ func (q *Queries) IsEmailVerified(ctx context.Context, userID uuid.UUID) (bool, 
 const listEligibleOrganizations = `-- name: ListEligibleOrganizations :many
 SELECT t.id, t.slug, t.name, t.plan, t.region, t.logo_url,
   ARRAY(SELECT DISTINCT role.name FROM rbac.user_roles membership
-    JOIN rbac.roles role ON role.id = membership.role_id AND role.tenant_id = membership.tenant_id
-    WHERE membership.user_id = $1 AND membership.tenant_id = t.id
+    JOIN rbac.roles role ON role.id = membership.role_id AND role.organization_id = membership.organization_id
+    WHERE membership.user_id = $1 AND membership.organization_id = t.id
     ORDER BY role.name)::text[] AS roles,
-  COALESCE((SELECT domain.domain FROM tenant.domains domain
-    WHERE domain.tenant_id = t.id AND domain.verified_at IS NOT NULL
+  COALESCE((SELECT domain.domain FROM organization.domains domain
+    WHERE domain.organization_id = t.id AND domain.verified_at IS NOT NULL
     ORDER BY domain.created_at, domain.id LIMIT 1), '')::text AS domain,
   COALESCE(GREATEST(
     (SELECT MAX(session.last_seen_at) FROM auth.sessions session
-      WHERE session.user_id = $1 AND session.tenant_id = t.id
+      WHERE session.user_id = $1 AND session.organization_id = t.id
         AND session.id <> $2),
     (SELECT MAX(sign_in.created_at) FROM audit.events sign_in
-      WHERE sign_in.actor_user_id = $1 AND sign_in.tenant_id = t.id
+      WHERE sign_in.actor_user_id = $1 AND sign_in.organization_id = t.id
         AND sign_in.action = 'auth.login_succeeded'
         AND sign_in.resource_id IS DISTINCT FROM $2)),
     '0001-01-01 00:00:00+00'::timestamptz)::timestamptz AS last_used_at
-FROM tenant.tenants t
+FROM organization.organizations t
 WHERE t.status = 'active' AND t.deleted_at IS NULL
   AND EXISTS (SELECT 1 FROM account.users account
     WHERE account.id = $1 AND account.status = 'active' AND account.deleted_at IS NULL)
-  AND t.id IN (SELECT account.tenant_id FROM account.users account WHERE account.id = $1
-    UNION SELECT membership.tenant_id FROM rbac.user_roles membership WHERE membership.user_id = $1)
+  AND t.id IN (SELECT account.organization_id FROM account.users account WHERE account.id = $1
+    UNION SELECT membership.organization_id FROM rbac.user_roles membership WHERE membership.user_id = $1)
   AND ($3::uuid = '00000000-0000-0000-0000-000000000000'::uuid OR t.id > $3::uuid)
 ORDER BY t.id
 LIMIT $4
@@ -266,7 +266,7 @@ type ListEligibleOrganizationsRow struct {
 	LastUsedAt time.Time
 }
 
-// ListEligibleOrganizations lists the active organisations an active account
+// ListEligibleOrganizations lists the active organizations an active account
 // belongs to, by id: its own, and each one it holds a role in. last_used_at is
 // its newest other session there, else its last sign-in there in the audit
 // log, which outlasts the sessions the cleanup deletes.
@@ -305,17 +305,17 @@ func (q *Queries) ListEligibleOrganizations(ctx context.Context, arg ListEligibl
 	return items, nil
 }
 
-const listTenantsDueForDeletion = `-- name: ListTenantsDueForDeletion :many
-SELECT id FROM tenant.tenants
+const listOrganizationsDueForDeletion = `-- name: ListOrganizationsDueForDeletion :many
+SELECT id FROM organization.organizations
 WHERE deleted_at IS NULL AND deletion_due_at IS NOT NULL AND deletion_due_at <= NOW()
 ORDER BY deletion_due_at
 LIMIT $1
 `
 
-// ListTenantsDueForDeletion lists organisations whose scheduled deletion is
+// ListOrganizationsDueForDeletion lists organizations whose scheduled deletion is
 // due, oldest first.
-func (q *Queries) ListTenantsDueForDeletion(ctx context.Context, maxRows int32) ([]uuid.UUID, error) {
-	rows, err := q.db.Query(ctx, listTenantsDueForDeletion, maxRows)
+func (q *Queries) ListOrganizationsDueForDeletion(ctx context.Context, maxRows int32) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listOrganizationsDueForDeletion, maxRows)
 	if err != nil {
 		return nil, err
 	}
@@ -334,32 +334,32 @@ func (q *Queries) ListTenantsDueForDeletion(ctx context.Context, maxRows int32) 
 	return items, nil
 }
 
-const listTenantsForUser = `-- name: ListTenantsForUser :many
+const listOrganizationsForUser = `-- name: ListOrganizationsForUser :many
 
 
 SELECT t.id, t.slug, t.name, t.status, t.plan, t.region, t.logo_url,
        t.metadata, t.created_at, t.updated_at, t.deletion_due_at,
   (SELECT count(DISTINCT ur.user_id) FROM rbac.user_roles ur
-     WHERE ur.tenant_id = t.id)::bigint AS member_count,
+     WHERE ur.organization_id = t.id)::bigint AS member_count,
   (SELECT count(DISTINCT ur.user_id) FROM rbac.user_roles ur
-     WHERE ur.tenant_id = t.id
+     WHERE ur.organization_id = t.id
        AND (EXISTS(SELECT 1 FROM auth.mfa_totp mt WHERE mt.user_id = ur.user_id AND mt.confirmed_at IS NOT NULL)
          OR EXISTS(SELECT 1 FROM auth.mfa_otp_factors mo WHERE mo.user_id = ur.user_id AND mo.verified_at IS NOT NULL)
          OR EXISTS(SELECT 1 FROM auth.mfa_push_devices md WHERE md.user_id = ur.user_id)))::bigint AS mfa_enabled_count
-FROM tenant.tenants t
+FROM organization.organizations t
 WHERE t.deleted_at IS NULL
-  AND t.id IN (SELECT ur.tenant_id FROM rbac.user_roles ur WHERE ur.user_id = $1
-               UNION SELECT u.tenant_id FROM account.users u WHERE u.id = $1)
+  AND t.id IN (SELECT ur.organization_id FROM rbac.user_roles ur WHERE ur.user_id = $1
+               UNION SELECT u.organization_id FROM account.users u WHERE u.id = $1)
 ORDER BY t.created_at DESC, t.id DESC
 LIMIT $2
 `
 
-type ListTenantsForUserParams struct {
+type ListOrganizationsForUserParams struct {
 	UserID uuid.UUID
 	Limit  int32
 }
 
-type ListTenantsForUserRow struct {
+type ListOrganizationsForUserRow struct {
 	ID              uuid.UUID
 	Slug            string
 	Name            string
@@ -375,22 +375,22 @@ type ListTenantsForUserRow struct {
 	MfaEnabledCount int64
 }
 
-// List the tenants a user is a member of, newest first. Cursor pagination is split
+// List the organizations a user is a member of, newest first. Cursor pagination is split
 // into a first-page and after-cursor variant (the idiomatic sqlc way to do dynamic paging).
 // The two list variants also enrich each org with a member count (distinct
 // rbac.user_roles holders) and an MFA-enabled member count (members with a
 // confirmed TOTP / verified OTP factor / push device). These are computed here
 // so the Organizations table shows per-org counts for EVERY org the caller
-// belongs to (the per-tenant analytics endpoint is locked to the active org).
-func (q *Queries) ListTenantsForUser(ctx context.Context, arg ListTenantsForUserParams) ([]ListTenantsForUserRow, error) {
-	rows, err := q.db.Query(ctx, listTenantsForUser, arg.UserID, arg.Limit)
+// belongs to (the per-organization analytics endpoint is locked to the active org).
+func (q *Queries) ListOrganizationsForUser(ctx context.Context, arg ListOrganizationsForUserParams) ([]ListOrganizationsForUserRow, error) {
+	rows, err := q.db.Query(ctx, listOrganizationsForUser, arg.UserID, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ListTenantsForUserRow{}
+	items := []ListOrganizationsForUserRow{}
 	for rows.Next() {
-		var i ListTenantsForUserRow
+		var i ListOrganizationsForUserRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Slug,
@@ -416,34 +416,34 @@ func (q *Queries) ListTenantsForUser(ctx context.Context, arg ListTenantsForUser
 	return items, nil
 }
 
-const listTenantsForUserAfter = `-- name: ListTenantsForUserAfter :many
+const listOrganizationsForUserAfter = `-- name: ListOrganizationsForUserAfter :many
 SELECT t.id, t.slug, t.name, t.status, t.plan, t.region, t.logo_url,
        t.metadata, t.created_at, t.updated_at, t.deletion_due_at,
   (SELECT count(DISTINCT ur.user_id) FROM rbac.user_roles ur
-     WHERE ur.tenant_id = t.id)::bigint AS member_count,
+     WHERE ur.organization_id = t.id)::bigint AS member_count,
   (SELECT count(DISTINCT ur.user_id) FROM rbac.user_roles ur
-     WHERE ur.tenant_id = t.id
+     WHERE ur.organization_id = t.id
        AND (EXISTS(SELECT 1 FROM auth.mfa_totp mt WHERE mt.user_id = ur.user_id AND mt.confirmed_at IS NOT NULL)
          OR EXISTS(SELECT 1 FROM auth.mfa_otp_factors mo WHERE mo.user_id = ur.user_id AND mo.verified_at IS NOT NULL)
          OR EXISTS(SELECT 1 FROM auth.mfa_push_devices md WHERE md.user_id = ur.user_id)))::bigint AS mfa_enabled_count
-FROM tenant.tenants t
+FROM organization.organizations t
 WHERE t.deleted_at IS NULL
-  AND t.id IN (SELECT ur.tenant_id FROM rbac.user_roles ur WHERE ur.user_id = $1
-               UNION SELECT u.tenant_id FROM account.users u WHERE u.id = $1)
+  AND t.id IN (SELECT ur.organization_id FROM rbac.user_roles ur WHERE ur.user_id = $1
+               UNION SELECT u.organization_id FROM account.users u WHERE u.id = $1)
   AND (t.created_at < $2
        OR (t.created_at = $2 AND t.id < $3))
 ORDER BY t.created_at DESC, t.id DESC
 LIMIT $4
 `
 
-type ListTenantsForUserAfterParams struct {
+type ListOrganizationsForUserAfterParams struct {
 	UserID          uuid.UUID
 	BeforeCreatedAt time.Time
 	BeforeID        uuid.UUID
 	RowLimit        int32
 }
 
-type ListTenantsForUserAfterRow struct {
+type ListOrganizationsForUserAfterRow struct {
 	ID              uuid.UUID
 	Slug            string
 	Name            string
@@ -459,8 +459,8 @@ type ListTenantsForUserAfterRow struct {
 	MfaEnabledCount int64
 }
 
-func (q *Queries) ListTenantsForUserAfter(ctx context.Context, arg ListTenantsForUserAfterParams) ([]ListTenantsForUserAfterRow, error) {
-	rows, err := q.db.Query(ctx, listTenantsForUserAfter,
+func (q *Queries) ListOrganizationsForUserAfter(ctx context.Context, arg ListOrganizationsForUserAfterParams) ([]ListOrganizationsForUserAfterRow, error) {
+	rows, err := q.db.Query(ctx, listOrganizationsForUserAfter,
 		arg.UserID,
 		arg.BeforeCreatedAt,
 		arg.BeforeID,
@@ -470,9 +470,9 @@ func (q *Queries) ListTenantsForUserAfter(ctx context.Context, arg ListTenantsFo
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ListTenantsForUserAfterRow{}
+	items := []ListOrganizationsForUserAfterRow{}
 	for rows.Next() {
-		var i ListTenantsForUserAfterRow
+		var i ListOrganizationsForUserAfterRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Slug,
@@ -498,35 +498,35 @@ func (q *Queries) ListTenantsForUserAfter(ctx context.Context, arg ListTenantsFo
 	return items, nil
 }
 
-const scheduleTenantDeletion = `-- name: ScheduleTenantDeletion :one
-UPDATE tenant.tenants SET deletion_due_at = $1::timestamptz, updated_at = NOW()
+const scheduleOrganizationDeletion = `-- name: ScheduleOrganizationDeletion :one
+UPDATE organization.organizations SET deletion_due_at = $1::timestamptz, updated_at = NOW()
 WHERE id = $2 AND deleted_at IS NULL AND deletion_due_at IS NULL
 RETURNING deletion_due_at
 `
 
-type ScheduleTenantDeletionParams struct {
+type ScheduleOrganizationDeletionParams struct {
 	DueAt time.Time
 	ID    uuid.UUID
 }
 
-// ScheduleTenantDeletion schedules an organisation's deletion for @due_at,
+// ScheduleOrganizationDeletion schedules an organization's deletion for @due_at,
 // unless one is already scheduled. No row: it is deleted or already
 // scheduled.
-func (q *Queries) ScheduleTenantDeletion(ctx context.Context, arg ScheduleTenantDeletionParams) (pgtype.Timestamptz, error) {
-	row := q.db.QueryRow(ctx, scheduleTenantDeletion, arg.DueAt, arg.ID)
+func (q *Queries) ScheduleOrganizationDeletion(ctx context.Context, arg ScheduleOrganizationDeletionParams) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, scheduleOrganizationDeletion, arg.DueAt, arg.ID)
 	var deletion_due_at pgtype.Timestamptz
 	err := row.Scan(&deletion_due_at)
 	return deletion_due_at, err
 }
 
-const softDeleteTenant = `-- name: SoftDeleteTenant :execrows
-UPDATE tenant.tenants
+const softDeleteOrganization = `-- name: SoftDeleteOrganization :execrows
+UPDATE organization.organizations
 SET deleted_at = NOW(), status = 'deleted', updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
 `
 
-func (q *Queries) SoftDeleteTenant(ctx context.Context, id uuid.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, softDeleteTenant, id)
+func (q *Queries) SoftDeleteOrganization(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, softDeleteOrganization, id)
 	if err != nil {
 		return 0, err
 	}

@@ -7,7 +7,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/email"
 )
 
-// template is an organisation's customised email: which one, its content and
+// template is an organization's customised email: which one, its content and
 // how many days after sign-up it was written.
 type template struct {
 	key   string
@@ -17,7 +17,7 @@ type template struct {
 
 func yes() *bool { b := true; return &b }
 
-// customTemplates are the organisations that rewrote some of their emails;
+// customTemplates are the organizations that rewrote some of their emails;
 // the rest send the built-in defaults.
 var customTemplates = map[string][]template{
 	"qeet": {
@@ -112,7 +112,7 @@ var customTemplates = map[string][]template{
 	},
 }
 
-// templates writes the organisation's customised emails through the editor's
+// templates writes the organization's customised emails through the editor's
 // own request; uncustomised ones keep the defaults.
 func (s *seeder) templates(o *world.Org) {
 	w := s.w

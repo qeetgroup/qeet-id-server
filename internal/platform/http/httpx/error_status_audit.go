@@ -10,8 +10,8 @@ import (
 func init() {
 	registerStatuses(map[string]int{
 		errs.CodeAuditCursorInvalid:         http.StatusBadRequest,
-		errs.CodeAuditTenantInvalid:         http.StatusBadRequest,
-		errs.CodeAuditTenantMismatch:        http.StatusForbidden,
+		errs.CodeAuditOrganizationInvalid:   http.StatusBadRequest,
+		errs.CodeAuditOrganizationMismatch:  http.StatusForbidden,
 		errs.CodeAuditActorIDInvalid:        http.StatusBadRequest,
 		errs.CodeAuditIDInvalid:             http.StatusBadRequest,
 		errs.CodeAuditAnomalyStatusInvalid:  http.StatusBadRequest,

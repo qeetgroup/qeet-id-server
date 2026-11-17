@@ -13,28 +13,28 @@ import (
 
 // Fixed inputs, so the tests are deterministic.
 var (
-	fixedID        = uuid.MustParse("11111111-1111-4111-8111-111111111111")
-	fixedTenantID  = uuid.MustParse("22222222-2222-4222-8222-222222222222")
-	fixedActorID   = uuid.MustParse("33333333-3333-4333-8333-333333333333")
-	fixedResource  = uuid.MustParse("44444444-4444-4444-8444-444444444444")
-	fixedCreatedAt = time.Date(2026, 5, 26, 10, 0, 0, 0, time.UTC)
+	fixedID             = uuid.MustParse("11111111-1111-4111-8111-111111111111")
+	fixedOrganizationID = uuid.MustParse("22222222-2222-4222-8222-222222222222")
+	fixedActorID        = uuid.MustParse("33333333-3333-4333-8333-333333333333")
+	fixedResource       = uuid.MustParse("44444444-4444-4444-8444-444444444444")
+	fixedCreatedAt      = time.Date(2026, 5, 26, 10, 0, 0, 0, time.UTC)
 )
 
 func sampleEvent() Event {
-	tid := fixedTenantID
+	tid := fixedOrganizationID
 	actor := fixedActorID
 	resource := fixedResource
 	return Event{
-		TenantID:     &tid,
-		ActorUserID:  &actor,
-		ActorType:    "user",
-		Action:       "user.create",
-		ResourceType: "user",
-		ResourceID:   &resource,
-		IP:           "192.168.1.1",
-		UserAgent:    "test-agent",
-		RequestID:    "req-1",
-		Metadata:     map[string]any{"k": "v", "n": 42.0},
+		OrganizationID: &tid,
+		ActorUserID:    &actor,
+		ActorType:      "user",
+		Action:         "user.create",
+		ResourceType:   "user",
+		ResourceID:     &resource,
+		IP:             "192.168.1.1",
+		UserAgent:      "test-agent",
+		RequestID:      "req-1",
+		Metadata:       map[string]any{"k": "v", "n": 42.0},
 	}
 }
 
@@ -73,7 +73,7 @@ func TestCanonicalize_Snapshot(t *testing.T) {
 // moving it to another chain changes its hash.
 func TestCanonicalize_ShardIsHashedBeyondTheFirstChain(t *testing.T) {
 	e := sampleEvent()
-	e.TenantID = nil
+	e.OrganizationID = nil
 	meta, _ := json.Marshal(e.Metadata)
 	first, _ := canonicalize(e, 0, fixedID, fixedCreatedAt, meta, chainSeed)
 	if strings.Contains(string(first), "chain_shard") {

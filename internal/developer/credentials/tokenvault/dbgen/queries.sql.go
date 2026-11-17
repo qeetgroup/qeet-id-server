@@ -14,16 +14,16 @@ import (
 )
 
 const deleteConnectState = `-- name: DeleteConnectState :one
-DELETE FROM tenant.token_vault_connect_states WHERE state = $1
-RETURNING tenant_id, user_id, provider, expires_at, COALESCE(code_verifier, '')::text AS code_verifier
+DELETE FROM organization.token_vault_connect_states WHERE state = $1
+RETURNING organization_id, user_id, provider, expires_at, COALESCE(code_verifier, '')::text AS code_verifier
 `
 
 type DeleteConnectStateRow struct {
-	TenantID     uuid.UUID
-	UserID       uuid.UUID
-	Provider     string
-	ExpiresAt    time.Time
-	CodeVerifier string
+	OrganizationID uuid.UUID
+	UserID         uuid.UUID
+	Provider       string
+	ExpiresAt      time.Time
+	CodeVerifier   string
 }
 
 // DeleteConnectState atomically consumes the single-use state for the
@@ -32,7 +32,7 @@ func (q *Queries) DeleteConnectState(ctx context.Context, state string) (DeleteC
 	row := q.db.QueryRow(ctx, deleteConnectState, state)
 	var i DeleteConnectStateRow
 	err := row.Scan(
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.UserID,
 		&i.Provider,
 		&i.ExpiresAt,
@@ -42,18 +42,18 @@ func (q *Queries) DeleteConnectState(ctx context.Context, state string) (DeleteC
 }
 
 const deleteGrant = `-- name: DeleteGrant :execrows
-DELETE FROM tenant.token_vault_grants
-WHERE tenant_id = $1 AND user_id = $2 AND provider = $3
+DELETE FROM organization.token_vault_grants
+WHERE organization_id = $1 AND user_id = $2 AND provider = $3
 `
 
 type DeleteGrantParams struct {
-	TenantID uuid.UUID
-	UserID   uuid.UUID
-	Provider string
+	OrganizationID uuid.UUID
+	UserID         uuid.UUID
+	Provider       string
 }
 
 func (q *Queries) DeleteGrant(ctx context.Context, arg DeleteGrantParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteGrant, arg.TenantID, arg.UserID, arg.Provider)
+	result, err := q.db.Exec(ctx, deleteGrant, arg.OrganizationID, arg.UserID, arg.Provider)
 	if err != nil {
 		return 0, err
 	}
@@ -61,16 +61,16 @@ func (q *Queries) DeleteGrant(ctx context.Context, arg DeleteGrantParams) (int64
 }
 
 const deleteProvider = `-- name: DeleteProvider :execrows
-DELETE FROM tenant.token_vault_providers WHERE tenant_id = $1 AND provider = $2
+DELETE FROM organization.token_vault_providers WHERE organization_id = $1 AND provider = $2
 `
 
 type DeleteProviderParams struct {
-	TenantID uuid.UUID
-	Provider string
+	OrganizationID uuid.UUID
+	Provider       string
 }
 
 func (q *Queries) DeleteProvider(ctx context.Context, arg DeleteProviderParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteProvider, arg.TenantID, arg.Provider)
+	result, err := q.db.Exec(ctx, deleteProvider, arg.OrganizationID, arg.Provider)
 	if err != nil {
 		return 0, err
 	}
@@ -78,29 +78,29 @@ func (q *Queries) DeleteProvider(ctx context.Context, arg DeleteProviderParams) 
 }
 
 const deleteProviderGrants = `-- name: DeleteProviderGrants :exec
-DELETE FROM tenant.token_vault_grants WHERE tenant_id = $1 AND provider = $2
+DELETE FROM organization.token_vault_grants WHERE organization_id = $1 AND provider = $2
 `
 
 type DeleteProviderGrantsParams struct {
-	TenantID uuid.UUID
-	Provider string
+	OrganizationID uuid.UUID
+	Provider       string
 }
 
 func (q *Queries) DeleteProviderGrants(ctx context.Context, arg DeleteProviderGrantsParams) error {
-	_, err := q.db.Exec(ctx, deleteProviderGrants, arg.TenantID, arg.Provider)
+	_, err := q.db.Exec(ctx, deleteProviderGrants, arg.OrganizationID, arg.Provider)
 	return err
 }
 
 const getTokenGrant = `-- name: GetTokenGrant :one
 SELECT access_token_ct, access_token_nonce, refresh_token_ct, refresh_token_nonce, expires_at
-FROM tenant.token_vault_grants
-WHERE tenant_id = $1 AND user_id = $2 AND provider = $3
+FROM organization.token_vault_grants
+WHERE organization_id = $1 AND user_id = $2 AND provider = $3
 `
 
 type GetTokenGrantParams struct {
-	TenantID uuid.UUID
-	UserID   uuid.UUID
-	Provider string
+	OrganizationID uuid.UUID
+	UserID         uuid.UUID
+	Provider       string
 }
 
 type GetTokenGrantRow struct {
@@ -112,7 +112,7 @@ type GetTokenGrantRow struct {
 }
 
 func (q *Queries) GetTokenGrant(ctx context.Context, arg GetTokenGrantParams) (GetTokenGrantRow, error) {
-	row := q.db.QueryRow(ctx, getTokenGrant, arg.TenantID, arg.UserID, arg.Provider)
+	row := q.db.QueryRow(ctx, getTokenGrant, arg.OrganizationID, arg.UserID, arg.Provider)
 	var i GetTokenGrantRow
 	err := row.Scan(
 		&i.AccessTokenCt,
@@ -125,23 +125,23 @@ func (q *Queries) GetTokenGrant(ctx context.Context, arg GetTokenGrantParams) (G
 }
 
 const insertConnectState = `-- name: InsertConnectState :exec
-INSERT INTO tenant.token_vault_connect_states (state, tenant_id, user_id, provider, expires_at, code_verifier)
+INSERT INTO organization.token_vault_connect_states (state, organization_id, user_id, provider, expires_at, code_verifier)
 VALUES ($1, $2, $3, $4, $5, $6)
 `
 
 type InsertConnectStateParams struct {
-	State        string
-	TenantID     uuid.UUID
-	UserID       uuid.UUID
-	Provider     string
-	ExpiresAt    time.Time
-	CodeVerifier *string
+	State          string
+	OrganizationID uuid.UUID
+	UserID         uuid.UUID
+	Provider       string
+	ExpiresAt      time.Time
+	CodeVerifier   *string
 }
 
 func (q *Queries) InsertConnectState(ctx context.Context, arg InsertConnectStateParams) error {
 	_, err := q.db.Exec(ctx, insertConnectState,
 		arg.State,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.UserID,
 		arg.Provider,
 		arg.ExpiresAt,
@@ -152,13 +152,13 @@ func (q *Queries) InsertConnectState(ctx context.Context, arg InsertConnectState
 
 const listGrants = `-- name: ListGrants :many
 SELECT provider, external_account_id, scope, expires_at, created_at, updated_at
-FROM tenant.token_vault_grants
-WHERE tenant_id = $1 AND user_id = $2 ORDER BY provider
+FROM organization.token_vault_grants
+WHERE organization_id = $1 AND user_id = $2 ORDER BY provider
 `
 
 type ListGrantsParams struct {
-	TenantID uuid.UUID
-	UserID   uuid.UUID
+	OrganizationID uuid.UUID
+	UserID         uuid.UUID
 }
 
 type ListGrantsRow struct {
@@ -171,7 +171,7 @@ type ListGrantsRow struct {
 }
 
 func (q *Queries) ListGrants(ctx context.Context, arg ListGrantsParams) ([]ListGrantsRow, error) {
-	rows, err := q.db.Query(ctx, listGrants, arg.TenantID, arg.UserID)
+	rows, err := q.db.Query(ctx, listGrants, arg.OrganizationID, arg.UserID)
 	if err != nil {
 		return nil, err
 	}
@@ -200,7 +200,7 @@ func (q *Queries) ListGrants(ctx context.Context, arg ListGrantsParams) ([]ListG
 const listProviders = `-- name: ListProviders :many
 
 SELECT id, provider, client_id, authorize_url, token_url, scopes, created_at, updated_at
-FROM tenant.token_vault_providers WHERE tenant_id = $1 ORDER BY provider
+FROM organization.token_vault_providers WHERE organization_id = $1 ORDER BY provider
 `
 
 type ListProvidersRow struct {
@@ -217,8 +217,8 @@ type ListProvidersRow struct {
 // Queries for the token-vault domain.
 // storeGrant (upsert with nullable []byte params) is converted below using
 // pointer types; the encrypt/decrypt/HTTP-exchange logic stays in the Service.
-func (q *Queries) ListProviders(ctx context.Context, tenantID uuid.UUID) ([]ListProvidersRow, error) {
-	rows, err := q.db.Query(ctx, listProviders, tenantID)
+func (q *Queries) ListProviders(ctx context.Context, organizationID uuid.UUID) ([]ListProvidersRow, error) {
+	rows, err := q.db.Query(ctx, listProviders, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -247,14 +247,14 @@ func (q *Queries) ListProviders(ctx context.Context, tenantID uuid.UUID) ([]List
 }
 
 const lockProvider = `-- name: LockProvider :one
-SELECT client_id, authorize_url, token_url FROM tenant.token_vault_providers
-WHERE tenant_id = $1 AND provider = $2
+SELECT client_id, authorize_url, token_url FROM organization.token_vault_providers
+WHERE organization_id = $1 AND provider = $2
 FOR UPDATE
 `
 
 type LockProviderParams struct {
-	TenantID uuid.UUID
-	Provider string
+	OrganizationID uuid.UUID
+	Provider       string
 }
 
 type LockProviderRow struct {
@@ -266,7 +266,7 @@ type LockProviderRow struct {
 // LockProvider reads a provider's endpoints and client, locking its row until
 // the transaction ends.
 func (q *Queries) LockProvider(ctx context.Context, arg LockProviderParams) (LockProviderRow, error) {
-	row := q.db.QueryRow(ctx, lockProvider, arg.TenantID, arg.Provider)
+	row := q.db.QueryRow(ctx, lockProvider, arg.OrganizationID, arg.Provider)
 	var i LockProviderRow
 	err := row.Scan(&i.ClientID, &i.AuthorizeUrl, &i.TokenUrl)
 	return i, err
@@ -274,15 +274,15 @@ func (q *Queries) LockProvider(ctx context.Context, arg LockProviderParams) (Loc
 
 const lockTokenGrant = `-- name: LockTokenGrant :one
 SELECT access_token_ct, access_token_nonce, refresh_token_ct, refresh_token_nonce, expires_at
-FROM tenant.token_vault_grants
-WHERE tenant_id = $1 AND user_id = $2 AND provider = $3
+FROM organization.token_vault_grants
+WHERE organization_id = $1 AND user_id = $2 AND provider = $3
 FOR UPDATE
 `
 
 type LockTokenGrantParams struct {
-	TenantID uuid.UUID
-	UserID   uuid.UUID
-	Provider string
+	OrganizationID uuid.UUID
+	UserID         uuid.UUID
+	Provider       string
 }
 
 type LockTokenGrantRow struct {
@@ -296,7 +296,7 @@ type LockTokenGrantRow struct {
 // LockTokenGrant reads a grant to refresh it, locking its row until the
 // transaction ends.
 func (q *Queries) LockTokenGrant(ctx context.Context, arg LockTokenGrantParams) (LockTokenGrantRow, error) {
-	row := q.db.QueryRow(ctx, lockTokenGrant, arg.TenantID, arg.UserID, arg.Provider)
+	row := q.db.QueryRow(ctx, lockTokenGrant, arg.OrganizationID, arg.UserID, arg.Provider)
 	var i LockTokenGrantRow
 	err := row.Scan(
 		&i.AccessTokenCt,
@@ -310,38 +310,38 @@ func (q *Queries) LockTokenGrant(ctx context.Context, arg LockTokenGrantParams) 
 
 const providerHasGrants = `-- name: ProviderHasGrants :one
 SELECT EXISTS (
-    SELECT 1 FROM tenant.token_vault_grants WHERE tenant_id = $1 AND provider = $2
+    SELECT 1 FROM organization.token_vault_grants WHERE organization_id = $1 AND provider = $2
 )::bool
 `
 
 type ProviderHasGrantsParams struct {
-	TenantID uuid.UUID
-	Provider string
+	OrganizationID uuid.UUID
+	Provider       string
 }
 
 func (q *Queries) ProviderHasGrants(ctx context.Context, arg ProviderHasGrantsParams) (bool, error) {
-	row := q.db.QueryRow(ctx, providerHasGrants, arg.TenantID, arg.Provider)
+	row := q.db.QueryRow(ctx, providerHasGrants, arg.OrganizationID, arg.Provider)
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err
 }
 
 const upsertTokenGrant = `-- name: UpsertTokenGrant :execrows
-INSERT INTO tenant.token_vault_grants
-    (tenant_id, user_id, provider, access_token_ct, access_token_nonce,
+INSERT INTO organization.token_vault_grants
+    (organization_id, user_id, provider, access_token_ct, access_token_nonce,
      refresh_token_ct, refresh_token_nonce, token_type, scope, expires_at)
-SELECT p.tenant_id, $1::uuid, p.provider, $2::bytea, $3::bytea,
+SELECT p.organization_id, $1::uuid, p.provider, $2::bytea, $3::bytea,
        $4::bytea, $5::bytea, $6::text,
        $7::text, $8::timestamptz
-FROM tenant.token_vault_providers p
-WHERE p.tenant_id = $9 AND p.provider = $10
+FROM organization.token_vault_providers p
+WHERE p.organization_id = $9 AND p.provider = $10
   AND p.token_url = $11 AND p.client_id = $12
 FOR SHARE
-ON CONFLICT (tenant_id, user_id, provider) DO UPDATE SET
+ON CONFLICT (organization_id, user_id, provider) DO UPDATE SET
     access_token_ct = EXCLUDED.access_token_ct,
     access_token_nonce = EXCLUDED.access_token_nonce,
-    refresh_token_ct = COALESCE(EXCLUDED.refresh_token_ct, tenant.token_vault_grants.refresh_token_ct),
-    refresh_token_nonce = COALESCE(EXCLUDED.refresh_token_nonce, tenant.token_vault_grants.refresh_token_nonce),
+    refresh_token_ct = COALESCE(EXCLUDED.refresh_token_ct, organization.token_vault_grants.refresh_token_ct),
+    refresh_token_nonce = COALESCE(EXCLUDED.refresh_token_nonce, organization.token_vault_grants.refresh_token_nonce),
     token_type = EXCLUDED.token_type,
     scope = EXCLUDED.scope,
     expires_at = EXCLUDED.expires_at,
@@ -357,7 +357,7 @@ type UpsertTokenGrantParams struct {
 	TokenType         string
 	Scope             *string
 	ExpiresAt         pgtype.Timestamptz
-	TenantID          uuid.UUID
+	OrganizationID    uuid.UUID
 	Provider          string
 	TokenUrl          string
 	ClientID          string
@@ -379,7 +379,7 @@ func (q *Queries) UpsertTokenGrant(ctx context.Context, arg UpsertTokenGrantPara
 		arg.TokenType,
 		arg.Scope,
 		arg.ExpiresAt,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Provider,
 		arg.TokenUrl,
 		arg.ClientID,

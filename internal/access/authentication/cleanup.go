@@ -74,8 +74,8 @@ func purgeSessionBatch(ctx context.Context, pool *pgxpool.Pool, cutoff time.Time
 			continue
 		}
 		sess := sessionsignal.Session{ID: r.ID, UserID: r.UserID}
-		if r.TenantID.Valid {
-			sess.TenantID = uuid.UUID(r.TenantID.Bytes)
+		if r.OrganizationID.Valid {
+			sess.OrganizationID = uuid.UUID(r.OrganizationID.Bytes)
 		}
 		expired = append(expired, sess)
 	}

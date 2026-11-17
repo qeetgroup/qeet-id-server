@@ -1,7 +1,7 @@
-// Package authpolicy stores a tenant's authentication policy (password rules,
+// Package authpolicy stores an organization's authentication policy (password rules,
 // permitted sign-in methods and sign-in lockout) and owns the password check
-// every path that sets a password runs (ValidateForTenant). An account with no
-// organisation gets the platform baseline, DefaultPolicy.
+// every path that sets a password runs (ValidateForOrganization). An account with no
+// organization gets the platform baseline, DefaultPolicy.
 package authpolicy
 
 import (
@@ -31,7 +31,7 @@ import (
 // count so we don't reveal breach-corpus details to the end user.
 const BreachedPasswordDetail = "This password has appeared in known data breaches — choose a different one."
 
-// Policy is a tenant's authentication policy. Self-registration (hosted
+// Policy is an organization's authentication policy. Self-registration (hosted
 // end-user signup) and remembering devices (skipping MFA on one for
 // RememberDeviceDays, 1–90; 0 on update means 30) are off by default.
 // LockoutLimits is read-only: returned by Get, ignored by Update.
@@ -57,7 +57,7 @@ type Policy struct {
 	LockoutLimits          *LockoutLimitsView `json:"lockout_limits,omitempty"`
 }
 
-// Lockout is the sign-in lockout a tenant applies: after Threshold failed
+// Lockout is the sign-in lockout an organization applies: after Threshold failed
 // password sign-ins to one account from one network, each within Window of the
 // last, the account is locked for that network for Duration.
 type Lockout struct {
@@ -67,7 +67,7 @@ type Lockout struct {
 }
 
 // LockoutLimits are the platform defaults for the lockout settings and the
-// documented bounds a tenant may choose within. Platform configuration
+// documented bounds an organization may choose within. Platform configuration
 // (LOGIN_LOCKOUT_*), validated at start-up; windows and durations are whole
 // minutes.
 type LockoutLimits struct {
@@ -77,7 +77,7 @@ type LockoutLimits struct {
 }
 
 // DefaultLockoutLimits are the built-in limits: five failures within fifteen
-// minutes lock for fifteen minutes. A tenant may only be stricter: a threshold
+// minutes lock for fifteen minutes. An organization may only be stricter: a threshold
 // of 3 to 5, and a window and a duration of 15 minutes to 24 hours.
 func DefaultLockoutLimits() LockoutLimits {
 	return LockoutLimits{
@@ -140,10 +140,10 @@ func (l LockoutLimits) CheckLockout(p Policy) []errs.FieldError {
 	return out
 }
 
-// DefaultPolicy mirrors the column defaults — returned when a tenant has no
+// DefaultPolicy mirrors the column defaults — returned when an organization has no
 // explicit row yet. It is also the platform baseline: the password rules for
-// an account that belongs to no organisation (8 characters, no required
-// character classes). Update never lets a tenant go below it.
+// an account that belongs to no organization (8 characters, no required
+// character classes). Update never lets an organization go below it.
 func DefaultPolicy() Policy {
 	return Policy{
 		PasswordEnabled:     true,
@@ -156,7 +156,7 @@ func DefaultPolicy() Policy {
 }
 
 // defaultRememberDeviceDays is how long a remembered device stays remembered
-// where the organisation sets nothing (the column default).
+// where the organization sets nothing (the column default).
 const defaultRememberDeviceDays = 30
 
 // ValidatePassword checks a plaintext password against the policy. Pure, so it
@@ -182,7 +182,7 @@ func ValidatePassword(p Policy, pw string) error {
 
 func isSymbol(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) && !unicode.IsSpace(r) }
 
-// Service stores tenants' authentication policies. breach (nil: off) checks
+// Service stores organizations' authentication policies. breach (nil: off) checks
 // new passwords against known breaches and fails open when the provider is
 // unreachable; lockout holds the platform lockout defaults and bounds.
 type Service struct {
@@ -207,8 +207,8 @@ func (s *Service) SetBreachChecker(c *hibp.Checker) { s.breach = c }
 // Pool returns the connection pool, for handlers that run their own transaction.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
-// toDomain maps a generated TenantAuthPolicy row to the domain Policy model.
-func toDomain(row dbgen.TenantAuthPolicy) *Policy {
+// toDomain maps a generated OrganizationAuthPolicy row to the domain Policy model.
+func toDomain(row dbgen.OrganizationAuthPolicy) *Policy {
 	return &Policy{
 		PasswordEnabled:          row.PasswordEnabled,
 		PasswordMinLength:        int(row.PasswordMinLength),
@@ -245,10 +245,10 @@ func int32OrNil(v *int) *int32 {
 	return &n
 }
 
-// Get returns the tenant's policy, or defaults when none is stored, with the
+// Get returns the organization's policy, or defaults when none is stored, with the
 // lockout limits attached.
-func (s *Service) Get(ctx context.Context, tenantID uuid.UUID) (*Policy, error) {
-	row, err := s.q.GetAuthPolicy(ctx, tenantID)
+func (s *Service) Get(ctx context.Context, organizationID uuid.UUID) (*Policy, error) {
+	row, err := s.q.GetAuthPolicy(ctx, organizationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		def := DefaultPolicy()
 		def.LockoutLimits = s.lockout.view()
@@ -262,16 +262,16 @@ func (s *Service) Get(ctx context.Context, tenantID uuid.UUID) (*Policy, error) 
 	return p, nil
 }
 
-// SignInLockout returns the lockout a password sign-in for tenantID is held
-// to: each setting the tenant chose, the platform default for the rest.
-// uuid.Nil (a sign-in with no tenant) gets the platform defaults without a
-// read. Which tenant a sign-in belongs to is the caller's decision.
-func (s *Service) SignInLockout(ctx context.Context, tenantID uuid.UUID) (Lockout, error) {
+// SignInLockout returns the lockout a password sign-in for organizationID is held
+// to: each setting the organization chose, the platform default for the rest.
+// uuid.Nil (a sign-in with no organization) gets the platform defaults without a
+// read. Which organization a sign-in belongs to is the caller's decision.
+func (s *Service) SignInLockout(ctx context.Context, organizationID uuid.UUID) (Lockout, error) {
 	l := s.lockout.Defaults
-	if tenantID == uuid.Nil {
+	if organizationID == uuid.Nil {
 		return l, nil
 	}
-	p, err := s.Get(ctx, tenantID)
+	p, err := s.Get(ctx, organizationID)
 	if err != nil {
 		return Lockout{}, err
 	}
@@ -287,19 +287,19 @@ func (s *Service) SignInLockout(ctx context.Context, tenantID uuid.UUID) (Lockou
 	return l, nil
 }
 
-// Update stores a tenant's whole policy. Invalid settings are refused, each
+// Update stores an organization's whole policy. Invalid settings are refused, each
 // named in the validation error, before anything is written; the password
 // length (8–128) and magic-link lifetime (5–1440 minutes) are clamped instead.
-// Every first-factor method may be off only while the tenant has an active
+// Every first-factor method may be off only while the organization has an active
 // SAML or LDAP connection to sign in through.
-func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p Policy) (*Policy, error) {
+func (s *Service) Update(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, p Policy) (*Policy, error) {
 	if p.RememberDeviceDays == 0 {
 		p.RememberDeviceDays = defaultRememberDeviceDays
 	}
 	sso := false
 	if !p.PasswordEnabled && !p.PasskeyEnabled && !p.MagicLinkEnabled {
 		var err error
-		if sso, err = s.q.WithTx(tx).HasActiveSSOConnection(ctx, tenantID); err != nil {
+		if sso, err = s.q.WithTx(tx).HasActiveSSOConnection(ctx, organizationID); err != nil {
 			return nil, err
 		}
 	}
@@ -325,7 +325,7 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p P
 		p.MagicLinkTTLMinutes = 1440
 	}
 	row, err := s.q.WithTx(tx).UpsertAuthPolicy(ctx, dbgen.UpsertAuthPolicyParams{
-		TenantID:                 tenantID,
+		OrganizationID:           organizationID,
 		PasswordEnabled:          p.PasswordEnabled,
 		PasswordMinLength:        int32(p.PasswordMinLength), // #nosec G115 -- clamped to 8–128 above
 		PasswordRequireUppercase: p.PasswordRequireUppercase,
@@ -352,10 +352,10 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p P
 }
 
 // checkSignInMethods refuses a policy that leaves no first-factor sign-in
-// method (password, passkey or magic link) on unless the organisation signs in
+// method (password, passkey or magic link) on unless the organization signs in
 // through single sign-on (sso), and one that switches on an email or SMS
 // one-time-code sign-in — no such sign-in exists, so saving it would claim a
-// method the organisation does not have.
+// method the organization does not have.
 func checkSignInMethods(p Policy, sso bool) []errs.FieldError {
 	var out []errs.FieldError
 	if !p.PasswordEnabled && !p.PasskeyEnabled && !p.MagicLinkEnabled && !sso {
@@ -373,14 +373,14 @@ func checkSignInMethods(p Policy, sso bool) []errs.FieldError {
 	return out
 }
 
-// ValidateForTenant is the check every path that sets a password runs, so a
-// password is judged the same everywhere: tenantID's rules (DefaultPolicy for
+// ValidateForOrganization is the check every path that sets a password runs, so a
+// password is judged the same everywhere: organizationID's rules (DefaultPolicy for
 // uuid.Nil), the offline strength baseline (email may be empty), then the
 // breach check, which fails open. It returns the first failure, never echoing pw.
-func (s *Service) ValidateForTenant(ctx context.Context, tenantID uuid.UUID, email, pw string) error {
+func (s *Service) ValidateForOrganization(ctx context.Context, organizationID uuid.UUID, email, pw string) error {
 	p := DefaultPolicy()
-	if tenantID != uuid.Nil {
-		tp, err := s.Get(ctx, tenantID)
+	if organizationID != uuid.Nil {
+		tp, err := s.Get(ctx, organizationID)
 		if err != nil {
 			return err
 		}
@@ -400,31 +400,31 @@ func (s *Service) ValidateForTenant(ctx context.Context, tenantID uuid.UUID, ema
 	return nil
 }
 
-// SelfRegistrationEnabled reports whether the tenant permits hosted end-user
+// SelfRegistrationEnabled reports whether the organization permits hosted end-user
 // self-registration.
-func (s *Service) SelfRegistrationEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error) {
-	p, err := s.Get(ctx, tenantID)
+func (s *Service) SelfRegistrationEnabled(ctx context.Context, organizationID uuid.UUID) (bool, error) {
+	p, err := s.Get(ctx, organizationID)
 	if err != nil {
 		return false, err
 	}
 	return p.SelfRegistrationEnabled, nil
 }
 
-// SignInMethods are the first-factor sign-in methods an organisation allows.
+// SignInMethods are the first-factor sign-in methods an organization allows.
 type SignInMethods struct {
 	Password  bool `json:"password"`
 	Passkey   bool `json:"passkey"`
 	MagicLink bool `json:"magic_link"`
 }
 
-// SignInMethodsFor returns the sign-in methods tenantID allows; uuid.Nil (no
-// organisation) allows all. Read on every call — a change applies to the next
+// SignInMethodsFor returns the sign-in methods organizationID allows; uuid.Nil (no
+// organization) allows all. Read on every call — a change applies to the next
 // sign-in.
-func (s *Service) SignInMethodsFor(ctx context.Context, tenantID uuid.UUID) (SignInMethods, error) {
-	if tenantID == uuid.Nil {
+func (s *Service) SignInMethodsFor(ctx context.Context, organizationID uuid.UUID) (SignInMethods, error) {
+	if organizationID == uuid.Nil {
 		return SignInMethods{Password: true, Passkey: true, MagicLink: true}, nil
 	}
-	p, err := s.Get(ctx, tenantID)
+	p, err := s.Get(ctx, organizationID)
 	if err != nil {
 		return SignInMethods{}, err
 	}
@@ -433,19 +433,19 @@ func (s *Service) SignInMethodsFor(ctx context.Context, tenantID uuid.UUID) (Sig
 
 // AllowedSignInMethods is SignInMethodsFor as plain values, for an interface
 // declared where SignInMethods can't be named.
-func (s *Service) AllowedSignInMethods(ctx context.Context, tenantID uuid.UUID) (password, passkey, magicLink bool, err error) {
-	m, err := s.SignInMethodsFor(ctx, tenantID)
+func (s *Service) AllowedSignInMethods(ctx context.Context, organizationID uuid.UUID) (password, passkey, magicLink bool, err error) {
+	m, err := s.SignInMethodsFor(ctx, organizationID)
 	return m.Password, m.Passkey, m.MagicLink, err
 }
 
-// HostedSignInPolicy is what tenantID's hosted sign-in pages say before anyone signs in: the
+// HostedSignInPolicy is what organizationID's hosted sign-in pages say before anyone signs in: the
 // rules a new password must meet (so the page can tick them off as they are met; the server still
 // checks on submit), how long a sign-in link works and how long a device is remembered. None of it
 // is secret: every rule is told to anyone who tries a password that breaks it.
-func (s *Service) HostedSignInPolicy(ctx context.Context, tenantID uuid.UUID) (minLength int, upper, number, symbol bool, magicLinkMinutes, rememberDeviceDays int, err error) {
+func (s *Service) HostedSignInPolicy(ctx context.Context, organizationID uuid.UUID) (minLength int, upper, number, symbol bool, magicLinkMinutes, rememberDeviceDays int, err error) {
 	p := DefaultPolicy()
-	if tenantID != uuid.Nil {
-		tp, gerr := s.Get(ctx, tenantID)
+	if organizationID != uuid.Nil {
+		tp, gerr := s.Get(ctx, organizationID)
 		if gerr != nil {
 			return 0, false, false, false, 0, 0, gerr
 		}
@@ -455,47 +455,47 @@ func (s *Service) HostedSignInPolicy(ctx context.Context, tenantID uuid.UUID) (m
 		p.MagicLinkTTLMinutes, p.RememberDeviceDays, nil
 }
 
-// PasswordEnabled reports whether the tenant permits password sign-in
+// PasswordEnabled reports whether the organization permits password sign-in
 // (password_enabled); uuid.Nil is not restricted.
-func (s *Service) PasswordEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error) {
-	m, err := s.SignInMethodsFor(ctx, tenantID)
+func (s *Service) PasswordEnabled(ctx context.Context, organizationID uuid.UUID) (bool, error) {
+	m, err := s.SignInMethodsFor(ctx, organizationID)
 	return m.Password, err
 }
 
-// MagicLinkPolicy reports whether the tenant permits magic-link sign-in and how
+// MagicLinkPolicy reports whether the organization permits magic-link sign-in and how
 // long a link it issues lives (magic_link_ttl_minutes).
-func (s *Service) MagicLinkPolicy(ctx context.Context, tenantID uuid.UUID) (bool, time.Duration, error) {
-	p, err := s.Get(ctx, tenantID)
+func (s *Service) MagicLinkPolicy(ctx context.Context, organizationID uuid.UUID) (bool, time.Duration, error) {
+	p, err := s.Get(ctx, organizationID)
 	if err != nil {
 		return false, 0, err
 	}
 	return p.MagicLinkEnabled, time.Duration(p.MagicLinkTTLMinutes) * time.Minute, nil
 }
 
-// PasskeyEnabled reports whether the tenant permits passkeys (passkey_enabled)
+// PasskeyEnabled reports whether the organization permits passkeys (passkey_enabled)
 // for enrolment and sign-in.
-func (s *Service) PasskeyEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error) {
-	p, err := s.Get(ctx, tenantID)
+func (s *Service) PasskeyEnabled(ctx context.Context, organizationID uuid.UUID) (bool, error) {
+	p, err := s.Get(ctx, organizationID)
 	if err != nil {
 		return false, err
 	}
 	return p.PasskeyEnabled, nil
 }
 
-// RememberDeviceEnabled reports whether the tenant lets an enrolled user skip
+// RememberDeviceEnabled reports whether the organization lets an enrolled user skip
 // the second factor on a remembered device.
-func (s *Service) RememberDeviceEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error) {
-	p, err := s.Get(ctx, tenantID)
+func (s *Service) RememberDeviceEnabled(ctx context.Context, organizationID uuid.UUID) (bool, error) {
+	p, err := s.Get(ctx, organizationID)
 	if err != nil {
 		return false, err
 	}
 	return p.RememberDeviceEnabled, nil
 }
 
-// RememberDevicePolicy reports whether the tenant allows remembering a device
+// RememberDevicePolicy reports whether the organization allows remembering a device
 // and for how long one stays remembered.
-func (s *Service) RememberDevicePolicy(ctx context.Context, tenantID uuid.UUID) (bool, time.Duration, error) {
-	p, err := s.Get(ctx, tenantID)
+func (s *Service) RememberDevicePolicy(ctx context.Context, organizationID uuid.UUID) (bool, time.Duration, error) {
+	p, err := s.Get(ctx, organizationID)
 	if err != nil {
 		return false, 0, err
 	}
@@ -519,12 +519,12 @@ func (h *Handler) Mount(r chi.Router) {
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	p, err := h.Service.Get(r.Context(), tenantID)
+	p, err := h.Service.Get(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -532,7 +532,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, p)
 }
 
-// MethodUsage is how many of the organisation's people use each way of
+// MethodUsage is how many of the organization's people use each way of
 // signing in, and how many would have no other way in without it. Magic links
 // and email codes aren't counted as a way in; MagicLinkEnabled says whether
 // they are one too.
@@ -557,17 +557,17 @@ type SocialCount struct {
 	Only     int    `json:"only"`
 }
 
-// Usage counts how the tenant's live accounts sign in.
-func (s *Service) Usage(ctx context.Context, tenantID uuid.UUID) (*MethodUsage, error) {
-	row, err := s.q.SignInMethodUsage(ctx, tenantID)
+// Usage counts how the organization's live accounts sign in.
+func (s *Service) Usage(ctx context.Context, organizationID uuid.UUID) (*MethodUsage, error) {
+	row, err := s.q.SignInMethodUsage(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
-	social, err := s.q.SocialProviderUsage(ctx, tenantID)
+	social, err := s.q.SocialProviderUsage(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
-	policy, err := s.Get(ctx, tenantID)
+	policy, err := s.Get(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -586,12 +586,12 @@ func (s *Service) Usage(ctx context.Context, tenantID uuid.UUID) (*MethodUsage, 
 
 // usage serves GET /tenants/{tenantID}/auth-policy/usage.
 func (h *Handler) usage(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	u, err := h.Service.Usage(r.Context(), tenantID)
+	u, err := h.Service.Usage(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -600,7 +600,7 @@ func (h *Handler) usage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -617,7 +617,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	p, err := h.Service.Update(ctx, tx, tenantID, in)
+	p, err := h.Service.Update(ctx, tx, organizationID, in)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -630,16 +630,16 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 			actorType = pr.ActorType
 		}
 	}
-	tid := tenantID
+	tid := organizationID
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     &tid,
-		ActorUserID:  actorID,
-		ActorType:    actorType,
-		Action:       "auth_policy.updated",
-		ResourceType: "auth_policy",
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
+		OrganizationID: &tid,
+		ActorUserID:    actorID,
+		ActorType:      actorType,
+		Action:         "auth_policy.updated",
+		ResourceType:   "auth_policy",
+		IP:             httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
+		RequestID:      httpx.RequestID(r),
 		Metadata: map[string]any{
 			"password_min_length":      p.PasswordMinLength,
 			"password_enabled":         p.PasswordEnabled,

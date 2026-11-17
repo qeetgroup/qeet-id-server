@@ -20,14 +20,14 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
-// enforceAddressRules turns tenant's address rules on with one allow rule for
+// enforceAddressRules turns organization's address rules on with one allow rule for
 // 192.0.2.0/24, so every sign-in to it and renewal in it reads them.
-func enforceAddressRules(t *testing.T, tenant uuid.UUID) {
+func enforceAddressRules(t *testing.T, organization uuid.UUID) {
 	t.Helper()
 	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `
-		WITH rule AS (INSERT INTO tenant.ip_rules (tenant_id, cidr, label, action) VALUES ($1, '192.0.2.0/24', 'office', 'allow'))
-		INSERT INTO tenant.ip_rules_config (tenant_id, enabled) VALUES ($1, TRUE)
-	`, tenant); err != nil {
+		WITH rule AS (INSERT INTO organization.ip_rules (organization_id, cidr, label, action) VALUES ($1, '192.0.2.0/24', 'office', 'allow'))
+		INSERT INTO organization.ip_rules_config (organization_id, enabled) VALUES ($1, TRUE)
+	`, organization); err != nil {
 		t.Fatalf("address rules: %v", err)
 	}
 }
@@ -51,13 +51,13 @@ func TestConcurrentSignInsShareASmallPool(t *testing.T) {
 	pool := dbtest.Pool(t)
 	svc := newService(t)
 	svc.SetAddressPolicy(ipallow.NewService(pool))
-	a, tenant := member(t)
-	enforceAddressRules(t, tenant)
+	a, organization := member(t)
+	enforceAddressRules(t, organization)
 	n := 3 * int(pool.Config().MaxConns)
 
 	pairs := make([]*TokenPair, n)
 	for i, err := range concurrently(n, func(i int) (err error) {
-		pairs[i], err = svc.IssuePair(ctx, a.ID, tenant, "192.0.2.10", "test", "password")
+		pairs[i], err = svc.IssuePair(ctx, a.ID, organization, "192.0.2.10", "test", "password")
 		return err
 	}) {
 		if err != nil {
@@ -75,16 +75,16 @@ func TestConcurrentSignInsShareASmallPool(t *testing.T) {
 }
 
 // TestRenewalFromARefusedAddress checks that a renewal from an address the
-// organisation's rules refuse is refused and recorded, and that the refresh
+// organization's rules refuse is refused and recorded, and that the refresh
 // token still renews from an allowed address.
 func TestRenewalFromARefusedAddress(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	svc := newService(t)
 	svc.SetAddressPolicy(ipallow.NewService(pool))
-	a, tenant := member(t)
-	enforceAddressRules(t, tenant)
-	pair, err := svc.IssuePair(ctx, a.ID, tenant, "192.0.2.10", "test", "password")
+	a, organization := member(t)
+	enforceAddressRules(t, organization)
+	pair, err := svc.IssuePair(ctx, a.ID, organization, "192.0.2.10", "test", "password")
 	if err != nil {
 		t.Fatalf("sign in: %v", err)
 	}
@@ -92,8 +92,8 @@ func TestRenewalFromARefusedAddress(t *testing.T) {
 	if _, err := svc.Refresh(ctx, RefreshInput{RefreshToken: pair.RefreshToken, IP: "198.51.100.7"}); !errors.Is(err, errs.ErrAuthAddressNotAllowed) {
 		t.Fatalf("renewal from a refused address: %v, want %v", err, errs.ErrAuthAddressNotAllowed)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'auth.address_refused' AND tenant_id = $1
-		AND metadata->>'path' = 'refresh' AND metadata->>'address' = '198.51.100.7'`, tenant); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'auth.address_refused' AND organization_id = $1
+		AND metadata->>'path' = 'refresh' AND metadata->>'address' = '198.51.100.7'`, organization); n != 1 {
 		t.Errorf("the refused renewal was recorded %d times, want 1", n)
 	}
 	if _, err := svc.Refresh(ctx, RefreshInput{RefreshToken: pair.RefreshToken, IP: "192.0.2.10"}); err != nil {
@@ -173,11 +173,11 @@ func TestEnrollmentChallengeWithOneConnection(t *testing.T) {
 	pool := dbtest.Pool(t)
 	svc := newService(t)
 	svc.SetMFA(&poolFactors{pool: pool})
-	a, tenant := member(t)
+	a, organization := member(t)
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO tenant.security_policies (tenant_id, mfa_enforcement, mfa_grace_days, mfa_enforced_since)
+		INSERT INTO organization.security_policies (organization_id, mfa_enforcement, mfa_grace_days, mfa_enforced_since)
 		VALUES ($1, 'required', 7, NOW())
-	`, tenant); err != nil {
+	`, organization); err != nil {
 		t.Fatalf("require MFA: %v", err)
 	}
 	res, err := svc.Login(ctx, LoginInput{Email: a.Email, Password: testPassword})
@@ -333,16 +333,16 @@ func TestPasskeyAndPushChallengeWithOneConnection(t *testing.T) {
 	}
 }
 
-// atSessionLimit caps a's sessions in tenant at one, refusing a sign-in beyond
+// atSessionLimit caps a's sessions in organization at one, refusing a sign-in beyond
 // it, and opens that one session.
-func atSessionLimit(t *testing.T, svc *Service, a dbtest.Account, tenant uuid.UUID) {
+func atSessionLimit(t *testing.T, svc *Service, a dbtest.Account, organization uuid.UUID) {
 	t.Helper()
 	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `
-		INSERT INTO tenant.security_policies (tenant_id, max_sessions, session_limit_action) VALUES ($1, 1, 'refuse')
-	`, tenant); err != nil {
+		INSERT INTO organization.security_policies (organization_id, max_sessions, session_limit_action) VALUES ($1, 1, 'refuse')
+	`, organization); err != nil {
 		t.Fatalf("session limit: %v", err)
 	}
-	if _, err := svc.IssuePair(dbtest.Context(t), a.ID, tenant, "", "test", "password"); err != nil {
+	if _, err := svc.IssuePair(dbtest.Context(t), a.ID, organization, "", "test", "password"); err != nil {
 		t.Fatalf("first session: %v", err)
 	}
 }
@@ -355,16 +355,16 @@ func sessionLimitRefusals(t *testing.T, a dbtest.Account) int {
 }
 
 // TestSessionLimitRefusalWithOneConnection checks that a sign-in refused at
-// the organisation's session limit is refused, and recorded, with only one
+// the organization's session limit is refused, and recorded, with only one
 // connection free.
 func TestSessionLimitRefusalWithOneConnection(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := newService(t)
-	a, tenant := member(t)
-	atSessionLimit(t, svc, a, tenant)
+	a, organization := member(t)
+	atSessionLimit(t, svc, a, organization)
 
 	dbtest.LeaveOneConnection(t)
-	if _, err := svc.IssuePair(ctx, a.ID, tenant, "", "test", "password"); !errors.Is(err, errs.ErrAuthSessionLimit) {
+	if _, err := svc.IssuePair(ctx, a.ID, organization, "", "test", "password"); !errors.Is(err, errs.ErrAuthSessionLimit) {
 		t.Fatalf("sign in beyond the limit: %v, want %v", err, errs.ErrAuthSessionLimit)
 	}
 	if n := sessionLimitRefusals(t, a); n != 1 {
@@ -378,12 +378,12 @@ func TestSessionLimitRefusalWithOneConnection(t *testing.T) {
 func TestConcurrentSessionLimitRefusals(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := newService(t)
-	a, tenant := member(t)
-	atSessionLimit(t, svc, a, tenant)
+	a, organization := member(t)
+	atSessionLimit(t, svc, a, organization)
 	n := 3 * int(dbtest.Pool(t).Config().MaxConns)
 
 	for i, err := range concurrently(n, func(int) error {
-		_, err := svc.IssuePair(ctx, a.ID, tenant, "", "test", "password")
+		_, err := svc.IssuePair(ctx, a.ID, organization, "", "test", "password")
 		return err
 	}) {
 		if !errors.Is(err, errs.ErrAuthSessionLimit) {
@@ -420,8 +420,8 @@ func TestRiskRecordsOnlyIssuedSignIns(t *testing.T) {
 	t.Run("refused at the session limit", func(t *testing.T) {
 		svc, risk := newService(t), &riskStub{}
 		svc.SetRiskAssessor(risk)
-		a, tenant := member(t)
-		atSessionLimit(t, svc, a, tenant)
+		a, organization := member(t)
+		atSessionLimit(t, svc, a, organization)
 		if _, err := login(svc, a); !errors.Is(err, errs.ErrAuthSessionLimit) {
 			t.Fatalf("sign in: %v, want %v", err, errs.ErrAuthSessionLimit)
 		}
@@ -448,11 +448,11 @@ func TestRiskRecordsOnlyIssuedSignIns(t *testing.T) {
 		svc.SetRiskAssessor(risk)
 		svc.SetMFA(&poolFactors{pool: pool})
 		svc.SetSender(mail)
-		a, tenant := member(t)
+		a, organization := member(t)
 		if _, err := pool.Exec(ctx, `UPDATE account.users SET email_verified_at = NOW() WHERE id = $1`, a.ID); err != nil {
 			t.Fatal(err)
 		}
-		atSessionLimit(t, svc, a, tenant)
+		atSessionLimit(t, svc, a, organization)
 		res, err := login(svc, a)
 		if err != nil || res.MFAToken == "" {
 			t.Fatalf("risky sign-in: %+v, %v; want a challenge", res, err)

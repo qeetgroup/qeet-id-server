@@ -18,18 +18,18 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
-// RoleRef is one of a person's roles in an organisation.
+// RoleRef is one of a person's roles in an organization.
 type RoleRef struct {
 	ID   uuid.UUID `json:"id"`
 	Name string    `json:"name"`
 }
 
-// ListFilter narrows and orders an organisation's members. Each set field
+// ListFilter narrows and orders an organization's members. Each set field
 // narrows, and they combine. Sort is "created" (the default), "name" or
 // "last_seen"; Desc orders newest, or Z, first.
 type ListFilter struct {
 	Query         string // display name, email or phone, case-insensitive
-	Role          string // a role name in the organisation
+	Role          string // a role name in the organization
 	Department    string // metadata.department
 	MFA           *bool  // a confirmed second factor
 	EmailVerified *bool
@@ -41,7 +41,7 @@ type ListFilter struct {
 	id *uuid.UUID // one member, for a single read
 }
 
-// Last-seen buckets, by how long ago the person last used the organisation.
+// Last-seen buckets, by how long ago the person last used the organization.
 var lastSeenBuckets = map[string]string{
 	"today": `m.last_seen_at >= NOW() - INTERVAL '1 day'`,
 	"week":  `m.last_seen_at < NOW() - INTERVAL '1 day' AND m.last_seen_at >= NOW() - INTERVAL '7 days'`,
@@ -120,35 +120,35 @@ func ParseListFilter(v url.Values) (ListFilter, error) {
 // one order a cursor pages.
 func (f ListFilter) keyset() bool { return f.Sort == "created" && f.Desc }
 
-// membersCTE is an organisation's members ($1): its home people and those
+// membersCTE is an organization's members ($1): its home people and those
 // holding one of its roles, with their roles there, whether they have a second
 // factor, how many of its groups they're in, when they were last seen there,
-// and their home organisation's name.
+// and their home organization's name.
 const membersCTE = `WITH m AS (
 	SELECT ` + userCols + `,
 	  COALESCE((
 		SELECT array_agg(r.name ORDER BY r.name)
 		FROM rbac.user_roles ur2 JOIN rbac.roles r ON r.id = ur2.role_id
-		WHERE ur2.user_id = account.users.id AND ur2.tenant_id = $1
+		WHERE ur2.user_id = account.users.id AND ur2.organization_id = $1
 	  ), '{}') AS roles,
 	  COALESCE((
 		SELECT jsonb_agg(jsonb_build_object('id', r.id, 'name', r.name) ORDER BY r.name)
 		FROM rbac.user_roles ur2 JOIN rbac.roles r ON r.id = ur2.role_id
-		WHERE ur2.user_id = account.users.id AND ur2.tenant_id = $1
+		WHERE ur2.user_id = account.users.id AND ur2.organization_id = $1
 	  ), '[]') AS role_refs,
 	  (EXISTS(SELECT 1 FROM auth.mfa_totp t WHERE t.user_id = account.users.id AND t.confirmed_at IS NOT NULL)
 	   OR EXISTS(SELECT 1 FROM auth.mfa_otp_factors o WHERE o.user_id = account.users.id AND o.verified_at IS NOT NULL)
 	   OR EXISTS(SELECT 1 FROM auth.mfa_push_devices d WHERE d.user_id = account.users.id))::boolean AS mfa_enabled,
-	  (SELECT count(*) FROM tenant.group_members gm
-	   WHERE gm.user_id = account.users.id AND gm.tenant_id = $1)::int AS groups_count,
+	  (SELECT count(*) FROM organization.group_members gm
+	   WHERE gm.user_id = account.users.id AND gm.organization_id = $1)::int AS groups_count,
 	  ` + lastSeenCols + `,
-	  (SELECT ht.name FROM tenant.tenants ht WHERE ht.id = account.users.tenant_id) AS home_tenant_name
+	  (SELECT ht.name FROM organization.organizations ht WHERE ht.id = account.users.organization_id) AS home_organization_name
 	FROM account.users
 	WHERE deleted_at IS NULL
 	  AND id IN (
-		SELECT u.id FROM account.users u WHERE u.tenant_id = $1 AND u.deleted_at IS NULL
+		SELECT u.id FROM account.users u WHERE u.organization_id = $1 AND u.deleted_at IS NULL
 		UNION
-		SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.tenant_id = $1
+		SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.organization_id = $1
 	  )
 )
 `
@@ -189,17 +189,17 @@ func (f ListFilter) where(args []any) (string, []any) {
 	return strings.Join(conds, " AND "), args
 }
 
-// List returns a page of the tenant's members that f matches, the next
+// List returns a page of the organization's members that f matches, the next
 // cursor, and how many match in all. offset > 0 pages by offset; otherwise a
 // cursor pages, in the default order only.
-func (r *Repository) List(ctx context.Context, tenantID uuid.UUID, f ListFilter, limit int, cursor string, offset int) ([]User, string, int, error) {
+func (r *Repository) List(ctx context.Context, organizationID uuid.UUID, f ListFilter, limit int, cursor string, offset int) ([]User, string, int, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
 	if f.Sort == "" {
 		f.Sort, f.Desc = "created", true
 	}
-	where, args := f.where([]any{tenantID})
+	where, args := f.where([]any{organizationID})
 	// Counted apart from the page: the count reads only the columns the filters
 	// name, and the page works out the rest for its own rows alone.
 	var total int
@@ -225,7 +225,7 @@ func (r *Repository) List(ctx context.Context, tenantID uuid.UUID, f ListFilter,
 	}
 	args = append(args, limit+1, offset)
 	rows, err := r.pool.Query(ctx, membersCTE+`SELECT `+userCols+`, roles, role_refs, mfa_enabled, groups_count,
-		last_seen_at, last_seen_ip, home_tenant_name
+		last_seen_at, last_seen_ip, home_organization_name
 		FROM m WHERE `+where+` ORDER BY `+fmt.Sprintf(listSorts[f.Sort], dir)+
 		fmt.Sprintf(` LIMIT $%d OFFSET $%d`, len(args)-1, len(args)), args...)
 	if err != nil {
@@ -243,18 +243,18 @@ func (r *Repository) List(ctx context.Context, tenantID uuid.UUID, f ListFilter,
 		if err := rows.Scan(&u.ID, &tid, &u.Email, &u.EmailVerifiedAt,
 			&u.Phone, &u.PhoneVerifiedAt, &u.DisplayName, &u.Status, &meta,
 			&u.CreatedAt, &u.UpdatedAt, &u.Roles, &refs,
-			&mfaEnabled, &groupsCount, &u.LastSeenAt, &u.LastSeenIP, &u.HomeTenantName); err != nil {
+			&mfaEnabled, &groupsCount, &u.LastSeenAt, &u.LastSeenIP, &u.HomeOrganizationName); err != nil {
 			return nil, "", 0, err
 		}
 		if tid != nil {
-			u.TenantID = *tid
+			u.OrganizationID = *tid
 		}
 		if err := json.Unmarshal(refs, &u.AssignedRoles); err != nil {
 			return nil, "", 0, err
 		}
 		u.MfaEnabled, u.GroupsCount = &mfaEnabled, &groupsCount
 		u.Metadata = parseUserMetadata(meta, u.ID)
-		out = append(out, *u.SeenBy(tenantID))
+		out = append(out, *u.SeenBy(organizationID))
 	}
 	// A mid-stream failure stops the loop without an error from Scan; unchecked,
 	// it returns a short page and a cursor that skips people.
@@ -272,11 +272,11 @@ func (r *Repository) List(ctx context.Context, tenantID uuid.UUID, f ListFilter,
 	return out, next, total, nil
 }
 
-// Member is user id as a member of tenantID sees them: their roles there,
+// Member is user id as a member of organizationID sees them: their roles there,
 // second factor, groups, when they were last seen there and their home
-// organisation's name. ErrNotFound if they aren't a member.
-func (r *Repository) Member(ctx context.Context, tenantID, id uuid.UUID) (*User, error) {
-	out, _, _, err := r.List(ctx, tenantID, ListFilter{id: &id}, 1, "", 0)
+// organization's name. ErrNotFound if they aren't a member.
+func (r *Repository) Member(ctx context.Context, organizationID, id uuid.UUID) (*User, error) {
+	out, _, _, err := r.List(ctx, organizationID, ListFilter{id: &id}, 1, "", 0)
 	if err != nil {
 		return nil, err
 	}
@@ -287,7 +287,7 @@ func (r *Repository) Member(ctx context.Context, tenantID, id uuid.UUID) (*User,
 }
 
 // Suspension is why and when a person was suspended, and by whom, as their
-// home organisation recorded it.
+// home organization recorded it.
 type Suspension struct {
 	Reason           string     `json:"reason"`
 	Source           string     `json:"source"`
@@ -296,10 +296,10 @@ type Suspension struct {
 	SuspendedByEmail *string    `json:"suspended_by_email"`
 }
 
-// SuspensionOf returns user id's suspension in tenantID, their home: the
+// SuspensionOf returns user id's suspension in organizationID, their home: the
 // recorded reason and source, and who last suspended them by hand. nil when
-// they aren't suspended, or tenantID isn't their home.
-func (r *Repository) SuspensionOf(ctx context.Context, tenantID, id uuid.UUID) (*Suspension, error) {
+// they aren't suspended, or organizationID isn't their home.
+func (r *Repository) SuspensionOf(ctx context.Context, organizationID, id uuid.UUID) (*Suspension, error) {
 	var s Suspension
 	err := r.pool.QueryRow(ctx, `
 		SELECT COALESCE(u.suspension_reason, 'unspecified'), COALESCE(u.suspension_source, 'unknown'), u.suspended_at,
@@ -307,12 +307,12 @@ func (r *Repository) SuspensionOf(ctx context.Context, tenantID, id uuid.UUID) (
 		FROM account.users u
 		LEFT JOIN LATERAL (
 			SELECT ev.actor_user_id FROM audit.events ev
-			WHERE ev.tenant_id = $1 AND ev.resource_id = u.id AND ev.action = 'user.suspended'
+			WHERE ev.organization_id = $1 AND ev.resource_id = u.id AND ev.action = 'user.suspended'
 			ORDER BY ev.created_at DESC LIMIT 1
 		) e ON TRUE
 		LEFT JOIN account.users a ON a.id = e.actor_user_id
-		WHERE u.id = $2 AND u.tenant_id = $1 AND u.status = 'suspended' AND u.deleted_at IS NULL`,
-		tenantID, id).Scan(&s.Reason, &s.Source, &s.SuspendedAt, &s.SuspendedBy, &s.SuspendedByEmail)
+		WHERE u.id = $2 AND u.organization_id = $1 AND u.status = 'suspended' AND u.deleted_at IS NULL`,
+		organizationID, id).Scan(&s.Reason, &s.Source, &s.SuspendedAt, &s.SuspendedBy, &s.SuspendedByEmail)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -345,9 +345,9 @@ type DeptCount struct {
 	Count      int    `json:"count"`
 }
 
-// Counts returns the tenant's MemberCounts, each with the same edges as the
+// Counts returns the organization's MemberCounts, each with the same edges as the
 // list's filters, so a count equals the list's total for that filter.
-func (r *Repository) Counts(ctx context.Context, tenantID uuid.UUID) (*MemberCounts, error) {
+func (r *Repository) Counts(ctx context.Context, organizationID uuid.UUID) (*MemberCounts, error) {
 	c := MemberCounts{LastSeen: map[string]int{}}
 	var today, week, month, older, never int
 	if err := r.pool.QueryRow(ctx, membersCTE+`SELECT
@@ -358,15 +358,15 @@ func (r *Repository) Counts(ctx context.Context, tenantID uuid.UUID) (*MemberCou
 		count(*) FILTER (WHERE `+lastSeenBuckets["never"]+`),
 		count(*) FILTER (WHERE NOT m.mfa_enabled AND EXISTS (
 			SELECT 1 FROM rbac.user_roles ur JOIN rbac.roles r ON r.id = ur.role_id
-			WHERE ur.user_id = m.id AND ur.tenant_id = $1 AND r.is_system AND r.name IN ('owner', 'admin'))),
+			WHERE ur.user_id = m.id AND ur.organization_id = $1 AND r.is_system AND r.name IN ('owner', 'admin'))),
 		count(*) FILTER (WHERE m.email_verified_at IS NULL)
-		FROM m`, tenantID).Scan(&today, &week, &month, &older, &never, &c.AdminsWithoutMFA, &c.EmailUnverified); err != nil {
+		FROM m`, organizationID).Scan(&today, &week, &month, &older, &never, &c.AdminsWithoutMFA, &c.EmailUnverified); err != nil {
 		return nil, err
 	}
 	c.LastSeen = map[string]int{"today": today, "week": week, "month": month, "older": older, "never": never}
 
 	rows, err := r.pool.Query(ctx, membersCTE+`SELECT rn, count(*)::int FROM m, unnest(m.roles) rn
-		GROUP BY rn ORDER BY 2 DESC, 1`, tenantID)
+		GROUP BY rn ORDER BY 2 DESC, 1`, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -379,7 +379,7 @@ func (r *Repository) Counts(ctx context.Context, tenantID uuid.UUID) (*MemberCou
 	}
 	rows, err = r.pool.Query(ctx, membersCTE+`SELECT m.metadata->>'department', count(*)::int FROM m
 		WHERE COALESCE(m.metadata->>'department', '') <> ''
-		GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 200`, tenantID)
+		GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 200`, organizationID)
 	if err != nil {
 		return nil, err
 	}

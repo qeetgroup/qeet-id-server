@@ -14,27 +14,27 @@ import (
 )
 
 const addressHolder = `-- name: AddressHolder :one
-SELECT u.email, u.tenant_id,
+SELECT u.email, u.organization_id,
        ((u.provisioned_via IS NOT DISTINCT FROM 'scim') OR EXISTS (
            SELECT 1 FROM account.external_identities e
-           WHERE e.user_id = u.id AND e.tenant_id = u.tenant_id AND e.connection_id IS NOT NULL
+           WHERE e.user_id = u.id AND e.organization_id = u.organization_id AND e.connection_id IS NOT NULL
        ))::bool AS provided
 FROM account.users u WHERE u.id = $1
 `
 
 type AddressHolderRow struct {
-	Email    string
-	TenantID pgtype.UUID
-	Provided bool
+	Email          string
+	OrganizationID pgtype.UUID
+	Provided       bool
 }
 
-// AddressHolder returns the account's address and organisation, and whether
-// that organisation's directory or single sign-on provides the address: SCIM
+// AddressHolder returns the account's address and organization, and whether
+// that organization's directory or single sign-on provides the address: SCIM
 // provisioned the account, or it is linked to one of its connections.
 func (q *Queries) AddressHolder(ctx context.Context, userID uuid.UUID) (AddressHolderRow, error) {
 	row := q.db.QueryRow(ctx, addressHolder, userID)
 	var i AddressHolderRow
-	err := row.Scan(&i.Email, &i.TenantID, &i.Provided)
+	err := row.Scan(&i.Email, &i.OrganizationID, &i.Provided)
 	return i, err
 }
 

@@ -18,23 +18,23 @@ import (
 )
 
 // Accepting an invitation with a passkey: an invited person without an account
-// founds one on a passkey. The ceremony takes its email and organisation from
+// founds one on a passkey. The ceremony takes its email and organization from
 // the invitation; finishing it creates the account, stores the passkey and
 // accepts the invitation in one transaction. A failed one leaves it pending.
 
 // InvitationAcceptor is the slice of the invitation service this needs. It is
 // satisfied by identity/invitations.Service without this package importing it.
 type InvitationAcceptor interface {
-	// InvitationForNewAccount returns the id, organisation and email of the
+	// InvitationForNewAccount returns the id, organization and email of the
 	// invitation token names if a new account may accept it now, or the password
 	// path's refusal (invalid link, not pending, expired, or the email is taken).
-	InvitationForNewAccount(ctx context.Context, token string) (id, tenantID uuid.UUID, email string, err error)
+	InvitationForNewAccount(ctx context.Context, token string) (id, organizationID uuid.UUID, email string, err error)
 	// AcceptForNewAccountTx accepts invitation id for userID, the account
-	// just created in tx for email in tenantID: the invitation, read under
+	// just created in tx for email in organizationID: the invitation, read under
 	// lock, must still be pending, unexpired and for that email and
-	// organisation. It grants the invited role and records the acceptance,
+	// organization. It grants the invited role and records the acceptance,
 	// made from ip with user agent ua.
-	AcceptForNewAccountTx(ctx context.Context, tx pgx.Tx, id, tenantID, userID uuid.UUID, email, ip, ua string) error
+	AcceptForNewAccountTx(ctx context.Context, tx pgx.Tx, id, organizationID, userID uuid.UUID, email, ip, ua string) error
 	// CheckInvitationSender refuses invitation id once whoever sent it may no
 	// longer give it. It reads the pool, so it runs before the transaction.
 	CheckInvitationSender(ctx context.Context, id uuid.UUID) error
@@ -44,27 +44,27 @@ type InvitationAcceptor interface {
 func (s *Service) SetInvitations(a InvitationAcceptor) { s.invitations = a }
 
 // BeginInviteSignup starts the ceremony for the invitation token names. It is
-// refused as the password path would be, or when the organisation has passkeys
+// refused as the password path would be, or when the organization has passkeys
 // off. Starting again replaces an earlier ceremony for the same invitation.
 func (s *Service) BeginInviteSignup(ctx context.Context, token, displayName string) (uuid.UUID, *protocol.CredentialCreation, error) {
 	if s.invitations == nil {
 		return uuid.Nil, nil, errs.ErrNotImplemented
 	}
-	inviteID, tenantID, email, err := s.invitations.InvitationForNewAccount(ctx, token)
+	inviteID, organizationID, email, err := s.invitations.InvitationForNewAccount(ctx, token)
 	if err != nil {
 		return uuid.Nil, nil, err
 	}
-	if err := s.passkeysAllowed(ctx, tenantID); err != nil {
+	if err := s.passkeysAllowed(ctx, organizationID); err != nil {
 		return uuid.Nil, nil, err
 	}
 	if err := s.q.DeleteInviteWebAuthnSessions(ctx, pgtype.UUID{Bytes: inviteID, Valid: true}); err != nil {
 		return uuid.Nil, nil, err
 	}
-	return s.beginSignupFor(ctx, tenantID, inviteID, email, displayName)
+	return s.beginSignupFor(ctx, organizationID, inviteID, email, displayName)
 }
 
 // FinishInviteSignup verifies the passkey, creates the account in the inviting
-// organisation with it, accepts the invitation, and signs the person in. The
+// organization with it, accepts the invitation, and signs the person in. The
 // passkey is named as in FinishRegister.
 func (s *Service) FinishInviteSignup(ctx context.Context, sessionID uuid.UUID, credential json.RawMessage, name, ip, ua string) (*auth.TokenPair, error) {
 	if s.invitations == nil {
@@ -78,19 +78,19 @@ func (s *Service) FinishInviteSignup(ctx context.Context, sessionID uuid.UUID, c
 	if err != nil {
 		return nil, err
 	}
-	if sess.inviteID == uuid.Nil || sess.tenantID == uuid.Nil {
+	if sess.inviteID == uuid.Nil || sess.organizationID == uuid.Nil {
 		return nil, errs.ErrPasskeySessionInvalid
 	}
-	// The organisation may have switched passkeys off since the ceremony began,
+	// The organization may have switched passkeys off since the ceremony began,
 	// or whoever sent the invitation lost the right to.
-	if err := s.passkeysAllowed(ctx, sess.tenantID); err != nil {
+	if err := s.passkeysAllowed(ctx, sess.organizationID); err != nil {
 		return nil, err
 	}
 	if err := s.invitations.CheckInvitationSender(ctx, sess.inviteID); err != nil {
 		return nil, err
 	}
 	userID, err := s.createUserFromSignup(ctx, sess, cred, name, func(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
-		return s.invitations.AcceptForNewAccountTx(ctx, tx, sess.inviteID, sess.tenantID, userID, sess.email, ip, ua)
+		return s.invitations.AcceptForNewAccountTx(ctx, tx, sess.inviteID, sess.organizationID, userID, sess.email, ip, ua)
 	})
 	if errors.Is(err, errs.ErrAuthEmailExists) {
 		// An account took the address after the ceremony began.
@@ -99,7 +99,7 @@ func (s *Service) FinishInviteSignup(ctx context.Context, sessionID uuid.UUID, c
 	if err != nil {
 		return nil, err
 	}
-	return s.auth.IssuePair(ctx, userID, sess.tenantID, ip, ua, "invite_accept")
+	return s.auth.IssuePair(ctx, userID, sess.organizationID, ip, ua, "invite_accept")
 }
 
 type inviteSignupBeginInput struct {

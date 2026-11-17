@@ -16,19 +16,19 @@ import (
 const cancelPurgeRequest = `-- name: CancelPurgeRequest :one
 UPDATE account.purge_requests
 SET status = 'cancelled'
-WHERE id = $1 AND tenant_id = $2 AND status = 'pending'
+WHERE id = $1 AND organization_id = $2 AND status = 'pending'
 RETURNING subject_id
 `
 
 type CancelPurgeRequestParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 // Cancel a pending purge request (e.g. the subject changed their mind),
 // returning its user. No row when it is already completed or not found.
 func (q *Queries) CancelPurgeRequest(ctx context.Context, arg CancelPurgeRequestParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, cancelPurgeRequest, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, cancelPurgeRequest, arg.ID, arg.OrganizationID)
 	var subject_id uuid.UUID
 	err := row.Scan(&subject_id)
 	return subject_id, err
@@ -36,44 +36,44 @@ func (q *Queries) CancelPurgeRequest(ctx context.Context, arg CancelPurgeRequest
 
 const checkAuditEventCount = `-- name: CheckAuditEventCount :one
 SELECT count(*) FROM audit.events
-WHERE tenant_id = $1 AND created_at >= now() - interval '30 days'
+WHERE organization_id = $1 AND created_at >= now() - interval '30 days'
 `
 
-func (q *Queries) CheckAuditEventCount(ctx context.Context, tenantID pgtype.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, checkAuditEventCount, tenantID)
+func (q *Queries) CheckAuditEventCount(ctx context.Context, organizationID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, checkAuditEventCount, organizationID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
 }
 
 const checkExportRequestCount = `-- name: CheckExportRequestCount :one
-SELECT count(*) FROM account.export_requests WHERE tenant_id = $1
+SELECT count(*) FROM account.export_requests WHERE organization_id = $1
 `
 
-func (q *Queries) CheckExportRequestCount(ctx context.Context, tenantID uuid.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, checkExportRequestCount, tenantID)
+func (q *Queries) CheckExportRequestCount(ctx context.Context, organizationID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, checkExportRequestCount, organizationID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
 }
 
 const checkIPRulesConfig = `-- name: CheckIPRulesConfig :one
-SELECT enabled FROM tenant.ip_rules_config WHERE tenant_id = $1
+SELECT enabled FROM organization.ip_rules_config WHERE organization_id = $1
 `
 
-func (q *Queries) CheckIPRulesConfig(ctx context.Context, tenantID uuid.UUID) (bool, error) {
-	row := q.db.QueryRow(ctx, checkIPRulesConfig, tenantID)
+func (q *Queries) CheckIPRulesConfig(ctx context.Context, organizationID uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, checkIPRulesConfig, organizationID)
 	var enabled bool
 	err := row.Scan(&enabled)
 	return enabled, err
 }
 
 const checkIPRulesCount = `-- name: CheckIPRulesCount :one
-SELECT count(*) FROM tenant.ip_rules WHERE tenant_id = $1
+SELECT count(*) FROM organization.ip_rules WHERE organization_id = $1
 `
 
-func (q *Queries) CheckIPRulesCount(ctx context.Context, tenantID uuid.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, checkIPRulesCount, tenantID)
+func (q *Queries) CheckIPRulesCount(ctx context.Context, organizationID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, checkIPRulesCount, organizationID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -82,7 +82,7 @@ func (q *Queries) CheckIPRulesCount(ctx context.Context, tenantID uuid.UUID) (in
 const checkLogSinksCount = `-- name: CheckLogSinksCount :one
 SELECT count(*) AS enabled,
        count(*) FILTER (WHERE last_error = '' AND last_forwarded_at > NOW() - INTERVAL '1 day') AS delivering
-FROM tenant.log_sinks WHERE tenant_id = $1 AND enabled
+FROM organization.log_sinks WHERE organization_id = $1 AND enabled
 `
 
 type CheckLogSinksCountRow struct {
@@ -92,8 +92,8 @@ type CheckLogSinksCountRow struct {
 
 // CheckLogSinksCount counts the enabled log sinks, and of those the ones
 // delivering: forwarded within a day and not failing now.
-func (q *Queries) CheckLogSinksCount(ctx context.Context, tenantID uuid.UUID) (CheckLogSinksCountRow, error) {
-	row := q.db.QueryRow(ctx, checkLogSinksCount, tenantID)
+func (q *Queries) CheckLogSinksCount(ctx context.Context, organizationID uuid.UUID) (CheckLogSinksCountRow, error) {
+	row := q.db.QueryRow(ctx, checkLogSinksCount, organizationID)
 	var i CheckLogSinksCountRow
 	err := row.Scan(&i.Enabled, &i.Delivering)
 	return i, err
@@ -102,7 +102,7 @@ func (q *Queries) CheckLogSinksCount(ctx context.Context, tenantID uuid.UUID) (C
 const checkMFAEnforcement = `-- name: CheckMFAEnforcement :one
 
 SELECT mfa_enforcement, mfa_grace_days, mfa_enforced_since
-FROM tenant.security_policies WHERE tenant_id = $1
+FROM organization.security_policies WHERE organization_id = $1
 `
 
 type CheckMFAEnforcementRow struct {
@@ -114,8 +114,8 @@ type CheckMFAEnforcementRow struct {
 // -----------------------------------------------------------------------
 // Control check queries — each check function has one query here.
 // -----------------------------------------------------------------------
-func (q *Queries) CheckMFAEnforcement(ctx context.Context, tenantID uuid.UUID) (CheckMFAEnforcementRow, error) {
-	row := q.db.QueryRow(ctx, checkMFAEnforcement, tenantID)
+func (q *Queries) CheckMFAEnforcement(ctx context.Context, organizationID uuid.UUID) (CheckMFAEnforcementRow, error) {
+	row := q.db.QueryRow(ctx, checkMFAEnforcement, organizationID)
 	var i CheckMFAEnforcementRow
 	err := row.Scan(&i.MfaEnforcement, &i.MfaGraceDays, &i.MfaEnforcedSince)
 	return i, err
@@ -123,7 +123,7 @@ func (q *Queries) CheckMFAEnforcement(ctx context.Context, tenantID uuid.UUID) (
 
 const checkPasswordComplexity = `-- name: CheckPasswordComplexity :one
 SELECT password_require_uppercase, password_require_number, password_require_symbol
-FROM tenant.auth_policy WHERE tenant_id = $1
+FROM organization.auth_policy WHERE organization_id = $1
 `
 
 type CheckPasswordComplexityRow struct {
@@ -132,52 +132,52 @@ type CheckPasswordComplexityRow struct {
 	PasswordRequireSymbol    bool
 }
 
-func (q *Queries) CheckPasswordComplexity(ctx context.Context, tenantID uuid.UUID) (CheckPasswordComplexityRow, error) {
-	row := q.db.QueryRow(ctx, checkPasswordComplexity, tenantID)
+func (q *Queries) CheckPasswordComplexity(ctx context.Context, organizationID uuid.UUID) (CheckPasswordComplexityRow, error) {
+	row := q.db.QueryRow(ctx, checkPasswordComplexity, organizationID)
 	var i CheckPasswordComplexityRow
 	err := row.Scan(&i.PasswordRequireUppercase, &i.PasswordRequireNumber, &i.PasswordRequireSymbol)
 	return i, err
 }
 
 const checkPasswordMinLength = `-- name: CheckPasswordMinLength :one
-SELECT password_min_length FROM tenant.auth_policy WHERE tenant_id = $1
+SELECT password_min_length FROM organization.auth_policy WHERE organization_id = $1
 `
 
-func (q *Queries) CheckPasswordMinLength(ctx context.Context, tenantID uuid.UUID) (int32, error) {
-	row := q.db.QueryRow(ctx, checkPasswordMinLength, tenantID)
+func (q *Queries) CheckPasswordMinLength(ctx context.Context, organizationID uuid.UUID) (int32, error) {
+	row := q.db.QueryRow(ctx, checkPasswordMinLength, organizationID)
 	var password_min_length int32
 	err := row.Scan(&password_min_length)
 	return password_min_length, err
 }
 
 const checkPurgeRequestCount = `-- name: CheckPurgeRequestCount :one
-SELECT count(*) FROM account.purge_requests WHERE tenant_id = $1
+SELECT count(*) FROM account.purge_requests WHERE organization_id = $1
 `
 
-func (q *Queries) CheckPurgeRequestCount(ctx context.Context, tenantID uuid.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, checkPurgeRequestCount, tenantID)
+func (q *Queries) CheckPurgeRequestCount(ctx context.Context, organizationID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, checkPurgeRequestCount, organizationID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
 }
 
 const checkRBACAssignments = `-- name: CheckRBACAssignments :one
-SELECT count(*) FROM rbac.user_roles WHERE tenant_id = $1
+SELECT count(*) FROM rbac.user_roles WHERE organization_id = $1
 `
 
-func (q *Queries) CheckRBACAssignments(ctx context.Context, tenantID uuid.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, checkRBACAssignments, tenantID)
+func (q *Queries) CheckRBACAssignments(ctx context.Context, organizationID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, checkRBACAssignments, organizationID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
 }
 
 const checkRBACRoles = `-- name: CheckRBACRoles :one
-SELECT count(*) FROM rbac.roles WHERE tenant_id = $1
+SELECT count(*) FROM rbac.roles WHERE organization_id = $1
 `
 
-func (q *Queries) CheckRBACRoles(ctx context.Context, tenantID uuid.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, checkRBACRoles, tenantID)
+func (q *Queries) CheckRBACRoles(ctx context.Context, organizationID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, checkRBACRoles, organizationID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -185,7 +185,7 @@ func (q *Queries) CheckRBACRoles(ctx context.Context, tenantID uuid.UUID) (int64
 
 const checkRetentionPolicy = `-- name: CheckRetentionPolicy :one
 SELECT deleted_users_enabled, deleted_users_days
-FROM tenant.retention_policy WHERE tenant_id = $1
+FROM organization.retention_policy WHERE organization_id = $1
 `
 
 type CheckRetentionPolicyRow struct {
@@ -193,8 +193,8 @@ type CheckRetentionPolicyRow struct {
 	DeletedUsersDays    int32
 }
 
-func (q *Queries) CheckRetentionPolicy(ctx context.Context, tenantID uuid.UUID) (CheckRetentionPolicyRow, error) {
-	row := q.db.QueryRow(ctx, checkRetentionPolicy, tenantID)
+func (q *Queries) CheckRetentionPolicy(ctx context.Context, organizationID uuid.UUID) (CheckRetentionPolicyRow, error) {
+	row := q.db.QueryRow(ctx, checkRetentionPolicy, organizationID)
 	var i CheckRetentionPolicyRow
 	err := row.Scan(&i.DeletedUsersEnabled, &i.DeletedUsersDays)
 	return i, err
@@ -202,7 +202,7 @@ func (q *Queries) CheckRetentionPolicy(ctx context.Context, tenantID uuid.UUID) 
 
 const checkRiskSettings = `-- name: CheckRiskSettings :one
 SELECT medium_threshold, high_threshold
-FROM auth.risk_settings WHERE tenant_id = $1
+FROM auth.risk_settings WHERE organization_id = $1
 `
 
 type CheckRiskSettingsRow struct {
@@ -210,19 +210,19 @@ type CheckRiskSettingsRow struct {
 	HighThreshold   float64
 }
 
-func (q *Queries) CheckRiskSettings(ctx context.Context, tenantID uuid.UUID) (CheckRiskSettingsRow, error) {
-	row := q.db.QueryRow(ctx, checkRiskSettings, tenantID)
+func (q *Queries) CheckRiskSettings(ctx context.Context, organizationID uuid.UUID) (CheckRiskSettingsRow, error) {
+	row := q.db.QueryRow(ctx, checkRiskSettings, organizationID)
 	var i CheckRiskSettingsRow
 	err := row.Scan(&i.MediumThreshold, &i.HighThreshold)
 	return i, err
 }
 
 const checkSecretsCount = `-- name: CheckSecretsCount :one
-SELECT count(*) FROM tenant.secrets WHERE tenant_id = $1
+SELECT count(*) FROM organization.secrets WHERE organization_id = $1
 `
 
-func (q *Queries) CheckSecretsCount(ctx context.Context, tenantID uuid.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, checkSecretsCount, tenantID)
+func (q *Queries) CheckSecretsCount(ctx context.Context, organizationID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, checkSecretsCount, organizationID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -230,11 +230,11 @@ func (q *Queries) CheckSecretsCount(ctx context.Context, tenantID uuid.UUID) (in
 
 const checkSessionTimeout = `-- name: CheckSessionTimeout :one
 SELECT extract(epoch FROM session_max_age)::float8 AS session_seconds
-FROM tenant.security_policies WHERE tenant_id = $1
+FROM organization.security_policies WHERE organization_id = $1
 `
 
-func (q *Queries) CheckSessionTimeout(ctx context.Context, tenantID uuid.UUID) (float64, error) {
-	row := q.db.QueryRow(ctx, checkSessionTimeout, tenantID)
+func (q *Queries) CheckSessionTimeout(ctx context.Context, organizationID uuid.UUID) (float64, error) {
+	row := q.db.QueryRow(ctx, checkSessionTimeout, organizationID)
 	var session_seconds float64
 	err := row.Scan(&session_seconds)
 	return session_seconds, err
@@ -254,35 +254,35 @@ func (q *Queries) CompletePurgeRequest(ctx context.Context, id uuid.UUID) error 
 const countUsersWithoutSecondFactor = `-- name: CountUsersWithoutSecondFactor :one
 SELECT count(*)::int
 FROM account.users u
-WHERE u.tenant_id = $1 AND u.deleted_at IS NULL
+WHERE u.organization_id = $1 AND u.deleted_at IS NULL
   AND NOT EXISTS (SELECT 1 FROM auth.mfa_totp t WHERE t.user_id = u.id AND t.confirmed_at IS NOT NULL)
   AND NOT EXISTS (SELECT 1 FROM auth.mfa_recovery_codes r WHERE r.user_id = u.id AND r.used_at IS NULL)
   AND NOT EXISTS (SELECT 1 FROM auth.mfa_otp_factors f WHERE f.user_id = u.id AND f.verified_at IS NOT NULL)
   AND NOT EXISTS (SELECT 1 FROM auth.mfa_push_devices d WHERE d.user_id = u.id)
   AND NOT (
-      COALESCE((SELECT ap.passkey_enabled FROM tenant.auth_policy ap WHERE ap.tenant_id = u.tenant_id), TRUE)
+      COALESCE((SELECT ap.passkey_enabled FROM organization.auth_policy ap WHERE ap.organization_id = u.organization_id), TRUE)
       AND EXISTS (SELECT 1 FROM auth.passkey_credentials p WHERE p.user_id = u.id)
   )
 `
 
-// CountUsersWithoutSecondFactor counts the tenant's accounts holding no
+// CountUsersWithoutSecondFactor counts the organization's accounts holding no
 // factor a sign-in challenge can be met with (as auth.LoginFactors reads
 // them): they set one up at their next sign-in.
-func (q *Queries) CountUsersWithoutSecondFactor(ctx context.Context, tenantID pgtype.UUID) (int32, error) {
-	row := q.db.QueryRow(ctx, countUsersWithoutSecondFactor, tenantID)
+func (q *Queries) CountUsersWithoutSecondFactor(ctx context.Context, organizationID pgtype.UUID) (int32, error) {
+	row := q.db.QueryRow(ctx, countUsersWithoutSecondFactor, organizationID)
 	var column_1 int32
 	err := row.Scan(&column_1)
 	return column_1, err
 }
 
 const deleteComplianceAudit = `-- name: DeleteComplianceAudit :one
-DELETE FROM tenant.compliance_audits WHERE id = $1 AND tenant_id = $2
+DELETE FROM organization.compliance_audits WHERE id = $1 AND organization_id = $2
 RETURNING framework, kind, body
 `
 
 type DeleteComplianceAuditParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type DeleteComplianceAuditRow struct {
@@ -292,23 +292,23 @@ type DeleteComplianceAuditRow struct {
 }
 
 func (q *Queries) DeleteComplianceAudit(ctx context.Context, arg DeleteComplianceAuditParams) (DeleteComplianceAuditRow, error) {
-	row := q.db.QueryRow(ctx, deleteComplianceAudit, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, deleteComplianceAudit, arg.ID, arg.OrganizationID)
 	var i DeleteComplianceAuditRow
 	err := row.Scan(&i.Framework, &i.Kind, &i.Body)
 	return i, err
 }
 
 const deleteControlOwner = `-- name: DeleteControlOwner :execrows
-DELETE FROM tenant.compliance_control_owners WHERE tenant_id = $1 AND control_id = $2
+DELETE FROM organization.compliance_control_owners WHERE organization_id = $1 AND control_id = $2
 `
 
 type DeleteControlOwnerParams struct {
-	TenantID  uuid.UUID
-	ControlID string
+	OrganizationID uuid.UUID
+	ControlID      string
 }
 
 func (q *Queries) DeleteControlOwner(ctx context.Context, arg DeleteControlOwnerParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteControlOwner, arg.TenantID, arg.ControlID)
+	result, err := q.db.Exec(ctx, deleteControlOwner, arg.OrganizationID, arg.ControlID)
 	if err != nil {
 		return 0, err
 	}
@@ -343,14 +343,14 @@ const failExportRequest = `-- name: FailExportRequest :execrows
 UPDATE account.export_requests
 SET status = 'failed', error = $1, completed_at = NOW(),
     lease_owner = NULL, lease_until = NULL
-WHERE id = $2 AND tenant_id = $3 AND lease_owner = $4
+WHERE id = $2 AND organization_id = $3 AND lease_owner = $4
 `
 
 type FailExportRequestParams struct {
-	ErrorMsg   *string
-	ID         uuid.UUID
-	TenantID   uuid.UUID
-	LeaseOwner pgtype.UUID
+	ErrorMsg       *string
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	LeaseOwner     pgtype.UUID
 }
 
 // Mark an export request the worker holds the lease on as failed.
@@ -358,7 +358,7 @@ func (q *Queries) FailExportRequest(ctx context.Context, arg FailExportRequestPa
 	result, err := q.db.Exec(ctx, failExportRequest,
 		arg.ErrorMsg,
 		arg.ID,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.LeaseOwner,
 	)
 	if err != nil {
@@ -368,24 +368,24 @@ func (q *Queries) FailExportRequest(ctx context.Context, arg FailExportRequestPa
 }
 
 const getEvidenceRun = `-- name: GetEvidenceRun :one
-SELECT id, tenant_id, framework, generated_at, generated_by,
+SELECT id, organization_id, framework, generated_at, generated_by,
        pass_count, fail_count, na_count, controls
-FROM tenant.compliance_evidence_runs
-WHERE id = $1 AND tenant_id = $2
+FROM organization.compliance_evidence_runs
+WHERE id = $1 AND organization_id = $2
 `
 
 type GetEvidenceRunParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 // Fetch a single evidence run with its full controls JSONB blob.
-func (q *Queries) GetEvidenceRun(ctx context.Context, arg GetEvidenceRunParams) (TenantComplianceEvidenceRun, error) {
-	row := q.db.QueryRow(ctx, getEvidenceRun, arg.ID, arg.TenantID)
-	var i TenantComplianceEvidenceRun
+func (q *Queries) GetEvidenceRun(ctx context.Context, arg GetEvidenceRunParams) (OrganizationComplianceEvidenceRun, error) {
+	row := q.db.QueryRow(ctx, getEvidenceRun, arg.ID, arg.OrganizationID)
+	var i OrganizationComplianceEvidenceRun
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Framework,
 		&i.GeneratedAt,
 		&i.GeneratedBy,
@@ -398,35 +398,35 @@ func (q *Queries) GetEvidenceRun(ctx context.Context, arg GetEvidenceRunParams) 
 }
 
 const getExportRequest = `-- name: GetExportRequest :one
-SELECT id, tenant_id, subject_id, requested_by, status, payload, error,
+SELECT id, organization_id, subject_id, requested_by, status, payload, error,
        completed_at, created_at
 FROM account.export_requests
-WHERE id = $1 AND tenant_id = $2
+WHERE id = $1 AND organization_id = $2
 `
 
 type GetExportRequestParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type GetExportRequestRow struct {
-	ID          uuid.UUID
-	TenantID    uuid.UUID
-	SubjectID   uuid.UUID
-	RequestedBy pgtype.UUID
-	Status      string
-	Payload     []byte
-	Error       *string
-	CompletedAt pgtype.Timestamptz
-	CreatedAt   time.Time
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	SubjectID      uuid.UUID
+	RequestedBy    pgtype.UUID
+	Status         string
+	Payload        []byte
+	Error          *string
+	CompletedAt    pgtype.Timestamptz
+	CreatedAt      time.Time
 }
 
 func (q *Queries) GetExportRequest(ctx context.Context, arg GetExportRequestParams) (GetExportRequestRow, error) {
-	row := q.db.QueryRow(ctx, getExportRequest, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, getExportRequest, arg.ID, arg.OrganizationID)
 	var i GetExportRequestRow
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.SubjectID,
 		&i.RequestedBy,
 		&i.Status,
@@ -458,12 +458,12 @@ const getUserProfileForExport = `-- name: GetUserProfileForExport :one
 SELECT email, phone, display_name, avatar_url, status, metadata,
        email_verified_at, phone_verified_at, created_at
 FROM account.users
-WHERE id = $1 AND tenant_id = $2
+WHERE id = $1 AND organization_id = $2
 `
 
 type GetUserProfileForExportParams struct {
-	UserID   uuid.UUID
-	TenantID pgtype.UUID
+	UserID         uuid.UUID
+	OrganizationID pgtype.UUID
 }
 
 type GetUserProfileForExportRow struct {
@@ -482,7 +482,7 @@ type GetUserProfileForExportRow struct {
 // User data collection for export (collectUserData)
 // -----------------------------------------------------------------------
 func (q *Queries) GetUserProfileForExport(ctx context.Context, arg GetUserProfileForExportParams) (GetUserProfileForExportRow, error) {
-	row := q.db.QueryRow(ctx, getUserProfileForExport, arg.UserID, arg.TenantID)
+	row := q.db.QueryRow(ctx, getUserProfileForExport, arg.UserID, arg.OrganizationID)
 	var i GetUserProfileForExportRow
 	err := row.Scan(
 		&i.Email,
@@ -499,21 +499,21 @@ func (q *Queries) GetUserProfileForExport(ctx context.Context, arg GetUserProfil
 }
 
 const insertComplianceAudit = `-- name: InsertComplianceAudit :one
-INSERT INTO tenant.compliance_audits (tenant_id, framework, kind, body, scope, reference, issued_on, expires_on, created_by)
+INSERT INTO organization.compliance_audits (organization_id, framework, kind, body, scope, reference, issued_on, expires_on, created_by)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING id, framework, kind, body, scope, reference, issued_on, expires_on, created_by, created_at
 `
 
 type InsertComplianceAuditParams struct {
-	TenantID  uuid.UUID
-	Framework string
-	Kind      string
-	Body      string
-	Scope     string
-	Reference string
-	IssuedOn  pgtype.Date
-	ExpiresOn pgtype.Date
-	CreatedBy pgtype.UUID
+	OrganizationID uuid.UUID
+	Framework      string
+	Kind           string
+	Body           string
+	Scope          string
+	Reference      string
+	IssuedOn       pgtype.Date
+	ExpiresOn      pgtype.Date
+	CreatedBy      pgtype.UUID
 }
 
 type InsertComplianceAuditRow struct {
@@ -531,7 +531,7 @@ type InsertComplianceAuditRow struct {
 
 func (q *Queries) InsertComplianceAudit(ctx context.Context, arg InsertComplianceAuditParams) (InsertComplianceAuditRow, error) {
 	row := q.db.QueryRow(ctx, insertComplianceAudit,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Framework,
 		arg.Kind,
 		arg.Body,
@@ -560,32 +560,32 @@ func (q *Queries) InsertComplianceAudit(ctx context.Context, arg InsertComplianc
 const insertEvidenceRun = `-- name: InsertEvidenceRun :one
 
 
-INSERT INTO tenant.compliance_evidence_runs
-    (tenant_id, framework, generated_by, pass_count, fail_count, na_count, controls)
+INSERT INTO organization.compliance_evidence_runs
+    (organization_id, framework, generated_by, pass_count, fail_count, na_count, controls)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, tenant_id, framework, generated_at, generated_by,
+RETURNING id, organization_id, framework, generated_at, generated_by,
           pass_count, fail_count, na_count
 `
 
 type InsertEvidenceRunParams struct {
-	TenantID    uuid.UUID
-	Framework   string
-	GeneratedBy pgtype.UUID
-	PassCount   int32
-	FailCount   int32
-	NaCount     int32
-	Controls    []byte
+	OrganizationID uuid.UUID
+	Framework      string
+	GeneratedBy    pgtype.UUID
+	PassCount      int32
+	FailCount      int32
+	NaCount        int32
+	Controls       []byte
 }
 
 type InsertEvidenceRunRow struct {
-	ID          uuid.UUID
-	TenantID    uuid.UUID
-	Framework   string
-	GeneratedAt time.Time
-	GeneratedBy pgtype.UUID
-	PassCount   int32
-	FailCount   int32
-	NaCount     int32
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	Framework      string
+	GeneratedAt    time.Time
+	GeneratedBy    pgtype.UUID
+	PassCount      int32
+	FailCount      int32
+	NaCount        int32
 }
 
 // Queries for the compliance domain (evidence.go + gdpr.go).
@@ -602,7 +602,7 @@ type InsertEvidenceRunRow struct {
 // the full report is retrievable without a JOIN.
 func (q *Queries) InsertEvidenceRun(ctx context.Context, arg InsertEvidenceRunParams) (InsertEvidenceRunRow, error) {
 	row := q.db.QueryRow(ctx, insertEvidenceRun,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Framework,
 		arg.GeneratedBy,
 		arg.PassCount,
@@ -613,7 +613,7 @@ func (q *Queries) InsertEvidenceRun(ctx context.Context, arg InsertEvidenceRunPa
 	var i InsertEvidenceRunRow
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Framework,
 		&i.GeneratedAt,
 		&i.GeneratedBy,
@@ -626,25 +626,25 @@ func (q *Queries) InsertEvidenceRun(ctx context.Context, arg InsertEvidenceRunPa
 
 const insertExportRequest = `-- name: InsertExportRequest :one
 
-INSERT INTO account.export_requests (tenant_id, user_id, subject_id, requested_by)
+INSERT INTO account.export_requests (organization_id, user_id, subject_id, requested_by)
 VALUES ($1, $2::uuid, $2::uuid, $3)
-RETURNING id, tenant_id, subject_id, requested_by, status, completed_at, created_at
+RETURNING id, organization_id, subject_id, requested_by, status, completed_at, created_at
 `
 
 type InsertExportRequestParams struct {
-	TenantID    uuid.UUID
-	SubjectID   uuid.UUID
-	RequestedBy pgtype.UUID
+	OrganizationID uuid.UUID
+	SubjectID      uuid.UUID
+	RequestedBy    pgtype.UUID
 }
 
 type InsertExportRequestRow struct {
-	ID          uuid.UUID
-	TenantID    uuid.UUID
-	SubjectID   uuid.UUID
-	RequestedBy pgtype.UUID
-	Status      string
-	CompletedAt pgtype.Timestamptz
-	CreatedAt   time.Time
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	SubjectID      uuid.UUID
+	RequestedBy    pgtype.UUID
+	Status         string
+	CompletedAt    pgtype.Timestamptz
+	CreatedAt      time.Time
 }
 
 // -----------------------------------------------------------------------
@@ -652,11 +652,11 @@ type InsertExportRequestRow struct {
 // -----------------------------------------------------------------------
 // subject_id keeps the account's ID once the account itself is deleted.
 func (q *Queries) InsertExportRequest(ctx context.Context, arg InsertExportRequestParams) (InsertExportRequestRow, error) {
-	row := q.db.QueryRow(ctx, insertExportRequest, arg.TenantID, arg.SubjectID, arg.RequestedBy)
+	row := q.db.QueryRow(ctx, insertExportRequest, arg.OrganizationID, arg.SubjectID, arg.RequestedBy)
 	var i InsertExportRequestRow
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.SubjectID,
 		&i.RequestedBy,
 		&i.Status,
@@ -668,34 +668,34 @@ func (q *Queries) InsertExportRequest(ctx context.Context, arg InsertExportReque
 
 const insertPurgeRequest = `-- name: InsertPurgeRequest :one
 
-INSERT INTO account.purge_requests (tenant_id, user_id, subject_id, requested_by, reason, grace_until,
+INSERT INTO account.purge_requests (organization_id, user_id, subject_id, requested_by, reason, grace_until,
                                    subject_email, subject_name)
 SELECT $1, $2::uuid, $2::uuid, $3, $4, $5, u.email, u.display_name
-FROM account.users u WHERE u.id = $2::uuid AND u.tenant_id = $1
-RETURNING id, tenant_id, subject_id, requested_by, reason, status,
+FROM account.users u WHERE u.id = $2::uuid AND u.organization_id = $1
+RETURNING id, organization_id, subject_id, requested_by, reason, status,
           grace_until, completed_at, created_at, subject_email, subject_name
 `
 
 type InsertPurgeRequestParams struct {
-	TenantID    uuid.UUID
-	SubjectID   uuid.UUID
-	RequestedBy pgtype.UUID
-	Reason      *string
-	GraceUntil  time.Time
+	OrganizationID uuid.UUID
+	SubjectID      uuid.UUID
+	RequestedBy    pgtype.UUID
+	Reason         *string
+	GraceUntil     time.Time
 }
 
 type InsertPurgeRequestRow struct {
-	ID           uuid.UUID
-	TenantID     uuid.UUID
-	SubjectID    uuid.UUID
-	RequestedBy  pgtype.UUID
-	Reason       *string
-	Status       string
-	GraceUntil   time.Time
-	CompletedAt  pgtype.Timestamptz
-	CreatedAt    time.Time
-	SubjectEmail *string
-	SubjectName  *string
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	SubjectID      uuid.UUID
+	RequestedBy    pgtype.UUID
+	Reason         *string
+	Status         string
+	GraceUntil     time.Time
+	CompletedAt    pgtype.Timestamptz
+	CreatedAt      time.Time
+	SubjectEmail   *string
+	SubjectName    *string
 }
 
 // -----------------------------------------------------------------------
@@ -707,7 +707,7 @@ type InsertPurgeRequestRow struct {
 // subject_email and subject_name who it was filed for until they are erased.
 func (q *Queries) InsertPurgeRequest(ctx context.Context, arg InsertPurgeRequestParams) (InsertPurgeRequestRow, error) {
 	row := q.db.QueryRow(ctx, insertPurgeRequest,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.SubjectID,
 		arg.RequestedBy,
 		arg.Reason,
@@ -716,7 +716,7 @@ func (q *Queries) InsertPurgeRequest(ctx context.Context, arg InsertPurgeRequest
 	var i InsertPurgeRequestRow
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.SubjectID,
 		&i.RequestedBy,
 		&i.Reason,
@@ -730,23 +730,23 @@ func (q *Queries) InsertPurgeRequest(ctx context.Context, arg InsertPurgeRequest
 	return i, err
 }
 
-const isTenantMember = `-- name: IsTenantMember :one
+const isOrganizationMember = `-- name: IsOrganizationMember :one
 SELECT EXISTS (
     SELECT 1 FROM account.users u WHERE u.id = $1 AND u.deleted_at IS NULL
-      AND (u.tenant_id = $2 OR EXISTS (
-          SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = $2))
+      AND (u.organization_id = $2 OR EXISTS (
+          SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.organization_id = $2))
 )
 `
 
-type IsTenantMemberParams struct {
-	UserID   uuid.UUID
-	TenantID pgtype.UUID
+type IsOrganizationMemberParams struct {
+	UserID         uuid.UUID
+	OrganizationID pgtype.UUID
 }
 
-// Whether the user is one of the tenant's people: its own, or holding a role
+// Whether the user is one of the organization's people: its own, or holding a role
 // there.
-func (q *Queries) IsTenantMember(ctx context.Context, arg IsTenantMemberParams) (bool, error) {
-	row := q.db.QueryRow(ctx, isTenantMember, arg.UserID, arg.TenantID)
+func (q *Queries) IsOrganizationMember(ctx context.Context, arg IsOrganizationMemberParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isOrganizationMember, arg.UserID, arg.OrganizationID)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
@@ -754,14 +754,14 @@ func (q *Queries) IsTenantMember(ctx context.Context, arg IsTenantMemberParams) 
 
 const latestEvidenceControls = `-- name: LatestEvidenceControls :one
 
-SELECT controls, generated_at FROM tenant.compliance_evidence_runs
-WHERE tenant_id = $1 AND framework = $2
+SELECT controls, generated_at FROM organization.compliance_evidence_runs
+WHERE organization_id = $1 AND framework = $2
 ORDER BY generated_at DESC LIMIT 1
 `
 
 type LatestEvidenceControlsParams struct {
-	TenantID  uuid.UUID
-	Framework string
+	OrganizationID uuid.UUID
+	Framework      string
 }
 
 type LatestEvidenceControlsRow struct {
@@ -772,9 +772,9 @@ type LatestEvidenceControlsRow struct {
 // -----------------------------------------------------------------------
 // Compliance controls: owners, the last run, external audits
 // -----------------------------------------------------------------------
-// The control results of the tenant's latest run of a framework.
+// The control results of the organization's latest run of a framework.
 func (q *Queries) LatestEvidenceControls(ctx context.Context, arg LatestEvidenceControlsParams) (LatestEvidenceControlsRow, error) {
-	row := q.db.QueryRow(ctx, latestEvidenceControls, arg.TenantID, arg.Framework)
+	row := q.db.QueryRow(ctx, latestEvidenceControls, arg.OrganizationID, arg.Framework)
 	var i LatestEvidenceControlsRow
 	err := row.Scan(&i.Controls, &i.GeneratedAt)
 	return i, err
@@ -782,15 +782,15 @@ func (q *Queries) LatestEvidenceControls(ctx context.Context, arg LatestEvidence
 
 const listComplianceAudits = `-- name: ListComplianceAudits :many
 SELECT id, framework, kind, body, scope, reference, issued_on, expires_on, created_by, created_at
-FROM tenant.compliance_audits
-WHERE tenant_id = $1 AND ($2::text IS NULL OR framework = $2)
+FROM organization.compliance_audits
+WHERE organization_id = $1 AND ($2::text IS NULL OR framework = $2)
 ORDER BY issued_on DESC, created_at DESC
 LIMIT 1001
 `
 
 type ListComplianceAuditsParams struct {
-	TenantID  uuid.UUID
-	Framework *string
+	OrganizationID uuid.UUID
+	Framework      *string
 }
 
 type ListComplianceAuditsRow struct {
@@ -808,7 +808,7 @@ type ListComplianceAuditsRow struct {
 
 // At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListComplianceAudits(ctx context.Context, arg ListComplianceAuditsParams) ([]ListComplianceAuditsRow, error) {
-	rows, err := q.db.Query(ctx, listComplianceAudits, arg.TenantID, arg.Framework)
+	rows, err := q.db.Query(ctx, listComplianceAudits, arg.OrganizationID, arg.Framework)
 	if err != nil {
 		return nil, err
 	}
@@ -840,9 +840,9 @@ func (q *Queries) ListComplianceAudits(ctx context.Context, arg ListComplianceAu
 
 const listControlOwners = `-- name: ListControlOwners :many
 SELECT o.control_id, o.user_id, u.email, u.display_name, o.updated_at
-FROM tenant.compliance_control_owners o
+FROM organization.compliance_control_owners o
 LEFT JOIN account.users u ON u.id = o.user_id
-WHERE o.tenant_id = $1
+WHERE o.organization_id = $1
 ORDER BY o.control_id
 LIMIT 1001
 `
@@ -856,8 +856,8 @@ type ListControlOwnersRow struct {
 }
 
 // At most paging.MaxListItems+1 rows: the API truncates the rest.
-func (q *Queries) ListControlOwners(ctx context.Context, tenantID uuid.UUID) ([]ListControlOwnersRow, error) {
-	rows, err := q.db.Query(ctx, listControlOwners, tenantID)
+func (q *Queries) ListControlOwners(ctx context.Context, organizationID uuid.UUID) ([]ListControlOwnersRow, error) {
+	rows, err := q.db.Query(ctx, listControlOwners, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -883,35 +883,35 @@ func (q *Queries) ListControlOwners(ctx context.Context, tenantID uuid.UUID) ([]
 }
 
 const listEvidenceRuns = `-- name: ListEvidenceRuns :many
-SELECT id, tenant_id, framework, generated_at, generated_by,
+SELECT id, organization_id, framework, generated_at, generated_by,
        pass_count, fail_count, na_count
-FROM tenant.compliance_evidence_runs
-WHERE tenant_id = $1 AND framework = $2
+FROM organization.compliance_evidence_runs
+WHERE organization_id = $1 AND framework = $2
 ORDER BY generated_at DESC
 LIMIT 1001
 `
 
 type ListEvidenceRunsParams struct {
-	TenantID  uuid.UUID
-	Framework string
+	OrganizationID uuid.UUID
+	Framework      string
 }
 
 type ListEvidenceRunsRow struct {
-	ID          uuid.UUID
-	TenantID    uuid.UUID
-	Framework   string
-	GeneratedAt time.Time
-	GeneratedBy pgtype.UUID
-	PassCount   int32
-	FailCount   int32
-	NaCount     int32
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	Framework      string
+	GeneratedAt    time.Time
+	GeneratedBy    pgtype.UUID
+	PassCount      int32
+	FailCount      int32
+	NaCount        int32
 }
 
-// List previous runs for a tenant+framework, most recent first.
+// List previous runs for an organization+framework, most recent first.
 // Controls are excluded from the list response (use GetEvidenceRun for full report).
 // At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListEvidenceRuns(ctx context.Context, arg ListEvidenceRunsParams) ([]ListEvidenceRunsRow, error) {
-	rows, err := q.db.Query(ctx, listEvidenceRuns, arg.TenantID, arg.Framework)
+	rows, err := q.db.Query(ctx, listEvidenceRuns, arg.OrganizationID, arg.Framework)
 	if err != nil {
 		return nil, err
 	}
@@ -921,7 +921,7 @@ func (q *Queries) ListEvidenceRuns(ctx context.Context, arg ListEvidenceRunsPara
 		var i ListEvidenceRunsRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.Framework,
 			&i.GeneratedAt,
 			&i.GeneratedBy,
@@ -940,27 +940,27 @@ func (q *Queries) ListEvidenceRuns(ctx context.Context, arg ListEvidenceRunsPara
 }
 
 const listExportRequests = `-- name: ListExportRequests :many
-SELECT id, tenant_id, subject_id, requested_by, status, error, completed_at, created_at
+SELECT id, organization_id, subject_id, requested_by, status, error, completed_at, created_at
 FROM account.export_requests
-WHERE tenant_id = $1
+WHERE organization_id = $1
 ORDER BY created_at DESC
 LIMIT 1001
 `
 
 type ListExportRequestsRow struct {
-	ID          uuid.UUID
-	TenantID    uuid.UUID
-	SubjectID   uuid.UUID
-	RequestedBy pgtype.UUID
-	Status      string
-	Error       *string
-	CompletedAt pgtype.Timestamptz
-	CreatedAt   time.Time
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	SubjectID      uuid.UUID
+	RequestedBy    pgtype.UUID
+	Status         string
+	Error          *string
+	CompletedAt    pgtype.Timestamptz
+	CreatedAt      time.Time
 }
 
 // At most paging.MaxListItems+1 rows: the API truncates the rest.
-func (q *Queries) ListExportRequests(ctx context.Context, tenantID uuid.UUID) ([]ListExportRequestsRow, error) {
-	rows, err := q.db.Query(ctx, listExportRequests, tenantID)
+func (q *Queries) ListExportRequests(ctx context.Context, organizationID uuid.UUID) ([]ListExportRequestsRow, error) {
+	rows, err := q.db.Query(ctx, listExportRequests, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -970,7 +970,7 @@ func (q *Queries) ListExportRequests(ctx context.Context, tenantID uuid.UUID) ([
 		var i ListExportRequestsRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.SubjectID,
 			&i.RequestedBy,
 			&i.Status,
@@ -989,32 +989,32 @@ func (q *Queries) ListExportRequests(ctx context.Context, tenantID uuid.UUID) ([
 }
 
 const listPurgeRequests = `-- name: ListPurgeRequests :many
-SELECT id, tenant_id, subject_id, requested_by, reason, status,
+SELECT id, organization_id, subject_id, requested_by, reason, status,
        grace_until, completed_at, created_at, subject_email, subject_name
 FROM account.purge_requests
-WHERE tenant_id = $1
+WHERE organization_id = $1
 ORDER BY created_at DESC
 LIMIT 1001
 `
 
 type ListPurgeRequestsRow struct {
-	ID           uuid.UUID
-	TenantID     uuid.UUID
-	SubjectID    uuid.UUID
-	RequestedBy  pgtype.UUID
-	Reason       *string
-	Status       string
-	GraceUntil   time.Time
-	CompletedAt  pgtype.Timestamptz
-	CreatedAt    time.Time
-	SubjectEmail *string
-	SubjectName  *string
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	SubjectID      uuid.UUID
+	RequestedBy    pgtype.UUID
+	Reason         *string
+	Status         string
+	GraceUntil     time.Time
+	CompletedAt    pgtype.Timestamptz
+	CreatedAt      time.Time
+	SubjectEmail   *string
+	SubjectName    *string
 }
 
-// List all purge requests for a tenant, most recent first.
+// List all purge requests for an organization, most recent first.
 // At most paging.MaxListItems+1 rows: the API truncates the rest.
-func (q *Queries) ListPurgeRequests(ctx context.Context, tenantID uuid.UUID) ([]ListPurgeRequestsRow, error) {
-	rows, err := q.db.Query(ctx, listPurgeRequests, tenantID)
+func (q *Queries) ListPurgeRequests(ctx context.Context, organizationID uuid.UUID) ([]ListPurgeRequestsRow, error) {
+	rows, err := q.db.Query(ctx, listPurgeRequests, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -1024,7 +1024,7 @@ func (q *Queries) ListPurgeRequests(ctx context.Context, tenantID uuid.UUID) ([]
 		var i ListPurgeRequestsRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.SubjectID,
 			&i.RequestedBy,
 			&i.Reason,
@@ -1049,13 +1049,13 @@ const listUserConsentsForExport = `-- name: ListUserConsentsForExport :many
 SELECT c.client_id, COALESCE(cl.name, '')::text AS client_name, c.scopes, c.granted_at
 FROM auth.oidc_consents c
 LEFT JOIN auth.oidc_clients cl ON cl.client_id = c.client_id
-WHERE c.user_id = $1 AND ($2::uuid IS NULL OR cl.tenant_id = $2)
+WHERE c.user_id = $1 AND ($2::uuid IS NULL OR cl.organization_id = $2)
 ORDER BY c.granted_at
 `
 
 type ListUserConsentsForExportParams struct {
-	UserID   uuid.UUID
-	TenantID pgtype.UUID
+	UserID         uuid.UUID
+	OrganizationID pgtype.UUID
 }
 
 type ListUserConsentsForExportRow struct {
@@ -1068,7 +1068,7 @@ type ListUserConsentsForExportRow struct {
 // ListUserConsentsForExport lists the applications the person consented to
 // and the scopes they granted.
 func (q *Queries) ListUserConsentsForExport(ctx context.Context, arg ListUserConsentsForExportParams) ([]ListUserConsentsForExportRow, error) {
-	rows, err := q.db.Query(ctx, listUserConsentsForExport, arg.UserID, arg.TenantID)
+	rows, err := q.db.Query(ctx, listUserConsentsForExport, arg.UserID, arg.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -1097,13 +1097,13 @@ SELECT t.client_id, COALESCE(cl.name, '')::text AS client_name, t.scopes, t.issu
 FROM auth.oidc_refresh_tokens t
 LEFT JOIN auth.oidc_clients cl ON cl.client_id = t.client_id
 WHERE t.user_id = $1 AND t.revoked_at IS NULL AND t.replaced_by IS NULL AND t.expires_at > NOW()
-  AND ($2::uuid IS NULL OR t.tenant_id = $2)
+  AND ($2::uuid IS NULL OR t.organization_id = $2)
 ORDER BY t.issued_at
 `
 
 type ListUserGrantsForExportParams struct {
-	UserID   uuid.UUID
-	TenantID pgtype.UUID
+	UserID         uuid.UUID
+	OrganizationID pgtype.UUID
 }
 
 type ListUserGrantsForExportRow struct {
@@ -1117,7 +1117,7 @@ type ListUserGrantsForExportRow struct {
 // ListUserGrantsForExport lists the person's live application grants, by
 // their latest refresh token.
 func (q *Queries) ListUserGrantsForExport(ctx context.Context, arg ListUserGrantsForExportParams) ([]ListUserGrantsForExportRow, error) {
-	rows, err := q.db.Query(ctx, listUserGrantsForExport, arg.UserID, arg.TenantID)
+	rows, err := q.db.Query(ctx, listUserGrantsForExport, arg.UserID, arg.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -1144,16 +1144,16 @@ func (q *Queries) ListUserGrantsForExport(ctx context.Context, arg ListUserGrant
 
 const listUserGroupsForExport = `-- name: ListUserGroupsForExport :many
 SELECT g.name, o.name AS organization, m.added_at
-FROM tenant.group_members m
-JOIN tenant.groups g ON g.id = m.group_id AND g.tenant_id = m.tenant_id
-JOIN tenant.tenants o ON o.id = m.tenant_id
-WHERE m.user_id = $1 AND ($2::uuid IS NULL OR m.tenant_id = $2)
+FROM organization.group_members m
+JOIN organization.groups g ON g.id = m.group_id AND g.organization_id = m.organization_id
+JOIN organization.organizations o ON o.id = m.organization_id
+WHERE m.user_id = $1 AND ($2::uuid IS NULL OR m.organization_id = $2)
 ORDER BY m.added_at
 `
 
 type ListUserGroupsForExportParams struct {
-	UserID   uuid.UUID
-	TenantID pgtype.UUID
+	UserID         uuid.UUID
+	OrganizationID pgtype.UUID
 }
 
 type ListUserGroupsForExportRow struct {
@@ -1163,7 +1163,7 @@ type ListUserGroupsForExportRow struct {
 }
 
 func (q *Queries) ListUserGroupsForExport(ctx context.Context, arg ListUserGroupsForExportParams) ([]ListUserGroupsForExportRow, error) {
-	rows, err := q.db.Query(ctx, listUserGroupsForExport, arg.UserID, arg.TenantID)
+	rows, err := q.db.Query(ctx, listUserGroupsForExport, arg.UserID, arg.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -1186,7 +1186,7 @@ const listUserIdentitiesForExport = `-- name: ListUserIdentitiesForExport :many
 
 SELECT i.provider, i.subject, i.email, i.linked_at
 FROM account.external_identities i
-WHERE i.user_id = $1 AND ($2::uuid IS NULL OR i.tenant_id = $2)
+WHERE i.user_id = $1 AND ($2::uuid IS NULL OR i.organization_id = $2)
 UNION ALL
 SELECT p.provider, p.subject, p.email, p.linked_at
 FROM auth.platform_social_identities p
@@ -1195,8 +1195,8 @@ ORDER BY linked_at
 `
 
 type ListUserIdentitiesForExportParams struct {
-	UserID   uuid.UUID
-	TenantID pgtype.UUID
+	UserID         uuid.UUID
+	OrganizationID pgtype.UUID
 }
 
 type ListUserIdentitiesForExportRow struct {
@@ -1207,14 +1207,14 @@ type ListUserIdentitiesForExportRow struct {
 }
 
 // -----------------------------------------------------------------------
-// Export sections: one organisation's part of the person's data when
-// tenant_id is set (its export of a member), all of it when it is null (the
+// Export sections: one organization's part of the person's data when
+// organization_id is set (its export of a member), all of it when it is null (the
 // person's own export).
 // -----------------------------------------------------------------------
 // ListUserIdentitiesForExport lists the accounts linked for signing in: social
 // and single sign-on identities, and the platform's own social sign-ins.
 func (q *Queries) ListUserIdentitiesForExport(ctx context.Context, arg ListUserIdentitiesForExportParams) ([]ListUserIdentitiesForExportRow, error) {
-	rows, err := q.db.Query(ctx, listUserIdentitiesForExport, arg.UserID, arg.TenantID)
+	rows, err := q.db.Query(ctx, listUserIdentitiesForExport, arg.UserID, arg.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -1321,12 +1321,12 @@ const listUserRolesForExport = `-- name: ListUserRolesForExport :many
 SELECT r.name AS role_name, ur.granted_at
 FROM rbac.user_roles ur
 JOIN rbac.roles r ON r.id = ur.role_id
-WHERE ur.user_id = $1 AND ur.tenant_id = $2
+WHERE ur.user_id = $1 AND ur.organization_id = $2
 `
 
 type ListUserRolesForExportParams struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type ListUserRolesForExportRow struct {
@@ -1335,7 +1335,7 @@ type ListUserRolesForExportRow struct {
 }
 
 func (q *Queries) ListUserRolesForExport(ctx context.Context, arg ListUserRolesForExportParams) ([]ListUserRolesForExportRow, error) {
-	rows, err := q.db.Query(ctx, listUserRolesForExport, arg.UserID, arg.TenantID)
+	rows, err := q.db.Query(ctx, listUserRolesForExport, arg.UserID, arg.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -1357,13 +1357,13 @@ func (q *Queries) ListUserRolesForExport(ctx context.Context, arg ListUserRolesF
 const listUserSessionsForExport = `-- name: ListUserSessionsForExport :many
 SELECT id, COALESCE(host(ip), '') AS ip, user_agent, created_at, last_seen_at, revoked_at
 FROM auth.sessions
-WHERE user_id = $1 AND tenant_id = $2
+WHERE user_id = $1 AND organization_id = $2
 ORDER BY created_at DESC
 `
 
 type ListUserSessionsForExportParams struct {
-	UserID   uuid.UUID
-	TenantID pgtype.UUID
+	UserID         uuid.UUID
+	OrganizationID pgtype.UUID
 }
 
 type ListUserSessionsForExportRow struct {
@@ -1377,7 +1377,7 @@ type ListUserSessionsForExportRow struct {
 
 // COALESCE ensures a non-null result for ip (inet is nullable; host() of NULL = NULL).
 func (q *Queries) ListUserSessionsForExport(ctx context.Context, arg ListUserSessionsForExportParams) ([]ListUserSessionsForExportRow, error) {
-	rows, err := q.db.Query(ctx, listUserSessionsForExport, arg.UserID, arg.TenantID)
+	rows, err := q.db.Query(ctx, listUserSessionsForExport, arg.UserID, arg.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -1409,16 +1409,16 @@ SELECT e.created_at, (e.action = 'auth.login_succeeded')::boolean AS succeeded,
        COALESCE(host(e.ip), '')::text AS ip, COALESCE(e.user_agent, '')::text AS user_agent,
        COALESCE(o.name, '')::text AS organization
 FROM audit.events e
-LEFT JOIN tenant.tenants o ON o.id = e.tenant_id
+LEFT JOIN organization.organizations o ON o.id = e.organization_id
 WHERE e.actor_user_id = $1::uuid AND e.action IN ('auth.login_succeeded', 'auth.sign_in_failed')
-  AND ($2::uuid IS NULL OR e.tenant_id = $2)
+  AND ($2::uuid IS NULL OR e.organization_id = $2)
 ORDER BY e.created_at DESC
 LIMIT 1000
 `
 
 type ListUserSignInsForExportParams struct {
-	UserID   uuid.UUID
-	TenantID pgtype.UUID
+	UserID         uuid.UUID
+	OrganizationID pgtype.UUID
 }
 
 type ListUserSignInsForExportRow struct {
@@ -1433,7 +1433,7 @@ type ListUserSignInsForExportRow struct {
 // ListUserSignInsForExport lists the person's most recent sign-ins, made and
 // failed, from the audit trail.
 func (q *Queries) ListUserSignInsForExport(ctx context.Context, arg ListUserSignInsForExportParams) ([]ListUserSignInsForExportRow, error) {
-	rows, err := q.db.Query(ctx, listUserSignInsForExport, arg.UserID, arg.TenantID)
+	rows, err := q.db.Query(ctx, listUserSignInsForExport, arg.UserID, arg.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -1515,22 +1515,22 @@ func (q *Queries) RevokeUserSessions(ctx context.Context, userID uuid.UUID) erro
 }
 
 const upsertControlOwner = `-- name: UpsertControlOwner :exec
-INSERT INTO tenant.compliance_control_owners (tenant_id, control_id, user_id, updated_by, updated_at)
+INSERT INTO organization.compliance_control_owners (organization_id, control_id, user_id, updated_by, updated_at)
 VALUES ($1, $2, $3, $4, NOW())
-ON CONFLICT (tenant_id, control_id) DO UPDATE SET
+ON CONFLICT (organization_id, control_id) DO UPDATE SET
     user_id = EXCLUDED.user_id, updated_by = EXCLUDED.updated_by, updated_at = NOW()
 `
 
 type UpsertControlOwnerParams struct {
-	TenantID  uuid.UUID
-	ControlID string
-	UserID    uuid.UUID
-	UpdatedBy pgtype.UUID
+	OrganizationID uuid.UUID
+	ControlID      string
+	UserID         uuid.UUID
+	UpdatedBy      pgtype.UUID
 }
 
 func (q *Queries) UpsertControlOwner(ctx context.Context, arg UpsertControlOwnerParams) error {
 	_, err := q.db.Exec(ctx, upsertControlOwner,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.ControlID,
 		arg.UserID,
 		arg.UpdatedBy,

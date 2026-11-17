@@ -361,20 +361,20 @@ func (q *Queries) InsertPushChallenge(ctx context.Context, arg InsertPushChallen
 	return i, err
 }
 
-const isTenantMember = `-- name: IsTenantMember :one
-SELECT (EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = $1 AND ur.tenant_id = $2)
-     OR EXISTS (SELECT 1 FROM account.users u WHERE u.id = $1 AND u.tenant_id = $2 AND u.deleted_at IS NULL))::bool
+const isOrganizationMember = `-- name: IsOrganizationMember :one
+SELECT (EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = $1 AND ur.organization_id = $2)
+     OR EXISTS (SELECT 1 FROM account.users u WHERE u.id = $1 AND u.organization_id = $2 AND u.deleted_at IS NULL))::bool
 `
 
-type IsTenantMemberParams struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
+type IsOrganizationMemberParams struct {
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
 }
 
-// IsTenantMember says whether the user belongs to the organisation: holds a
-// role in it, or has it as their home organisation.
-func (q *Queries) IsTenantMember(ctx context.Context, arg IsTenantMemberParams) (bool, error) {
-	row := q.db.QueryRow(ctx, isTenantMember, arg.UserID, arg.TenantID)
+// IsOrganizationMember says whether the user belongs to the organization: holds a
+// role in it, or has it as their home organization.
+func (q *Queries) IsOrganizationMember(ctx context.Context, arg IsOrganizationMemberParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isOrganizationMember, arg.UserID, arg.OrganizationID)
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -493,7 +493,7 @@ SELECT
     EXISTS (SELECT 1 FROM auth.mfa_totp t WHERE t.user_id = $1 AND t.confirmed_at IS NOT NULL) AS totp,
     (SELECT count(*) FROM auth.mfa_recovery_codes r WHERE r.user_id = $1 AND r.used_at IS NULL)::int AS recovery_codes,
     CASE WHEN COALESCE((SELECT ap.passkey_enabled FROM account.users u
-                        JOIN tenant.auth_policy ap ON ap.tenant_id = u.tenant_id
+                        JOIN organization.auth_policy ap ON ap.organization_id = u.organization_id
                         WHERE u.id = $1), TRUE)
          THEN (SELECT count(*) FROM auth.passkey_credentials p WHERE p.user_id = $1)
          ELSE 0 END::int AS passkeys,
@@ -510,7 +510,7 @@ type LoginFactorCountsRow struct {
 
 // LoginFactorCounts says which second factors the user can meet a sign-in
 // challenge with: a confirmed authenticator app, unused recovery codes,
-// passkeys (while the user's organisation allows passkeys) and push devices.
+// passkeys (while the user's organization allows passkeys) and push devices.
 func (q *Queries) LoginFactorCounts(ctx context.Context, userID uuid.UUID) (LoginFactorCountsRow, error) {
 	row := q.db.QueryRow(ctx, loginFactorCounts, userID)
 	var i LoginFactorCountsRow
@@ -554,7 +554,7 @@ const orgStepUpPolicy = `-- name: OrgStepUpPolicy :one
 SELECT EXTRACT(EPOCH FROM COALESCE(sp.step_up_window, INTERVAL '5 minutes'))::bigint AS window_seconds,
        (sp.step_up_methods IS NULL)::bool AS every_factor
 FROM (SELECT $1::uuid AS id) q
-LEFT JOIN tenant.security_policies sp ON sp.tenant_id = q.id
+LEFT JOIN organization.security_policies sp ON sp.organization_id = q.id
 `
 
 type OrgStepUpPolicyRow struct {
@@ -562,8 +562,8 @@ type OrgStepUpPolicyRow struct {
 	EveryFactor   bool
 }
 
-func (q *Queries) OrgStepUpPolicy(ctx context.Context, tenantID uuid.UUID) (OrgStepUpPolicyRow, error) {
-	row := q.db.QueryRow(ctx, orgStepUpPolicy, tenantID)
+func (q *Queries) OrgStepUpPolicy(ctx context.Context, organizationID uuid.UUID) (OrgStepUpPolicyRow, error) {
+	row := q.db.QueryRow(ctx, orgStepUpPolicy, organizationID)
 	var i OrgStepUpPolicyRow
 	err := row.Scan(&i.WindowSeconds, &i.EveryFactor)
 	return i, err
@@ -676,7 +676,7 @@ SELECT COALESCE(s.signed_in_at > NOW() - COALESCE(sp.step_up_window, INTERVAL '5
 FROM (SELECT $1::uuid AS id, $2::uuid AS user_id) q
 LEFT JOIN auth.sessions s ON s.id = q.id AND s.user_id = q.user_id AND s.revoked_at IS NULL
   AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
-LEFT JOIN tenant.security_policies sp ON sp.tenant_id = s.tenant_id
+LEFT JOIN organization.security_policies sp ON sp.organization_id = s.organization_id
 `
 
 type SessionSignedInRecentlyParams struct {
@@ -689,10 +689,10 @@ type SessionSignedInRecentlyRow struct {
 	WindowSeconds int64
 }
 
-// OrgStepUpPolicy is how long a step-up lasts in an organisation and whether
-// it counts every factor type (no organisation, or none set: 5 minutes, yes).
+// OrgStepUpPolicy is how long a step-up lasts in an organization and whether
+// it counts every factor type (no organization, or none set: 5 minutes, yes).
 // SessionSignedInRecently says whether the user's live session continues a
-// sign-in made within its organisation's step-up window, and that window.
+// sign-in made within its organization's step-up window, and that window.
 func (q *Queries) SessionSignedInRecently(ctx context.Context, arg SessionSignedInRecentlyParams) (SessionSignedInRecentlyRow, error) {
 	row := q.db.QueryRow(ctx, sessionSignedInRecently, arg.SessionID, arg.UserID)
 	var i SessionSignedInRecentlyRow
@@ -714,14 +714,14 @@ SELECT
     EXISTS (SELECT 1 FROM auth.mfa_totp t WHERE t.user_id = $1 AND t.confirmed_at IS NOT NULL)::bool AS totp,
     EXISTS (SELECT 1 FROM auth.mfa_otp_factors f WHERE f.user_id = $1 AND f.verified_at IS NOT NULL)::bool AS otp,
     (EXISTS (SELECT 1 FROM auth.passkey_credentials c WHERE c.user_id = $1)
-     AND COALESCE((SELECT ap.passkey_enabled FROM tenant.auth_policy ap WHERE ap.tenant_id = $2::uuid), TRUE))::bool AS passkeys,
+     AND COALESCE((SELECT ap.passkey_enabled FROM organization.auth_policy ap WHERE ap.organization_id = $2::uuid), TRUE))::bool AS passkeys,
     EXISTS (SELECT 1 FROM auth.mfa_push_devices d WHERE d.user_id = $1)::bool AS push,
-    (SELECT sp.step_up_methods FROM tenant.security_policies sp WHERE sp.tenant_id = $2::uuid)::text[] AS step_up_methods
+    (SELECT sp.step_up_methods FROM organization.security_policies sp WHERE sp.organization_id = $2::uuid)::text[] AS step_up_methods
 `
 
 type StepUpFactorsHeldParams struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type StepUpFactorsHeldRow struct {
@@ -734,10 +734,10 @@ type StepUpFactorsHeldRow struct {
 
 // StepUpFactorsHeld says which kinds of factor the user could step up with —
 // a confirmed authenticator app (or its recovery codes), a confirmed email or
-// SMS factor, a passkey while the organisation allows passkeys — and which
-// factor types the organisation counts (NULL: every one).
+// SMS factor, a passkey while the organization allows passkeys — and which
+// factor types the organization counts (NULL: every one).
 func (q *Queries) StepUpFactorsHeld(ctx context.Context, arg StepUpFactorsHeldParams) (StepUpFactorsHeldRow, error) {
-	row := q.db.QueryRow(ctx, stepUpFactorsHeld, arg.UserID, arg.TenantID)
+	row := q.db.QueryRow(ctx, stepUpFactorsHeld, arg.UserID, arg.OrganizationID)
 	var i StepUpFactorsHeldRow
 	err := row.Scan(
 		&i.Totp,
@@ -759,7 +759,7 @@ FROM (SELECT $1::uuid AS id, $2::uuid AS user_id) q
 LEFT JOIN auth.sessions s ON s.id = q.id AND s.user_id = q.user_id AND s.revoked_at IS NULL
   AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
 LEFT JOIN auth.mfa_verifications v ON v.session_id = s.id
-LEFT JOIN tenant.security_policies sp ON sp.tenant_id = s.tenant_id
+LEFT JOIN organization.security_policies sp ON sp.organization_id = s.organization_id
 `
 
 type StepUpStateParams struct {
@@ -776,9 +776,9 @@ type StepUpStateRow struct {
 	StepUpMethods []string
 }
 
-// StepUpState is a session's step-up as its organisation judges it: fresh
-// while inside the organisation's window, and counted only when met by a
-// factor type the organisation accepts (step_up_methods NULL: any). A session
+// StepUpState is a session's step-up as its organization judges it: fresh
+// while inside the organization's window, and counted only when met by a
+// factor type the organization accepts (step_up_methods NULL: any). A session
 // that has ended reads as never stepped up.
 func (q *Queries) StepUpState(ctx context.Context, arg StepUpStateParams) (StepUpStateRow, error) {
 	row := q.db.QueryRow(ctx, stepUpState, arg.SessionID, arg.UserID)

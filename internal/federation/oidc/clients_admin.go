@@ -21,20 +21,20 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
-// OIDC client administration (tenant-scoped CRUD + secret rotation). Every query
-// filters by tenant_id so an admin can only see/mutate clients in their own tenant;
+// OIDC client administration (organization-scoped CRUD + secret rotation). Every query
+// filters by organization_id so an admin can only see/mutate clients in their own organization;
 // mutations are audited, mirroring registerClient.
 
-// ListClients returns every OIDC client owned by the tenant, newest first.
-func (s *Service) ListClients(ctx context.Context, tenantID uuid.UUID) ([]Client, error) {
-	rows, err := s.q.ListOIDCClients(ctx, tenantID)
+// ListClients returns every OIDC client owned by the organization, newest first.
+func (s *Service) ListClients(ctx context.Context, organizationID uuid.UUID) ([]Client, error) {
+	rows, err := s.q.ListOIDCClients(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]Client, len(rows))
 	for i, r := range rows {
 		out[i] = Client{
-			ID: r.ID, TenantID: r.TenantID, ClientID: r.ClientID, Type: r.Type, Name: r.Name,
+			ID: r.ID, OrganizationID: r.OrganizationID, ClientID: r.ClientID, Type: r.Type, Name: r.Name,
 			RedirectURIs: r.RedirectUris, PostLogoutURIs: r.PostLogoutUris,
 			GrantTypes: r.GrantTypes, Scopes: r.Scopes, CreatedAt: r.CreatedAt,
 			PKCEExemptUntil:      timePtr(r.PkceExemptUntil),
@@ -42,15 +42,15 @@ func (s *Service) ListClients(ctx context.Context, tenantID uuid.UUID) ([]Client
 			LogoURI: derefStr(r.LogoUri), ClientURI: derefStr(r.ClientUri),
 		}
 	}
-	if err := s.clientWebOrigins(ctx, tenantID, out); err != nil {
+	if err := s.clientWebOrigins(ctx, organizationID, out); err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// GetClient resolves a single client by row id within the tenant.
-func (s *Service) GetClient(ctx context.Context, tenantID, id uuid.UUID) (*Client, error) {
-	r, err := s.q.GetOIDCClient(ctx, dbgen.GetOIDCClientParams{ID: id, TenantID: tenantID})
+// GetClient resolves a single client by row id within the organization.
+func (s *Service) GetClient(ctx context.Context, organizationID, id uuid.UUID) (*Client, error) {
+	r, err := s.q.GetOIDCClient(ctx, dbgen.GetOIDCClientParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrOIDCClientNotFound
 	}
@@ -58,14 +58,14 @@ func (s *Service) GetClient(ctx context.Context, tenantID, id uuid.UUID) (*Clien
 		return nil, err
 	}
 	c := Client{
-		ID: r.ID, TenantID: r.TenantID, ClientID: r.ClientID, Type: r.Type, Name: r.Name,
+		ID: r.ID, OrganizationID: r.OrganizationID, ClientID: r.ClientID, Type: r.Type, Name: r.Name,
 		RedirectURIs: r.RedirectUris, PostLogoutURIs: r.PostLogoutUris,
 		GrantTypes: r.GrantTypes, Scopes: r.Scopes, CreatedAt: r.CreatedAt,
 		PKCEExemptUntil:      timePtr(r.PkceExemptUntil),
 		BackchannelLogoutURI: derefStr(r.BackchannelLogoutUri), FrontchannelLogoutURI: derefStr(r.FrontchannelLogoutUri),
 		LogoURI: derefStr(r.LogoUri), ClientURI: derefStr(r.ClientUri),
 	}
-	stored, err := s.q.GetClientWebOrigins(ctx, dbgen.GetClientWebOriginsParams{ID: id, TenantID: tenantID})
+	stored, err := s.q.GetClientWebOrigins(ctx, dbgen.GetClientWebOriginsParams{ID: id, OrganizationID: organizationID})
 	if err != nil {
 		return nil, err
 	}
@@ -98,10 +98,10 @@ type UpdateClientInput struct {
 	WebOrigins OptionalOrigins `json:"web_origins"`
 }
 
-// UpdateClient applies a partial update to a tenant's client and returns the
+// UpdateClient applies a partial update to an organization's client and returns the
 // updated row. Unset (nil) fields are preserved via COALESCE. type and
 // client_id are immutable here (rotate-secret handles credentials).
-func (s *Service) UpdateClient(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, in UpdateClientInput) (*Client, error) {
+func (s *Service) UpdateClient(ctx context.Context, tx pgx.Tx, organizationID, id uuid.UUID, in UpdateClientInput) (*Client, error) {
 	// *[]string → []string: nil pointer → nil slice (SQL NULL → COALESCE keeps existing).
 	var redirectUris, postLogoutUris, grantTypes, scopes []string
 	if in.RedirectURIs != nil {
@@ -119,7 +119,7 @@ func (s *Service) UpdateClient(ctx context.Context, tx pgx.Tx, tenantID, id uuid
 	q := s.q.WithTx(tx)
 	// Hold the edited client to the same rules as registration, checked on the
 	// result of the edit (unset fields keep their stored values).
-	cur, err := q.GetOIDCClient(ctx, dbgen.GetOIDCClientParams{ID: id, TenantID: tenantID})
+	cur, err := q.GetOIDCClient(ctx, dbgen.GetOIDCClientParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrOIDCClientNotFound
 	}
@@ -171,7 +171,7 @@ func (s *Service) UpdateClient(ctx context.Context, tx pgx.Tx, tenantID, id uuid
 		SetClientUri:             in.ClientURI != nil,
 		ClientUri:                derefStr(in.ClientURI),
 		ID:                       id,
-		TenantID:                 tenantID,
+		OrganizationID:           organizationID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrOIDCClientNotFound
@@ -180,7 +180,7 @@ func (s *Service) UpdateClient(ctx context.Context, tx pgx.Tx, tenantID, id uuid
 		return nil, err
 	}
 	c := Client{
-		ID: r.ID, TenantID: r.TenantID, ClientID: r.ClientID, Type: r.Type, Name: r.Name,
+		ID: r.ID, OrganizationID: r.OrganizationID, ClientID: r.ClientID, Type: r.Type, Name: r.Name,
 		RedirectURIs: r.RedirectUris, PostLogoutURIs: r.PostLogoutUris,
 		GrantTypes: r.GrantTypes, Scopes: r.Scopes, CreatedAt: r.CreatedAt,
 		PKCEExemptUntil:      timePtr(r.PkceExemptUntil),
@@ -188,13 +188,13 @@ func (s *Service) UpdateClient(ctx context.Context, tx pgx.Tx, tenantID, id uuid
 		LogoURI: derefStr(r.LogoUri), ClientURI: derefStr(r.ClientUri),
 	}
 	if in.WebOrigins.Set {
-		if err := s.setWebOrigins(ctx, tx, tenantID, id, in.WebOrigins.Origins); err != nil {
+		if err := s.setWebOrigins(ctx, tx, organizationID, id, in.WebOrigins.Origins); err != nil {
 			return nil, err
 		}
 	} else if in.RedirectURIs != nil {
 		s.webOrigins.forget()
 	}
-	stored, err := q.GetClientWebOrigins(ctx, dbgen.GetClientWebOriginsParams{ID: id, TenantID: tenantID})
+	stored, err := q.GetClientWebOrigins(ctx, dbgen.GetClientWebOriginsParams{ID: id, OrganizationID: organizationID})
 	if err != nil {
 		return nil, err
 	}
@@ -202,11 +202,11 @@ func (s *Service) UpdateClient(ctx context.Context, tx pgx.Tx, tenantID, id uuid
 	return &c, nil
 }
 
-// DeleteClient removes a tenant's client. Returns the public client_id (for the
-// audit row) or ErrNotFound if the row doesn't exist in this tenant.
-func (s *Service) DeleteClient(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (string, error) {
+// DeleteClient removes an organization's client. Returns the public client_id (for the
+// audit row) or ErrNotFound if the row doesn't exist in this organization.
+func (s *Service) DeleteClient(ctx context.Context, tx pgx.Tx, organizationID, id uuid.UUID) (string, error) {
 	q := s.q.WithTx(tx)
-	clientID, err := q.DeleteOIDCClient(ctx, dbgen.DeleteOIDCClientParams{ID: id, TenantID: tenantID})
+	clientID, err := q.DeleteOIDCClient(ctx, dbgen.DeleteOIDCClientParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", errs.ErrOIDCClientNotFound
 	}
@@ -219,10 +219,10 @@ func (s *Service) DeleteClient(ctx context.Context, tx pgx.Tx, tenantID, id uuid
 // RotateClientSecret mints a fresh client secret for a confidential client,
 // re-using the SAME generation + hashing as RegisterClient, stores only the
 // hash, and returns the plaintext once. Public clients have no secret, so the
-// rotation is rejected with a 422. Tenant-scoped.
-func (s *Service) RotateClientSecret(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (string, *Client, error) {
+// rotation is rejected with a 422. Organization-scoped.
+func (s *Service) RotateClientSecret(ctx context.Context, tx pgx.Tx, organizationID, id uuid.UUID) (string, *Client, error) {
 	q := s.q.WithTx(tx)
-	r, err := q.LockOIDCClientForUpdate(ctx, dbgen.LockOIDCClientForUpdateParams{ID: id, TenantID: tenantID})
+	r, err := q.LockOIDCClientForUpdate(ctx, dbgen.LockOIDCClientForUpdateParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil, errs.ErrOIDCClientNotFound
 	}
@@ -238,12 +238,12 @@ func (s *Service) RotateClientSecret(ctx context.Context, tx pgx.Tx, tenantID, i
 	}
 	hash := password.HashSecret(secret)
 	if err := q.UpdateOIDCClientSecret(ctx, dbgen.UpdateOIDCClientSecretParams{
-		ClientSecretHash: &hash, ID: id, TenantID: tenantID,
+		ClientSecretHash: &hash, ID: id, OrganizationID: organizationID,
 	}); err != nil {
 		return "", nil, err
 	}
 	c := Client{
-		ID: r.ID, TenantID: r.TenantID, ClientID: r.ClientID, Type: r.Type, Name: r.Name,
+		ID: r.ID, OrganizationID: r.OrganizationID, ClientID: r.ClientID, Type: r.Type, Name: r.Name,
 		RedirectURIs: r.RedirectUris, PostLogoutURIs: r.PostLogoutUris,
 		GrantTypes: r.GrantTypes, Scopes: r.Scopes, CreatedAt: r.CreatedAt,
 		PKCEExemptUntil:      timePtr(r.PkceExemptUntil),
@@ -261,11 +261,11 @@ func pathID(r *http.Request) (uuid.UUID, error) {
 	return id, nil
 }
 
-// createTenantClient registers a client under the path tenant. It overrides any
-// tenant_id in the body with the path/JWT tenant so a client can't be created
-// in another tenant. Mirrors registerClient's audit + one-time-secret response.
-func (h *Handler) createTenantClient(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+// createOrganizationClient registers a client under the path organization. It overrides any
+// tenant_id in the body with the path/JWT organization so a client can't be created
+// in another organization. Mirrors registerClient's audit + one-time-secret response.
+func (h *Handler) createOrganizationClient(w http.ResponseWriter, r *http.Request) {
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -275,9 +275,9 @@ func (h *Handler) createTenantClient(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	in.TenantID = tenantID // path/JWT tenant wins over the body
+	in.OrganizationID = organizationID // path/JWT organization wins over the body
 	ctx := r.Context()
-	if err := h.Service.checkClientLimit(ctx, tenantID); err != nil {
+	if err := h.Service.checkClientLimit(ctx, organizationID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -293,10 +293,10 @@ func (h *Handler) createTenantClient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actorID, actorType := audit.ActorOf(r).Identity()
-	tid := c.TenantID
+	tid := c.OrganizationID
 	resourceID := c.ID
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID: &tid, ActorUserID: actorID, ActorType: actorType,
+		OrganizationID: &tid, ActorUserID: actorID, ActorType: actorType,
 		Action: "oidc.client_registered", ResourceType: "oidc_client", ResourceID: &resourceID,
 		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
 		Metadata: map[string]any{
@@ -320,12 +320,12 @@ func (h *Handler) createTenantClient(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listClients(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out, err := h.Service.ListClients(r.Context(), tenantID)
+	out, err := h.Service.ListClients(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -334,7 +334,7 @@ func (h *Handler) listClients(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) getClient(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -344,7 +344,7 @@ func (h *Handler) getClient(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	c, err := h.Service.GetClient(r.Context(), tenantID, id)
+	c, err := h.Service.GetClient(r.Context(), organizationID, id)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -355,7 +355,7 @@ func (h *Handler) getClient(w http.ResponseWriter, r *http.Request) {
 // clientAuthFailures is an application's lockout in force (if any) and its
 // recent wrong-secret attempts, with time and address, never the secret.
 func (h *Handler) clientAuthFailures(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -365,7 +365,7 @@ func (h *Handler) clientAuthFailures(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out, err := h.Service.RecentClientAuthFailures(r.Context(), tenantID, id)
+	out, err := h.Service.RecentClientAuthFailures(r.Context(), organizationID, id)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -374,7 +374,7 @@ func (h *Handler) clientAuthFailures(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) patchClient(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -396,16 +396,16 @@ func (h *Handler) patchClient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	c, err := h.Service.UpdateClient(ctx, tx, tenantID, id, in)
+	c, err := h.Service.UpdateClient(ctx, tx, organizationID, id, in)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	actorID, actorType := audit.ActorOf(r).Identity()
-	tid := c.TenantID
+	tid := c.OrganizationID
 	resourceID := c.ID
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID: &tid, ActorUserID: actorID, ActorType: actorType,
+		OrganizationID: &tid, ActorUserID: actorID, ActorType: actorType,
 		Action: "oidc.client_updated", ResourceType: "oidc_client", ResourceID: &resourceID,
 		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
 		Metadata: clientUpdatedMeta(c, in),
@@ -421,7 +421,7 @@ func (h *Handler) patchClient(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) deleteClient(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -431,14 +431,14 @@ func (h *Handler) deleteClient(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	h.deleteClientInTenant(w, r, tenantID, id)
+	h.deleteClientInOrganization(w, r, organizationID, id)
 }
 
-// deleteClientByScope serves the admin UI's non-tenant-scoped
-// DELETE /v1/oidc/clients/{id}: it derives the tenant from the caller's JWT so
-// the delete is still strictly tenant-scoped.
+// deleteClientByScope serves the admin UI's non-organization-scoped
+// DELETE /v1/oidc/clients/{id}: it derives the organization from the caller's JWT so
+// the delete is still strictly organization-scoped.
 func (h *Handler) deleteClientByScope(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.RequireTenant(r)
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -448,12 +448,12 @@ func (h *Handler) deleteClientByScope(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	h.deleteClientInTenant(w, r, tenantID, id)
+	h.deleteClientInOrganization(w, r, organizationID, id)
 }
 
-// deleteClientInTenant performs the audited, tenant-scoped delete shared by the
-// tenant-path and JWT-scoped delete handlers.
-func (h *Handler) deleteClientInTenant(w http.ResponseWriter, r *http.Request, tenantID, id uuid.UUID) {
+// deleteClientInOrganization performs the audited, organization-scoped delete shared by the
+// organization-path and JWT-scoped delete handlers.
+func (h *Handler) deleteClientInOrganization(w http.ResponseWriter, r *http.Request, organizationID, id uuid.UUID) {
 	ctx := r.Context()
 	tx, err := h.Service.Pool().Begin(ctx)
 	if err != nil {
@@ -461,16 +461,16 @@ func (h *Handler) deleteClientInTenant(w http.ResponseWriter, r *http.Request, t
 		return
 	}
 	defer tx.Rollback(ctx)
-	clientID, err := h.Service.DeleteClient(ctx, tx, tenantID, id)
+	clientID, err := h.Service.DeleteClient(ctx, tx, organizationID, id)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	actorID, actorType := audit.ActorOf(r).Identity()
-	tid := tenantID
+	tid := organizationID
 	resourceID := id
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID: &tid, ActorUserID: actorID, ActorType: actorType,
+		OrganizationID: &tid, ActorUserID: actorID, ActorType: actorType,
 		Action: "oidc.client_deleted", ResourceType: "oidc_client", ResourceID: &resourceID,
 		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
 		Metadata: map[string]any{"client_id": clientID},
@@ -486,7 +486,7 @@ func (h *Handler) deleteClientInTenant(w http.ResponseWriter, r *http.Request, t
 }
 
 func (h *Handler) rotateClientSecret(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -503,16 +503,16 @@ func (h *Handler) rotateClientSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	secret, c, err := h.Service.RotateClientSecret(ctx, tx, tenantID, id)
+	secret, c, err := h.Service.RotateClientSecret(ctx, tx, organizationID, id)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	actorID, actorType := audit.ActorOf(r).Identity()
-	tid := c.TenantID
+	tid := c.OrganizationID
 	resourceID := c.ID
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID: &tid, ActorUserID: actorID, ActorType: actorType,
+		OrganizationID: &tid, ActorUserID: actorID, ActorType: actorType,
 		Action: "oidc.client_secret_rotated", ResourceType: "oidc_client", ResourceID: &resourceID,
 		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
 		Metadata: map[string]any{"client_id": c.ClientID},
@@ -569,8 +569,8 @@ func (s *Service) SigningKeys(ctx context.Context) ([]SigningKey, error) {
 }
 
 // signingKeys reports the issuer's signing-key metadata (candidate, active, and retired). The
-// signing key is global/issuer-level, not per-tenant, so this endpoint is not
-// tenant-scoped; it exposes no key material (see Issuer.KeyInfo).
+// signing key is global/issuer-level, not per-organization, so this endpoint is not
+// organization-scoped; it exposes no key material (see Issuer.KeyInfo).
 func (h *Handler) signingKeys(w http.ResponseWriter, r *http.Request) {
 	keys, err := h.Service.SigningKeys(r.Context())
 	if err != nil {
@@ -581,12 +581,12 @@ func (h *Handler) signingKeys(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) shadowAI(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out, err := h.Service.ShadowAICandidates(r.Context(), tenantID)
+	out, err := h.Service.ShadowAICandidates(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -595,7 +595,7 @@ func (h *Handler) shadowAI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) reviewShadowAI(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -610,7 +610,7 @@ func (h *Handler) reviewShadowAI(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrOIDCReviewerRequired)
 		return
 	}
-	if err := h.Service.ReviewShadowAIClient(r.Context(), tenantID, id, *p.UserID); err != nil {
+	if err := h.Service.ReviewShadowAIClient(r.Context(), organizationID, id, *p.UserID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

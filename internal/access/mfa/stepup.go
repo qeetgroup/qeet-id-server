@@ -29,7 +29,7 @@ func (s *Service) RecordVerification(ctx context.Context, tx pgx.Tx, userID, ses
 	})
 }
 
-// StepUp is a session's step-up as its organisation judges it. Met reports
+// StepUp is a session's step-up as its organization judges it. Met reports
 // whether a counted factor was met within Window. VerifiedAt and Method are the
 // latest step-up, counted or not. Methods are the counted types (nil: any).
 type StepUp struct {
@@ -69,7 +69,7 @@ func (s *Service) StepUpState(ctx context.Context, userID uuid.UUID, sessionID *
 }
 
 // defaultStepUpWindow is how long a step-up lasts where nothing else is known
-// (no session): the organisation default the migration also uses.
+// (no session): the organization default the migration also uses.
 const defaultStepUpWindow = 5 * time.Minute
 
 // RequireRecentMFA gates a handler behind a step-up of the calling session.
@@ -129,7 +129,7 @@ func (s *Service) StepUpGate(routes map[string]StepUpRule) func(http.Handler) ht
 					httpx.WriteError(w, r, errs.ErrUnauthorized)
 					return
 				}
-				held, err := s.HoldsStepUpFactor(r.Context(), *p.UserID, p.TenantID)
+				held, err := s.HoldsStepUpFactor(r.Context(), *p.UserID, p.OrganizationID)
 				if err != nil {
 					httpx.WriteError(w, r, err)
 					return
@@ -147,14 +147,14 @@ func (s *Service) StepUpGate(routes map[string]StepUpRule) func(http.Handler) ht
 	}
 }
 
-// HoldsStepUpFactor reports whether userID holds a factor that tenantID (nil:
+// HoldsStepUpFactor reports whether userID holds a factor that organizationID (nil:
 // none) counts for a step-up, so a step-up can be asked of them.
-func (s *Service) HoldsStepUpFactor(ctx context.Context, userID uuid.UUID, tenantID *uuid.UUID) (bool, error) {
+func (s *Service) HoldsStepUpFactor(ctx context.Context, userID uuid.UUID, organizationID *uuid.UUID) (bool, error) {
 	tid := uuid.Nil
-	if tenantID != nil {
-		tid = *tenantID
+	if organizationID != nil {
+		tid = *organizationID
 	}
-	row, err := s.q.StepUpFactorsHeld(ctx, dbgen.StepUpFactorsHeldParams{UserID: userID, TenantID: tid})
+	row, err := s.q.StepUpFactorsHeld(ctx, dbgen.StepUpFactorsHeldParams{UserID: userID, OrganizationID: tid})
 	if err != nil {
 		return false, err
 	}
@@ -178,7 +178,7 @@ func (s *Service) HoldsStepUpFactor(ctx context.Context, userID uuid.UUID, tenan
 // passStepUp reports whether the request's session is stepped up. If not, it
 // has already written the refusal (401 with no user, else an audited 403
 // step_up_required). A hosted-login principal has no session; its sign-in
-// counts within the window when the organisation counts every factor type.
+// counts within the window when the organization counts every factor type.
 func (s *Service) passStepUp(w http.ResponseWriter, r *http.Request) bool {
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {
@@ -187,8 +187,8 @@ func (s *Service) passStepUp(w http.ResponseWriter, r *http.Request) bool {
 	}
 	if p.SessionID == nil && p.SignedInAt != nil {
 		tid := uuid.Nil
-		if p.TenantID != nil {
-			tid = *p.TenantID
+		if p.OrganizationID != nil {
+			tid = *p.OrganizationID
 		}
 		org, err := s.q.OrgStepUpPolicy(r.Context(), tid)
 		if err != nil {
@@ -217,7 +217,7 @@ func (s *Service) passStepUp(w http.ResponseWriter, r *http.Request) bool {
 }
 
 // passRecentSignIn reports whether the request's principal signed in within
-// its organisation's step-up window: its session's sign-in, or a hosted-login
+// its organization's step-up window: its session's sign-in, or a hosted-login
 // principal's. If not, it has already written an audited 403
 // recent_sign_in_required.
 func (s *Service) passRecentSignIn(w http.ResponseWriter, r *http.Request) bool {
@@ -234,8 +234,8 @@ func (s *Service) passRecentSignIn(w http.ResponseWriter, r *http.Request) bool 
 		recent, window = row.Recent, row.WindowSeconds
 	default:
 		tid := uuid.Nil
-		if p.TenantID != nil {
-			tid = *p.TenantID
+		if p.OrganizationID != nil {
+			tid = *p.OrganizationID
 		}
 		org, err := s.q.OrgStepUpPolicy(r.Context(), tid)
 		if err != nil {
@@ -272,16 +272,16 @@ func (s *Service) auditStepUp(r *http.Request, action string, meta map[string]an
 		meta["session_id"] = *p.SessionID
 	}
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     p.TenantID,
-		ActorUserID:  actorID,
-		ActorType:    actorType,
-		Action:       action,
-		ResourceType: "user",
-		ResourceID:   p.UserID,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
-		Metadata:     meta,
+		OrganizationID: p.OrganizationID,
+		ActorUserID:    actorID,
+		ActorType:      actorType,
+		Action:         action,
+		ResourceType:   "user",
+		ResourceID:     p.UserID,
+		IP:             httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
+		RequestID:      httpx.RequestID(r),
+		Metadata:       meta,
 	}); err != nil {
 		return
 	}
@@ -301,16 +301,16 @@ func (h *Handler) recordStepUp(ctx context.Context, tx pgx.Tx, r *http.Request, 
 	}
 	actorID, actorType := audit.ActorOf(r).Identity()
 	return audit.Record(ctx, tx, audit.Event{
-		TenantID:     p.TenantID,
-		ActorUserID:  actorID,
-		ActorType:    actorType,
-		Action:       "mfa.step_up_verified",
-		ResourceType: "user",
-		ResourceID:   p.UserID,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
-		Metadata:     map[string]any{"method": method, "session_id": *p.SessionID},
+		OrganizationID: p.OrganizationID,
+		ActorUserID:    actorID,
+		ActorType:      actorType,
+		Action:         "mfa.step_up_verified",
+		ResourceType:   "user",
+		ResourceID:     p.UserID,
+		IP:             httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
+		RequestID:      httpx.RequestID(r),
+		Metadata:       map[string]any{"method": method, "session_id": *p.SessionID},
 	})
 }
 
@@ -375,15 +375,15 @@ func (h *Handler) webauthnVerify(w http.ResponseWriter, r *http.Request) {
 	actorID, actorType := audit.ActorOf(r).Identity()
 	target := *p.UserID
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     p.TenantID,
-		ActorUserID:  actorID,
-		ActorType:    actorType,
-		Action:       "mfa.webauthn_verified",
-		ResourceType: "user",
-		ResourceID:   &target,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
+		OrganizationID: p.OrganizationID,
+		ActorUserID:    actorID,
+		ActorType:      actorType,
+		Action:         "mfa.webauthn_verified",
+		ResourceType:   "user",
+		ResourceID:     &target,
+		IP:             httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
+		RequestID:      httpx.RequestID(r),
 	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return

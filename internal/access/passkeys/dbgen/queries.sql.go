@@ -87,20 +87,20 @@ func (q *Queries) GetPasskeyCredentialsForCeremony(ctx context.Context, userID u
 }
 
 const getUserForWebAuthn = `-- name: GetUserForWebAuthn :one
-SELECT email, display_name, tenant_id FROM account.users
+SELECT email, display_name, organization_id FROM account.users
 WHERE id = $1 AND deleted_at IS NULL
 `
 
 type GetUserForWebAuthnRow struct {
-	Email       string
-	DisplayName *string
-	TenantID    pgtype.UUID
+	Email          string
+	DisplayName    *string
+	OrganizationID pgtype.UUID
 }
 
 func (q *Queries) GetUserForWebAuthn(ctx context.Context, id uuid.UUID) (GetUserForWebAuthnRow, error) {
 	row := q.db.QueryRow(ctx, getUserForWebAuthn, id)
 	var i GetUserForWebAuthnRow
-	err := row.Scan(&i.Email, &i.DisplayName, &i.TenantID)
+	err := row.Scan(&i.Email, &i.DisplayName, &i.OrganizationID)
 	return i, err
 }
 
@@ -152,18 +152,18 @@ func (q *Queries) InsertPasskeyCredential(ctx context.Context, arg InsertPasskey
 }
 
 const insertSignupWebAuthnSession = `-- name: InsertSignupWebAuthnSession :one
-INSERT INTO auth.webauthn_sessions (kind, data, expires_at, subject_id, pending_email, pending_display_name, pending_tenant_id, pending_invite_id)
+INSERT INTO auth.webauthn_sessions (kind, data, expires_at, subject_id, pending_email, pending_display_name, pending_organization_id, pending_invite_id)
 VALUES ('signup', $1, $2, $3, $4, $5, $6, $7) RETURNING id
 `
 
 type InsertSignupWebAuthnSessionParams struct {
-	Data               []byte
-	ExpiresAt          time.Time
-	SubjectID          pgtype.UUID
-	PendingEmail       *string
-	PendingDisplayName *string
-	PendingTenantID    pgtype.UUID
-	InviteID           pgtype.UUID
+	Data                  []byte
+	ExpiresAt             time.Time
+	SubjectID             pgtype.UUID
+	PendingEmail          *string
+	PendingDisplayName    *string
+	PendingOrganizationID pgtype.UUID
+	InviteID              pgtype.UUID
 }
 
 // InsertSignupWebAuthnSession stores a pending passkey sign-up; invite_id names
@@ -175,7 +175,7 @@ func (q *Queries) InsertSignupWebAuthnSession(ctx context.Context, arg InsertSig
 		arg.SubjectID,
 		arg.PendingEmail,
 		arg.PendingDisplayName,
-		arg.PendingTenantID,
+		arg.PendingOrganizationID,
 		arg.InviteID,
 	)
 	var id uuid.UUID
@@ -184,16 +184,16 @@ func (q *Queries) InsertSignupWebAuthnSession(ctx context.Context, arg InsertSig
 }
 
 const insertUserFromSignup = `-- name: InsertUserFromSignup :one
-INSERT INTO account.users (id, tenant_id, email, display_name)
+INSERT INTO account.users (id, organization_id, email, display_name)
 VALUES ($1, $2, $3, $4)
 RETURNING id
 `
 
 type InsertUserFromSignupParams struct {
-	ID          uuid.UUID
-	TenantID    pgtype.UUID
-	Email       string
-	DisplayName *string
+	ID             uuid.UUID
+	OrganizationID pgtype.UUID
+	Email          string
+	DisplayName    *string
 }
 
 // The id is the WebAuthn user ID the signup passkey was registered under: the
@@ -201,7 +201,7 @@ type InsertUserFromSignupParams struct {
 func (q *Queries) InsertUserFromSignup(ctx context.Context, arg InsertUserFromSignupParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, insertUserFromSignup,
 		arg.ID,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Email,
 		arg.DisplayName,
 	)
@@ -337,18 +337,18 @@ func (q *Queries) RenamePasskeyCredential(ctx context.Context, arg RenamePasskey
 const takeSignupWebAuthnSession = `-- name: TakeSignupWebAuthnSession :one
 
 DELETE FROM auth.webauthn_sessions WHERE id = $1
-RETURNING kind, data, expires_at, subject_id, pending_email, pending_display_name, pending_tenant_id, pending_invite_id
+RETURNING kind, data, expires_at, subject_id, pending_email, pending_display_name, pending_organization_id, pending_invite_id
 `
 
 type TakeSignupWebAuthnSessionRow struct {
-	Kind               string
-	Data               []byte
-	ExpiresAt          time.Time
-	SubjectID          pgtype.UUID
-	PendingEmail       *string
-	PendingDisplayName *string
-	PendingTenantID    pgtype.UUID
-	PendingInviteID    pgtype.UUID
+	Kind                  string
+	Data                  []byte
+	ExpiresAt             time.Time
+	SubjectID             pgtype.UUID
+	PendingEmail          *string
+	PendingDisplayName    *string
+	PendingOrganizationID pgtype.UUID
+	PendingInviteID       pgtype.UUID
 }
 
 // TakeSignupWebAuthnSession atomically removes a signup session and returns its data.
@@ -362,7 +362,7 @@ func (q *Queries) TakeSignupWebAuthnSession(ctx context.Context, id uuid.UUID) (
 		&i.SubjectID,
 		&i.PendingEmail,
 		&i.PendingDisplayName,
-		&i.PendingTenantID,
+		&i.PendingOrganizationID,
 		&i.PendingInviteID,
 	)
 	return i, err

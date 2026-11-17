@@ -7,9 +7,9 @@
 -- InsertUser is the user-row half of CreateWithCredential; the cross-context
 -- password credential is inserted by InsertPasswordCredential on the same tx.
 -- name: InsertUser :one
-INSERT INTO account.users (tenant_id, email, phone, display_name, metadata)
+INSERT INTO account.users (organization_id, email, phone, display_name, metadata)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, tenant_id, email, email_verified_at, phone, phone_verified_at,
+RETURNING id, organization_id, email, email_verified_at, phone, phone_verified_at,
           display_name, status, metadata, created_at, updated_at;
 
 -- InsertPasswordCredential is the password-credential half of CreateWithCredential.
@@ -21,25 +21,25 @@ VALUES ($1, $2);
 -- GetUserByID fetches the full user row including avatar_url (read by the
 -- profile / header paths that want to render the avatar).
 -- name: GetUserByID :one
-SELECT id, tenant_id, email, email_verified_at, phone, phone_verified_at,
+SELECT id, organization_id, email, email_verified_at, phone, phone_verified_at,
        display_name, status, metadata, created_at, updated_at, avatar_url
 FROM account.users WHERE id = $1 AND deleted_at IS NULL;
 
 -- name: GetUserByEmail :one
-SELECT id, tenant_id, email, email_verified_at, phone, phone_verified_at,
+SELECT id, organization_id, email, email_verified_at, phone, phone_verified_at,
        display_name, status, metadata, created_at, updated_at
 FROM account.users
-WHERE tenant_id = $1 AND LOWER(email) = LOWER($2) AND deleted_at IS NULL;
+WHERE organization_id = $1 AND LOWER(email) = LOWER($2) AND deleted_at IS NULL;
 
--- GetUserByEmailGlobal looks up a user by email across all tenants (email is
+-- GetUserByEmailGlobal looks up a user by email across all organizations (email is
 -- globally unique since migration 0022).
 -- name: GetUserByEmailGlobal :one
-SELECT id, tenant_id, email, email_verified_at, phone, phone_verified_at,
+SELECT id, organization_id, email, email_verified_at, phone, phone_verified_at,
        display_name, status, metadata, created_at, updated_at
 FROM account.users
 WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL;
 
--- ListUsersByTenant and ListUsersByTenantAfter are left hand-written in
+-- ListUsersByOrganization and ListUsersByOrganizationAfter are left hand-written in
 -- repository.go because the COALESCE(array_agg(...), '{}'::text[]) expression
 -- causes sqlc to infer Roles as interface{}, making the generated scan
 -- unusable. Those two methods continue to use pool.Query with the original SQL.
@@ -59,11 +59,11 @@ WHERE id = @id AND deleted_at IS NULL
 RETURNING id, deleted_at, deleted_by;
 
 -- name: ListDeletedUsers :many
--- The tenant's deleted users, newest deletion first, after the cursor's
+-- The organization's deleted users, newest deletion first, after the cursor's
 -- (deleted_at, id) when before_ts is set.
 SELECT id, email, display_name, deleted_at, created_at, deleted_by
 FROM account.users
-WHERE tenant_id = @tenant_id AND deleted_at IS NOT NULL
+WHERE organization_id = @organization_id AND deleted_at IS NOT NULL
   AND (sqlc.narg('before_ts')::timestamptz IS NULL OR deleted_at < sqlc.narg('before_ts')
        OR (deleted_at = sqlc.narg('before_ts') AND id < sqlc.narg('before_id')::uuid))
 ORDER BY deleted_at DESC, id DESC
@@ -92,7 +92,7 @@ ON CONFLICT (user_id) DO UPDATE SET password_hash = EXCLUDED.password_hash, upda
 
 -- ── User 360 admin reads ──────────────────────────────────────────────────────
 -- These power the console's per-user "identity investigation" workspace. They
--- read cross-schema (auth/rbac/tenant) but are fixed SQL, so they live in the
+-- read cross-schema (auth/rbac/organization) but are fixed SQL, so they live in the
 -- users package's sqlc set (whose schema path is the shared migrations dir).
 -- Every aggregate / correlated subquery is explicitly cast so sqlc infers a
 -- concrete Go type instead of interface{} (see the array_agg note above).
@@ -103,7 +103,7 @@ ON CONFLICT (user_id) DO UPDATE SET password_hash = EXCLUDED.password_hash, upda
 -- boolean signals live here so sqlc types them concretely; the two nullable
 -- timestamps (password last-changed, passkey last-used) are fetched by the
 -- dedicated :one queries below, where an absent row cleanly means "never".
--- Sessions are counted as ListUserActiveSessions lists them for @tenant_id.
+-- Sessions are counted as ListUserActiveSessions lists them for @organization_id.
 -- name: GetUserSecuritySummary :one
 SELECT
   u.mfa_required::boolean AS mfa_required,
@@ -115,10 +115,10 @@ SELECT
   EXISTS(SELECT 1 FROM auth.password_credentials pc WHERE pc.user_id = u.id)::boolean AS password_set,
   (SELECT count(*) FROM auth.sessions s WHERE s.user_id = u.id AND s.revoked_at IS NULL
      AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
-     AND (s.tenant_id = @tenant_id::uuid OR (s.tenant_id IS NULL AND u.tenant_id = @tenant_id::uuid)))::int AS active_sessions,
+     AND (s.organization_id = @organization_id::uuid OR (s.organization_id IS NULL AND u.organization_id = @organization_id::uuid)))::int AS active_sessions,
   (SELECT count(DISTINCT s.user_agent) FROM auth.sessions s WHERE s.user_id = u.id AND s.revoked_at IS NULL
      AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
-     AND (s.tenant_id = @tenant_id::uuid OR (s.tenant_id IS NULL AND u.tenant_id = @tenant_id::uuid)))::int AS distinct_devices
+     AND (s.organization_id = @organization_id::uuid OR (s.organization_id IS NULL AND u.organization_id = @organization_id::uuid)))::int AS distinct_devices
 FROM account.users u
 WHERE u.id = @id AND u.deleted_at IS NULL;
 
@@ -136,9 +136,9 @@ WHERE user_id = $1 AND last_used_at IS NOT NULL
 ORDER BY last_used_at DESC
 LIMIT 1;
 
--- ListUserActiveSessions lists a user's live sessions in @tenant_id (most
+-- ListUserActiveSessions lists a user's live sessions in @organization_id (most
 -- recently seen first): not revoked and not past their maximum age or idle
--- timeout. Sessions in no tenant belong to the account, so only its home tenant
+-- timeout. Sessions in no organization belong to the account, so only its home organization
 -- sees them. ip goes through host() and COALESCE to scan as a plain string.
 -- name: ListUserActiveSessions :many
 -- At most paging.MaxListItems+1 rows: the API truncates the rest.
@@ -148,48 +148,46 @@ FROM auth.sessions s
 JOIN account.users u ON u.id = s.user_id
 WHERE s.user_id = @user_id AND s.revoked_at IS NULL
   AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
-  AND (s.tenant_id = @tenant_id::uuid OR (s.tenant_id IS NULL AND u.tenant_id = @tenant_id::uuid))
+  AND (s.organization_id = @organization_id::uuid OR (s.organization_id IS NULL AND u.organization_id = @organization_id::uuid))
 ORDER BY s.last_seen_at DESC
 LIMIT 1001;
 
--- ListUserRolesInTenant returns the roles directly assigned to a user within a
--- tenant (group-inherited roles are reflected in effective permissions elsewhere).
--- name: ListUserRolesInTenant :many
+-- ListUserRolesInOrganization returns the roles directly assigned to a user within a
+-- organization (group-inherited roles are reflected in effective permissions elsewhere).
+-- name: ListUserRolesInOrganization :many
 SELECT ro.id, ro.name, ro.description
 FROM rbac.user_roles ur
 JOIN rbac.roles ro ON ro.id = ur.role_id
-WHERE ur.user_id = $1 AND ur.tenant_id = $2
+WHERE ur.user_id = $1 AND ur.organization_id = $2
 ORDER BY ro.name;
 
--- ListUserGroupsInTenant returns the groups a user belongs to within a tenant.
--- name: ListUserGroupsInTenant :many
+-- ListUserGroupsInOrganization returns the groups a user belongs to within an organization.
+-- name: ListUserGroupsInOrganization :many
 SELECT g.id, g.name, g.description
-FROM tenant.group_members gm
-JOIN tenant.groups g ON g.id = gm.group_id
-WHERE gm.user_id = $1 AND gm.tenant_id = $2
+FROM organization.group_members gm
+JOIN organization.groups g ON g.id = gm.group_id
+WHERE gm.user_id = $1 AND gm.organization_id = $2
 ORDER BY g.name;
 
--- GetUserOrganization returns the tenant (a.k.a. organization) a user belongs to.
--- Each user belongs to exactly one tenant (users.tenant_id is NOT NULL).
 -- GetAccessOrganization is the organization an access view is about: the one
 -- the admin is viewing the user from, never the user's home elsewhere.
 -- name: GetAccessOrganization :one
-SELECT id, name, slug FROM tenant.tenants WHERE id = $1;
+SELECT id, name, slug FROM organization.organizations WHERE id = $1;
 
 -- CountUserApplications counts the OIDC applications a user has consented to,
--- scoped to the applications registered in the given tenant.
+-- scoped to the applications registered in the given organization.
 -- name: CountUserApplications :one
 SELECT count(*)::int AS applications
 FROM auth.oidc_consents c
 JOIN auth.oidc_clients oc ON oc.client_id = c.client_id
-WHERE c.user_id = $1 AND oc.tenant_id = $2;
+WHERE c.user_id = $1 AND oc.organization_id = $2;
 
--- CountTenantEnabledPolicies counts the tenant's enabled ABAC policies — the
+-- CountOrganizationEnabledPolicies counts the organization's enabled ABAC policies — the
 -- access rules that can apply to any member, including this user.
--- name: CountTenantEnabledPolicies :one
+-- name: CountOrganizationEnabledPolicies :one
 SELECT count(*)::int AS policies
 FROM auth.abac_policies
-WHERE tenant_id = $1 AND enabled = TRUE;
+WHERE organization_id = $1 AND enabled = TRUE;
 
 -- CountUserDirectPermissions counts the distinct permissions a user holds via
 -- directly-assigned roles (rbac.user_roles) — the "direct" half of the split.
@@ -198,7 +196,7 @@ SELECT count(DISTINCT p.key)::int AS direct
 FROM rbac.user_roles ur
 JOIN rbac.role_permissions rp ON rp.role_id = ur.role_id
 JOIN rbac.permissions p ON p.id = rp.permission_id
-WHERE ur.user_id = $1 AND ur.tenant_id = $2;
+WHERE ur.user_id = $1 AND ur.organization_id = $2;
 
 -- CountUserEffectivePermissions counts the distinct effective permissions — the
 -- union of directly-assigned roles and group-inherited roles. Mirrors the RBAC
@@ -209,14 +207,14 @@ SELECT count(*)::int AS effective FROM (
   FROM rbac.user_roles ur
   JOIN rbac.role_permissions rp ON rp.role_id = ur.role_id
   JOIN rbac.permissions p ON p.id = rp.permission_id
-  WHERE ur.user_id = $1 AND ur.tenant_id = $2
+  WHERE ur.user_id = $1 AND ur.organization_id = $2
   UNION
   SELECT p.key
-  FROM tenant.group_members gm
-  JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+  FROM organization.group_members gm
+  JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.organization_id = gm.organization_id
   JOIN rbac.role_permissions rp ON rp.role_id = gr.role_id
   JOIN rbac.permissions p ON p.id = rp.permission_id
-  WHERE gm.user_id = $1 AND gm.tenant_id = $2
+  WHERE gm.user_id = $1 AND gm.organization_id = $2
 ) eff;
 
 -- SetUserMfaRequired flips the users.mfa_required policy flag for a user. Returns
@@ -226,7 +224,7 @@ UPDATE account.users
 SET mfa_required = $2, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL;
 
--- GetUserStats returns the tenant-wide member counts for the Users admin summary
+-- GetUserStats returns the organization-wide member counts for the Users admin summary
 -- strip: total, active, suspended, invited, and MFA enabled/missing. Membership
 -- is defined the same way the list is (home users and role holders), and "MFA
 -- enabled" matches the list's OR-logic (confirmed TOTP / verified OTP /
@@ -236,8 +234,8 @@ WITH members AS (
   SELECT u.id, u.status, u.created_at
   FROM account.users u
   WHERE u.deleted_at IS NULL
-    AND u.id IN (SELECT h.id FROM account.users h WHERE h.tenant_id = $1::uuid AND h.deleted_at IS NULL
-                 UNION SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.tenant_id = $1)
+    AND u.id IN (SELECT h.id FROM account.users h WHERE h.organization_id = $1::uuid AND h.deleted_at IS NULL
+                 UNION SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.organization_id = $1)
 ),
 mfa AS (
   SELECT m.id,
@@ -280,8 +278,8 @@ members AS (
      ) e) AS mfa_at
   FROM account.users u
   WHERE u.deleted_at IS NULL
-    AND u.id IN (SELECT h.id FROM account.users h WHERE h.tenant_id = $1::uuid AND h.deleted_at IS NULL
-                 UNION SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.tenant_id = $1)
+    AND u.id IN (SELECT h.id FROM account.users h WHERE h.organization_id = $1::uuid AND h.deleted_at IS NULL
+                 UNION SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.organization_id = $1)
 )
 SELECT
   (SELECT count(*) FROM members m WHERE m.created_at < days.day + interval '1 day')::int AS total,
@@ -289,38 +287,38 @@ SELECT
 FROM days
 ORDER BY days.day;
 
--- GetUserStandingIn is how a user relates to a tenant: whether the tenant is
+-- GetUserStandingIn is how a user relates to an organization: whether the organization is
 -- their home, the one that manages the account, and whether they hold one of
--- its roles. A user who is neither isn't the tenant's to see. Soft-deleted
--- users are included so the home tenant can restore or purge them.
+-- its roles. A user who is neither isn't the organization's to see. Soft-deleted
+-- users are included so the home organization can restore or purge them.
 -- name: GetUserStandingIn :one
-SELECT COALESCE(u.tenant_id = @tenant_id::uuid, false)::boolean AS home,
+SELECT COALESCE(u.organization_id = @organization_id::uuid, false)::boolean AS home,
        EXISTS (
            SELECT 1 FROM rbac.user_roles membership
            JOIN rbac.roles member_role
-             ON member_role.id = membership.role_id AND member_role.tenant_id = membership.tenant_id
-           WHERE membership.user_id = u.id AND membership.tenant_id = @tenant_id::uuid
+             ON member_role.id = membership.role_id AND member_role.organization_id = membership.organization_id
+           WHERE membership.user_id = u.id AND membership.organization_id = @organization_id::uuid
        )::boolean AS member
 FROM account.users u
 WHERE u.id = @id;
 
--- The writes that remove a member from one tenant, leaving their account and
--- every other tenant alone: their roles and groups there, and the application
+-- The writes that remove a member from one organization, leaving their account and
+-- every other organization alone: their roles and groups there, and the application
 -- grants and API keys they hold there.
 
--- name: RemoveUserRolesInTenant :execrows
-DELETE FROM rbac.user_roles WHERE user_id = @user_id AND tenant_id = @tenant_id;
+-- name: RemoveUserRolesInOrganization :execrows
+DELETE FROM rbac.user_roles WHERE user_id = @user_id AND organization_id = @organization_id;
 
--- name: RemoveUserGroupsInTenant :exec
-DELETE FROM tenant.group_members WHERE user_id = @user_id AND tenant_id = @tenant_id;
+-- name: RemoveUserGroupsInOrganization :exec
+DELETE FROM organization.group_members WHERE user_id = @user_id AND organization_id = @organization_id;
 
--- name: RevokeUserAppGrantsInTenant :exec
+-- name: RevokeUserAppGrantsInOrganization :exec
 UPDATE auth.oidc_refresh_tokens SET revoked_at = NOW()
-WHERE user_id = @user_id AND tenant_id = @tenant_id AND revoked_at IS NULL;
+WHERE user_id = @user_id AND organization_id = @organization_id AND revoked_at IS NULL;
 
--- name: RevokeUserAPIKeysInTenant :exec
+-- name: RevokeUserAPIKeysInOrganization :exec
 UPDATE auth.api_keys SET revoked_at = NOW()
-WHERE user_id = @user_id AND tenant_id = @tenant_id AND revoked_at IS NULL;
+WHERE user_id = @user_id AND organization_id = @organization_id AND revoked_at IS NULL;
 
 -- name: ListUserPasskeys :many
 SELECT id, name, created_at, last_used_at
@@ -332,45 +330,45 @@ ORDER BY created_at;
 DELETE FROM auth.passkey_credentials WHERE id = @id AND user_id = @user_id
 RETURNING name;
 
--- EndMemberSession ends one of a person's live sessions in the tenant, as
--- ListUserActiveSessions shows them, and returns its organisation for the
+-- EndMemberSession ends one of a person's live sessions in the organization, as
+-- ListUserActiveSessions shows them, and returns its organization for the
 -- session.revoked signal (the nil UUID for none). No row: it isn't theirs
 -- there, or has already ended.
 -- name: EndMemberSession :one
 UPDATE auth.sessions s SET revoked_at = NOW()
 WHERE s.id = @id AND s.user_id = @user_id AND s.revoked_at IS NULL
   AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
-  AND (s.tenant_id = @tenant_id::uuid
-       OR (s.tenant_id IS NULL AND EXISTS (SELECT 1 FROM account.users u WHERE u.id = s.user_id AND u.tenant_id = @tenant_id::uuid)))
-RETURNING COALESCE(s.tenant_id, '00000000-0000-0000-0000-000000000000'::uuid)::uuid AS tenant_id;
+  AND (s.organization_id = @organization_id::uuid
+       OR (s.organization_id IS NULL AND EXISTS (SELECT 1 FROM account.users u WHERE u.id = s.user_id AND u.organization_id = @organization_id::uuid)))
+RETURNING COALESCE(s.organization_id, '00000000-0000-0000-0000-000000000000'::uuid)::uuid AS organization_id;
 
 -- ---- Offboarding ----
 
 -- IntegrationsCreatedBy lists the integrations user_id created in the
--- organisation that still work: service principals, SCIM tokens, webhooks,
+-- organization that still work: service principals, SCIM tokens, webhooks,
 -- auth hooks and OpenID Connect applications.
 -- name: IntegrationsCreatedBy :many
 SELECT 'service_principal'::text AS kind, sp.id, sp.name FROM auth.service_principals sp
-WHERE sp.tenant_id = @tenant_id AND sp.created_by = @user_id::uuid AND sp.disabled_at IS NULL
+WHERE sp.organization_id = @organization_id AND sp.created_by = @user_id::uuid AND sp.disabled_at IS NULL
 UNION ALL
-SELECT 'scim_token', st.id, st.name FROM tenant.scim_tokens st
-WHERE st.tenant_id = @tenant_id AND st.created_by = @user_id::uuid AND st.revoked_at IS NULL
+SELECT 'scim_token', st.id, st.name FROM organization.scim_tokens st
+WHERE st.organization_id = @organization_id AND st.created_by = @user_id::uuid AND st.revoked_at IS NULL
   AND (st.expires_at IS NULL OR st.expires_at > NOW())
 UNION ALL
-SELECT 'webhook', ws.id, ws.url FROM tenant.webhook_subscriptions ws
-WHERE ws.tenant_id = @tenant_id AND ws.created_by = @user_id::uuid AND ws.disabled_at IS NULL
+SELECT 'webhook', ws.id, ws.url FROM organization.webhook_subscriptions ws
+WHERE ws.organization_id = @organization_id AND ws.created_by = @user_id::uuid AND ws.disabled_at IS NULL
 UNION ALL
-SELECT 'auth_hook', ah.id, ah.url FROM tenant.auth_hooks ah
-WHERE ah.tenant_id = @tenant_id AND ah.created_by = @user_id::uuid
+SELECT 'auth_hook', ah.id, ah.url FROM organization.auth_hooks ah
+WHERE ah.organization_id = @organization_id AND ah.created_by = @user_id::uuid
 UNION ALL
 SELECT 'oidc_client', oc.id, oc.name FROM auth.oidc_clients oc
-WHERE oc.tenant_id = @tenant_id AND oc.created_by = @user_id::uuid
+WHERE oc.organization_id = @organization_id AND oc.created_by = @user_id::uuid
 ORDER BY 1, 3;
 
 -- name: RevokeAdminPortalLinksCreatedBy :execrows
-UPDATE tenant.admin_portal_links SET revoked_at = NOW()
-WHERE tenant_id = @tenant_id AND created_by = @user_id::uuid AND revoked_at IS NULL AND expires_at > NOW();
+UPDATE organization.admin_portal_links SET revoked_at = NOW()
+WHERE organization_id = @organization_id AND created_by = @user_id::uuid AND revoked_at IS NULL AND expires_at > NOW();
 
 -- name: RevokeInvitesSentBy :execrows
-UPDATE tenant.invites SET status = 'revoked'
-WHERE tenant_id = @tenant_id AND invited_by = @user_id::uuid AND status = 'pending';
+UPDATE organization.invites SET status = 'revoked'
+WHERE organization_id = @organization_id AND invited_by = @user_id::uuid AND status = 'pending';

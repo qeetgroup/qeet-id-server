@@ -14,13 +14,13 @@ import (
 )
 
 const createSecret = `-- name: CreateSecret :one
-INSERT INTO tenant.secrets (tenant_id, name, scope, ciphertext, nonce, last4, rotation_interval_days)
+INSERT INTO organization.secrets (organization_id, name, scope, ciphertext, nonce, last4, rotation_interval_days)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING id
 `
 
 type CreateSecretParams struct {
-	TenantID             uuid.UUID
+	OrganizationID       uuid.UUID
 	Name                 string
 	Scope                string
 	Ciphertext           []byte
@@ -31,7 +31,7 @@ type CreateSecretParams struct {
 
 func (q *Queries) CreateSecret(ctx context.Context, arg CreateSecretParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, createSecret,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Name,
 		arg.Scope,
 		arg.Ciphertext,
@@ -45,16 +45,16 @@ func (q *Queries) CreateSecret(ctx context.Context, arg CreateSecretParams) (uui
 }
 
 const deleteSecret = `-- name: DeleteSecret :execrows
-DELETE FROM tenant.secrets WHERE id = $1 AND tenant_id = $2
+DELETE FROM organization.secrets WHERE id = $1 AND organization_id = $2
 `
 
 type DeleteSecretParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) DeleteSecret(ctx context.Context, arg DeleteSecretParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteSecret, arg.ID, arg.TenantID)
+	result, err := q.db.Exec(ctx, deleteSecret, arg.ID, arg.OrganizationID)
 	if err != nil {
 		return 0, err
 	}
@@ -66,14 +66,14 @@ SELECT s.id, s.name, s.scope, s.last4, s.created_at, s.updated_at,
        s.last_revealed_at, s.last_revealed_by, s.last_revealed_credential,
        u.email AS revealed_by_email, u.display_name AS revealed_by_name,
        s.value_changed_at, s.rotation_interval_days
-FROM tenant.secrets s
+FROM organization.secrets s
 LEFT JOIN account.users u ON u.id = s.last_revealed_by
-WHERE s.id = $1 AND s.tenant_id = $2
+WHERE s.id = $1 AND s.organization_id = $2
 `
 
 type GetSecretParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type GetSecretRow struct {
@@ -93,7 +93,7 @@ type GetSecretRow struct {
 }
 
 func (q *Queries) GetSecret(ctx context.Context, arg GetSecretParams) (GetSecretRow, error) {
-	row := q.db.QueryRow(ctx, getSecret, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, getSecret, arg.ID, arg.OrganizationID)
 	var i GetSecretRow
 	err := row.Scan(
 		&i.ID,
@@ -114,12 +114,12 @@ func (q *Queries) GetSecret(ctx context.Context, arg GetSecretParams) (GetSecret
 }
 
 const getSecretByName = `-- name: GetSecretByName :one
-SELECT id, ciphertext, nonce FROM tenant.secrets WHERE tenant_id = $1 AND name = $2
+SELECT id, ciphertext, nonce FROM organization.secrets WHERE organization_id = $1 AND name = $2
 `
 
 type GetSecretByNameParams struct {
-	TenantID uuid.UUID
-	Name     string
+	OrganizationID uuid.UUID
+	Name           string
 }
 
 type GetSecretByNameRow struct {
@@ -129,7 +129,7 @@ type GetSecretByNameRow struct {
 }
 
 func (q *Queries) GetSecretByName(ctx context.Context, arg GetSecretByNameParams) (GetSecretByNameRow, error) {
-	row := q.db.QueryRow(ctx, getSecretByName, arg.TenantID, arg.Name)
+	row := q.db.QueryRow(ctx, getSecretByName, arg.OrganizationID, arg.Name)
 	var i GetSecretByNameRow
 	err := row.Scan(&i.ID, &i.Ciphertext, &i.Nonce)
 	return i, err
@@ -141,9 +141,9 @@ SELECT s.id, s.name, s.scope, s.last4, s.created_at, s.updated_at,
        s.last_revealed_at, s.last_revealed_by, s.last_revealed_credential,
        u.email AS revealed_by_email, u.display_name AS revealed_by_name,
        s.value_changed_at, s.rotation_interval_days
-FROM tenant.secrets s
+FROM organization.secrets s
 LEFT JOIN account.users u ON u.id = s.last_revealed_by
-WHERE s.tenant_id = $1
+WHERE s.organization_id = $1
 ORDER BY s.created_at DESC
 LIMIT 1001
 `
@@ -164,13 +164,13 @@ type ListSecretsRow struct {
 	RotationIntervalDays   *int32
 }
 
-// Per-tenant secrets vault (table tenant.secrets, migration 0039_secrets).
+// Per-organization secrets vault (table organization.secrets, migration 0039_secrets).
 // Values are stored encrypted at rest (AES-256-GCM); plaintext is only ever
 // returned via RevealSecret / GetSecretByName and always audited by the caller.
 // At most paging.MaxListItems+1 rows: the API truncates the rest. GetSecret
 // returns the same columns, so its row converts to this one.
-func (q *Queries) ListSecrets(ctx context.Context, tenantID uuid.UUID) ([]ListSecretsRow, error) {
-	rows, err := q.db.Query(ctx, listSecrets, tenantID)
+func (q *Queries) ListSecrets(ctx context.Context, organizationID uuid.UUID) ([]ListSecretsRow, error) {
+	rows, err := q.db.Query(ctx, listSecrets, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -204,17 +204,17 @@ func (q *Queries) ListSecrets(ctx context.Context, tenantID uuid.UUID) ([]ListSe
 }
 
 const markSecretRevealed = `-- name: MarkSecretRevealed :exec
-UPDATE tenant.secrets
+UPDATE organization.secrets
 SET last_revealed_at = NOW(), last_revealed_by = $1,
     last_revealed_credential = $2
-WHERE id = $3 AND tenant_id = $4
+WHERE id = $3 AND organization_id = $4
 `
 
 type MarkSecretRevealedParams struct {
-	UserID     pgtype.UUID
-	Credential *string
-	ID         uuid.UUID
-	TenantID   uuid.UUID
+	UserID         pgtype.UUID
+	Credential     *string
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 // Records who revealed the secret: a person, or a machine credential by its id.
@@ -223,18 +223,18 @@ func (q *Queries) MarkSecretRevealed(ctx context.Context, arg MarkSecretRevealed
 		arg.UserID,
 		arg.Credential,
 		arg.ID,
-		arg.TenantID,
+		arg.OrganizationID,
 	)
 	return err
 }
 
 const revealSecret = `-- name: RevealSecret :one
-SELECT name, ciphertext, nonce FROM tenant.secrets WHERE id = $1 AND tenant_id = $2
+SELECT name, ciphertext, nonce FROM organization.secrets WHERE id = $1 AND organization_id = $2
 `
 
 type RevealSecretParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type RevealSecretRow struct {
@@ -244,7 +244,7 @@ type RevealSecretRow struct {
 }
 
 func (q *Queries) RevealSecret(ctx context.Context, arg RevealSecretParams) (RevealSecretRow, error) {
-	row := q.db.QueryRow(ctx, revealSecret, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, revealSecret, arg.ID, arg.OrganizationID)
 	var i RevealSecretRow
 	err := row.Scan(&i.Name, &i.Ciphertext, &i.Nonce)
 	return i, err

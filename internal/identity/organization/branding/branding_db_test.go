@@ -26,18 +26,18 @@ type planGate struct{ on bool }
 func (g *planGate) FeatureAllowed(context.Context, uuid.UUID, string) (bool, error) { return g.on, nil }
 
 // TestBrandingFollowsThePlan checks that the hosted pages and emails show an
-// organisation's branding only while its plan includes custom branding, and
+// organization's branding only while its plan includes custom branding, and
 // that the stored branding comes back on an upgrade.
 func TestBrandingFollowsThePlan(t *testing.T) {
 	ctx := dbtest.Context(t)
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	repo := NewRepository(dbtest.Pool(t))
 	logo, primary, name := "https://cdn.example.test/acme.png", "#112233", "Acme"
 	tx, err := dbtest.Pool(t).Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.Upsert(ctx, tx, Branding{TenantID: tenant, LogoURL: &logo, PrimaryColor: &primary, EmailFromName: &name}); err != nil {
+	if err := repo.Upsert(ctx, tx, Branding{OrganizationID: organization, LogoURL: &logo, PrimaryColor: &primary, EmailFromName: &name}); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -46,18 +46,18 @@ func TestBrandingFollowsThePlan(t *testing.T) {
 
 	gate := &planGate{on: true}
 	repo.SetPlanGate(gate)
-	if l, p, _, _ := repo.LoginBranding(ctx, tenant); l != logo || p != primary {
+	if l, p, _, _ := repo.LoginBranding(ctx, organization); l != logo || p != primary {
 		t.Errorf("on a plan with branding the hosted pages get %q %q, want the stored logo and colour", l, p)
 	}
 	gate.on = false
-	if l, p, s, b := repo.LoginBranding(ctx, tenant); l != "" || p != "" || s != "" || b != "" {
+	if l, p, s, b := repo.LoginBranding(ctx, organization); l != "" || p != "" || s != "" || b != "" {
 		t.Errorf("without custom_branding the hosted pages get %q %q %q %q, want the default look", l, p, s, b)
 	}
-	if n, l, p, err := repo.EmailAppearance(ctx, tenant); err != nil || n != "" || l != "" || p != "" {
+	if n, l, p, err := repo.EmailAppearance(ctx, organization); err != nil || n != "" || l != "" || p != "" {
 		t.Errorf("without custom_branding emails get %q %q %q (%v), want the default look", n, l, p, err)
 	}
 	gate.on = true
-	if n, l, _, err := repo.EmailAppearance(ctx, tenant); err != nil || n != name || l != logo {
+	if n, l, _, err := repo.EmailAppearance(ctx, organization); err != nil || n != name || l != logo {
 		t.Errorf("after an upgrade emails get %q %q (%v), want the stored branding back", n, l, err)
 	}
 }
@@ -67,7 +67,7 @@ func TestBrandingFollowsThePlan(t *testing.T) {
 // the link serves the image safely, and that a logo set by URL is left as is.
 func TestUploadedLogoIsServedForEmailsAndHostedPages(t *testing.T) {
 	ctx := dbtest.Context(t)
-	tenant, linked := dbtest.Tenant(t), dbtest.Tenant(t)
+	organization, linked := dbtest.Organization(t), dbtest.Organization(t)
 	repo := NewRepository(dbtest.Pool(t))
 	repo.SetPublicBaseURL("https://api.example.test/")
 	gate := &planGate{on: true}
@@ -80,21 +80,21 @@ func TestUploadedLogoIsServedForEmailsAndHostedPages(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := repo.Upsert(ctx, tx, Branding{TenantID: id, LogoURL: &logo}); err != nil {
+		if err := repo.Upsert(ctx, tx, Branding{OrganizationID: id, LogoURL: &logo}); err != nil {
 			t.Fatal(err)
 		}
 		if err := tx.Commit(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
-	save(tenant, uploaded)
+	save(organization, uploaded)
 	save(linked, byURL)
 
-	want := "https://api.example.test/v1/branding/" + tenant.String() + "/logo?v="
-	if l, _, _, _ := repo.LoginBranding(ctx, tenant); !strings.HasPrefix(l, want) {
+	want := "https://api.example.test/v1/branding/" + organization.String() + "/logo?v="
+	if l, _, _, _ := repo.LoginBranding(ctx, organization); !strings.HasPrefix(l, want) {
 		t.Errorf("hosted pages get %q, want a link starting %q", l, want)
 	}
-	if _, l, _, _ := repo.EmailAppearance(ctx, tenant); !strings.HasPrefix(l, want) {
+	if _, l, _, _ := repo.EmailAppearance(ctx, organization); !strings.HasPrefix(l, want) {
 		t.Errorf("emails get %q, want a link starting %q", l, want)
 	}
 	if l, _, _, _ := repo.LoginBranding(ctx, linked); l != byURL {
@@ -108,7 +108,7 @@ func TestUploadedLogoIsServedForEmailsAndHostedPages(t *testing.T) {
 		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/branding/"+id.String()+"/logo?v=1", nil))
 		return rec
 	}
-	rec := get(tenant)
+	rec := get(organization)
 	if rec.Code != http.StatusOK || !bytes.Equal(rec.Body.Bytes(), png) || rec.Header().Get("Content-Type") != "image/png" {
 		t.Fatalf("the logo: %d %q %q, want the uploaded PNG", rec.Code, rec.Header().Get("Content-Type"), rec.Body.String())
 	}
@@ -119,7 +119,7 @@ func TestUploadedLogoIsServedForEmailsAndHostedPages(t *testing.T) {
 		t.Errorf("an organisation whose logo is a URL: %d, want 404", rec.Code)
 	}
 	gate.on = false
-	if rec := get(tenant); rec.Code != http.StatusNotFound {
+	if rec := get(organization); rec.Code != http.StatusNotFound {
 		t.Errorf("without custom_branding: %d, want 404", rec.Code)
 	}
 }
@@ -129,27 +129,27 @@ func TestUploadedLogoIsServedForEmailsAndHostedPages(t *testing.T) {
 // pages.
 func TestFromAddressIsNotKept(t *testing.T) {
 	ctx := dbtest.Context(t)
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	repo := NewRepository(dbtest.Pool(t))
 	from, accent := "noreply@acme.example", "#abcdef"
 	tx, err := dbtest.Pool(t).Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.Upsert(ctx, tx, Branding{TenantID: tenant, EmailFromAddress: &from, SecondaryColor: &accent}); err != nil {
+	if err := repo.Upsert(ctx, tx, Branding{OrganizationID: organization, EmailFromAddress: &from, SecondaryColor: &accent}); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	b, err := repo.Get(ctx, tenant)
+	b, err := repo.Get(ctx, organization)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if raw, _ := json.Marshal(b); b.EmailFromAddress != nil || strings.Contains(string(raw), "email_from_address") {
 		t.Errorf("branding %s; want no sender address kept or returned", raw)
 	}
-	if _, _, secondary, _ := repo.LoginBranding(ctx, tenant); secondary != accent {
+	if _, _, secondary, _ := repo.LoginBranding(ctx, organization); secondary != accent {
 		t.Errorf("the hosted pages get accent %q, want %q", secondary, accent)
 	}
 }

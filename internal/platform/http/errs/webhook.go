@@ -2,14 +2,14 @@ package errs
 
 // Webhook error codes.
 const (
-	CodeWebhookNotFound         = "webhook.not_found"
-	CodeWebhookDeliveryNotFound = "webhook.delivery_not_found"
-	CodeWebhookURLRequired      = "webhook.url_required"
-	CodeWebhookInvalidID        = "webhook.invalid_id"
-	CodeWebhookTenantMismatch   = "webhook.tenant_mismatch"
-	CodeWebhookEventsRequired   = "webhook.events_required"
-	CodeWebhookEventUnknown     = "webhook.event_unknown"
-	CodeWebhookURLNotAllowed    = "webhook.url_not_allowed"
+	CodeWebhookNotFound             = "webhook.not_found"
+	CodeWebhookDeliveryNotFound     = "webhook.delivery_not_found"
+	CodeWebhookURLRequired          = "webhook.url_required"
+	CodeWebhookInvalidID            = "webhook.invalid_id"
+	CodeWebhookOrganizationMismatch = "webhook.tenant_mismatch"
+	CodeWebhookEventsRequired       = "webhook.events_required"
+	CodeWebhookEventUnknown         = "webhook.event_unknown"
+	CodeWebhookURLNotAllowed        = "webhook.url_not_allowed"
 )
 
 // Webhook errors. The Message is what the end user sees — edit wording here, in
@@ -21,8 +21,8 @@ var (
 	ErrWebhookURLRequired      = New(CodeWebhookURLRequired, "Enter a URL for the webhook.")
 	ErrWebhookURLNotAllowed    = New(CodeWebhookURLNotAllowed,
 		"Webhooks can only be sent to a public https address, not a private, local or reserved one.")
-	ErrWebhookInvalidID      = New(CodeWebhookInvalidID, "That identifier isn't valid.")
-	ErrWebhookTenantMismatch = New(CodeWebhookTenantMismatch, "You can only manage webhooks in your own tenant.")
-	ErrWebhookEventsRequired = New(CodeWebhookEventsRequired, "Choose at least one event for the webhook.")
-	ErrWebhookEventUnknown   = New(CodeWebhookEventUnknown, "That isn't an event a webhook can receive.")
+	ErrWebhookInvalidID            = New(CodeWebhookInvalidID, "That identifier isn't valid.")
+	ErrWebhookOrganizationMismatch = New(CodeWebhookOrganizationMismatch, "You can only manage webhooks in your own tenant.")
+	ErrWebhookEventsRequired       = New(CodeWebhookEventsRequired, "Choose at least one event for the webhook.")
+	ErrWebhookEventUnknown         = New(CodeWebhookEventUnknown, "That isn't an event a webhook can receive.")
 )

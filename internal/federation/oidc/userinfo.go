@@ -81,7 +81,7 @@ func bearerChallenge(w http.ResponseWriter, code string) {
 	w.Header().Set("WWW-Authenticate", v)
 }
 
-// userinfo handles GET and POST /v1/oauth/userinfo, returning sub, the tenant
+// userinfo handles GET and POST /v1/oauth/userinfo, returning sub, the organization
 // and the standard claims the token's scopes grant. A token without openid gets
 // 403 insufficient_scope; a suspended or deleted account gets 401 invalid_token.
 func (h *Handler) userinfo(w http.ResponseWriter, r *http.Request) {
@@ -107,8 +107,8 @@ func (h *Handler) userinfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	claims["sub"] = p.UserID
-	if p.TenantID != nil {
-		claims["tenant_id"] = p.TenantID
+	if p.OrganizationID != nil {
+		claims["tenant_id"] = p.OrganizationID
 	}
 	httpx.WriteJSON(w, http.StatusOK, claims)
 }

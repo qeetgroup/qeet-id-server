@@ -35,13 +35,13 @@ type Handler struct {
 	PairingThrottle func(http.Handler) http.Handler
 	// ActOnCheck refuses an administrator changing the sign-in methods of a
 	// member who outranks them (rbac CheckActOn); nil refuses every change.
-	ActOnCheck func(ctx context.Context, caller *httpx.Principal, tenantID, targetID uuid.UUID) error
+	ActOnCheck func(ctx context.Context, caller *httpx.Principal, organizationID, targetID uuid.UUID) error
 }
 
 // PlanGate reports whether a plan-gated boolean feature is included in the
-// tenant's plan. Satisfied by operations/entitlements.Service.
+// organization's plan. Satisfied by operations/entitlements.Service.
 type PlanGate interface {
-	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
+	FeatureAllowed(ctx context.Context, organizationID uuid.UUID, feature string) (bool, error)
 }
 
 // Mount registers the second-factor routes on r.
@@ -129,18 +129,18 @@ func (h *Handler) startEnroll(w http.ResponseWriter, r *http.Request) {
 	}
 	actorID, actorType := audit.ActorOf(r).Identity()
 	target := *p.UserID
-	tenantID := p.TenantID
+	organizationID := p.OrganizationID
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     tenantID,
-		ActorUserID:  actorID,
-		ActorType:    actorType,
-		Action:       "mfa.totp_enroll_started",
-		ResourceType: "user",
-		ResourceID:   &target,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
-		Metadata:     map[string]any{"replacing": out.Replacing},
+		OrganizationID: organizationID,
+		ActorUserID:    actorID,
+		ActorType:      actorType,
+		Action:         "mfa.totp_enroll_started",
+		ResourceType:   "user",
+		ResourceID:     &target,
+		IP:             httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
+		RequestID:      httpx.RequestID(r),
+		Metadata:       map[string]any{"replacing": out.Replacing},
 	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -199,16 +199,16 @@ func (h *Handler) confirmEnroll(w http.ResponseWriter, r *http.Request) {
 	actorID, actorType := audit.ActorOf(r).Identity()
 	target := *p.UserID
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     p.TenantID,
-		ActorUserID:  actorID,
-		ActorType:    actorType,
-		Action:       "mfa.totp_enrolled",
-		ResourceType: "user",
-		ResourceID:   &target,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
-		Metadata:     map[string]any{"recovery_codes_minted": len(codes)},
+		OrganizationID: p.OrganizationID,
+		ActorUserID:    actorID,
+		ActorType:      actorType,
+		Action:         "mfa.totp_enrolled",
+		ResourceType:   "user",
+		ResourceID:     &target,
+		IP:             httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
+		RequestID:      httpx.RequestID(r),
+		Metadata:       map[string]any{"recovery_codes_minted": len(codes)},
 	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -279,16 +279,16 @@ func (h *Handler) verify(w http.ResponseWriter, r *http.Request) {
 			meta["recovery_code_id"] = *result.RecoveryCodeID
 		}
 		if err := audit.Record(ctx, tx, audit.Event{
-			TenantID:     p.TenantID,
-			ActorUserID:  actorID,
-			ActorType:    actorType,
-			Action:       "mfa.recovery_code_used",
-			ResourceType: "user",
-			ResourceID:   &target,
-			IP:           httpx.ClientIP(r),
-			UserAgent:    r.UserAgent(),
-			RequestID:    httpx.RequestID(r),
-			Metadata:     meta,
+			OrganizationID: p.OrganizationID,
+			ActorUserID:    actorID,
+			ActorType:      actorType,
+			Action:         "mfa.recovery_code_used",
+			ResourceType:   "user",
+			ResourceID:     &target,
+			IP:             httpx.ClientIP(r),
+			UserAgent:      r.UserAgent(),
+			RequestID:      httpx.RequestID(r),
+			Metadata:       meta,
 		}); err != nil {
 			httpx.WriteError(w, r, err)
 			return
@@ -321,15 +321,15 @@ func (h *Handler) disable(w http.ResponseWriter, r *http.Request) {
 	actorID, actorType := audit.ActorOf(r).Identity()
 	target := *p.UserID
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     p.TenantID,
-		ActorUserID:  actorID,
-		ActorType:    actorType,
-		Action:       "mfa.totp_disabled",
-		ResourceType: "user",
-		ResourceID:   &target,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
+		OrganizationID: p.OrganizationID,
+		ActorUserID:    actorID,
+		ActorType:      actorType,
+		Action:         "mfa.totp_disabled",
+		ResourceType:   "user",
+		ResourceID:     &target,
+		IP:             httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
+		RequestID:      httpx.RequestID(r),
 	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -392,16 +392,16 @@ func (h *Handler) regenerateRecovery(w http.ResponseWriter, r *http.Request) {
 	actorID, actorType := audit.ActorOf(r).Identity()
 	target := *p.UserID
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     p.TenantID,
-		ActorUserID:  actorID,
-		ActorType:    actorType,
-		Action:       "mfa.recovery_codes_regenerated",
-		ResourceType: "user",
-		ResourceID:   &target,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
-		Metadata:     map[string]any{"count": len(out)},
+		OrganizationID: p.OrganizationID,
+		ActorUserID:    actorID,
+		ActorType:      actorType,
+		Action:         "mfa.recovery_codes_regenerated",
+		ResourceType:   "user",
+		ResourceID:     &target,
+		IP:             httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
+		RequestID:      httpx.RequestID(r),
+		Metadata:       map[string]any{"count": len(out)},
 	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -449,8 +449,8 @@ func (h *Handler) enrollOTPStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// SMS is a paid factor: the service refuses it unless the caller's
-	// organisation's plan includes it (see SetPlan).
-	factorID, err := h.Service.EnrollOTPStart(r.Context(), *p.UserID, p.TenantID, in.Channel, in.Destination)
+	// organization's plan includes it (see SetPlan).
+	factorID, err := h.Service.EnrollOTPStart(r.Context(), *p.UserID, p.OrganizationID, in.Channel, in.Destination)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -495,15 +495,15 @@ func (h *Handler) enrollOTPConfirm(w http.ResponseWriter, r *http.Request) {
 	actorID, actorType := audit.ActorOf(r).Identity()
 	target := *p.UserID
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     p.TenantID,
-		ActorUserID:  actorID,
-		ActorType:    actorType,
-		Action:       "mfa.otp_factor_added",
-		ResourceType: "user",
-		ResourceID:   &target,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
+		OrganizationID: p.OrganizationID,
+		ActorUserID:    actorID,
+		ActorType:      actorType,
+		Action:         "mfa.otp_factor_added",
+		ResourceType:   "user",
+		ResourceID:     &target,
+		IP:             httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
+		RequestID:      httpx.RequestID(r),
 	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -528,7 +528,7 @@ func (h *Handler) challengeOTP(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	if err := h.Service.ChallengeOTP(r.Context(), *p.UserID, p.TenantID, factorID); err != nil {
+	if err := h.Service.ChallengeOTP(r.Context(), *p.UserID, p.OrganizationID, factorID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -560,15 +560,15 @@ func (h *Handler) deleteOTPFactor(w http.ResponseWriter, r *http.Request) {
 	actorID, actorType := audit.ActorOf(r).Identity()
 	target := *p.UserID
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     p.TenantID,
-		ActorUserID:  actorID,
-		ActorType:    actorType,
-		Action:       "mfa.otp_factor_removed",
-		ResourceType: "user",
-		ResourceID:   &target,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
+		OrganizationID: p.OrganizationID,
+		ActorUserID:    actorID,
+		ActorType:      actorType,
+		Action:         "mfa.otp_factor_removed",
+		ResourceType:   "user",
+		ResourceID:     &target,
+		IP:             httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
+		RequestID:      httpx.RequestID(r),
 	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return

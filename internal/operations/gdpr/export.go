@@ -75,11 +75,11 @@ type exportSignIn struct {
 // exportSections adds to out the sections both exports share: linked
 // accounts, email and SMS factors (their destinations masked), application
 // consents and live grants, group memberships and the latest sign-ins. With
-// tenantID set they cover that organisation's part only.
-func exportSections(ctx context.Context, q *dbgen.Queries, userID uuid.UUID, tenantID *uuid.UUID, out map[string]any) error {
-	tenant := pgUUIDNullable(tenantID)
+// organizationID set they cover that organization's part only.
+func exportSections(ctx context.Context, q *dbgen.Queries, userID uuid.UUID, organizationID *uuid.UUID, out map[string]any) error {
+	organization := pgUUIDNullable(organizationID)
 
-	idRows, err := q.ListUserIdentitiesForExport(ctx, dbgen.ListUserIdentitiesForExportParams{UserID: userID, TenantID: tenant})
+	idRows, err := q.ListUserIdentitiesForExport(ctx, dbgen.ListUserIdentitiesForExportParams{UserID: userID, OrganizationID: organization})
 	if err != nil {
 		return err
 	}
@@ -100,7 +100,7 @@ func exportSections(ctx context.Context, q *dbgen.Queries, userID uuid.UUID, ten
 		})
 	}
 
-	consentRows, err := q.ListUserConsentsForExport(ctx, dbgen.ListUserConsentsForExportParams{UserID: userID, TenantID: tenant})
+	consentRows, err := q.ListUserConsentsForExport(ctx, dbgen.ListUserConsentsForExportParams{UserID: userID, OrganizationID: organization})
 	if err != nil {
 		return err
 	}
@@ -109,7 +109,7 @@ func exportSections(ctx context.Context, q *dbgen.Queries, userID uuid.UUID, ten
 		consents = append(consents, exportConsent{ClientID: r.ClientID, ClientName: r.ClientName, Scopes: r.Scopes, GrantedAt: r.GrantedAt})
 	}
 
-	grantRows, err := q.ListUserGrantsForExport(ctx, dbgen.ListUserGrantsForExportParams{UserID: userID, TenantID: tenant})
+	grantRows, err := q.ListUserGrantsForExport(ctx, dbgen.ListUserGrantsForExportParams{UserID: userID, OrganizationID: organization})
 	if err != nil {
 		return err
 	}
@@ -119,7 +119,7 @@ func exportSections(ctx context.Context, q *dbgen.Queries, userID uuid.UUID, ten
 			IssuedAt: r.IssuedAt, ExpiresAt: r.ExpiresAt})
 	}
 
-	groupRows, err := q.ListUserGroupsForExport(ctx, dbgen.ListUserGroupsForExportParams{UserID: userID, TenantID: tenant})
+	groupRows, err := q.ListUserGroupsForExport(ctx, dbgen.ListUserGroupsForExportParams{UserID: userID, OrganizationID: organization})
 	if err != nil {
 		return err
 	}
@@ -128,7 +128,7 @@ func exportSections(ctx context.Context, q *dbgen.Queries, userID uuid.UUID, ten
 		groups = append(groups, exportGroup{Name: r.Name, Organization: r.Organization, AddedAt: r.AddedAt})
 	}
 
-	signInRows, err := q.ListUserSignInsForExport(ctx, dbgen.ListUserSignInsForExportParams{UserID: userID, TenantID: tenant})
+	signInRows, err := q.ListUserSignInsForExport(ctx, dbgen.ListUserSignInsForExportParams{UserID: userID, OrganizationID: organization})
 	if err != nil {
 		return err
 	}

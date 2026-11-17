@@ -16,20 +16,20 @@ import (
 const countRipeDeletedUsers = `-- name: CountRipeDeletedUsers :one
 SELECT count(*)
 FROM account.users
-WHERE tenant_id = $1
+WHERE organization_id = $1
   AND deleted_at IS NOT NULL
   AND deleted_at < NOW() - make_interval(days => $2)
 `
 
 type CountRipeDeletedUsersParams struct {
-	TenantID pgtype.UUID
-	Days     int32
+	OrganizationID pgtype.UUID
+	Days           int32
 }
 
-// Count soft-deleted users older than `days` days for a given tenant.
+// Count soft-deleted users older than `days` days for a given organization.
 // The days value is clamped to [1,3650] by the caller before it reaches here.
 func (q *Queries) CountRipeDeletedUsers(ctx context.Context, arg CountRipeDeletedUsersParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countRipeDeletedUsers, arg.TenantID, arg.Days)
+	row := q.db.QueryRow(ctx, countRipeDeletedUsers, arg.OrganizationID, arg.Days)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -38,9 +38,9 @@ func (q *Queries) CountRipeDeletedUsers(ctx context.Context, arg CountRipeDelete
 const getRetentionPolicy = `-- name: GetRetentionPolicy :one
 
 SELECT p.deleted_users_enabled, p.deleted_users_days, p.updated_at, p.updated_by, u.email AS updated_by_email
-FROM tenant.retention_policy p
+FROM organization.retention_policy p
 LEFT JOIN account.users u ON u.id = p.updated_by
-WHERE p.tenant_id = $1
+WHERE p.organization_id = $1
 `
 
 type GetRetentionPolicyRow struct {
@@ -52,10 +52,10 @@ type GetRetentionPolicyRow struct {
 }
 
 // Queries for the retention domain.
-// Static queries against tenant.retention_policy and account.users live here
+// Static queries against organization.retention_policy and account.users live here
 // and are compiled by sqlc into ./dbgen.
-func (q *Queries) GetRetentionPolicy(ctx context.Context, tenantID uuid.UUID) (GetRetentionPolicyRow, error) {
-	row := q.db.QueryRow(ctx, getRetentionPolicy, tenantID)
+func (q *Queries) GetRetentionPolicy(ctx context.Context, organizationID uuid.UUID) (GetRetentionPolicyRow, error) {
+	row := q.db.QueryRow(ctx, getRetentionPolicy, organizationID)
 	var i GetRetentionPolicyRow
 	err := row.Scan(
 		&i.DeletedUsersEnabled,
@@ -68,13 +68,13 @@ func (q *Queries) GetRetentionPolicy(ctx context.Context, tenantID uuid.UUID) (G
 }
 
 const listEnabledRetentionPolicies = `-- name: ListEnabledRetentionPolicies :many
-SELECT tenant_id, deleted_users_days
-FROM tenant.retention_policy
+SELECT organization_id, deleted_users_days
+FROM organization.retention_policy
 WHERE deleted_users_enabled = TRUE
 `
 
 type ListEnabledRetentionPoliciesRow struct {
-	TenantID         uuid.UUID
+	OrganizationID   uuid.UUID
 	DeletedUsersDays int32
 }
 
@@ -87,7 +87,7 @@ func (q *Queries) ListEnabledRetentionPolicies(ctx context.Context) ([]ListEnabl
 	items := []ListEnabledRetentionPoliciesRow{}
 	for rows.Next() {
 		var i ListEnabledRetentionPoliciesRow
-		if err := rows.Scan(&i.TenantID, &i.DeletedUsersDays); err != nil {
+		if err := rows.Scan(&i.OrganizationID, &i.DeletedUsersDays); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -100,7 +100,7 @@ func (q *Queries) ListEnabledRetentionPolicies(ctx context.Context) ([]ListEnabl
 
 const listRipeDeletedUsers = `-- name: ListRipeDeletedUsers :many
 SELECT id FROM account.users
-WHERE tenant_id = $1
+WHERE organization_id = $1
   AND deleted_at IS NOT NULL
   AND deleted_at < NOW() - make_interval(days => $2)
   AND id > $3
@@ -109,17 +109,17 @@ LIMIT $4
 `
 
 type ListRipeDeletedUsersParams struct {
-	TenantID pgtype.UUID
-	Days     int32
-	After    uuid.UUID
-	MaxRows  int32
+	OrganizationID pgtype.UUID
+	Days           int32
+	After          uuid.UUID
+	MaxRows        int32
 }
 
 // ListRipeDeletedUsers lists, in ID order after @after, at most @max_rows of
-// the tenant's soft-deleted users older than @days days.
+// the organization's soft-deleted users older than @days days.
 func (q *Queries) ListRipeDeletedUsers(ctx context.Context, arg ListRipeDeletedUsersParams) ([]uuid.UUID, error) {
 	rows, err := q.db.Query(ctx, listRipeDeletedUsers,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Days,
 		arg.After,
 		arg.MaxRows,
@@ -144,21 +144,21 @@ func (q *Queries) ListRipeDeletedUsers(ctx context.Context, arg ListRipeDeletedU
 
 const purgeRipeDeletedUser = `-- name: PurgeRipeDeletedUser :execrows
 DELETE FROM account.users
-WHERE id = $1 AND tenant_id = $2
+WHERE id = $1 AND organization_id = $2
   AND deleted_at IS NOT NULL
   AND deleted_at < NOW() - make_interval(days => $3)
 `
 
 type PurgeRipeDeletedUserParams struct {
-	ID       uuid.UUID
-	TenantID pgtype.UUID
-	Days     int32
+	ID             uuid.UUID
+	OrganizationID pgtype.UUID
+	Days           int32
 }
 
-// PurgeRipeDeletedUser permanently removes one of the tenant's soft-deleted
+// PurgeRipeDeletedUser permanently removes one of the organization's soft-deleted
 // users older than @days days.
 func (q *Queries) PurgeRipeDeletedUser(ctx context.Context, arg PurgeRipeDeletedUserParams) (int64, error) {
-	result, err := q.db.Exec(ctx, purgeRipeDeletedUser, arg.ID, arg.TenantID, arg.Days)
+	result, err := q.db.Exec(ctx, purgeRipeDeletedUser, arg.ID, arg.OrganizationID, arg.Days)
 	if err != nil {
 		return 0, err
 	}
@@ -166,9 +166,9 @@ func (q *Queries) PurgeRipeDeletedUser(ctx context.Context, arg PurgeRipeDeleted
 }
 
 const upsertRetentionPolicy = `-- name: UpsertRetentionPolicy :one
-INSERT INTO tenant.retention_policy (tenant_id, deleted_users_enabled, deleted_users_days, updated_at, updated_by)
+INSERT INTO organization.retention_policy (organization_id, deleted_users_enabled, deleted_users_days, updated_at, updated_by)
 VALUES ($1, $2, $3, NOW(), $4)
-ON CONFLICT (tenant_id) DO UPDATE SET
+ON CONFLICT (organization_id) DO UPDATE SET
     deleted_users_enabled = EXCLUDED.deleted_users_enabled,
     deleted_users_days    = EXCLUDED.deleted_users_days,
     updated_at            = NOW(),
@@ -177,7 +177,7 @@ RETURNING deleted_users_enabled, deleted_users_days, updated_at
 `
 
 type UpsertRetentionPolicyParams struct {
-	TenantID            uuid.UUID
+	OrganizationID      uuid.UUID
 	DeletedUsersEnabled bool
 	DeletedUsersDays    int32
 	UpdatedBy           pgtype.UUID
@@ -189,10 +189,10 @@ type UpsertRetentionPolicyRow struct {
 	UpdatedAt           time.Time
 }
 
-// Upsert a tenant's retention policy and return the stored values.
+// Upsert an organization's retention policy and return the stored values.
 func (q *Queries) UpsertRetentionPolicy(ctx context.Context, arg UpsertRetentionPolicyParams) (UpsertRetentionPolicyRow, error) {
 	row := q.db.QueryRow(ctx, upsertRetentionPolicy,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.DeletedUsersEnabled,
 		arg.DeletedUsersDays,
 		arg.UpdatedBy,

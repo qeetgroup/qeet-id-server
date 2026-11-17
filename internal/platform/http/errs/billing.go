@@ -12,8 +12,8 @@ const (
 	CodeBillingCheckoutRefInvalid        = "billing.checkout_ref_invalid"
 	CodeBillingProviderUnknown           = "billing.provider_unknown"
 	CodeBillingWebhookVerificationFailed = "billing.webhook_verification_failed"
-	CodeBillingTenantInvalid             = "billing.tenant_invalid"
-	CodeBillingTenantMismatch            = "billing.tenant_mismatch"
+	CodeBillingOrganizationInvalid       = "billing.tenant_invalid"
+	CodeBillingOrganizationMismatch      = "billing.tenant_mismatch"
 	CodeBillingCheckoutRequired          = "billing.checkout_required"
 	CodeBillingTaxIDInvalid              = "billing.tax_id_invalid"
 	CodeBillingTrialNotEligible          = "billing.trial_not_eligible"
@@ -33,8 +33,8 @@ var (
 	ErrBillingCheckoutRefInvalid        = New(CodeBillingCheckoutRefInvalid, "That checkout reference is invalid.")
 	ErrBillingProviderUnknown           = New(CodeBillingProviderUnknown, "That payment provider isn't configured.")
 	ErrBillingWebhookVerificationFailed = New(CodeBillingWebhookVerificationFailed, "We couldn't verify this webhook request.")
-	ErrBillingTenantInvalid             = New(CodeBillingTenantInvalid, "That tenant reference is invalid.")
-	ErrBillingTenantMismatch            = New(CodeBillingTenantMismatch, "You can't access another tenant's billing.")
+	ErrBillingOrganizationInvalid       = New(CodeBillingOrganizationInvalid, "That tenant reference is invalid.")
+	ErrBillingOrganizationMismatch      = New(CodeBillingOrganizationMismatch, "You can't access another tenant's billing.")
 	ErrBillingCheckoutRequired          = New(CodeBillingCheckoutRequired, "This plan requires checkout. Start the paid signup flow to create this organization.")
 	ErrBillingTaxIDInvalid              = New(CodeBillingTaxIDInvalid, "That tax ID isn't valid.")
 	ErrBillingTrialNotEligible          = New(CodeBillingTrialNotEligible, "This organization isn't eligible for a trial.")

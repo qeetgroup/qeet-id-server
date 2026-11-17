@@ -107,7 +107,7 @@ func TestFromAddress(t *testing.T) {
 	}
 }
 
-func TestTenantEmailHeaders(t *testing.T) {
+func TestOrganizationEmailHeaders(t *testing.T) {
 	from := messageFrom("Qeet ID <platform@example.test>", "Example Auth")
 	if fromAddress(from) != "platform@example.test" || !strings.Contains(from, "Example Auth") {
 		t.Fatalf("custom name changed provider-approved address: %s", from)
@@ -129,7 +129,7 @@ func (client *recordedSES) SendEmail(_ context.Context, input *sesv2.SendEmailIn
 	return &sesv2.SendEmailOutput{}, nil
 }
 
-func TestTenantSESHeaders(t *testing.T) {
+func TestOrganizationSESHeaders(t *testing.T) {
 	client := &recordedSES{}
 	sender := &SESv2Sender{client: client, from: "Qeet ID <platform@example.test>"}
 	if err := sender.Send(context.Background(), Message{To: "user@example.test", Channel: "email", FromName: "Organization", ReplyTo: "reply@example.test", Subject: "Notice", Body: "Body"}); err != nil {

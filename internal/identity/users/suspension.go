@@ -121,17 +121,17 @@ func parseSuspensionFilters(request *http.Request) (SuspensionFilters, error) {
 
 const suspendedDataset = `WITH suspended AS (
  SELECT u.id,u.email,u.display_name,u.avatar_url,
- COALESCE((SELECT p.profile->>'department' FROM tenant.directory_profiles p WHERE p.tenant_id=$1 AND p.user_id=u.id AND p.profile->>'department' IS NOT NULL ORDER BY p.updated_at DESC LIMIT 1),'') AS team,
- CASE WHEN u.tenant_id=$1 THEN COALESCE(u.suspension_reason,'unspecified') ELSE 'managed_elsewhere' END AS reason,
- CASE WHEN u.tenant_id=$1 THEN COALESCE(u.suspension_source,'unknown') ELSE 'external' END AS source,
- CASE WHEN u.tenant_id=$1 THEN COALESCE(u.suspension_risk,'unknown') ELSE 'unknown' END AS risk,
- CASE WHEN u.tenant_id=$1 THEN COALESCE(u.suspension_review,'pending') ELSE 'external' END AS review,
- CASE WHEN u.tenant_id=$1 THEN u.suspended_at ELSE NULL END AS suspended_at,
- GREATEST((SELECT max(s.created_at) FROM auth.sessions s WHERE s.tenant_id=$1 AND s.user_id=u.id),
-  (SELECT max(e.created_at) FROM audit.events e WHERE e.tenant_id=$1 AND e.actor_user_id=u.id AND e.action='auth.login_succeeded')) AS last_sign_in,
- COALESCE(u.tenant_id=$1,false) AS can_manage
+ COALESCE((SELECT p.profile->>'department' FROM organization.directory_profiles p WHERE p.organization_id=$1 AND p.user_id=u.id AND p.profile->>'department' IS NOT NULL ORDER BY p.updated_at DESC LIMIT 1),'') AS team,
+ CASE WHEN u.organization_id=$1 THEN COALESCE(u.suspension_reason,'unspecified') ELSE 'managed_elsewhere' END AS reason,
+ CASE WHEN u.organization_id=$1 THEN COALESCE(u.suspension_source,'unknown') ELSE 'external' END AS source,
+ CASE WHEN u.organization_id=$1 THEN COALESCE(u.suspension_risk,'unknown') ELSE 'unknown' END AS risk,
+ CASE WHEN u.organization_id=$1 THEN COALESCE(u.suspension_review,'pending') ELSE 'external' END AS review,
+ CASE WHEN u.organization_id=$1 THEN u.suspended_at ELSE NULL END AS suspended_at,
+ GREATEST((SELECT max(s.created_at) FROM auth.sessions s WHERE s.organization_id=$1 AND s.user_id=u.id),
+  (SELECT max(e.created_at) FROM audit.events e WHERE e.organization_id=$1 AND e.actor_user_id=u.id AND e.action='auth.login_succeeded')) AS last_sign_in,
+ COALESCE(u.organization_id=$1,false) AS can_manage
  FROM account.users u WHERE u.status='suspended' AND u.deleted_at IS NULL
- AND (u.tenant_id=$1 OR EXISTS(SELECT 1 FROM rbac.user_roles roles WHERE roles.tenant_id=$1 AND roles.user_id=u.id))
+ AND (u.organization_id=$1 OR EXISTS(SELECT 1 FROM rbac.user_roles roles WHERE roles.organization_id=$1 AND roles.user_id=u.id))
 ) `
 const suspendedWhere = `($2='' OR email ILIKE '%'||$2||'%' OR display_name ILIKE '%'||$2||'%' OR id::text ILIKE '%'||$2||'%') AND ($3='' OR reason=$3) AND ($4='' OR source=$4) AND ($5='' OR team=$5) AND ($6='' OR risk=$6) AND ($7='' OR review=$7)`
 const suspendedColumns = `id,email,display_name,avatar_url,team,reason,source,risk,review,suspended_at,last_sign_in,can_manage`
@@ -142,20 +142,20 @@ func scanSuspended(row pgx.Row) (SuspendedUser, error) {
 	return user, err
 }
 
-// ListSuspended returns one page of the tenant's suspended accounts.
-func (repository *Repository) ListSuspended(ctx context.Context, tenantID uuid.UUID, filter SuspensionFilters) (SuspendedPage, error) {
+// ListSuspended returns one page of the organization's suspended accounts.
+func (repository *Repository) ListSuspended(ctx context.Context, organizationID uuid.UUID, filter SuspensionFilters) (SuspendedPage, error) {
 	page := SuspendedPage{Items: []SuspendedUser{}, Reasons: []SuspensionBreakdown{}, Risks: []SuspensionBreakdown{}, Queue: []SuspendedUser{}, Teams: []string{}, Limit: filter.Limit}
-	if tenantID == uuid.Nil {
+	if organizationID == uuid.Nil {
 		return page, errs.ErrUnauthorized
 	}
-	args := []any{tenantID, postgres.EscapeLike(filter.Search), filter.Reason, filter.Source, filter.Team, filter.Risk, filter.Review}
+	args := []any{organizationID, postgres.EscapeLike(filter.Search), filter.Reason, filter.Source, filter.Team, filter.Risk, filter.Review}
 	err := repository.pool.QueryRow(ctx, suspendedDataset+`SELECT count(*),count(*) FILTER(WHERE risk='high'),count(*) FILTER(WHERE source='policy'),count(*) FILTER(WHERE source='manual'),count(*) FILTER(WHERE review='pending') FROM suspended WHERE `+suspendedWhere, args...).Scan(&page.Summary.Total, &page.Summary.HighRisk, &page.Summary.Policy, &page.Summary.Manual, &page.Summary.Pending)
 	if err != nil {
 		return page, err
 	}
 	page.Total = page.Summary.Total
 	// The order is suspended_at newest first, then the never-dated (people
-	// another organisation manages) last, then id; a cursor's zero time stands
+	// another organization manages) last, then id; a cursor's zero time stands
 	// for a NULL suspended_at.
 	var afterTime *time.Time
 	if filter.After.Set && !filter.After.Time.IsZero() {
@@ -210,7 +210,7 @@ func (repository *Repository) ListSuspended(ctx context.Context, tenantID uuid.U
 			return page, err
 		}
 	}
-	queue, err := repository.pool.Query(ctx, suspendedDataset+`SELECT `+suspendedColumns+` FROM suspended WHERE review='pending' ORDER BY suspended_at ASC NULLS FIRST,id LIMIT 5`, tenantID)
+	queue, err := repository.pool.Query(ctx, suspendedDataset+`SELECT `+suspendedColumns+` FROM suspended WHERE review='pending' ORDER BY suspended_at ASC NULLS FIRST,id LIMIT 5`, organizationID)
 	if err != nil {
 		return page, err
 	}
@@ -227,7 +227,7 @@ func (repository *Repository) ListSuspended(ctx context.Context, tenantID uuid.U
 	if err != nil {
 		return page, err
 	}
-	teams, err := repository.pool.Query(ctx, suspendedDataset+`SELECT DISTINCT team FROM suspended WHERE team<>'' ORDER BY team LIMIT 100`, tenantID)
+	teams, err := repository.pool.Query(ctx, suspendedDataset+`SELECT DISTINCT team FROM suspended WHERE team<>'' ORDER BY team LIMIT 100`, organizationID)
 	if err != nil {
 		return page, err
 	}
@@ -243,7 +243,7 @@ func (repository *Repository) ListSuspended(ctx context.Context, tenantID uuid.U
 }
 
 func (handler *Handler) listSuspended(response http.ResponseWriter, request *http.Request) {
-	tenantID, err := httpx.RequireTenant(request)
+	organizationID, err := httpx.RequireOrganization(request)
 	if err != nil {
 		httpx.WriteError(response, request, err)
 		return
@@ -253,7 +253,7 @@ func (handler *Handler) listSuspended(response http.ResponseWriter, request *htt
 		httpx.WriteError(response, request, err)
 		return
 	}
-	page, err := handler.Repo.ListSuspended(request.Context(), tenantID, filter)
+	page, err := handler.Repo.ListSuspended(request.Context(), organizationID, filter)
 	if err != nil {
 		httpx.WriteError(response, request, err)
 		return
@@ -262,10 +262,10 @@ func (handler *Handler) listSuspended(response http.ResponseWriter, request *htt
 }
 
 // updateWithEvidence applies an administrator's update to an account of
-// tenantID in one transaction with its evidence: user.updated naming the
+// organizationID in one transaction with its evidence: user.updated naming the
 // profile fields it changed, and a status change's own record, event and
 // ended sign-ins.
-func (handler *Handler) updateWithEvidence(request *http.Request, tenantID, userID uuid.UUID, input UpdateInput) (*User, error) {
+func (handler *Handler) updateWithEvidence(request *http.Request, organizationID, userID uuid.UUID, input UpdateInput) (*User, error) {
 	ctx := request.Context()
 	tx, err := handler.Repo.pool.Begin(ctx)
 	if err != nil {
@@ -273,7 +273,7 @@ func (handler *Handler) updateWithEvidence(request *http.Request, tenantID, user
 	}
 	defer tx.Rollback(ctx)
 	var previous string
-	if err := tx.QueryRow(ctx, `SELECT status FROM account.users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE`, tenantID, userID).Scan(&previous); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT status FROM account.users WHERE organization_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE`, organizationID, userID).Scan(&previous); err != nil {
 		return nil, errs.ErrNotFound
 	}
 	if input.Status != nil && *input.Status == "active" && previous == "suspended" {
@@ -290,7 +290,7 @@ func (handler *Handler) updateWithEvidence(request *http.Request, tenantID, user
 		return nil, err
 	}
 	if changed := profileChanges(before, input); len(changed) > 0 {
-		if err := audit.Record(ctx, tx, audit.ActorOf(request).Event(tenantID, "user.updated", "user", userID,
+		if err := audit.Record(ctx, tx, audit.ActorOf(request).Event(organizationID, "user.updated", "user", userID,
 			map[string]any{"changed": changed})); err != nil {
 			return nil, err
 		}
@@ -299,7 +299,7 @@ func (handler *Handler) updateWithEvidence(request *http.Request, tenantID, user
 		action := "user.reactivated"
 		if *input.Status == "suspended" {
 			action = "user.suspended"
-			if _, err := tx.Exec(ctx, `UPDATE account.users SET suspension_source='manual' WHERE tenant_id=$1 AND id=$2`, tenantID, userID); err != nil {
+			if _, err := tx.Exec(ctx, `UPDATE account.users SET suspension_source='manual' WHERE organization_id=$1 AND id=$2`, organizationID, userID); err != nil {
 				return nil, err
 			}
 		}
@@ -310,7 +310,7 @@ func (handler *Handler) updateWithEvidence(request *http.Request, tenantID, user
 		if err := handler.endEverySignIn(ctx, tx, userID, reason); err != nil {
 			return nil, err
 		}
-		if err := recordSuspensionEvidence(ctx, tx, request, tenantID, userID, action); err != nil {
+		if err := recordSuspensionEvidence(ctx, tx, request, organizationID, userID, action); err != nil {
 			return nil, err
 		}
 	}
@@ -346,7 +346,7 @@ func profileChanges(before *User, input UpdateInput) []string {
 	return changed
 }
 
-func recordSuspensionEvidence(ctx context.Context, tx pgx.Tx, request *http.Request, tenantID, userID uuid.UUID, action string) error {
+func recordSuspensionEvidence(ctx context.Context, tx pgx.Tx, request *http.Request, organizationID, userID uuid.UUID, action string) error {
 	principal := httpx.PrincipalFromCtx(ctx)
 	var actor *uuid.UUID
 	actorType := "system"
@@ -354,14 +354,14 @@ func recordSuspensionEvidence(ctx context.Context, tx pgx.Tx, request *http.Requ
 		actor = principal.UserID
 		actorType = principal.ActorType
 	}
-	if err := audit.Record(ctx, tx, audit.Event{TenantID: &tenantID, ActorUserID: actor, ActorType: actorType, Action: action, ResourceType: "user", ResourceID: &userID, IP: httpx.ClientIP(request), RequestID: httpx.RequestID(request)}); err != nil {
+	if err := audit.Record(ctx, tx, audit.Event{OrganizationID: &organizationID, ActorUserID: actor, ActorType: actorType, Action: action, ResourceType: "user", ResourceID: &userID, IP: httpx.ClientIP(request), RequestID: httpx.RequestID(request)}); err != nil {
 		return err
 	}
-	return outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: userID, Topic: "user.events", EventType: action, Payload: map[string]any{"tenant_id": tenantID, "user_id": userID}})
+	return outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: userID, Topic: "user.events", EventType: action, Payload: map[string]any{"tenant_id": organizationID, "user_id": userID}})
 }
 
 func (handler *Handler) reactivateUser(response http.ResponseWriter, request *http.Request) {
-	userID, tenantID, err := handler.actOnID(request)
+	userID, organizationID, err := handler.actOnID(request)
 	if err != nil {
 		httpx.WriteError(response, request, err)
 		return
@@ -378,7 +378,7 @@ func (handler *Handler) reactivateUser(response http.ResponseWriter, request *ht
 	}
 	defer tx.Rollback(ctx)
 	var status string
-	err = tx.QueryRow(ctx, `SELECT status FROM account.users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE`, tenantID, userID).Scan(&status)
+	err = tx.QueryRow(ctx, `SELECT status FROM account.users WHERE organization_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE`, organizationID, userID).Scan(&status)
 	if errors.Is(err, pgx.ErrNoRows) {
 		httpx.WriteError(response, request, errs.ErrNotFound)
 		return
@@ -401,7 +401,7 @@ func (handler *Handler) reactivateUser(response http.ResponseWriter, request *ht
 		httpx.WriteError(response, request, err)
 		return
 	}
-	if err := recordSuspensionEvidence(ctx, tx, request, tenantID, userID, "user.reactivated"); err != nil {
+	if err := recordSuspensionEvidence(ctx, tx, request, organizationID, userID, "user.reactivated"); err != nil {
 		httpx.WriteError(response, request, err)
 		return
 	}
@@ -413,7 +413,7 @@ func (handler *Handler) reactivateUser(response http.ResponseWriter, request *ht
 }
 
 func (handler *Handler) reviewSuspension(response http.ResponseWriter, request *http.Request) {
-	userID, tenantID, err := handler.scopedID(request)
+	userID, organizationID, err := handler.scopedID(request)
 	if err != nil {
 		httpx.WriteError(response, request, err)
 		return
@@ -438,7 +438,7 @@ func (handler *Handler) reviewSuspension(response http.ResponseWriter, request *
 		return
 	}
 	defer tx.Rollback(ctx)
-	result, err := tx.Exec(ctx, `UPDATE account.users SET suspension_reason=$3,suspension_risk=$4,suspension_review=$5,updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='suspended' AND deleted_at IS NULL`, tenantID, userID, input.Reason, input.Risk, input.Review)
+	result, err := tx.Exec(ctx, `UPDATE account.users SET suspension_reason=$3,suspension_risk=$4,suspension_review=$5,updated_at=NOW() WHERE organization_id=$1 AND id=$2 AND status='suspended' AND deleted_at IS NULL`, organizationID, userID, input.Reason, input.Risk, input.Review)
 	if err != nil {
 		httpx.WriteError(response, request, err)
 		return
@@ -447,7 +447,7 @@ func (handler *Handler) reviewSuspension(response http.ResponseWriter, request *
 		httpx.WriteError(response, request, errs.ErrConflict)
 		return
 	}
-	if err := recordSuspensionEvidence(ctx, tx, request, tenantID, userID, "user.suspension_reviewed"); err != nil {
+	if err := recordSuspensionEvidence(ctx, tx, request, organizationID, userID, "user.suspension_reviewed"); err != nil {
 		httpx.WriteError(response, request, err)
 		return
 	}

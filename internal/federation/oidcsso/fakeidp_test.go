@@ -27,7 +27,7 @@ const (
 	testAuthorizeBase = "https://idp.example.test/authorize"
 )
 
-// fakeIdP is an organisation's OpenID Connect provider: a discovery document,
+// fakeIdP is an organization's OpenID Connect provider: a discovery document,
 // its published signing keys and a token endpoint answering the codes a test
 // prepares with ID tokens it signs.
 type fakeIdP struct {

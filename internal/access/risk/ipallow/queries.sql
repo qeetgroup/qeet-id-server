@@ -2,22 +2,22 @@
 -- All queries are static and compiled by sqlc into ./dbgen.
 
 -- name: ListIPRules :many
-SELECT id, tenant_id, cidr, label, action, created_at
-FROM tenant.ip_rules WHERE tenant_id = $1 ORDER BY action, created_at;
+SELECT id, organization_id, cidr, label, action, created_at
+FROM organization.ip_rules WHERE organization_id = $1 ORDER BY action, created_at;
 
 -- name: GetIPRulesEnabled :one
-SELECT enabled FROM tenant.ip_rules_config WHERE tenant_id = $1;
+SELECT enabled FROM organization.ip_rules_config WHERE organization_id = $1;
 
 -- name: SetIPRulesEnabled :exec
-INSERT INTO tenant.ip_rules_config (tenant_id, enabled, updated_at)
+INSERT INTO organization.ip_rules_config (organization_id, enabled, updated_at)
 VALUES ($1, $2, NOW())
-ON CONFLICT (tenant_id) DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = NOW();
+ON CONFLICT (organization_id) DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = NOW();
 
 -- name: InsertIPRule :one
-INSERT INTO tenant.ip_rules (tenant_id, cidr, label, action)
+INSERT INTO organization.ip_rules (organization_id, cidr, label, action)
 VALUES ($1, $2, $3, $4)
-RETURNING id, tenant_id, cidr, label, action, created_at;
+RETURNING id, organization_id, cidr, label, action, created_at;
 
 -- name: DeleteIPRule :one
-DELETE FROM tenant.ip_rules WHERE id = $1 AND tenant_id = $2
-RETURNING id, tenant_id, cidr, label, action, created_at;
+DELETE FROM organization.ip_rules WHERE id = $1 AND organization_id = $2
+RETURNING id, organization_id, cidr, label, action, created_at;

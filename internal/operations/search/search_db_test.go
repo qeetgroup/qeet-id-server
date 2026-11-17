@@ -23,24 +23,24 @@ type page struct {
 	NextCursor string   `json:"next_cursor"`
 }
 
-// TestSearchFindsOnlyTheOrganisationsOwn checks that a search finds the
+// TestSearchFindsOnlyTheOrganizationsOwn checks that a search finds the
 // matching users, groups, roles, applications and audit events of the
-// caller's organisation and none of another's, that each type needs its read
+// caller's organization and none of another's, that each type needs its read
 // permission, that types narrow it, and that pages follow the cursor.
-func TestSearchFindsOnlyTheOrganisationsOwn(t *testing.T) {
+func TestSearchFindsOnlyTheOrganizationsOwn(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	mine, theirs := dbtest.Tenant(t), dbtest.Tenant(t)
+	mine, theirs := dbtest.Organization(t), dbtest.Organization(t)
 	reader := dbtest.User(t, mine)
 	dbtest.Assign(t, reader.ID, mine, dbtest.Role(t, mine, "user.read", "tenant.read", "group.read", "role.read", "connection.read", "audit.read"))
 	narrow := dbtest.User(t, mine)
 	dbtest.Assign(t, narrow.ID, mine, dbtest.Role(t, mine, "group.read"))
-	for _, tenant := range []uuid.UUID{mine, theirs} {
+	for _, organization := range []uuid.UUID{mine, theirs} {
 		for _, sql := range []string{
-			`INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, 'Zephyr engineering')`,
-			`INSERT INTO rbac.roles (tenant_id, name) VALUES ($1, 'Zephyr admin')`,
+			`INSERT INTO organization.groups (organization_id, name) VALUES ($1, 'Zephyr engineering')`,
+			`INSERT INTO rbac.roles (organization_id, name) VALUES ($1, 'Zephyr admin')`,
 		} {
-			if _, err := pool.Exec(ctx, sql, tenant); err != nil {
+			if _, err := pool.Exec(ctx, sql, organization); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -48,7 +48,7 @@ func TestSearchFindsOnlyTheOrganisationsOwn(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := audit.Record(ctx, tx, audit.Actor{Type: "system"}.Event(tenant, "zephyr.rotated", "key", uuid.New(), nil)); err != nil {
+		if err := audit.Record(ctx, tx, audit.Actor{Type: "system"}.Event(organization, "zephyr.rotated", "key", uuid.New(), nil)); err != nil {
 			t.Fatal(err)
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -108,15 +108,15 @@ func TestSearchFindsOnlyTheOrganisationsOwn(t *testing.T) {
 func TestSearchTakesWildcardsLiterally(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	tenant := dbtest.Tenant(t)
-	reader := dbtest.User(t, tenant)
-	dbtest.Assign(t, reader.ID, tenant, dbtest.Role(t, tenant, "group.read"))
+	organization := dbtest.Organization(t)
+	reader := dbtest.User(t, organization)
+	dbtest.Assign(t, reader.ID, organization, dbtest.Role(t, organization, "group.read"))
 	for _, name := range []string{"qa_b team", "qaXb team", "100% team", "plain team"} {
-		if _, err := pool.Exec(ctx, `INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, $2)`, tenant, name); err != nil {
+		if _, err := pool.Exec(ctx, `INSERT INTO organization.groups (organization_id, name) VALUES ($1, $2)`, organization, name); err != nil {
 			t.Fatal(err)
 		}
 	}
-	h := dbtest.Serve(dbtest.Principal(reader.ID, tenant), (&Handler{Service: NewService(pool, rbac.NewRepository(pool))}).Mount)
+	h := dbtest.Serve(dbtest.Principal(reader.ID, organization), (&Handler{Service: NewService(pool, rbac.NewRepository(pool))}).Mount)
 	for query, want := range map[string][]string{"qa_b": {"qa_b team"}, "%": {"100% team"}} {
 		rec := dbtest.Do(t, h, http.MethodGet, "/search?types=group&q="+url.QueryEscape(query), nil)
 		var p page

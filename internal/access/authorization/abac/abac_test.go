@@ -542,7 +542,7 @@ func TestEvaluateCondition_CrossNamespace(t *testing.T) {
 // disabled one, an allow, or a save with no user author is never a lock-out,
 // without reading the author's attributes (the service here has no database).
 func TestLocksOutAuthor(t *testing.T) {
-	author, tenantID := uuid.New(), uuid.New()
+	author, organizationID := uuid.New(), uuid.New()
 	actor := audit.Actor{UserID: &author}
 	s := &Service{}
 	for _, tc := range []struct {
@@ -557,7 +557,7 @@ func TestLocksOutAuthor(t *testing.T) {
 		{"allow everything", "allow", "*", "*", true, actor},
 		{"a save with no user author (system)", "deny", "*", "*", true, audit.Actor{}},
 	} {
-		if locked, err := s.locksOutAuthor(context.Background(), tenantID, tc.effect, tc.resourceType, tc.action, tc.enabled, json.RawMessage(`{}`), tc.actor); locked || err != nil {
+		if locked, err := s.locksOutAuthor(context.Background(), organizationID, tc.effect, tc.resourceType, tc.action, tc.enabled, json.RawMessage(`{}`), tc.actor); locked || err != nil {
 			t.Errorf("%s: locksOutAuthor = %v, %v; want no lock-out", tc.name, locked, err)
 		}
 	}
@@ -568,8 +568,8 @@ func TestLocksOutAuthor(t *testing.T) {
 // they meet or one left unknown by an attribute they lack, and not one naming
 // someone else or one they don't meet.
 func TestRefusesPolicyWrite(t *testing.T) {
-	author, other, tenantID := uuid.New(), uuid.New(), uuid.New()
-	subject := SubjectAttributes(author.String(), tenantID)
+	author, other, organizationID := uuid.New(), uuid.New(), uuid.New()
+	subject := SubjectAttributes(author.String(), organizationID)
 	subject["groups"], subject["roles"] = []any{"admins"}, []any{"owner"}
 	withMFA, withoutMFA := map[string]any{"mfa": true, "ip": "203.0.113.7"}, map[string]any{"mfa": false}
 	subjectIs := func(id uuid.UUID) string {

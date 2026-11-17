@@ -68,33 +68,33 @@ func testCipher(t *testing.T) *envelope.Cipher {
 	return box
 }
 
-// storedConnection stores an active directory connection of tenant at
+// storedConnection stores an active directory connection of organization at
 // serverURL, whose service account bindDN binds with "service-secret".
-func storedConnection(t *testing.T, tenant uuid.UUID, serverURL, bindDN string) uuid.UUID {
+func storedConnection(t *testing.T, organization uuid.UUID, serverURL, bindDN string) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
-	ct, nonce, err := testCipher(t).Seal(tenant, "ldap-bind", id.String(), []byte("service-secret"))
+	ct, nonce, err := testCipher(t).Seal(organization, "ldap-bind", id.String(), []byte("service-secret"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `
-		INSERT INTO tenant.ldap_connections
-		    (id, tenant_id, name, server_url, bind_dn, bind_password_ct, bind_password_nonce, base_dn, status)
+		INSERT INTO organization.ldap_connections
+		    (id, organization_id, name, server_url, bind_dn, bind_password_ct, bind_password_nonce, base_dn, status)
 		VALUES ($1, $2, 'Directory', $3, $4, $5, $6, 'dc=example,dc=test', 'active')
-	`, id, tenant, serverURL, bindDN, ct, nonce); err != nil {
+	`, id, organization, serverURL, bindDN, ct, nonce); err != nil {
 		t.Fatalf("connection: %v", err)
 	}
 	return id
 }
 
-// TestDirectoryConnectionsOverHTTP checks that an organisation manages its
+// TestDirectoryConnectionsOverHTTP checks that an organization manages its
 // directory connections without the service password ever being returned,
 // tests them, and that people sign in through one, provisioned into that
-// organisation only, until it is disabled.
+// organization only, until it is disabled.
 func TestDirectoryConnectionsOverHTTP(t *testing.T) {
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	domain := dbtest.Domain(t, tenant)
-	admin := dbtest.User(t, tenant, tenant)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	domain := dbtest.Domain(t, organization)
+	admin := dbtest.User(t, organization, organization)
 	outsider := dbtest.UserAt(t, dbtest.Unique("eve")+"@"+domain, other, other)
 	dir := &directory{
 		binds: map[string]string{
@@ -114,10 +114,10 @@ func TestDirectoryConnectionsOverHTTP(t *testing.T) {
 	observed := &operations{}
 	svc.SetOperationObserver(observed)
 	h := &Handler{Service: svc}
-	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), h.Mount)
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)
 	public := chi.NewRouter()
 	h.MountPublic(public)
-	base := "/tenants/" + tenant.String() + "/ldap"
+	base := "/tenants/" + organization.String() + "/ldap"
 
 	connection := map[string]any{
 		"name": "Directory", "server_url": serverURL, "bind_dn": "cn=service,dc=example,dc=test",
@@ -181,13 +181,13 @@ func TestDirectoryConnectionsOverHTTP(t *testing.T) {
 	if first.code != http.StatusOK || !strings.Contains(first.body, `"access_token"`) {
 		t.Fatalf("first sign-in: %d %s", first.code, first.body)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1 AND tenant_id = $2 AND display_name = 'Bob'`, dir.entries["bob"].attrs["mail"], tenant); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1 AND organization_id = $2 AND display_name = 'Bob'`, dir.entries["bob"].attrs["mail"], organization); n != 1 {
 		t.Errorf("%d accounts provisioned for bob in the organisation, want 1", n)
 	}
 	if again := signIn("bob", "bob-secret"); again.code != http.StatusOK || dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, dir.entries["bob"].attrs["mail"]) != 1 {
 		t.Errorf("second sign-in: %d %s", again.code, again.body)
 	}
-	if res := signIn("eve", "eve-secret"); !strings.Contains(res.body, errs.CodeLDAPAccountNotInTenant) {
+	if res := signIn("eve", "eve-secret"); !strings.Contains(res.body, errs.CodeLDAPAccountNotInOrganization) {
 		t.Errorf("a directory entry naming another organisation's account: %d %s", res.code, res.body)
 	}
 	if res := signIn("nomail", "nomail-secret"); !strings.Contains(res.body, errs.CodeLDAPEmailAttributeMissing) {
@@ -240,7 +240,7 @@ func TestDirectoryConnectionsOverHTTP(t *testing.T) {
 	if rec := dbtest.Do(t, asAdmin, http.MethodDelete, connPath, nil); rec.Code != http.StatusNoContent {
 		t.Errorf("delete: %d", rec.Code)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action LIKE 'ldap.connection_%'`, tenant); n != 5 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action LIKE 'ldap.connection_%'`, organization); n != 5 {
 		t.Errorf("%d connection changes recorded, want created, three updates and deleted", n)
 	}
 }
@@ -255,14 +255,14 @@ type response struct {
 // can't add a connection.
 func TestDirectoryConnectionLimits(t *testing.T) {
 	ctx := dbtest.Context(t)
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	svc := directoryService(t)
 	svc.SetPlanGate(noLDAP{})
 	tx, err := dbtest.Pool(t).Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = svc.Create(ctx, tx, tenant, CreateInput{Name: "Directory", ServerURL: "ldap://127.0.0.1:1", BindDN: "cn=service,dc=example,dc=test", BindPassword: "x", BaseDN: "dc=example,dc=test"})
+	_, err = svc.Create(ctx, tx, organization, CreateInput{Name: "Directory", ServerURL: "ldap://127.0.0.1:1", BindDN: "cn=service,dc=example,dc=test", BindPassword: "x", BaseDN: "dc=example,dc=test"})
 	_ = tx.Rollback(ctx)
 	if !strings.Contains(errorCode(err), errs.CodeUpgradeRequired) {
 		t.Errorf("create on a plan without directory sign-in: %v, want an upgrade", err)

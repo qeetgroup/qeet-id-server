@@ -15,21 +15,21 @@ import (
 
 const accountBelongsTo = `-- name: AccountBelongsTo :one
 SELECT EXISTS (
-    SELECT 1 FROM account.users WHERE id = $1 AND tenant_id = $2::uuid
+    SELECT 1 FROM account.users WHERE id = $1 AND organization_id = $2::uuid
     UNION ALL
-    SELECT 1 FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2::uuid
+    SELECT 1 FROM rbac.user_roles WHERE user_id = $1 AND organization_id = $2::uuid
 )::bool AS belongs
 `
 
 type AccountBelongsToParams struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
 }
 
-// AccountBelongsTo reports whether the account belongs to the organisation: it
+// AccountBelongsTo reports whether the account belongs to the organization: it
 // is the account's home, or the account holds a role there.
 func (q *Queries) AccountBelongsTo(ctx context.Context, arg AccountBelongsToParams) (bool, error) {
-	row := q.db.QueryRow(ctx, accountBelongsTo, arg.UserID, arg.TenantID)
+	row := q.db.QueryRow(ctx, accountBelongsTo, arg.UserID, arg.OrganizationID)
 	var belongs bool
 	err := row.Scan(&belongs)
 	return belongs, err
@@ -60,14 +60,14 @@ func (q *Queries) ExpirePasswordResets(ctx context.Context, userID uuid.UUID) er
 }
 
 const getMagicLinkAccount = `-- name: GetMagicLinkAccount :one
-SELECT id, tenant_id, email FROM account.users
+SELECT id, organization_id, email FROM account.users
 WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL AND status <> 'suspended'
 `
 
 type GetMagicLinkAccountRow struct {
-	ID       uuid.UUID
-	TenantID pgtype.UUID
-	Email    string
+	ID             uuid.UUID
+	OrganizationID pgtype.UUID
+	Email          string
 }
 
 // GetMagicLinkAccount finds the account a magic link signs in to: by its
@@ -76,25 +76,25 @@ type GetMagicLinkAccountRow struct {
 func (q *Queries) GetMagicLinkAccount(ctx context.Context, email string) (GetMagicLinkAccountRow, error) {
 	row := q.db.QueryRow(ctx, getMagicLinkAccount, email)
 	var i GetMagicLinkAccountRow
-	err := row.Scan(&i.ID, &i.TenantID, &i.Email)
+	err := row.Scan(&i.ID, &i.OrganizationID, &i.Email)
 	return i, err
 }
 
 const getMagicLinkByToken = `-- name: GetMagicLinkByToken :one
-SELECT id, tenant_id, email, expires_at, used_at, app, return_to
+SELECT id, organization_id, email, expires_at, used_at, app, return_to
 FROM auth.magic_links
 WHERE token_hash = $1
 FOR UPDATE
 `
 
 type GetMagicLinkByTokenRow struct {
-	ID        uuid.UUID
-	TenantID  pgtype.UUID
-	Email     string
-	ExpiresAt time.Time
-	UsedAt    pgtype.Timestamptz
-	App       string
-	ReturnTo  *string
+	ID             uuid.UUID
+	OrganizationID pgtype.UUID
+	Email          string
+	ExpiresAt      time.Time
+	UsedAt         pgtype.Timestamptz
+	App            string
+	ReturnTo       *string
 }
 
 func (q *Queries) GetMagicLinkByToken(ctx context.Context, tokenHash string) (GetMagicLinkByTokenRow, error) {
@@ -102,7 +102,7 @@ func (q *Queries) GetMagicLinkByToken(ctx context.Context, tokenHash string) (Ge
 	var i GetMagicLinkByTokenRow
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Email,
 		&i.ExpiresAt,
 		&i.UsedAt,
@@ -139,63 +139,63 @@ func (q *Queries) GetPasswordResetByToken(ctx context.Context, tokenHash string)
 }
 
 const getResetAccount = `-- name: GetResetAccount :one
-SELECT tenant_id, email FROM account.users WHERE id = $1
+SELECT organization_id, email FROM account.users WHERE id = $1
 `
 
 type GetResetAccountRow struct {
-	TenantID pgtype.UUID
-	Email    string
+	OrganizationID pgtype.UUID
+	Email          string
 }
 
-// GetResetAccount returns the organisation (NULL = none) and email of the
+// GetResetAccount returns the organization (NULL = none) and email of the
 // account a reset is for, so the new password is checked against its rules.
 func (q *Queries) GetResetAccount(ctx context.Context, id uuid.UUID) (GetResetAccountRow, error) {
 	row := q.db.QueryRow(ctx, getResetAccount, id)
 	var i GetResetAccountRow
-	err := row.Scan(&i.TenantID, &i.Email)
+	err := row.Scan(&i.OrganizationID, &i.Email)
 	return i, err
 }
 
-const getUserIDByEmailForTenant = `-- name: GetUserIDByEmailForTenant :one
+const getUserIDByEmailForOrganization = `-- name: GetUserIDByEmailForOrganization :one
 
 SELECT id FROM account.users
-WHERE tenant_id = $1 AND LOWER(email) = LOWER($2) AND deleted_at IS NULL
+WHERE organization_id = $1 AND LOWER(email) = LOWER($2) AND deleted_at IS NULL
 `
 
-type GetUserIDByEmailForTenantParams struct {
-	TenantID pgtype.UUID
-	Lower    string
+type GetUserIDByEmailForOrganizationParams struct {
+	OrganizationID pgtype.UUID
+	Lower          string
 }
 
 // Queries for the access/recovery domain.
 // All queries are static and compiled by sqlc into ./dbgen.
-func (q *Queries) GetUserIDByEmailForTenant(ctx context.Context, arg GetUserIDByEmailForTenantParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, getUserIDByEmailForTenant, arg.TenantID, arg.Lower)
+func (q *Queries) GetUserIDByEmailForOrganization(ctx context.Context, arg GetUserIDByEmailForOrganizationParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, getUserIDByEmailForOrganization, arg.OrganizationID, arg.Lower)
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
 }
 
 const insertMagicLink = `-- name: InsertMagicLink :exec
-INSERT INTO auth.magic_links (tenant_id, email, token_hash, expires_at, app, return_to)
+INSERT INTO auth.magic_links (organization_id, email, token_hash, expires_at, app, return_to)
 VALUES ($1, $2, $3, $4, $5, $6)
 `
 
 type InsertMagicLinkParams struct {
-	TenantID  pgtype.UUID
-	Email     string
-	TokenHash string
-	ExpiresAt time.Time
-	App       string
-	ReturnTo  *string
+	OrganizationID pgtype.UUID
+	Email          string
+	TokenHash      string
+	ExpiresAt      time.Time
+	App            string
+	ReturnTo       *string
 }
 
-// InsertMagicLink stores a link (only its token's hash). tenant_id is the
-// organisation it was asked for from (NULL from the console); app is where it
+// InsertMagicLink stores a link (only its token's hash). organization_id is the
+// organization it was asked for from (NULL from the console); app is where it
 // opens and return_to where the hosted journey continues.
 func (q *Queries) InsertMagicLink(ctx context.Context, arg InsertMagicLinkParams) error {
 	_, err := q.db.Exec(ctx, insertMagicLink,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Email,
 		arg.TokenHash,
 		arg.ExpiresAt,

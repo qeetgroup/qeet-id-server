@@ -17,10 +17,10 @@ func TestMain(m *testing.M) { dbtest.Main(m) }
 // field, that an invalid change is refused and stores nothing, and that each
 // change is audited.
 func TestPatchChangesOnlyWhatItSends(t *testing.T) {
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Repo: NewRepository(dbtest.Pool(t))}).Mount)
-	path := "/tenants/" + tenant.String() + "/policy"
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Repo: NewRepository(dbtest.Pool(t))}).Mount)
+	path := "/tenants/" + organization.String() + "/policy"
 	read := func() Policy {
 		t.Helper()
 		var p Policy
@@ -57,7 +57,7 @@ func TestPatchChangesOnlyWhatItSends(t *testing.T) {
 	if p = read(); p.MFAGraceDays != 7 {
 		t.Errorf("a refused patch changed the grace period to %d", p.MFAGraceDays)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'security_policy.updated'`, tenant); n != 4 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'security_policy.updated'`, organization); n != 4 {
 		t.Errorf("%d policy changes audited, want 4", n)
 	}
 }

@@ -52,7 +52,7 @@ type EditorInput struct {
 	Options EditorOptions `json:"options"`
 }
 
-// EmailAppearanceSource returns a tenant's email branding: display name, logo
+// EmailAppearanceSource returns an organization's email branding: display name, logo
 // URL and primary colour.
 type EmailAppearanceSource interface {
 	EmailAppearance(context.Context, uuid.UUID) (name, logo, primary string, err error)
@@ -60,10 +60,10 @@ type EmailAppearanceSource interface {
 
 type templateSource interface {
 	Get(context.Context, uuid.UUID, string) (*Resolved, error)
-	RecipientLocale(ctx context.Context, tenantID uuid.UUID, address string) (string, error)
+	RecipientLocale(ctx context.Context, organizationID uuid.UUID, address string) (string, error)
 }
 
-// TemplateSender is a notifier.Sender that applies a tenant's customised invite
+// TemplateSender is a notifier.Sender that applies an organization's customised invite
 // or magic-link template before passing the message to Next.
 type TemplateSender struct {
 	Templates  templateSource
@@ -71,7 +71,7 @@ type TemplateSender struct {
 	Next       notifier.Sender
 }
 
-// Send renders the tenant's customised template into message, in the
+// Send renders the organization's customised template into message, in the
 // recipient's profile language when the template has it and else in the
 // template's default locale, and sends it through Next. Other messages,
 // uncustomised templates and render failures are sent unchanged.
@@ -79,20 +79,20 @@ func (sender TemplateSender) Send(ctx context.Context, message notifier.Message)
 	if (message.Channel != "" && message.Channel != "email") || (message.TemplateKey != "invite" && message.TemplateKey != "magic_link") {
 		return sender.Next.Send(ctx, message)
 	}
-	tenantID, err := uuid.Parse(message.TenantID)
-	if err != nil || tenantID == uuid.Nil {
+	organizationID, err := uuid.Parse(message.OrganizationID)
+	if err != nil || organizationID == uuid.Nil {
 		return sender.Next.Send(ctx, message)
 	}
-	template, err := sender.Templates.Get(ctx, tenantID, message.TemplateKey)
+	template, err := sender.Templates.Get(ctx, organizationID, message.TemplateKey)
 	if err != nil || !template.Custom {
 		return sender.Next.Send(ctx, message)
 	}
-	appearance := (&Handler{Appearance: sender.Appearance}).appearance(ctx, tenantID)
+	appearance := (&Handler{Appearance: sender.Appearance}).appearance(ctx, organizationID)
 	variables := map[string]string{"tenant_name": appearance.name}
 	for key, value := range message.TemplateVariables {
 		variables[key] = value
 	}
-	preferred, err := sender.Templates.RecipientLocale(ctx, tenantID, message.To)
+	preferred, err := sender.Templates.RecipientLocale(ctx, organizationID, message.To)
 	if err != nil {
 		preferred = "" // the template's default locale
 	}
@@ -169,7 +169,7 @@ func hasActionVariable(value string) bool {
 // validateTemplateURLs allows a variable in href or src only as the whole href
 // of a *_url variable, and a *_url variable nowhere else in the markup, so a
 // one-time link can't leak through images or other URLs, or be dressed up in
-// the organisation's words.
+// the organization's words.
 func validateTemplateURLs(markup string) error {
 	tokenizer := htmlparser.NewTokenizer(strings.NewReader(markup))
 	for {
@@ -310,12 +310,12 @@ func normalizeEditor(input *EditorInput, definition Definition) error {
 	return nil
 }
 
-func (h *Handler) appearance(ctx context.Context, tenantID uuid.UUID) emailAppearance {
+func (h *Handler) appearance(ctx context.Context, organizationID uuid.UUID) emailAppearance {
 	appearance := emailAppearance{name: "Qeet ID", primary: "#f97316"}
 	if h.Appearance == nil {
 		return appearance
 	}
-	name, logo, primary, err := h.Appearance.EmailAppearance(ctx, tenantID)
+	name, logo, primary, err := h.Appearance.EmailAppearance(ctx, organizationID)
 	if err != nil {
 		return appearance
 	}
@@ -422,7 +422,7 @@ func (limit *testEmailLimits) allow(key string, now time.Time) bool {
 // minute at most. It is forbidden unless TestEmailEnabled is set and a Sender
 // is configured.
 func (h *Handler) testEmail(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -450,14 +450,14 @@ func (h *Handler) testEmail(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest)
 		return
 	}
-	appearance := h.appearance(r.Context(), tenantID)
+	appearance := h.appearance(r.Context(), organizationID)
 	variables := map[string]string{"code": "482913", "ttl": "10 minutes", "tenant_name": appearance.name, "reset_url": "https://example.invalid/test/reset", "magic_url": "https://example.invalid/test/sign-in", "invite_url": "https://example.invalid/test/invite"}
 	preview, err := renderEditor(chi.URLParam(r, "key"), input.Draft, variables, input.Locale, appearance)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if !h.testLimits.allow(tenantID.String()+":"+principal.UserID.String(), time.Now()) {
+	if !h.testLimits.allow(organizationID.String()+":"+principal.UserID.String(), time.Now()) {
 		w.Header().Set("Retry-After", "60")
 		httpx.WriteJSON(w, http.StatusTooManyRequests, map[string]any{"error": map[string]any{"code": "rate_limited", "message": "Wait before sending another test email."}})
 		return
@@ -468,7 +468,7 @@ func (h *Handler) testEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
-	if err := h.audit(r.Context(), tx, r, tenantID, "email_template.test_requested", chi.URLParam(r, "key")); err != nil {
+	if err := h.audit(r.Context(), tx, r, organizationID, "email_template.test_requested", chi.URLParam(r, "key")); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -476,7 +476,7 @@ func (h *Handler) testEmail(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Sender.Send(r.Context(), notifier.Message{TenantID: tenantID.String(), Channel: "email", To: parsed.Address, Subject: "[Test] " + preview.Subject, Body: preview.Body, HTML: preview.HTML}); err != nil {
+	if err := h.Sender.Send(r.Context(), notifier.Message{OrganizationID: organizationID.String(), Channel: "email", To: parsed.Address, Subject: "[Test] " + preview.Subject, Body: preview.Body, HTML: preview.HTML}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

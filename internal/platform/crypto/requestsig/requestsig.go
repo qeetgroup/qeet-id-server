@@ -1,4 +1,4 @@
-// Package requestsig signs the requests Qeet ID sends to an organisation's own
+// Package requestsig signs the requests Qeet ID sends to an organization's own
 // endpoints, webhook deliveries and auth-hook calls alike, so one receiver's
 // check serves both. X-Qeet-Timestamp is the Unix second of sending, and
 // X-Qeet-Signature is "sha256=" and the hex HMAC-SHA256, keyed by a secret, of

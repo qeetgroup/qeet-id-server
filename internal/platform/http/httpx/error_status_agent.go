@@ -9,16 +9,16 @@ import (
 // init registers the HTTP statuses of the AI-agent error codes.
 func init() {
 	registerStatuses(map[string]int{
-		errs.CodeAgentNotFound:          http.StatusNotFound,
-		errs.CodeAgentStatusInvalid:     http.StatusBadRequest,
-		errs.CodeAgentDecommissioned:    http.StatusConflict,
-		errs.CodeAgentTransitionInvalid: http.StatusConflict,
-		errs.CodeAgentNameRequired:      http.StatusUnprocessableEntity,
-		errs.CodeAgentSponsorRequired:   http.StatusUnprocessableEntity,
-		errs.CodeAgentSponsorNotMember:  http.StatusUnprocessableEntity,
-		errs.CodeAgentTokenInvalid:      http.StatusUnauthorized,
-		errs.CodeAgentInactive:          http.StatusUnauthorized,
-		errs.CodeAgentInvalidID:         http.StatusBadRequest,
-		errs.CodeAgentTenantMismatch:    http.StatusForbidden,
+		errs.CodeAgentNotFound:             http.StatusNotFound,
+		errs.CodeAgentStatusInvalid:        http.StatusBadRequest,
+		errs.CodeAgentDecommissioned:       http.StatusConflict,
+		errs.CodeAgentTransitionInvalid:    http.StatusConflict,
+		errs.CodeAgentNameRequired:         http.StatusUnprocessableEntity,
+		errs.CodeAgentSponsorRequired:      http.StatusUnprocessableEntity,
+		errs.CodeAgentSponsorNotMember:     http.StatusUnprocessableEntity,
+		errs.CodeAgentTokenInvalid:         http.StatusUnauthorized,
+		errs.CodeAgentInactive:             http.StatusUnauthorized,
+		errs.CodeAgentInvalidID:            http.StatusBadRequest,
+		errs.CodeAgentOrganizationMismatch: http.StatusForbidden,
 	})
 }

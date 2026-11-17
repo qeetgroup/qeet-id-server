@@ -23,7 +23,7 @@ import (
 func TestWrongSecretsFromAnotherAddressDontLockTheApplicationOut(t *testing.T) {
 	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
 	svc.SetClientLockout(ClientLockout{Threshold: 3, Window: time.Minute, Duration: time.Minute})
-	client, secret := registerClient(t, svc, dbtest.Tenant(t))
+	client, secret := registerClient(t, svc, dbtest.Organization(t))
 	router := chi.NewRouter()
 	router.Use(httpx.ClientIPContext)
 	(&Handler{Service: svc}).MountToken(router)

@@ -134,8 +134,8 @@ func (h *Handler) sandboxPay(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, successURL, http.StatusSeeOther) // #nosec G710 -- dev-only sandbox, refused outside dev by config
 }
 
-func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	return httpx.PathTenantOr(r, errs.ErrBillingTenantInvalid, errs.ErrBillingTenantMismatch)
+func requirePathOrganization(r *http.Request) (uuid.UUID, error) {
+	return httpx.PathOrganizationOr(r, errs.ErrBillingOrganizationInvalid, errs.ErrBillingOrganizationMismatch)
 }
 
 func (h *Handler) listPlans(w http.ResponseWriter, r *http.Request) {
@@ -148,12 +148,12 @@ func (h *Handler) listPlans(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) getSubscription(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	sub, err := h.Service.GetSubscription(r.Context(), tenantID)
+	sub, err := h.Service.GetSubscription(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -162,7 +162,7 @@ func (h *Handler) getSubscription(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) startTrial(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -175,7 +175,7 @@ func (h *Handler) startTrial(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	sub, err := h.Service.StartTrial(r.Context(), tenantID, in.PlanCode, in.Currency)
+	sub, err := h.Service.StartTrial(r.Context(), organizationID, in.PlanCode, in.Currency)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -184,12 +184,12 @@ func (h *Handler) startTrial(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) getBillingProfile(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	p, err := h.Service.GetBillingProfile(r.Context(), tenantID)
+	p, err := h.Service.GetBillingProfile(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -198,7 +198,7 @@ func (h *Handler) getBillingProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) putBillingProfile(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -208,11 +208,11 @@ func (h *Handler) putBillingProfile(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.UpsertBillingProfile(r.Context(), tenantID, in); err != nil {
+	if err := h.Service.UpsertBillingProfile(r.Context(), organizationID, in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	p, err := h.Service.GetBillingProfile(r.Context(), tenantID)
+	p, err := h.Service.GetBillingProfile(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -221,7 +221,7 @@ func (h *Handler) putBillingProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) changePlan(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -241,15 +241,15 @@ func (h *Handler) changePlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	sub, err := h.Service.SwitchPlan(ctx, tx, tenantID, in.PlanCode, in.Currency)
+	sub, err := h.Service.SwitchPlan(ctx, tx, organizationID, in.PlanCode, in.Currency)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	actorID, actorType := audit.ActorOf(r).Identity()
-	tid := tenantID
+	tid := organizationID
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID: &tid, ActorUserID: actorID, ActorType: actorType,
+		OrganizationID: &tid, ActorUserID: actorID, ActorType: actorType,
 		Action: "billing.plan_changed", ResourceType: "subscription",
 		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
 		Metadata: map[string]any{"plan": sub.PlanCode, "currency": sub.Currency, "amount_minor": sub.AmountMinor},
@@ -267,7 +267,7 @@ func (h *Handler) changePlan(w http.ResponseWriter, r *http.Request) {
 // checkout starts a plan change and returns either a hosted-payment URL or
 // {status: "active"} when the plan was activated directly.
 func (h *Handler) checkout(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -287,7 +287,7 @@ func (h *Handler) checkout(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBillingCheckoutURLInvalid)
 		return
 	}
-	res, err := h.Service.Checkout(r.Context(), tenantID, in.PlanCode, in.Currency, in.Country, in.SuccessURL, in.CancelURL)
+	res, err := h.Service.Checkout(r.Context(), organizationID, in.PlanCode, in.Currency, in.Country, in.SuccessURL, in.CancelURL)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -403,7 +403,7 @@ func (h *Handler) razorpayVerify(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) cancel(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -415,14 +415,14 @@ func (h *Handler) cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	if err := h.Service.Cancel(ctx, tx, tenantID); err != nil {
+	if err := h.Service.Cancel(ctx, tx, organizationID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	actorID, actorType := audit.ActorOf(r).Identity()
-	tid := tenantID
+	tid := organizationID
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID: &tid, ActorUserID: actorID, ActorType: actorType,
+		OrganizationID: &tid, ActorUserID: actorID, ActorType: actorType,
 		Action: "billing.subscription_canceled", ResourceType: "subscription",
 		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
 	}); err != nil {
@@ -437,12 +437,12 @@ func (h *Handler) cancel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listInvoices(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out, err := h.Service.ListInvoices(r.Context(), tenantID)
+	out, err := h.Service.ListInvoices(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -452,7 +452,7 @@ func (h *Handler) listInvoices(w http.ResponseWriter, r *http.Request) {
 
 // payInvoice opens a hosted checkout for an open invoice, such as a renewal.
 func (h *Handler) payInvoice(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -474,7 +474,7 @@ func (h *Handler) payInvoice(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBillingCheckoutURLInvalid)
 		return
 	}
-	res, err := h.Service.PayInvoice(r.Context(), tenantID, invoiceID, in.SuccessURL, in.CancelURL)
+	res, err := h.Service.PayInvoice(r.Context(), organizationID, invoiceID, in.SuccessURL, in.CancelURL)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -482,14 +482,14 @@ func (h *Handler) payInvoice(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
-// paymentMethod returns what the organisation last paid with, or null.
+// paymentMethod returns what the organization last paid with, or null.
 func (h *Handler) paymentMethod(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	m, err := h.Service.LastPaymentMethod(r.Context(), tenantID)
+	m, err := h.Service.LastPaymentMethod(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

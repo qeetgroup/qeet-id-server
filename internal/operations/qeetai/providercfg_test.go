@@ -167,7 +167,7 @@ func bodyCode(t *testing.T, rec *httptest.ResponseRecorder) string {
 	return body.Error.Code
 }
 
-// TestPlatformViewHidesTheDeploymentsEndpoint checks that an organisation using
+// TestPlatformViewHidesTheDeploymentsEndpoint checks that an organization using
 // the Qeet-managed provider sees which provider and model answer, not the
 // deployment's base URL.
 func TestPlatformViewHidesTheDeploymentsEndpoint(t *testing.T) {

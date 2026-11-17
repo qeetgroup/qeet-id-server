@@ -125,7 +125,7 @@ func TestUnsupportedFiltersReturnSCIMInvalidFilter(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodGet, test.path, nil)
-			request = request.WithContext(context.WithValue(request.Context(), tenantCtxKey, uuid.New()))
+			request = request.WithContext(context.WithValue(request.Context(), organizationCtxKey, uuid.New()))
 			recorder := httptest.NewRecorder()
 			test.call(recorder, request)
 			if recorder.Code != http.StatusBadRequest {

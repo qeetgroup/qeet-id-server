@@ -35,29 +35,29 @@ func pendingBackchannel(t *testing.T, svc *Service, client *Client, secret strin
 	return started.AuthReqID, id
 }
 
-// TestBackchannelApprovalMeetsTheOrganisationsRules checks that approving a
+// TestBackchannelApprovalMeetsTheOrganizationsRules checks that approving a
 // backchannel request needs what signing in to the application does: the
-// person still a member of its organisation, an address its rules allow (a
+// person still a member of its organization, an address its rules allow (a
 // refusal recorded), and a session that met the second factor it requires.
-func TestBackchannelApprovalMeetsTheOrganisationsRules(t *testing.T) {
+func TestBackchannelApprovalMeetsTheOrganizationsRules(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
 	svc := NewService(pool, dbtest.Issuer(t))
 	svc.SetAddressPolicy(ipallow.NewService(pool))
 	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
 	authSvc.SetMFA(mfa.NewService(pool, "Qeet", notifier.LogSender{}, ""))
 	svc.SetSessionFactors(authSvc.SessionFactorShortfall)
-	tenant, home := dbtest.Tenant(t), dbtest.Tenant(t)
-	client, secret := registerClientWith(t, svc, CreateClientInput{TenantID: tenant, GrantTypes: []string{grantTypeCIBA}})
+	organization, home := dbtest.Organization(t), dbtest.Organization(t)
+	client, secret := registerClientWith(t, svc, CreateClientInput{OrganizationID: organization, GrantTypes: []string{grantTypeCIBA}})
 	exec := func(sql string, args ...any) {
 		t.Helper()
 		if _, err := pool.Exec(ctx, sql, args...); err != nil {
 			t.Fatal(err)
 		}
 	}
-	exec(`WITH rule AS (INSERT INTO tenant.ip_rules (tenant_id, cidr, label, action) VALUES ($1, '192.0.2.0/24', 'office', 'allow'))
-		INSERT INTO tenant.ip_rules_config (tenant_id, enabled) VALUES ($1, TRUE)`, tenant)
+	exec(`WITH rule AS (INSERT INTO organization.ip_rules (organization_id, cidr, label, action) VALUES ($1, '192.0.2.0/24', 'office', 'allow'))
+		INSERT INTO organization.ip_rules_config (organization_id, enabled) VALUES ($1, TRUE)`, organization)
 	const office, elsewhere = "192.0.2.10", "198.51.100.7"
-	a := dbtest.User(t, home, home, tenant)
+	a := dbtest.User(t, home, home, organization)
 	pair, err := authSvc.IssuePair(ctx, a.ID, home, office, "test", "password")
 	if err != nil {
 		t.Fatal(err)
@@ -71,14 +71,14 @@ func TestBackchannelApprovalMeetsTheOrganisationsRules(t *testing.T) {
 	if err := decide(id, elsewhere); !errors.Is(err, errs.ErrAuthAddressNotAllowed) {
 		t.Errorf("approve from an address the rules refuse: %v, want %v", err, errs.ErrAuthAddressNotAllowed)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'auth.address_refused' AND metadata->>'path' = 'ciba_approval'`, tenant); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'auth.address_refused' AND metadata->>'path' = 'ciba_approval'`, organization); n != 1 {
 		t.Errorf("the refused approval was recorded %d times, want once", n)
 	}
 	if err := decide(id, office); err != nil {
 		t.Fatalf("approve from the office: %v", err)
 	}
 
-	exec(`INSERT INTO tenant.security_policies (tenant_id, mfa_enforcement, mfa_grace_days, mfa_enforced_since) VALUES ($1, 'required', 0, NOW())`, tenant)
+	exec(`INSERT INTO organization.security_policies (organization_id, mfa_enforcement, mfa_grace_days, mfa_enforced_since) VALUES ($1, 'required', 0, NOW())`, organization)
 	_, id = pendingBackchannel(t, svc, client, secret, a)
 	if err := decide(id, office); !errors.Is(err, errs.ErrMFAEnrollmentRequired) {
 		t.Errorf("approve through a session short of the factor the organisation requires: %v, want %v", err, errs.ErrMFAEnrollmentRequired)
@@ -89,9 +89,9 @@ func TestBackchannelApprovalMeetsTheOrganisationsRules(t *testing.T) {
 	}
 
 	_, id = pendingBackchannel(t, svc, client, secret, a)
-	exec(`DELETE FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2`, a.ID, tenant)
-	if err := decide(id, office); !errors.Is(err, errs.ErrOIDCUserTenantMismatch) {
-		t.Errorf("approve once no longer a member of the organisation: %v, want %v", err, errs.ErrOIDCUserTenantMismatch)
+	exec(`DELETE FROM rbac.user_roles WHERE user_id = $1 AND organization_id = $2`, a.ID, organization)
+	if err := decide(id, office); !errors.Is(err, errs.ErrOIDCUserOrganizationMismatch) {
+		t.Errorf("approve once no longer a member of the organisation: %v, want %v", err, errs.ErrOIDCUserOrganizationMismatch)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM auth.oidc_ciba_requests WHERE id = $1 AND status = 'pending'`, id); n != 1 {
 		t.Error("a refused approval changed the request")
@@ -100,13 +100,13 @@ func TestBackchannelApprovalMeetsTheOrganisationsRules(t *testing.T) {
 
 // TestCIBAGrantRemovedAfterAuthorizeIsRefusedAtToken checks that collecting a
 // backchannel grant's tokens needs a confidential client still holding the CIBA
-// grant and a person still in its organisation, and that a token that fails to
+// grant and a person still in its organization, and that a token that fails to
 // be stored leaves the request unspent, so a later poll gets it.
 func TestCIBAGrantRemovedAfterAuthorizeIsRefusedAtToken(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
 	svc := NewService(pool, dbtest.Issuer(t))
-	tenant := dbtest.Tenant(t)
-	client, secret := registerClientWith(t, svc, CreateClientInput{TenantID: tenant, GrantTypes: []string{grantTypeCIBA, "refresh_token"}})
+	organization := dbtest.Organization(t)
+	client, secret := registerClientWith(t, svc, CreateClientInput{OrganizationID: organization, GrantTypes: []string{grantTypeCIBA, "refresh_token"}})
 	exec := func(sql string, args ...any) {
 		t.Helper()
 		if _, err := pool.Exec(ctx, sql, args...); err != nil {
@@ -125,7 +125,7 @@ func TestCIBAGrantRemovedAfterAuthorizeIsRefusedAtToken(t *testing.T) {
 	repoll := func() {
 		exec(`UPDATE auth.oidc_ciba_requests SET last_polled_at = NULL WHERE client_id = $1`, client.ClientID)
 	}
-	a := dbtest.User(t, tenant, tenant)
+	a := dbtest.User(t, organization, organization)
 
 	authReqID := approved(a)
 	exec(`UPDATE auth.oidc_clients SET grant_types = ARRAY['refresh_token'] WHERE client_id = $1`, client.ClientID)
@@ -160,8 +160,8 @@ func TestCIBAGrantRemovedAfterAuthorizeIsRefusedAtToken(t *testing.T) {
 	}
 
 	authReqID = approved(a)
-	exec(`DELETE FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2`, a.ID, tenant)
-	exec(`UPDATE account.users SET tenant_id = $2 WHERE id = $1`, a.ID, dbtest.Tenant(t))
+	exec(`DELETE FROM rbac.user_roles WHERE user_id = $1 AND organization_id = $2`, a.ID, organization)
+	exec(`UPDATE account.users SET organization_id = $2 WHERE id = $1`, a.ID, dbtest.Organization(t))
 	repoll()
 	if _, err := svc.BackchannelToken(ctx, client.ClientID, secret, authReqID); err == nil {
 		t.Error("collect once the person left the organisation: tokens issued")

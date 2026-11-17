@@ -20,57 +20,57 @@ import (
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
 
-// TestSocialSignInAdoptsOnlyAnAccountInTheTenant checks that a verified
-// address adopts an existing account only in its home tenant: a tenant where
-// it merely holds a role, like any other, is refused, so that tenant's provider
+// TestSocialSignInAdoptsOnlyAnAccountInTheOrganization checks that a verified
+// address adopts an existing account only in its home organization: an organization where
+// it merely holds a role, like any other, is refused, so that organization's provider
 // can't sign a guest in and switch into the guest's home.
-func TestSocialSignInAdoptsOnlyAnAccountInTheTenant(t *testing.T) {
+func TestSocialSignInAdoptsOnlyAnAccountInTheOrganization(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := NewService(dbtest.Pool(t), nil, "https://api.id.qeet.in")
-	home, joined, other := dbtest.Tenant(t), dbtest.Tenant(t), dbtest.Tenant(t)
+	home, joined, other := dbtest.Organization(t), dbtest.Organization(t), dbtest.Organization(t)
 	account := dbtest.User(t, home, joined)
 	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE account.users SET email_verified_at = NOW() WHERE id = $1`, account.ID); err != nil {
 		t.Fatal(err)
 	}
-	// GitHub, whose endpoints are fixed, vouches for an address in any tenant.
-	signIn := func(tenant uuid.UUID) (uuid.UUID, error) {
-		return svc.findOrCreateUser(ctx, tenant, "github", userInfo{Subject: uuid.NewString(), Email: account.Email, EmailVerified: true})
+	// GitHub, whose endpoints are fixed, vouches for an address in any organization.
+	signIn := func(organization uuid.UUID) (uuid.UUID, error) {
+		return svc.findOrCreateUser(ctx, organization, "github", userInfo{Subject: uuid.NewString(), Email: account.Email, EmailVerified: true})
 	}
 
 	if got, err := signIn(home); err != nil || got != account.ID {
 		t.Errorf("sign-in to the home tenant = %s, %v; want the account %s", got, err, account.ID)
 	}
-	for name, tenant := range map[string]uuid.UUID{"joined": joined, "another": other} {
-		if got, err := signIn(tenant); !errors.Is(err, errs.ErrSocialAccountNotInTenant) {
-			t.Errorf("sign-in to the %s tenant = %s, %v; want %v", name, got, err, errs.ErrSocialAccountNotInTenant)
+	for name, organization := range map[string]uuid.UUID{"joined": joined, "another": other} {
+		if got, err := signIn(organization); !errors.Is(err, errs.ErrSocialAccountNotInOrganization) {
+			t.Errorf("sign-in to the %s tenant = %s, %v; want %v", name, got, err, errs.ErrSocialAccountNotInOrganization)
 		}
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE user_id = $1 AND tenant_id <> $2`, account.ID, home); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE user_id = $1 AND organization_id <> $2`, account.ID, home); n != 0 {
 		t.Errorf("another tenant's sign-in linked %d identities", n)
 	}
 }
 
 // TestSocialSignUpWithOneConnection checks, with only one connection free,
 // that a social sign-in with an address nobody holds creates an account where
-// the organisation allows self-registration, and is refused where it doesn't.
+// the organization allows self-registration, and is refused where it doesn't.
 func TestSocialSignUpWithOneConnection(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
 	authSvc.SetRegistrationPolicy(authpolicy.NewService(pool))
 	svc := NewService(pool, authSvc, "https://api.id.qeet.in")
-	open, closed := dbtest.Tenant(t), dbtest.Tenant(t)
-	if _, err := pool.Exec(ctx, `INSERT INTO tenant.auth_policy (tenant_id, self_registration_enabled) VALUES ($1, TRUE)`, open); err != nil {
+	open, closed := dbtest.Organization(t), dbtest.Organization(t)
+	if _, err := pool.Exec(ctx, `INSERT INTO organization.auth_policy (organization_id, self_registration_enabled) VALUES ($1, TRUE)`, open); err != nil {
 		t.Fatalf("policy: %v", err)
 	}
-	signUp := func(tenant uuid.UUID) (string, uuid.UUID, error) {
+	signUp := func(organization uuid.UUID) (string, uuid.UUID, error) {
 		email := dbtest.Unique("social") + "@example.test"
-		id, err := svc.findOrCreateUser(ctx, tenant, "google", userInfo{Subject: uuid.NewString(), Email: email, EmailVerified: true})
+		id, err := svc.findOrCreateUser(ctx, organization, "google", userInfo{Subject: uuid.NewString(), Email: email, EmailVerified: true})
 		return email, id, err
 	}
 
 	dbtest.LeaveOneConnection(t)
-	if email, id, err := signUp(open); err != nil || dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND email = $2 AND tenant_id = $3`, id, email, open) != 1 {
+	if email, id, err := signUp(open); err != nil || dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND email = $2 AND organization_id = $3`, id, email, open) != 1 {
 		t.Errorf("sign-up where self-registration is on: %s, %v; want an account in the tenant", id, err)
 	}
 	if email, _, err := signUp(closed); !errors.Is(err, errs.ErrAuthSelfRegistrationDisabled) || dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, email) != 0 {
@@ -79,20 +79,20 @@ func TestSocialSignUpWithOneConnection(t *testing.T) {
 }
 
 // TestSocialSignInAdoptsADirectoryProvisionedAccount checks that an account
-// the organisation's directory provisioned, its address never proved, is
+// the organization's directory provisioned, its address never proved, is
 // adopted by a verified sign-in and marked verified, while an unproved account
 // registered any other way is still refused.
 func TestSocialSignInAdoptsADirectoryProvisionedAccount(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	svc := NewService(pool, nil, "https://api.id.qeet.in")
-	tenant := dbtest.Tenant(t)
-	provisioned, registered := dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	provisioned, registered := dbtest.User(t, organization, organization), dbtest.User(t, organization, organization)
 	if _, err := pool.Exec(ctx, `UPDATE account.users SET provisioned_via = 'scim' WHERE id = $1`, provisioned.ID); err != nil {
 		t.Fatal(err)
 	}
 	signIn := func(email string) (uuid.UUID, error) {
-		return svc.findOrCreateUser(ctx, tenant, "github", userInfo{Subject: uuid.NewString(), Email: email, EmailVerified: true})
+		return svc.findOrCreateUser(ctx, organization, "github", userInfo{Subject: uuid.NewString(), Email: email, EmailVerified: true})
 	}
 	if got, err := signIn(provisioned.Email); err != nil || got != provisioned.ID {
 		t.Errorf("a directory-provisioned account: %s, %v; want it adopted", got, err)
@@ -107,21 +107,21 @@ func TestSocialSignInAdoptsADirectoryProvisionedAccount(t *testing.T) {
 
 // TestSocialSignInIgnoresConnectionLinks checks that a social provider named
 // like a single sign-on kind (saml, ldap, oidc) doesn't find a person linked
-// through one of the organisation's connections by that subject, so whoever
+// through one of the organization's connections by that subject, so whoever
 // controls such a provider can't sign in as them.
 func TestSocialSignInIgnoresConnectionLinks(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := NewService(dbtest.Pool(t), nil, "https://api.id.qeet.in")
-	tenant := dbtest.Tenant(t)
-	linked := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	linked := dbtest.User(t, organization, organization)
 	for _, provider := range []string{"saml", "ldap", "oidc"} {
 		subject := provider + "-subject-" + uuid.NewString()
 		if _, err := dbtest.Pool(t).Exec(ctx, `
-			INSERT INTO account.external_identities (user_id, tenant_id, provider, subject, email, connection_id)
-			VALUES ($1, $2, $3, $4, $5, $6)`, linked.ID, tenant, provider, subject, linked.Email, uuid.New()); err != nil {
+			INSERT INTO account.external_identities (user_id, organization_id, provider, subject, email, connection_id)
+			VALUES ($1, $2, $3, $4, $5, $6)`, linked.ID, organization, provider, subject, linked.Email, uuid.New()); err != nil {
 			t.Fatal(err)
 		}
-		got, err := svc.findOrCreateUser(ctx, tenant, provider, userInfo{Subject: subject})
+		got, err := svc.findOrCreateUser(ctx, organization, provider, userInfo{Subject: subject})
 		if got == linked.ID || !errors.Is(err, errs.ErrSocialEmailMissing) {
 			t.Errorf("a social %q sign-in with a connection's subject = %s, %v; want no link found", provider, got, err)
 		}
@@ -129,7 +129,7 @@ func TestSocialSignInIgnoresConnectionLinks(t *testing.T) {
 }
 
 // TestSocialProviderTrustChangeMustOutrankLinkedAdministrators checks that
-// pointing an organisation's OpenID Connect provider an owner is linked
+// pointing an organization's OpenID Connect provider an owner is linked
 // through at another discovery URL, by setting it up again or by changing it,
 // is refused to someone who can change providers but doesn't outrank the
 // owner, as it could then sign in as them, while other changes aren't, and an
@@ -138,16 +138,16 @@ func TestSocialProviderTrustChangeMustOutrankLinkedAdministrators(t *testing.T) 
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
 	f := newSocialFixture(t)
 	h := &Handler{Service: f.svc, ActOnCheck: rbac.NewRepository(pool).CheckActOn}
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	var ownerRole uuid.UUID
-	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, tenant).Scan(&ownerRole); err != nil {
+	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (organization_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, organization).Scan(&ownerRole); err != nil {
 		t.Fatal(err)
 	}
-	owner, editor := dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant)
-	dbtest.Assign(t, owner.ID, tenant, ownerRole)
-	dbtest.Assign(t, editor.ID, tenant, dbtest.Role(t, tenant, "connection.write", "connection.read"))
+	owner, editor := dbtest.User(t, organization, organization), dbtest.User(t, organization, organization)
+	dbtest.Assign(t, owner.ID, organization, ownerRole)
+	dbtest.Assign(t, editor.ID, organization, dbtest.Role(t, organization, "connection.write", "connection.read"))
 	as := func(a dbtest.Account, method, path string, body any) (int, string) {
-		rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(a.ID, tenant), h.Mount), method, path, body)
+		rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(a.ID, organization), h.Mount), method, path, body)
 		return rec.Code, rec.Body.String()
 	}
 	discovery := f.idp.URL + "/.well-known/openid-configuration"
@@ -157,7 +157,7 @@ func TestSocialProviderTrustChangeMustOutrankLinkedAdministrators(t *testing.T) 
 	if status, body := as(owner, http.MethodPost, "/social/providers", provider(discovery)); status != http.StatusOK {
 		t.Fatalf("set the provider up: %d %s", status, body)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO account.external_identities (user_id, tenant_id, provider, subject) VALUES ($1, $2, 'corp', 'owner-subject')`, owner.ID, tenant); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO account.external_identities (user_id, organization_id, provider, subject) VALUES ($1, $2, 'corp', 'owner-subject')`, owner.ID, organization); err != nil {
 		t.Fatal(err)
 	}
 	elsewhere := "https://idp.attacker.example/.well-known/openid-configuration"
@@ -197,34 +197,34 @@ func TestUnlinkingAnOwnersSocialIdentityNeedsToOutrankThem(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
 	f := newSocialFixture(t)
 	h := &Handler{Service: f.svc, ActOnCheck: rbac.NewRepository(pool).CheckActOn}
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	var ownerRole uuid.UUID
-	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name, is_system) VALUES ($1, 'owner', TRUE) RETURNING id`, tenant).Scan(&ownerRole); err != nil {
+	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (organization_id, name, is_system) VALUES ($1, 'owner', TRUE) RETURNING id`, organization).Scan(&ownerRole); err != nil {
 		t.Fatal(err)
 	}
-	owner, otherOwner := dbtest.User(t, tenant), dbtest.User(t, tenant)
-	dbtest.Assign(t, owner.ID, tenant, ownerRole)
-	dbtest.Assign(t, otherOwner.ID, tenant, ownerRole)
-	admin := dbtest.User(t, tenant)
-	dbtest.Assign(t, admin.ID, tenant, dbtest.Role(t, tenant, "user.read", "user.write"))
-	billing := dbtest.User(t, tenant)
-	dbtest.Assign(t, billing.ID, tenant, dbtest.Role(t, tenant, "billing.write"))
-	member := dbtest.User(t, tenant, tenant)
-	if _, err := pool.Exec(ctx, `INSERT INTO tenant.social_providers (tenant_id, provider, client_id, client_secret_ct, client_secret_nonce) VALUES ($1, 'google', 'id', '\x00', '\x00')`, tenant); err != nil {
+	owner, otherOwner := dbtest.User(t, organization), dbtest.User(t, organization)
+	dbtest.Assign(t, owner.ID, organization, ownerRole)
+	dbtest.Assign(t, otherOwner.ID, organization, ownerRole)
+	admin := dbtest.User(t, organization)
+	dbtest.Assign(t, admin.ID, organization, dbtest.Role(t, organization, "user.read", "user.write"))
+	billing := dbtest.User(t, organization)
+	dbtest.Assign(t, billing.ID, organization, dbtest.Role(t, organization, "billing.write"))
+	member := dbtest.User(t, organization, organization)
+	if _, err := pool.Exec(ctx, `INSERT INTO organization.social_providers (organization_id, provider, client_id, client_secret_ct, client_secret_nonce) VALUES ($1, 'google', 'id', '\x00', '\x00')`, organization); err != nil {
 		t.Fatal(err)
 	}
 	identity := func(a dbtest.Account) string {
 		t.Helper()
 		dbtest.SetPassword(t, a.ID, dbtest.Unique("Kx7mQ2vLp9Wz"))
 		var id uuid.UUID
-		if err := pool.QueryRow(ctx, `INSERT INTO account.external_identities (user_id, tenant_id, provider, subject) VALUES ($1, $2, 'google', $3) RETURNING id`,
-			a.ID, tenant, dbtest.Unique("subject")).Scan(&id); err != nil {
+		if err := pool.QueryRow(ctx, `INSERT INTO account.external_identities (user_id, organization_id, provider, subject) VALUES ($1, $2, 'google', $3) RETURNING id`,
+			a.ID, organization, dbtest.Unique("subject")).Scan(&id); err != nil {
 			t.Fatal(err)
 		}
 		return "/social/identities/" + id.String()
 	}
 	unlink := func(as dbtest.Account, path string) (int, string) {
-		rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(as.ID, tenant), h.Mount), http.MethodDelete, path, nil)
+		rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(as.ID, organization), h.Mount), http.MethodDelete, path, nil)
 		return rec.Code, rec.Body.String()
 	}
 

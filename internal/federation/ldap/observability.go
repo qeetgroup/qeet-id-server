@@ -18,17 +18,17 @@ import (
 // directory it used; Subject is the login name a sign-in tried and UserID the
 // person it was for, once known.
 type Operation struct {
-	TenantID     uuid.UUID
-	ConnectionID uuid.UUID
-	Operation    string
-	Resource     string
-	Status       int
-	Started      time.Time
-	Duration     time.Duration
-	Reason       string
-	Params       map[string]string
-	Subject      string
-	UserID       *uuid.UUID
+	OrganizationID uuid.UUID
+	ConnectionID   uuid.UUID
+	Operation      string
+	Resource       string
+	Status         int
+	Started        time.Time
+	Duration       time.Duration
+	Reason         string
+	Params         map[string]string
+	Subject        string
+	UserID         *uuid.UUID
 }
 
 // OperationObserver records each directory operation.
@@ -46,7 +46,7 @@ func (service *Service) recordOperation(ctx context.Context, c *connFull, operat
 		return
 	}
 	op := Operation{
-		TenantID: c.TenantID, ConnectionID: c.ID, Operation: operation, Resource: resource,
+		OrganizationID: c.OrganizationID, ConnectionID: c.ID, Operation: operation, Resource: resource,
 		Status: operationStatus(operation, operationError), Started: started, Duration: time.Since(started),
 		Subject: subject, UserID: userID,
 	}
@@ -59,13 +59,13 @@ func (service *Service) recordOperation(ctx context.Context, c *connFull, operat
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer cancel()
 	if err := service.observer.RecordLDAPOperation(ctx, op); err != nil {
-		slog.Warn("LDAP operation telemetry unavailable", "tenant_id", c.TenantID, "err", err)
+		slog.Warn("LDAP operation telemetry unavailable", "tenant_id", c.OrganizationID, "err", err)
 	}
 }
 
 // operationStatus is how an operation's outcome is recorded: a person's own
 // credentials refused (401) apart from the service account refused (403), the
-// directory unreachable (502), and a sign-in this organisation refuses (422).
+// directory unreachable (502), and a sign-in this organization refuses (422).
 func operationStatus(operation string, err error) int {
 	switch {
 	case err == nil:
@@ -81,10 +81,10 @@ func operationStatus(operation string, err error) int {
 	}
 }
 
-// TestConnection binds to one of the tenant's LDAP connections and reports
+// TestConnection binds to one of the organization's LDAP connections and reports
 // the error, if any.
-func (service *Service) TestConnection(ctx context.Context, tenantID, connectionID uuid.UUID) (resultError error) {
-	connection, err := service.getFull(ctx, connectionID, tenantID)
+func (service *Service) TestConnection(ctx context.Context, organizationID, connectionID uuid.UUID) (resultError error) {
+	connection, err := service.getFull(ctx, connectionID, organizationID)
 	if err != nil {
 		return err
 	}

@@ -83,7 +83,7 @@ service_test.go     unit
 
 ## access — authorization
 
-**Purpose** — RBAC *"models permissions, per-tenant roles, role→permission bindings, and user
+**Purpose** — RBAC *"models permissions, per-organization roles, role→permission bindings, and user
 assignments. The Check endpoint is the hot path callers use to authorize an action."*
 **Path** `internal/access/authorization/{rbac,abac,rebac,decide,decisionlog,authzen,policy,authpolicy}/`
 **Key dependencies** `platform/http/{errs,httpx}` · **`operations/audit`** (cross-context)
@@ -98,10 +98,10 @@ rbac/enforce.go       router middleware — consumes bootstrap/permissions.go
 rbac/http.go          /check, /roles, /permissions
 abac/abac.go          13 operators, role and relation leaves, deny-overrides, fail-closed
 rebac/rebac.go        Zanzibar relation tuples, recursive check
-decide/decide.go      one decision across all three: tenant, ABAC deny, then any allow
+decide/decide.go      one decision across all three: organization, ABAC deny, then any allow
 authzen/authzen.go    OpenID AuthZEN PDP/PEP facade
 decisionlog/decisionlog.go   the decisions check, AuthZEN and evaluate answer, kept 30 days
-policy/policy.go      tenant security policy
+policy/policy.go      organization security policy
 authpolicy/authpolicy.go   password rules, permitted login methods
 ```
 
@@ -168,20 +168,20 @@ risk/ipallow/ipallow.go   CIDR allow/deny
 
 ## identity
 
-**Purpose** — tenants, users, groups, invitations, verification. Invitations: *"lets a tenant admin
-invite an email address into a tenant with a pre-assigned role … the invite is consumed in the same
+**Purpose** — organizations, users, groups, invitations, verification. Invitations: *"lets an organization admin
+invite an email address into an organization with a pre-assigned role … the invite is consumed in the same
 transaction."*
-**Path** `internal/identity/{tenant,users,groups,invitations,verification,domainverify}/`
+**Path** `internal/identity/{organization,users,groups,invitations,verification,domainverify}/`
 **Key dependencies** `platform/http/{errs,httpx,paging}` — **the only `http/paging` consumer** ·
 `platform/database/postgres/{dbutil,pgxerr}` · `platform/messaging/{notifier,emailtmpl}` ·
 `platform/events/outbox` · **`access/authentication`**, **`operations/audit`**
-**Security** **High** — tenant and user lifecycle
+**Security** **High** — organization and user lifecycle
 
 **L4 pointers**
 
 ```text
-tenant/domain.go · tenant/http.go · tenant/repository.go
-tenant/branding/branding.go
+organization/domain.go · organization/http.go · organization/repository.go
+organization/branding/branding.go
 users/domain.go · users/http.go · users/repository.go
 users/bulk.go             bulk import
 users/import_adapters.go  Auth0 / Cognito / Azure B2C migration
@@ -193,7 +193,7 @@ verification/{http.go,verification.go} · domainverify/domainverify.go
 **Tests** `users/{repository,bulk,import_adapters}_test.go`, `domainverify/domainverify_test.go` ·
 integration: `identity_modules_test.go`, `flows_test.go`
 
-`identity/users` and `identity/tenant` still have no package doc comment. Tenant, groups,
+`identity/users` and `identity/organization` still have no package doc comment. Organization, groups,
 invitations and verification now all have direct package tests in addition to wider flow coverage.
 
 ---
@@ -222,7 +222,7 @@ saml/saml.go            SP role — consume a customer IdP
 saml/certificates.go · metadata.go · encryption.go   IdP certificate rollover, metadata import/refresh, encrypted assertions
 saml/idp.go             IdP role — serve a customer SP
 saml/idp_attributes.go · idp_assignment.go   NameID and attributes per app, assigned people and groups
-oidcsso/                an organisation's own OpenID Connect provider as a sign-in connection
+oidcsso/                an organization's own OpenID Connect provider as a sign-in connection
 ssosync/                SSO sign-in keeps name, address and groups in step; IdP group mappings
 scim/scim.go · scim/groups.go
 ldap/ldap.go
@@ -242,7 +242,7 @@ adminportal/adminportal.go   capability-scoped, time-limited SSO/SCIM config lin
 ## developer
 
 **Purpose** — service principals: *"non-human callers that authenticate via client_credentials grant
-and receive a short-lived service JWT scoped to a single tenant."* Agents: *"non-human AI-agent
+and receive a short-lived service JWT scoped to a single organization."* Agents: *"non-human AI-agent
 identities … tokens (`actor_type="agent"`) that are re-minted rather than refreshed."*
 **Path** `internal/developer/{agents,api-keys,principal,auth-hooks,webhooks,credentials}/`
 **Key dependencies** `platform/http/{errs,httpx}` · `platform/crypto/{tokens,encryption}` ·
@@ -274,8 +274,8 @@ credentials/vc/vc.go         W3C JWT-VC
 
 **Purpose** — audit: *"records actor-visible mutations to `audit.events`. Each write happens inside
 the caller's `pgx.Tx`, so the row commits atomically with the business write. Every row carries a
-SHA-256 hash chaining to the previous row in the same tenant; tampering (delete, edit, reorder)
-breaks the chain and is caught by `Verifier.Verify`."* Rows with no tenant go on one of 16
+SHA-256 hash chaining to the previous row in the same organization; tampering (delete, edit, reorder)
+breaks the chain and is caught by `Verifier.Verify`."* Rows with no organization go on one of 16
 platform chains (`chain_shard`, the writer's database connection's), so their writers don't
 queue on one lock; each is a whole chain with its own tip, lock and checkpoint.
 **Path** `internal/operations/{audit,billing,gdpr,analytics,retention,siem,activity,notifications,entitlements,ratelimits,search,sales,email,qeetai,servicehealth}/`
@@ -293,7 +293,7 @@ audit/anomaly/anomaly.go   behavioural baselines
 billing/{billing,payments,tax}.go
 gdpr/{gdpr,evidence}.go    requests, SOC2/ISO evidence
 gdpr/erasure.go · gdpr/export.go   what erasure removes, what an export holds
-gdpr/tenantpurge.go        a deleted organisation's data purged after 30 days
+gdpr/organizationpurge.go        a deleted organization's data purged after 30 days
 retention/retention.go · retention/sweeps.go   purge window, sweeps of every growing table
 siem/siem.go · analytics/analytics.go
 servicehealth/servicehealth.go   each component's state, operator-posted incidents
@@ -302,8 +302,8 @@ qeetai/{qeetai,orchestrator,sse,tools,providercfg,http}.go
 entitlements/ · ratelimits/ · search/ · notifications/ · sales/ · email/
 ```
 
-**Monthly active users** (the plans' `mau` allowance): `tenant.monthly_active_users`, one row per
-organisation, calendar month (UTC) and person, written by `identity/users/active.go`'s
+**Monthly active users** (the plans' `mau` allowance): `organization.monthly_active_users`, one row per
+organization, calendar month (UTC) and person, written by `identity/users/active.go`'s
 `RecordActive` in the same transaction as each sign-in (`access/authentication/issue.go`), session
 renewal (`refresh.go`) and application code exchange or refresh-token grant
 (`federation/oidc/token.go`). API keys, service principals and agents are never recorded. Reported
@@ -328,13 +328,13 @@ status, so these errors are reusable across HTTP, gRPC, CLI, jobs, and event con
 **Path** `internal/platform/`
 **Key dependencies** **none inside this repository** — R1 forbids importing any bounded context,
 `cmd/*` or `bootstrap`
-**Security** **Critical** — `http/httpx` (tenant scope, CSRF), `crypto/` (signing, hashing),
+**Security** **Critical** — `http/httpx` (organization scope, CSRF), `crypto/` (signing, hashing),
 `config` (the boot gate)
 
 **L4 pointers**
 
 ```text
-http/httpx/auth.go        RequireAuth · RequireTenant · EnforceTenantScope   ← tenant boundary
+http/httpx/auth.go        RequireAuth · RequireOrganization · EnforceOrganizationScope   ← organization boundary
 http/httpx/csrf.go        double-submit, HMAC-keyed
 http/httpx/middleware.go · response.go · ctx.go · timing.go
 http/errs/                ~50 files, one per domain
@@ -367,7 +367,7 @@ the repository's broadest direct infrastructure coverage.
 **Path** `internal/bootstrap/`
 **Key dependencies** **everything** — this is the one package allowed to import every context and all
 of platform
-**Security** **Critical** — middleware order and the route tree are load-bearing for tenant isolation
+**Security** **Critical** — middleware order and the route tree are load-bearing for organization isolation
 
 **L4 pointers**
 
@@ -406,7 +406,7 @@ identity/users         ← federation(2) · access(1)
 - **`operations/audit` is imported by all four other contexts** — a shared kernel in practice, not by
   design.
 - `access ↔ identity` is bidirectional at package granularity (`access/authentication` → `identity/users`,
-  `identity/tenant` → `access/authentication`) without forming a Go import cycle.
+  `identity/organization` → `access/authentication`) without forming a Go import cycle.
 - **Nothing imports `developer`.**
 
 Prefer interfaces declared by the consumer over importing another context's concrete types, so the

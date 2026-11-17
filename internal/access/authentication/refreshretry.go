@@ -36,7 +36,7 @@ func (s *Service) SetRefreshReuseGrace(grace time.Duration, cipher *envelope.Cip
 func (s *Service) refreshRetryOn() bool { return s.refreshGrace > 0 && s.refreshCipher != nil }
 
 // keepRotation stores pair, sealed, on rotated, the refresh token it replaces.
-// The session ID is the context, as a tenant-less session has no tenant.
+// The session ID is the context, as an organization-less session has no organization.
 func (s *Service) keepRotation(ctx context.Context, tx pgx.Tx, rotated uuid.UUID, pair *TokenPair) error {
 	if !s.refreshRetryOn() {
 		return nil
@@ -99,8 +99,8 @@ func (s *Service) keptRotation(ctx context.Context, tx pgx.Tx, rotated, sessionI
 // pair its rotation issued, once the address rules allow the renewal, and
 // audits it as auth.refresh_token_retried.
 func (s *Service) answerRetry(ctx context.Context, tx pgx.Tx, pair *TokenPair, age time.Duration, rotated uuid.UUID,
-	userID, tenantID uuid.UUID, in RefreshInput) (*TokenPair, error) {
-	if err := s.checkAddressTx(ctx, tx, tenantID, userID, in.IP, "refresh"); err != nil {
+	userID, organizationID uuid.UUID, in RefreshInput) (*TokenPair, error) {
+	if err := s.checkAddressTx(ctx, tx, organizationID, userID, in.IP, "refresh"); err != nil {
 		if errors.Is(err, errs.ErrAuthAddressNotAllowed) {
 			if cerr := tx.Commit(ctx); cerr != nil {
 				return nil, cerr
@@ -110,7 +110,7 @@ func (s *Service) answerRetry(ctx context.Context, tx pgx.Tx, pair *TokenPair, a
 	}
 	sessionID := pair.SessionID
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID: pair.TenantID, ActorUserID: &userID, ActorType: "user",
+		OrganizationID: pair.OrganizationID, ActorUserID: &userID, ActorType: "user",
 		Action: "auth.refresh_token_retried", ResourceType: "session", ResourceID: &sessionID,
 		IP: in.IP, UserAgent: in.UserAgent, RequestID: in.RequestID,
 		Metadata: map[string]any{"refresh_token_id": rotated, "seconds_since_rotation": int(age.Round(time.Second).Seconds())},

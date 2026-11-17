@@ -1,5 +1,5 @@
 // Package risk combines bot-detection, impossible-travel and device-reputation
-// signals into a per-request risk level. A level at or above the tenant's
+// signals into a per-request risk level. A level at or above the organization's
 // force-MFA level sends the sign-in through a second factor, even from a
 // trusted device.
 package risk
@@ -44,10 +44,10 @@ func (l Level) String() string {
 	}
 }
 
-// Settings are the per-tenant risk thresholds stored in auth.risk_settings.
+// Settings are the per-organization risk thresholds stored in auth.risk_settings.
 // ImpossibleTravelEnabled flags a sign-in from a new country sooner than
 // MinTravelHours after the last; DeviceReputationEnabled flags a browser-OS
-// pair never seen for the user. Both are off until a tenant opts in.
+// pair never seen for the user. Both are off until an organization opts in.
 type Settings struct {
 	MediumThreshold         float64 `json:"medium_threshold"`
 	HighThreshold           float64 `json:"high_threshold"`
@@ -100,7 +100,7 @@ func computeLevel(settings Settings, botScore float64, impossibleTravel, newDevi
 	}
 }
 
-// Service assesses risk and manages per-tenant risk settings.
+// Service assesses risk and manages per-organization risk settings.
 type Service struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
@@ -113,10 +113,10 @@ func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool, q: db
 // which RecordSignIn adds. country "" disables the impossible-travel check.
 // Database errors fail open (Low, or the signal is skipped), so a broken risk
 // table never blocks sign-in.
-func (s *Service) Assess(ctx context.Context, tenantID, userID uuid.UUID, ip, ua, country string) Level {
-	settings, err := s.GetSettings(ctx, tenantID)
+func (s *Service) Assess(ctx context.Context, organizationID, userID uuid.UUID, ip, ua, country string) Level {
+	settings, err := s.GetSettings(ctx, organizationID)
 	if err != nil {
-		slog.Warn("risk: could not load settings, defaulting to Low", "tenant_id", tenantID, "err", err)
+		slog.Warn("risk: could not load settings, defaulting to Low", "tenant_id", organizationID, "err", err)
 		return Low
 	}
 
@@ -124,7 +124,7 @@ func (s *Service) Assess(ctx context.Context, tenantID, userID uuid.UUID, ip, ua
 	dk := deviceKey(ua)
 
 	if settings.ImpossibleTravelEnabled && country != "" {
-		lastCountry, lastSeenAt, ok := s.lastCountry(ctx, tenantID, userID)
+		lastCountry, lastSeenAt, ok := s.lastCountry(ctx, organizationID, userID)
 		if ok && lastCountry != country {
 			elapsed := time.Since(lastSeenAt).Hours()
 			if elapsed < settings.MinTravelHours {
@@ -133,7 +133,7 @@ func (s *Service) Assess(ctx context.Context, tenantID, userID uuid.UUID, ip, ua
 		}
 	}
 	if settings.DeviceReputationEnabled {
-		seen, err := s.deviceSeenBefore(ctx, tenantID, userID, dk)
+		seen, err := s.deviceSeenBefore(ctx, organizationID, userID, dk)
 		if err == nil && !seen {
 			newDevice = true
 		}
@@ -145,14 +145,14 @@ func (s *Service) Assess(ctx context.Context, tenantID, userID uuid.UUID, ip, ua
 // RecordSignIn records a completed sign-in's device and country for later
 // assessments. A sign-in still to meet a challenge, or refused, is not
 // recorded, so asking again is assessed the same.
-func (s *Service) RecordSignIn(ctx context.Context, tenantID, userID uuid.UUID, ua, country string) {
-	s.recordLogin(ctx, tenantID, userID, deviceKey(ua), country)
+func (s *Service) RecordSignIn(ctx context.Context, organizationID, userID uuid.UUID, ua, country string) {
+	s.recordLogin(ctx, organizationID, userID, deviceKey(ua), country)
 }
 
 // ForceMFA reports whether the risk level should force MFA regardless of
-// trusted-device status, based on the tenant's force_mfa_at_level setting.
-func (s *Service) ForceMFA(ctx context.Context, tenantID uuid.UUID, level Level) bool {
-	settings, err := s.GetSettings(ctx, tenantID)
+// trusted-device status, based on the organization's force_mfa_at_level setting.
+func (s *Service) ForceMFA(ctx context.Context, organizationID uuid.UUID, level Level) bool {
+	settings, err := s.GetSettings(ctx, organizationID)
 	if err != nil {
 		return false
 	}
@@ -165,16 +165,16 @@ func (s *Service) ForceMFA(ctx context.Context, tenantID uuid.UUID, level Level)
 }
 
 // ShouldForceMFA satisfies auth.RiskAssessor: it assesses the request, without
-// recording it, and reports whether its level reaches the tenant's force-MFA
+// recording it, and reports whether its level reaches the organization's force-MFA
 // level.
-func (s *Service) ShouldForceMFA(ctx context.Context, tenantID, userID uuid.UUID, ip, ua, country string) bool {
-	level := s.Assess(ctx, tenantID, userID, ip, ua, country)
-	return s.ForceMFA(ctx, tenantID, level)
+func (s *Service) ShouldForceMFA(ctx context.Context, organizationID, userID uuid.UUID, ip, ua, country string) bool {
+	level := s.Assess(ctx, organizationID, userID, ip, ua, country)
+	return s.ForceMFA(ctx, organizationID, level)
 }
 
-// GetSettings returns the tenant's risk settings.
-func (s *Service) GetSettings(ctx context.Context, tenantID uuid.UUID) (Settings, error) {
-	row, err := s.q.GetRiskSettings(ctx, tenantID)
+// GetSettings returns the organization's risk settings.
+func (s *Service) GetSettings(ctx context.Context, organizationID uuid.UUID) (Settings, error) {
+	row, err := s.q.GetRiskSettings(ctx, organizationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return defaultSettings(), nil
 	}
@@ -200,12 +200,12 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Put("/tenants/{tenantID}/security/risk-settings", h.put)
 }
 
-func requireTenant(r *http.Request) (uuid.UUID, error) {
+func requireOrganization(r *http.Request) (uuid.UUID, error) {
 	id, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
 		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid tenantID")
 	}
-	scope, err := httpx.RequireTenant(r)
+	scope, err := httpx.RequireOrganization(r)
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -216,12 +216,12 @@ func requireTenant(r *http.Request) (uuid.UUID, error) {
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requireTenant(r)
+	organizationID, err := requireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	st, err := h.Service.GetSettings(r.Context(), tenantID)
+	st, err := h.Service.GetSettings(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -237,7 +237,7 @@ func withCountrySignal(st Settings) Settings {
 }
 
 func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requireTenant(r)
+	organizationID, err := requireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -247,7 +247,7 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	st, err := h.Service.UpdateSettings(r.Context(), tenantID, in, audit.ActorOf(r))
+	st, err := h.Service.UpdateSettings(r.Context(), organizationID, in, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -255,9 +255,9 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, withCountrySignal(st))
 }
 
-// UpdateSettings stores the tenant's risk settings, recorded as actor's with
+// UpdateSettings stores the organization's risk settings, recorded as actor's with
 // each setting it changed.
-func (s *Service) UpdateSettings(ctx context.Context, tenantID uuid.UUID, in Settings, actor audit.Actor) (Settings, error) {
+func (s *Service) UpdateSettings(ctx context.Context, organizationID uuid.UUID, in Settings, actor audit.Actor) (Settings, error) {
 	if in.MediumThreshold < 0.1 {
 		in.MediumThreshold = 0.1
 	}
@@ -277,7 +277,7 @@ func (s *Service) UpdateSettings(ctx context.Context, tenantID uuid.UUID, in Set
 	defer tx.Rollback(ctx)
 	q := s.q.WithTx(tx)
 	before := defaultSettings()
-	row, err := q.LockRiskSettings(ctx, tenantID)
+	row, err := q.LockRiskSettings(ctx, organizationID)
 	switch {
 	case err == nil:
 		before = Settings{
@@ -289,7 +289,7 @@ func (s *Service) UpdateSettings(ctx context.Context, tenantID uuid.UUID, in Set
 		return Settings{}, err
 	}
 	if err := q.UpsertRiskSettings(ctx, dbgen.UpsertRiskSettingsParams{
-		TenantID:                tenantID,
+		OrganizationID:          organizationID,
 		MediumThreshold:         in.MediumThreshold,
 		HighThreshold:           in.HighThreshold,
 		ForceMfaAtLevel:         in.ForceMFAAtLevel,
@@ -299,7 +299,7 @@ func (s *Service) UpdateSettings(ctx context.Context, tenantID uuid.UUID, in Set
 	}); err != nil {
 		return Settings{}, err
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "risk.settings_updated", "tenant", tenantID,
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "risk.settings_updated", "tenant", organizationID,
 		map[string]any{"changes": audit.Changes(before.audited(), in.audited()), "settings": in.audited()})); err != nil {
 		return Settings{}, err
 	}

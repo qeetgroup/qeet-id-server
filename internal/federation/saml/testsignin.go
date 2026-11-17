@@ -73,13 +73,13 @@ type TestAttribute struct {
 	Values       []string `json:"values"`
 }
 
-// BeginTestSignIn starts a test of tenantID's connection id in this browser,
+// BeginTestSignIn starts a test of organizationID's connection id in this browser,
 // on tx, and returns it with the IdP address to send the browser to. The IdP's
 // answer returns the browser to returnURL, the test's and the connection's IDs
 // in its fragment. A draft connection can be tested: the test signs nobody in.
-func (h *Handler) BeginTestSignIn(w http.ResponseWriter, r *http.Request, tx pgx.Tx, tenantID, id uuid.UUID, returnURL string) (*TestSignIn, error) {
+func (h *Handler) BeginTestSignIn(w http.ResponseWriter, r *http.Request, tx pgx.Tx, organizationID, id uuid.UUID, returnURL string) (*TestSignIn, error) {
 	ctx := r.Context()
-	row, err := h.Service.q.WithTx(tx).GetSamlConnection(ctx, dbgen.GetSamlConnectionParams{ID: id, TenantID: tenantID})
+	row, err := h.Service.q.WithTx(tx).GetSamlConnection(ctx, dbgen.GetSamlConnectionParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
 	}
@@ -119,16 +119,16 @@ func (h *Handler) BeginTestSignIn(w http.ResponseWriter, r *http.Request, tx pgx
 	return t, nil
 }
 
-// TestSignIn returns test id of tenantID's connection connectionID.
-func (s *Service) TestSignIn(ctx context.Context, id, connectionID, tenantID uuid.UUID) (*TestSignIn, error) {
+// TestSignIn returns test id of organizationID's connection connectionID.
+func (s *Service) TestSignIn(ctx context.Context, id, connectionID, organizationID uuid.UUID) (*TestSignIn, error) {
 	t := &TestSignIn{}
 	var result []byte
 	err := s.pool.QueryRow(ctx, `
 		SELECT t.id, t.connection_id, t.status, t.result, t.expires_at, t.created_at, t.completed_at
 		FROM auth.saml_test_sign_ins t
-		JOIN tenant.saml_connections c ON c.id = t.connection_id
-		WHERE t.id = $1 AND t.connection_id = $2 AND c.tenant_id = $3
-	`, id, connectionID, tenantID).Scan(&t.ID, &t.ConnectionID, &t.Status, &result, &t.ExpiresAt, &t.CreatedAt, &t.CompletedAt)
+		JOIN organization.saml_connections c ON c.id = t.connection_id
+		WHERE t.id = $1 AND t.connection_id = $2 AND c.organization_id = $3
+	`, id, connectionID, organizationID).Scan(&t.ID, &t.ConnectionID, &t.Status, &result, &t.ExpiresAt, &t.CreatedAt, &t.CompletedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrSAMLTestSignInNotFound
 	}
@@ -215,7 +215,7 @@ func (h *Handler) answerTestSignIn(w http.ResponseWriter, r *http.Request, conn 
 // checkTestAnswer validates the answer to test requestID as the ACS validates
 // a sign-in's, and returns the test's status and findings. It finds and
 // creates no account, reporting only whether the asserted address is on a
-// domain the organisation verified. err is a fault, never a finding.
+// domain the organization verified. err is a fault, never a finding.
 func (s *Service) checkTestAnswer(ctx context.Context, base string, conn *Connection, requestID, encoded string) (string, TestSignInResult, error) {
 	var res TestSignInResult
 	fail := func(e *errs.Error, cause error) (string, TestSignInResult, error) {
@@ -278,11 +278,11 @@ func (s *Service) checkTestAnswer(ctx context.Context, base string, conn *Connec
 	if res.Email == "" {
 		return fail(errs.ErrSAMLAssertionNoEmail, nil)
 	}
-	manager, managed, err := domainverify.ManagerOf(postgres.AcrossTenants(ctx), s.pool, res.Email)
+	manager, managed, err := domainverify.ManagerOf(postgres.AcrossOrganizations(ctx), s.pool, res.Email)
 	if err != nil {
 		return "", res, err
 	}
-	res.EmailDomainVerified = managed && manager == conn.TenantID
+	res.EmailDomainVerified = managed && manager == conn.OrganizationID
 	if !res.EmailDomainVerified {
 		return fail(errs.ErrSAMLEmailDomainUnverified, nil)
 	}

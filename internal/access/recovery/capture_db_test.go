@@ -16,7 +16,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// captureDomain refuses every address on its domain, as an organisation that
+// captureDomain refuses every address on its domain, as an organization that
 // requires single sign-on there does.
 type captureDomain string
 
@@ -39,9 +39,9 @@ func TestCapturedAddressesGetNoLinks(t *testing.T) {
 	policy := authpolicy.NewService(pool)
 	svc.SetPasswordRules(policy)
 	svc.SetMagicLinkPolicy(policy)
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	domain := dbtest.Unique("acme") + ".example.test"
-	a := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, tenant, tenant)
+	a := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, organization, organization)
 	dbtest.SetPassword(t, a.ID, "Kx7mQ2vLp9Wz-old")
 	reset, link := dbtest.Unique("reset"), dbtest.Unique("link")
 	if _, err := pool.Exec(ctx, `
@@ -56,7 +56,7 @@ func TestCapturedAddressesGetNoLinks(t *testing.T) {
 		if _, err := svc.StartPasswordReset(ctx, email, ResetOrigin{}); !errors.Is(err, errs.ErrAuthSSORequired) {
 			t.Errorf("reset for %s: %v, want %v", email, err, errs.ErrAuthSSORequired)
 		}
-		if err := svc.RequestMagicLink(ctx, MagicLinkRequest{Email: email, TenantID: tenant}); !errors.Is(err, errs.ErrAuthSSORequired) {
+		if err := svc.RequestMagicLink(ctx, MagicLinkRequest{Email: email, OrganizationID: organization}); !errors.Is(err, errs.ErrAuthSSORequired) {
 			t.Errorf("magic link for %s: %v, want %v", email, err, errs.ErrAuthSSORequired)
 		}
 	}
@@ -81,8 +81,8 @@ func TestCapturedAddressesGetNoLinks(t *testing.T) {
 		t.Errorf("%d of the two refused links stay unused, want both", n)
 	}
 
-	other := dbtest.User(t, tenant, tenant)
-	if err := svc.RequestMagicLink(ctx, MagicLinkRequest{Email: other.Email, TenantID: tenant}); err != nil {
+	other := dbtest.User(t, organization, organization)
+	if err := svc.RequestMagicLink(ctx, MagicLinkRequest{Email: other.Email, OrganizationID: organization}); err != nil {
 		t.Fatalf("magic link for an address on no captured domain: %v", err)
 	}
 	svc.deliveries.Wait()

@@ -18,7 +18,7 @@ import (
 // scored with the sweep's weights (0.5, up to 0.3, 0.2). The last week's are
 // open; older ones were resolved by the security team.
 
-// anomalyPlan is an organisation's anomaly settings and how many anomalies it
+// anomalyPlan is an organization's anomaly settings and how many anomalies it
 // has seen in 60 days.
 type anomalyPlan struct {
 	slug     string
@@ -35,7 +35,7 @@ var anomalyPlans = []anomalyPlan{
 	{"kestrel", anomaly.Settings{Enabled: false, ScoreThreshold: 0.6, MinBaselineEvents: 20}, 0},
 }
 
-// auditAnomalies stores each organisation's anomaly settings and the anomalies
+// auditAnomalies stores each organization's anomaly settings and the anomalies
 // flagged on its people.
 func auditAnomalies(w *world.World) {
 	for _, plan := range anomalyPlans {
@@ -73,7 +73,7 @@ func auditAnomalies(w *world.World) {
 // flag writes one anomalous action in o around t and the anomaly raised on it,
 // reporting whether it is still open.
 func flag(w *world.World, o *world.Org, t time.Time, threshold float64) bool {
-	e := audit.Event{TenantID: &o.ID}
+	e := audit.Event{OrganizationID: &o.ID}
 	builders := w.Rand.Perm(5)
 	var p *world.Person
 	for _, b := range builders {
@@ -128,7 +128,7 @@ func flag(w *world.World, o *world.Org, t time.Time, threshold float64) bool {
 		}
 	}
 	w.Exec("flag an audit anomaly", `
-		INSERT INTO audit.anomalies (tenant_id, event_id, actor_user_id, score, reasons, status, resolved_at, resolved_by, created_at)
+		INSERT INTO audit.anomalies (organization_id, event_id, actor_user_id, score, reasons, status, resolved_at, resolved_by, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 		o.ID, eventID, p.ID, float64(int(score*1000))/1000, reasons, status, resolvedAt, resolvedBy, flagged)
 	return status == "open"
@@ -151,7 +151,7 @@ func anomalousAction(w *world.World, o *world.Org, t time.Time, kind int, e *aud
 	anyone := func(*world.Person) bool { return true }
 	switch kind {
 	case 0:
-		id, name, ok := tenantRow(w, o, `SELECT id, name FROM tenant.secrets WHERE tenant_id = $1 AND created_at < $2 ORDER BY created_at LIMIT 1`, t)
+		id, name, ok := organizationRow(w, o, `SELECT id, name FROM organization.secrets WHERE organization_id = $1 AND created_at < $2 ORDER BY created_at LIMIT 1`, t)
 		p := pick(builders)
 		if !ok || p == nil {
 			return nil
@@ -159,8 +159,8 @@ func anomalousAction(w *world.World, o *world.Org, t time.Time, kind int, e *aud
 		e.Action, e.ResourceType, e.ResourceID, e.Metadata = "secret.revealed", "secret", &id, map[string]any{"name": name}
 		return p
 	case 1:
-		id, clientID, ok := tenantRow(w, o, `SELECT id, client_id FROM auth.oidc_clients
-			WHERE tenant_id = $1 AND type = 'confidential' AND created_at < $2 ORDER BY created_at LIMIT 1`, t)
+		id, clientID, ok := organizationRow(w, o, `SELECT id, client_id FROM auth.oidc_clients
+			WHERE organization_id = $1 AND type = 'confidential' AND created_at < $2 ORDER BY created_at LIMIT 1`, t)
 		p := pick(builders)
 		if !ok || p == nil {
 			return nil
@@ -194,9 +194,9 @@ func anomalousAction(w *world.World, o *world.Org, t time.Time, kind int, e *aud
 	}
 }
 
-// tenantRow reads one (id, name) row of o's that existed by t with sql, which
-// takes the tenant and t; ok is false when there is none.
-func tenantRow(w *world.World, o *world.Org, sql string, t time.Time) (uuid.UUID, string, bool) {
+// organizationRow reads one (id, name) row of o's that existed by t with sql, which
+// takes the organization and t; ok is false when there is none.
+func organizationRow(w *world.World, o *world.Org, sql string, t time.Time) (uuid.UUID, string, bool) {
 	var id uuid.UUID
 	var name string
 	err := w.Admin.QueryRow(w.Ctx, sql, o.ID, t).Scan(&id, &name)
@@ -241,7 +241,7 @@ func resolver(o *world.Org, t time.Time) *world.Person {
 // policyMFA returns o's MFA enforcement, if it has a security policy yet.
 func policyMFA(w *world.World, o *world.Org) (string, bool) {
 	var mfa string
-	err := w.Admin.QueryRow(w.Ctx, `SELECT mfa_enforcement FROM tenant.security_policies WHERE tenant_id = $1`, o.ID).Scan(&mfa)
+	err := w.Admin.QueryRow(w.Ctx, `SELECT mfa_enforcement FROM organization.security_policies WHERE organization_id = $1`, o.ID).Scan(&mfa)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", false
 	}

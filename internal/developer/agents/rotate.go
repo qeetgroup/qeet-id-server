@@ -45,10 +45,10 @@ func previousSecretWorks(ctx context.Context, hash *string, until pgtype.Timesta
 	return ok, err
 }
 
-// RotateSecret gives one of the tenant's agents that isn't decommissioned a new
+// RotateSecret gives one of the organization's agents that isn't decommissioned a new
 // secret, returned only now, and leaves the old one working for overlap (0: it
 // stops at once). Recorded as actor's.
-func (s *Service) RotateSecret(ctx context.Context, tenantID, id uuid.UUID, overlap time.Duration, actor audit.Actor) (string, time.Time, error) {
+func (s *Service) RotateSecret(ctx context.Context, organizationID, id uuid.UUID, overlap time.Duration, actor audit.Actor) (string, time.Time, error) {
 	if overlap < 0 || overlap > MaxRotationOverlap {
 		return "", time.Time{}, errs.ErrValidationFailed.WithFields([]errs.FieldError{{
 			Field: "overlap_hours", Code: "out_of_range", Message: "Keep the old secret working for 0 to 168 hours.",
@@ -66,7 +66,7 @@ func (s *Service) RotateSecret(ctx context.Context, tenantID, id uuid.UUID, over
 	defer tx.Rollback(ctx)
 	name, err := s.q.WithTx(tx).RotateAgentSecret(ctx, dbgen.RotateAgentSecretParams{
 		PreviousExpiresAt: pgtype.Timestamptz{Time: until, Valid: true}, SecretHash: password.HashSecret(secret),
-		ID: id, TenantID: tenantID,
+		ID: id, OrganizationID: organizationID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", time.Time{}, errs.ErrAgentNotFound
@@ -74,7 +74,7 @@ func (s *Service) RotateSecret(ctx context.Context, tenantID, id uuid.UUID, over
 	if err != nil {
 		return "", time.Time{}, err
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "agent.secret_rotated", "agent", id,
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "agent.secret_rotated", "agent", id,
 		map[string]any{"name": name, "old_secret_ends": until})); err != nil {
 		return "", time.Time{}, err
 	}
@@ -84,27 +84,27 @@ func (s *Service) RotateSecret(ctx context.Context, tenantID, id uuid.UUID, over
 	return secret, until, nil
 }
 
-// ResumeAll makes every suspended agent of a tenant active again in one
+// ResumeAll makes every suspended agent of an organization active again in one
 // statement, the undoing of KillAll. Returns the number resumed and emits a
 // single webhook event.
-func (s *Service) ResumeAll(ctx context.Context, tenantID uuid.UUID, actor audit.Actor) (int, error) {
+func (s *Service) ResumeAll(ctx context.Context, organizationID uuid.UUID, actor audit.Actor) (int, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback(ctx)
-	n, err := s.q.WithTx(tx).ResumeAllAgents(ctx, tenantID)
+	n, err := s.q.WithTx(tx).ResumeAllAgents(ctx, organizationID)
 	if err != nil {
 		return 0, err
 	}
 	count := int(n)
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "agent.resume_all", "tenant", tenantID,
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "agent.resume_all", "tenant", organizationID,
 		map[string]any{"resumed": count})); err != nil {
 		return 0, err
 	}
 	if err := outbox.Enqueue(ctx, tx, outbox.Event{
-		AggregateID: tenantID, Topic: "agent.events", EventType: "agent.resume_all",
-		Payload: map[string]any{"tenant_id": tenantID, "resumed": count},
+		AggregateID: organizationID, Topic: "agent.events", EventType: "agent.resume_all",
+		Payload: map[string]any{"tenant_id": organizationID, "resumed": count},
 	}); err != nil {
 		return 0, err
 	}
@@ -132,7 +132,7 @@ func overlapOf(r *http.Request) (time.Duration, error) {
 
 // rotateSecret handles POST /v1/tenants/{tenantID}/agents/{id}/rotate-secret.
 func (h *Handler) rotateSecret(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -149,11 +149,11 @@ func (h *Handler) rotateSecret(w http.ResponseWriter, r *http.Request) {
 	}
 	// The new secret carries the credential's scopes, so whoever rotates it
 	// must hold them, as for creating one.
-	if err := h.checkScopes(r, tenantID, id); err != nil {
+	if err := h.checkScopes(r, organizationID, id); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	secret, until, err := h.Service.RotateSecret(r.Context(), tenantID, id, overlap, audit.ActorOf(r))
+	secret, until, err := h.Service.RotateSecret(r.Context(), organizationID, id, overlap, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -165,12 +165,12 @@ func (h *Handler) rotateSecret(w http.ResponseWriter, r *http.Request) {
 
 // resumeAll handles POST /v1/tenants/{tenantID}/agents/resume-all.
 func (h *Handler) resumeAll(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	n, err := h.Service.ResumeAll(r.Context(), tenantID, audit.ActorOf(r))
+	n, err := h.Service.ResumeAll(r.Context(), organizationID, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -178,9 +178,9 @@ func (h *Handler) resumeAll(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"resumed": n})
 }
 
-// Scopes returns the scopes of agent id of tenantID, or ErrAgentNotFound.
-func (s *Service) Scopes(ctx context.Context, tenantID, id uuid.UUID) ([]string, error) {
-	scopes, err := s.q.AgentScopes(ctx, dbgen.AgentScopesParams{ID: id, TenantID: tenantID})
+// Scopes returns the scopes of agent id of organizationID, or ErrAgentNotFound.
+func (s *Service) Scopes(ctx context.Context, organizationID, id uuid.UUID) ([]string, error) {
+	scopes, err := s.q.AgentScopes(ctx, dbgen.AgentScopesParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrAgentNotFound
 	}
@@ -188,14 +188,14 @@ func (s *Service) Scopes(ctx context.Context, tenantID, id uuid.UUID) ([]string,
 }
 
 // checkScopes refuses the caller taking over credential id's scopes in
-// tenantID (GrantCheck); without the check it refuses every caller.
-func (h *Handler) checkScopes(r *http.Request, tenantID, id uuid.UUID) error {
+// organizationID (GrantCheck); without the check it refuses every caller.
+func (h *Handler) checkScopes(r *http.Request, organizationID, id uuid.UUID) error {
 	if h.GrantCheck == nil {
 		return errs.ErrNotImplemented
 	}
-	scopes, err := h.Service.Scopes(r.Context(), tenantID, id)
+	scopes, err := h.Service.Scopes(r.Context(), organizationID, id)
 	if err != nil {
 		return err
 	}
-	return h.GrantCheck(r.Context(), httpx.PrincipalFromCtx(r.Context()), tenantID, scopes)
+	return h.GrantCheck(r.Context(), httpx.PrincipalFromCtx(r.Context()), organizationID, scopes)
 }

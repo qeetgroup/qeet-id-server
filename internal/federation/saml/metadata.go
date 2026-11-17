@@ -246,16 +246,16 @@ func (c *MetadataChange) empty() bool {
 // Certificates md lists are trusted from now on; ones an earlier metadata
 // listed and md doesn't are dropped; ones an administrator added stay.
 // metadataURL is where to refresh from later, nil for nowhere.
-func (s *Service) ApplyMetadata(ctx context.Context, tx pgx.Tx, connectionID, tenantID uuid.UUID, md *IdPMetadata, metadataURL *string) (*MetadataChange, error) {
+func (s *Service) ApplyMetadata(ctx context.Context, tx pgx.Tx, connectionID, organizationID uuid.UUID, md *IdPMetadata, metadataURL *string) (*MetadataChange, error) {
 	q := s.q.WithTx(tx)
-	current, err := q.LockSamlMetadataSource(ctx, dbgen.LockSamlMetadataSourceParams{ID: connectionID, TenantID: tenantID})
+	current, err := q.LockSamlMetadataSource(ctx, dbgen.LockSamlMetadataSourceParams{ID: connectionID, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	rows, err := q.ListSamlCertificates(ctx, dbgen.ListSamlCertificatesParams{ConnectionID: connectionID, TenantID: tenantID})
+	rows, err := q.ListSamlCertificates(ctx, dbgen.ListSamlCertificatesParams{ConnectionID: connectionID, OrganizationID: organizationID})
 	if err != nil {
 		return nil, err
 	}
@@ -272,12 +272,12 @@ func (s *Service) ApplyMetadata(ctx context.Context, tx pgx.Tx, connectionID, te
 			listed[i] = true
 			kept++
 			if r.Source != certificateMetadata {
-				if err := q.SetSamlCertificateSource(ctx, dbgen.SetSamlCertificateSourceParams{Source: certificateMetadata, ID: r.ID, TenantID: tenantID}); err != nil {
+				if err := q.SetSamlCertificateSource(ctx, dbgen.SetSamlCertificateSourceParams{Source: certificateMetadata, ID: r.ID, OrganizationID: organizationID}); err != nil {
 					return nil, err
 				}
 			}
 		case r.Source == certificateMetadata:
-			if err := q.DeleteSamlCertificate(ctx, dbgen.DeleteSamlCertificateParams{ID: r.ID, ConnectionID: connectionID, TenantID: tenantID}); err != nil {
+			if err := q.DeleteSamlCertificate(ctx, dbgen.DeleteSamlCertificateParams{ID: r.ID, ConnectionID: connectionID, OrganizationID: organizationID}); err != nil {
 				return nil, err
 			}
 			change.Removed = append(change.Removed, toCertificate(r).FingerprintSHA256)
@@ -293,7 +293,7 @@ func (s *Service) ApplyMetadata(ctx context.Context, tx pgx.Tx, connectionID, te
 			return nil, errs.ErrSAMLCertificateLimit
 		}
 		if _, err := q.InsertSamlCertificate(ctx, dbgen.InsertSamlCertificateParams{
-			TenantID: tenantID, ConnectionID: connectionID, Certificate: certificatePEM(cert), Source: certificateMetadata,
+			OrganizationID: organizationID, ConnectionID: connectionID, Certificate: certificatePEM(cert), Source: certificateMetadata,
 		}); err != nil {
 			return nil, err
 		}
@@ -301,12 +301,12 @@ func (s *Service) ApplyMetadata(ctx context.Context, tx pgx.Tx, connectionID, te
 		change.Added = append(change.Added, fingerprint(cert))
 	}
 	if len(change.Added) > 0 || len(change.Removed) > 0 {
-		if err := q.SyncSamlPrimaryCertificate(ctx, dbgen.SyncSamlPrimaryCertificateParams{ID: connectionID, TenantID: tenantID}); err != nil {
+		if err := q.SyncSamlPrimaryCertificate(ctx, dbgen.SyncSamlPrimaryCertificateParams{ID: connectionID, OrganizationID: organizationID}); err != nil {
 			return nil, err
 		}
 	}
 	return change, q.SetSamlIdPFromMetadata(ctx, dbgen.SetSamlIdPFromMetadataParams{
-		IdpSsoUrl: md.SSOURL, MetadataUrl: metadataURL, ID: connectionID, TenantID: tenantID,
+		IdpSsoUrl: md.SSOURL, MetadataUrl: metadataURL, ID: connectionID, OrganizationID: organizationID,
 	})
 }
 
@@ -324,10 +324,10 @@ type ImportInput struct {
 	Status          string `json:"status"`
 }
 
-// Import creates a connection in tenantID within tx with md's entity ID, SSO
+// Import creates a connection in organizationID within tx with md's entity ID, SSO
 // URL and certificates, refreshed from in.MetadataURL when that is given.
-func (s *Service) Import(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in ImportInput, md *IdPMetadata) (*Connection, error) {
-	conn, err := s.Create(ctx, tx, tenantID, CreateInput{
+func (s *Service) Import(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, in ImportInput, md *IdPMetadata) (*Connection, error) {
+	conn, err := s.Create(ctx, tx, organizationID, CreateInput{
 		Name: in.Name, IdpEntityID: md.EntityID, IdpSSOURL: md.SSOURL, IdpCertificate: certificatePEM(md.Certificates[0]),
 		EmailAttribute: in.EmailAttribute, NameAttribute: in.NameAttribute, GroupsAttribute: in.GroupsAttribute, Status: in.Status,
 	})
@@ -338,7 +338,7 @@ func (s *Service) Import(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in 
 	if u := strings.TrimSpace(in.MetadataURL); u != "" {
 		refreshFrom = &u
 	}
-	if _, err := s.ApplyMetadata(ctx, tx, conn.ID, tenantID, md, refreshFrom); err != nil {
+	if _, err := s.ApplyMetadata(ctx, tx, conn.ID, organizationID, md, refreshFrom); err != nil {
 		return nil, err
 	}
 	return conn, nil
@@ -346,7 +346,7 @@ func (s *Service) Import(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in 
 
 // withMetadataSource fills c's metadata fields from q.
 func withMetadataSource(ctx context.Context, q *dbgen.Queries, c *Connection) error {
-	r, err := q.GetSamlMetadataSource(ctx, dbgen.GetSamlMetadataSourceParams{ID: c.ID, TenantID: c.TenantID})
+	r, err := q.GetSamlMetadataSource(ctx, dbgen.GetSamlMetadataSourceParams{ID: c.ID, OrganizationID: c.OrganizationID})
 	if err != nil {
 		return err
 	}
@@ -354,9 +354,9 @@ func withMetadataSource(ctx context.Context, q *dbgen.Queries, c *Connection) er
 	return nil
 }
 
-// withMetadataSources fills the metadata fields of the tenant's connections.
-func (s *Service) withMetadataSources(ctx context.Context, tenantID uuid.UUID, conns []Connection) error {
-	rows, err := s.q.ListSamlMetadataSources(ctx, tenantID)
+// withMetadataSources fills the metadata fields of the organization's connections.
+func (s *Service) withMetadataSources(ctx context.Context, organizationID uuid.UUID, conns []Connection) error {
+	rows, err := s.q.ListSamlMetadataSources(ctx, organizationID)
 	if err != nil {
 		return err
 	}
@@ -403,7 +403,7 @@ type MetadataRun struct {
 func RefreshMetadata(ctx context.Context, pool *pgxpool.Pool, policy *egress.Policy) (MetadataRun, error) {
 	s := NewService(pool, nil, "")
 	s.SetEgressPolicy(policy)
-	ctx = postgres.AcrossTenants(ctx)
+	ctx = postgres.AcrossOrganizations(ctx)
 	due, err := s.q.ListSamlMetadataDue(ctx, dbgen.ListSamlMetadataDueParams{
 		CheckedBefore: pgtype.Timestamptz{Time: time.Now().Add(-metadataRefreshAge), Valid: true},
 		MaxRows:       metadataRefreshBatch,
@@ -416,12 +416,12 @@ func RefreshMetadata(ctx context.Context, pool *pgxpool.Pool, policy *egress.Pol
 		if err := ctx.Err(); err != nil {
 			return run, err
 		}
-		scoped := postgres.WithTenant(ctx, c.TenantID)
-		if err := s.refreshMetadata(scoped, c.ID, c.TenantID, c.MetadataUrl); err != nil {
+		scoped := postgres.WithOrganization(ctx, c.OrganizationID)
+		if err := s.refreshMetadata(scoped, c.ID, c.OrganizationID, c.MetadataUrl); err != nil {
 			run.Failed++
 			slog.Warn("saml metadata refresh failed", "connection", c.ID, "err", err)
 			msg := failureText(err)
-			if err := s.q.SetSamlMetadataError(scoped, dbgen.SetSamlMetadataErrorParams{MetadataError: &msg, ID: c.ID, TenantID: c.TenantID}); err != nil {
+			if err := s.q.SetSamlMetadataError(scoped, dbgen.SetSamlMetadataErrorParams{MetadataError: &msg, ID: c.ID, OrganizationID: c.OrganizationID}); err != nil {
 				return run, err
 			}
 			continue
@@ -434,7 +434,7 @@ func RefreshMetadata(ctx context.Context, pool *pgxpool.Pool, policy *egress.Pol
 // refreshMetadata fetches connectionID's metadata from metadataURL and applies
 // it, if the connection still refreshes from there. The metadata must still
 // describe the connection's IdP, so the URL can't repoint it at another.
-func (s *Service) refreshMetadata(ctx context.Context, connectionID, tenantID uuid.UUID, metadataURL string) error {
+func (s *Service) refreshMetadata(ctx context.Context, connectionID, organizationID uuid.UUID, metadataURL string) error {
 	raw, err := s.fetchMetadata(ctx, metadataURL)
 	if err != nil {
 		return err
@@ -444,7 +444,7 @@ func (s *Service) refreshMetadata(ctx context.Context, connectionID, tenantID uu
 		return err
 	}
 	defer tx.Rollback(ctx)
-	current, err := s.q.WithTx(tx).LockSamlMetadataSource(ctx, dbgen.LockSamlMetadataSourceParams{ID: connectionID, TenantID: tenantID})
+	current, err := s.q.WithTx(tx).LockSamlMetadataSource(ctx, dbgen.LockSamlMetadataSourceParams{ID: connectionID, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && (current.MetadataUrl == nil || *current.MetadataUrl != metadataURL)) {
 		return nil // deleted, or no longer refreshed from this URL
 	}
@@ -455,12 +455,12 @@ func (s *Service) refreshMetadata(ctx context.Context, connectionID, tenantID uu
 	if err != nil {
 		return err
 	}
-	change, err := s.ApplyMetadata(ctx, tx, connectionID, tenantID, md, &metadataURL)
+	change, err := s.ApplyMetadata(ctx, tx, connectionID, organizationID, md, &metadataURL)
 	if err != nil {
 		return err
 	}
 	if !change.empty() {
-		if err := audit.Record(ctx, tx, audit.Actor{Type: "system"}.Event(tenantID, "saml.metadata_refreshed", "saml_connection", connectionID, map[string]any{
+		if err := audit.Record(ctx, tx, audit.Actor{Type: "system"}.Event(organizationID, "saml.metadata_refreshed", "saml_connection", connectionID, map[string]any{
 			"certificates_added": change.Added, "certificates_removed": change.Removed, "idp_sso_url": change.SSOURL,
 		})); err != nil {
 			return err
@@ -473,7 +473,7 @@ func (s *Service) refreshMetadata(ctx context.Context, connectionID, tenantID uu
 
 // importConnection creates a connection from its IdP's metadata.
 func (h *Handler) importConnection(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -493,7 +493,7 @@ func (h *Handler) importConnection(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	// Before the metadata is fetched: a plan without SSO sets up no connection.
-	if err := h.Service.RequireSSO(ctx, tenantID); err != nil {
+	if err := h.Service.RequireSSO(ctx, organizationID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -508,7 +508,7 @@ func (h *Handler) importConnection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	conn, err := h.Service.Import(ctx, tx, tenantID, in, md)
+	conn, err := h.Service.Import(ctx, tx, organizationID, in, md)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -517,7 +517,7 @@ func (h *Handler) importConnection(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(in.MetadataURL) != "" {
 		source = metadataFromURL
 	}
-	if err := h.recordAudit(ctx, tx, r, tenantID, conn.ID, "saml.connection_created", map[string]any{
+	if err := h.recordAudit(ctx, tx, r, organizationID, conn.ID, "saml.connection_created", map[string]any{
 		"name": conn.Name, "idp": conn.IdpEntityID, "metadata": source,
 	}); err != nil {
 		httpx.WriteError(w, r, err)
@@ -527,7 +527,7 @@ func (h *Handler) importConnection(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	created, err := h.Service.Get(ctx, conn.ID, tenantID)
+	created, err := h.Service.Get(ctx, conn.ID, organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -539,7 +539,7 @@ func (h *Handler) importConnection(w http.ResponseWriter, r *http.Request) {
 // refreshing), from XML (which stops refreshing), or, given neither, from the
 // URL it refreshes from. The metadata must describe the connection's IdP.
 func (h *Handler) applyMetadata(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -558,7 +558,7 @@ func (h *Handler) applyMetadata(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	conn, err := h.Service.Get(ctx, id, tenantID)
+	conn, err := h.Service.Get(ctx, id, organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -567,7 +567,7 @@ func (h *Handler) applyMetadata(w http.ResponseWriter, r *http.Request) {
 	// Metadata from anywhere but the connection's own URL changes what it
 	// trusts; a refresh from that URL is the IdP's own rollover.
 	if metadataXML != "" || (metadataURL != "" && (conn.MetadataURL == nil || metadataURL != *conn.MetadataURL)) {
-		if err := h.checkTrust(r, tenantID, id); err != nil {
+		if err := h.checkTrust(r, organizationID, id); err != nil {
 			httpx.WriteError(w, r, err)
 			return
 		}
@@ -591,12 +591,12 @@ func (h *Handler) applyMetadata(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	change, err := h.Service.ApplyMetadata(ctx, tx, id, tenantID, md, refreshFrom)
+	change, err := h.Service.ApplyMetadata(ctx, tx, id, organizationID, md, refreshFrom)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.recordAudit(ctx, tx, r, tenantID, id, "saml.connection_updated", map[string]any{
+	if err := h.recordAudit(ctx, tx, r, organizationID, id, "saml.connection_updated", map[string]any{
 		"metadata": source, "certificates_added": change.Added, "certificates_removed": change.Removed, "idp_sso_url": change.SSOURL,
 	}); err != nil {
 		httpx.WriteError(w, r, err)
@@ -606,7 +606,7 @@ func (h *Handler) applyMetadata(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	updated, err := h.Service.Get(ctx, id, tenantID)
+	updated, err := h.Service.Get(ctx, id, organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

@@ -9,7 +9,7 @@ import (
 // init registers the HTTP statuses of the analytics error codes.
 func init() {
 	registerStatuses(map[string]int{
-		errs.CodeAnalyticsTenantInvalid:  http.StatusBadRequest,
-		errs.CodeAnalyticsTenantMismatch: http.StatusForbidden,
+		errs.CodeAnalyticsOrganizationInvalid:  http.StatusBadRequest,
+		errs.CodeAnalyticsOrganizationMismatch: http.StatusForbidden,
 	})
 }

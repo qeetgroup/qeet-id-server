@@ -22,11 +22,11 @@ func TestEmailChangeToAddressInUse(t *testing.T) {
 	ctx := dbtest.Context(t)
 	mail := &dbtest.Mailbox{}
 	svc := NewService(dbtest.Pool(t), mail, 10*time.Minute)
-	tenant := dbtest.Tenant(t)
-	a := dbtest.User(t, tenant, tenant)
-	holder := dbtest.User(t, tenant, tenant)
-	who := Requester{Actor: audit.Actor{UserID: &a.ID, Type: "user"}, TenantID: &tenant}
-	as := dbtest.Serve(dbtest.Principal(a.ID, tenant), (&Handler{Service: svc}).Mount)
+	organization := dbtest.Organization(t)
+	a := dbtest.User(t, organization, organization)
+	holder := dbtest.User(t, organization, organization)
+	who := Requester{Actor: audit.Actor{UserID: &a.ID, Type: "user"}, OrganizationID: &organization}
+	as := dbtest.Serve(dbtest.Principal(a.ID, organization), (&Handler{Service: svc}).Mount)
 	codeRe := regexp.MustCompile(`\b\d{8}\b`)
 
 	free := dbtest.Unique("free") + "@example.test"
@@ -66,16 +66,16 @@ func TestEmailChangeEndsLinksToTheOldAddress(t *testing.T) {
 	pool := dbtest.Pool(t)
 	mail := &dbtest.Mailbox{}
 	svc := NewService(pool, mail, 10*time.Minute)
-	tenant := dbtest.Tenant(t)
-	a := dbtest.User(t, tenant, tenant)
-	who := Requester{Actor: audit.Actor{UserID: &a.ID, Type: "user"}, TenantID: &tenant}
+	organization := dbtest.Organization(t)
+	a := dbtest.User(t, organization, organization)
+	who := Requester{Actor: audit.Actor{UserID: &a.ID, Type: "user"}, OrganizationID: &organization}
 	if _, err := pool.Exec(ctx, `
 		WITH r AS (INSERT INTO auth.password_resets (user_id, token_hash, expires_at) VALUES ($1, $2, NOW() + INTERVAL '1 hour'))
 		INSERT INTO auth.magic_links (email, token_hash, expires_at, app) VALUES ($3, $4, NOW() + INTERVAL '1 hour', 'console')
 	`, a.ID, dbtest.Unique("reset"), strings.ToUpper(a.Email), dbtest.Unique("link")); err != nil {
 		t.Fatal(err)
 	}
-	as := dbtest.Serve(dbtest.Principal(a.ID, tenant), (&Handler{Service: svc}).Mount)
+	as := dbtest.Serve(dbtest.Principal(a.ID, organization), (&Handler{Service: svc}).Mount)
 	if rec := dbtest.Do(t, as, http.MethodPost, "/me/email/change/start", map[string]any{"email": dbtest.Unique("moved") + "@example.test"}); rec.Code != http.StatusOK {
 		t.Fatalf("start: %d %s", rec.Code, rec.Body.String())
 	}
@@ -92,21 +92,21 @@ func TestEmailChangeEndsLinksToTheOldAddress(t *testing.T) {
 }
 
 // TestCapturedMemberCannotMoveOffTheManagedDomain checks that an address on a
-// domain the account's organisation manages moves only to another of its
+// domain the account's organization manages moves only to another of its
 // domains, that an address the directory or single sign-on provides doesn't
-// move, and that no address moves onto a domain another organisation manages,
+// move, and that no address moves onto a domain another organization manages,
 // when the change starts and when it is confirmed; and that other moves work.
 func TestCapturedMemberCannotMoveOffTheManagedDomain(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	mail := &dbtest.Mailbox{}
 	svc := NewService(pool, mail, 10*time.Minute)
-	tenant := dbtest.Tenant(t)
-	domain := dbtest.Domain(t, tenant)
-	elsewhere := dbtest.Domain(t, dbtest.Tenant(t))
+	organization := dbtest.Organization(t)
+	domain := dbtest.Domain(t, organization)
+	elsewhere := dbtest.Domain(t, dbtest.Organization(t))
 	start := func(a dbtest.Account, email string) (int, string) {
 		t.Helper()
-		as := dbtest.Serve(dbtest.Principal(a.ID, tenant), (&Handler{Service: svc}).Mount)
+		as := dbtest.Serve(dbtest.Principal(a.ID, organization), (&Handler{Service: svc}).Mount)
 		rec := dbtest.Do(t, as, http.MethodPost, "/me/email/change/start", map[string]any{"email": email})
 		return rec.Code, rec.Body.String()
 	}
@@ -118,18 +118,18 @@ func TestCapturedMemberCannotMoveOffTheManagedDomain(t *testing.T) {
 	}
 	free := func() string { return dbtest.Unique("free") + "@example.test" }
 
-	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, tenant, tenant)
-	directory := dbtest.User(t, tenant, tenant)
+	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, organization, organization)
+	directory := dbtest.User(t, organization, organization)
 	exec(`UPDATE account.users SET provisioned_via = 'scim' WHERE id = $1`, directory.ID)
-	sso := dbtest.User(t, tenant, tenant)
+	sso := dbtest.User(t, organization, organization)
 	var conn string
 	if err := pool.QueryRow(ctx, `
-		INSERT INTO tenant.saml_connections (tenant_id, name, idp_entity_id, idp_sso_url, idp_certificate, status)
-		VALUES ($1, 'Okta', 'https://idp.example.test', 'https://idp.example.test/sso', 'cert', 'active') RETURNING id`, tenant).Scan(&conn); err != nil {
+		INSERT INTO organization.saml_connections (organization_id, name, idp_entity_id, idp_sso_url, idp_certificate, status)
+		VALUES ($1, 'Okta', 'https://idp.example.test', 'https://idp.example.test/sso', 'cert', 'active') RETURNING id`, organization).Scan(&conn); err != nil {
 		t.Fatal(err)
 	}
-	exec(`INSERT INTO account.external_identities (user_id, tenant_id, provider, connection_id, subject) VALUES ($1, $2, 'saml', $3, 'okta|sso')`, sso.ID, tenant, conn)
-	plain := dbtest.User(t, tenant, tenant)
+	exec(`INSERT INTO account.external_identities (user_id, organization_id, provider, connection_id, subject) VALUES ($1, $2, 'saml', $3, 'okta|sso')`, sso.ID, organization, conn)
+	plain := dbtest.User(t, organization, organization)
 	for name, c := range map[string]struct {
 		a     dbtest.Account
 		email string
@@ -155,15 +155,15 @@ func TestCapturedMemberCannotMoveOffTheManagedDomain(t *testing.T) {
 		}
 	}
 
-	// The organisation verifies the domain between start and confirm.
+	// The organization verifies the domain between start and confirm.
 	late := dbtest.Unique("late") + ".example.test"
-	moving := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+late, tenant, tenant)
+	moving := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+late, organization, organization)
 	if status, body := start(moving, free()); status != http.StatusOK {
 		t.Fatalf("start before the domain is verified: %d %s", status, body)
 	}
 	code := regexp.MustCompile(`\b\d{8}\b`).FindString(mail.Last(t).Body)
-	exec(`INSERT INTO tenant.domains (tenant_id, domain, verification_token, verified_at) VALUES ($1, $2, 'test', NOW())`, tenant, late)
-	who := Requester{Actor: audit.Actor{UserID: &moving.ID, Type: "user"}, TenantID: &tenant}
+	exec(`INSERT INTO organization.domains (organization_id, domain, verification_token, verified_at) VALUES ($1, $2, 'test', NOW())`, organization, late)
+	who := Requester{Actor: audit.Actor{UserID: &moving.ID, Type: "user"}, OrganizationID: &organization}
 	if _, err := svc.ConfirmEmailChange(ctx, moving.ID, code, who); !errors.Is(err, errs.ErrVerifyEmailManaged) {
 		t.Errorf("confirm a move off a domain verified since the start: %v, want %v", err, errs.ErrVerifyEmailManaged)
 	}

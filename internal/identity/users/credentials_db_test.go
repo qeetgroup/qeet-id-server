@@ -15,24 +15,24 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// TestCredentialChangesNeedAnAccountOfOneOrganisation checks that the home
-// organisation may set the password or reset the second factors of an account
-// only while no other live organisation shares it, that each change ends the
+// TestCredentialChangesNeedAnAccountOfOneOrganization checks that the home
+// organization may set the password or reset the second factors of an account
+// only while no other live organization shares it, that each change ends the
 // person's sign-ins or factors, is audited and emailed, and that signing out
 // everywhere needs no such exclusivity.
-func TestCredentialChangesNeedAnAccountOfOneOrganisation(t *testing.T) {
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	solo := dbtest.User(t, tenant, tenant)
-	shared := dbtest.User(t, tenant, tenant, other)
+func TestCredentialChangesNeedAnAccountOfOneOrganization(t *testing.T) {
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	solo := dbtest.User(t, organization, organization)
+	shared := dbtest.User(t, organization, organization, other)
 	for _, u := range []uuid.UUID{solo.ID, shared.ID} {
-		session(t, u, tenant, "")
+		session(t, u, organization, "")
 		exec(t, `INSERT INTO auth.mfa_totp (user_id, secret_ct, secret_nonce, confirmed_at) VALUES ($1, '\x00', '\x00', NOW())`, u)
 	}
 	session(t, shared.ID, other, "")
 	mailbox := &dbtest.Mailbox{}
 	h := testHandler(t, mailbox)
-	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), h.Mount)
+	as := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)
 	newPassword := map[string]any{"password": "Kx7mQ2vLp9Wz-set"}
 	passwords := `SELECT count(*) FROM auth.password_credentials WHERE user_id = $1`
 	factors := `SELECT count(*) FROM auth.mfa_totp WHERE user_id = $1`
@@ -55,7 +55,7 @@ func TestCredentialChangesNeedAnAccountOfOneOrganisation(t *testing.T) {
 	if rec := dbtest.Do(t, as, http.MethodPost, soloPath+"/password", newPassword); rec.Code != http.StatusNoContent {
 		t.Fatalf("set the password: %d %s", rec.Code, rec.Body.String())
 	}
-	if dbtest.Count(t, passwords, solo.ID) != 1 || liveSessions(t, solo.ID) != 0 || audited(t, tenant, "user.password_set", solo.ID) != 1 {
+	if dbtest.Count(t, passwords, solo.ID) != 1 || liveSessions(t, solo.ID) != 0 || audited(t, organization, "user.password_set", solo.ID) != 1 {
 		t.Error("setting the password didn't store it, end the sessions and audit it")
 	}
 	if m := mailbox.Last(t); m.To != solo.Email || !strings.Contains(m.Subject, "password") {
@@ -65,7 +65,7 @@ func TestCredentialChangesNeedAnAccountOfOneOrganisation(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("reset the second factors: %d %s", rec.Code, rec.Body.String())
 	}
-	if dbtest.Count(t, factors, solo.ID) != 0 || audited(t, tenant, "mfa.admin_reset", solo.ID) != 1 {
+	if dbtest.Count(t, factors, solo.ID) != 0 || audited(t, organization, "mfa.admin_reset", solo.ID) != 1 {
 		t.Error("resetting the second factors didn't remove them and audit it")
 	}
 	if m := mailbox.Last(t); m.To != solo.Email || !strings.Contains(m.Subject, "two-step") || mailbox.Len() != 2 {
@@ -76,11 +76,11 @@ func TestCredentialChangesNeedAnAccountOfOneOrganisation(t *testing.T) {
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"revoked":2`) {
 		t.Errorf("sign a shared account out everywhere: %d %s, want both sessions ended", rec.Code, rec.Body.String())
 	}
-	if liveSessions(t, shared.ID) != 0 || audited(t, tenant, "session.admin_revoked_all", shared.ID) != 1 {
+	if liveSessions(t, shared.ID) != 0 || audited(t, organization, "session.admin_revoked_all", shared.ID) != 1 {
 		t.Error("signing out everywhere left a session or wasn't audited")
 	}
 
-	exec(t, `UPDATE tenant.tenants SET deleted_at = NOW() WHERE id = $1`, other)
+	exec(t, `UPDATE organization.organizations SET deleted_at = NOW() WHERE id = $1`, other)
 	if rec := dbtest.Do(t, as, http.MethodPost, sharedPath+"/password", newPassword); rec.Code != http.StatusNoContent {
 		t.Errorf("set the password of an account shared only with a deleted organisation: %d %s, want 204", rec.Code, rec.Body.String())
 	}
@@ -104,11 +104,11 @@ func TestCredentialChangesNeedAnAccountOfOneOrganisation(t *testing.T) {
 // a person a new phone number leaves it unverified, so applications aren't told
 // the new number is verified.
 func TestAdminPhoneChangeDropsItsVerification(t *testing.T) {
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	target := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	target := dbtest.User(t, organization, organization)
 	exec(t, `UPDATE account.users SET phone = '+14155550100', phone_verified_at = NOW() WHERE id = $1`, target.ID)
-	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), testHandler(t, nil).Mount)
+	as := dbtest.Serve(dbtest.Principal(admin.ID, organization), testHandler(t, nil).Mount)
 	rec := dbtest.Do(t, as, http.MethodPatch, "/users/"+target.ID.String(), map[string]any{"phone": "+14155550199"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("change the phone: %d %s", rec.Code, rec.Body.String())
@@ -118,22 +118,22 @@ func TestAdminPhoneChangeDropsItsVerification(t *testing.T) {
 	}
 }
 
-// TestAccountViewsDescribeTheCallersOrganisation checks that the MFA-required
+// TestAccountViewsDescribeTheCallersOrganization checks that the MFA-required
 // flag is set, audited and shown in the security summary, and that the access
-// view lists only the caller's organisation, its roles and groups, and splits
+// view lists only the caller's organization, its roles and groups, and splits
 // the permissions into direct and inherited ones.
-func TestAccountViewsDescribeTheCallersOrganisation(t *testing.T) {
-	home, tenant := dbtest.Tenant(t), dbtest.Tenant(t)
+func TestAccountViewsDescribeTheCallersOrganization(t *testing.T) {
+	home, organization := dbtest.Organization(t), dbtest.Organization(t)
 	admin := dbtest.User(t, home, home)
 	dbtest.Assign(t, admin.ID, home, dbtest.Role(t, home, "users.read", "users.write"))
-	member := dbtest.User(t, home, tenant)
+	member := dbtest.User(t, home, organization)
 	dbtest.Assign(t, member.ID, home, dbtest.Role(t, home, "users.read"))
 	dbtest.SetPassword(t, member.ID, "Kx7mQ2vLp9Wz")
 	exec(t, `INSERT INTO auth.passkey_credentials (user_id, credential_id, public_key, last_used_at) VALUES ($1, convert_to(gen_random_uuid()::text, 'UTF8'), '\x02', NOW())`, member.ID)
 	exec(t, `
-		WITH g AS (INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, 'Engineering') RETURNING id),
-		     m AS (INSERT INTO tenant.group_members (group_id, user_id, tenant_id) SELECT id, $2, $1 FROM g)
-		INSERT INTO rbac.group_roles (tenant_id, group_id, role_id) SELECT $1, id, $3 FROM g
+		WITH g AS (INSERT INTO organization.groups (organization_id, name) VALUES ($1, 'Engineering') RETURNING id),
+		     m AS (INSERT INTO organization.group_members (group_id, user_id, organization_id) SELECT id, $2, $1 FROM g)
+		INSERT INTO rbac.group_roles (organization_id, group_id, role_id) SELECT $1, id, $3 FROM g
 	`, home, member.ID, dbtest.Role(t, home, "users.read", "users.write"))
 	as := dbtest.Serve(dbtest.Principal(admin.ID, home), testHandler(t, nil).Mount)
 	path := "/users/" + member.ID.String()
@@ -153,7 +153,7 @@ func TestAccountViewsDescribeTheCallersOrganisation(t *testing.T) {
 	set := func(value string) int {
 		return dbtest.Count(t, `
 			SELECT count(*) FROM audit.events
-			WHERE tenant_id = $1 AND action = 'user.mfa_required_set' AND resource_id = $2 AND actor_user_id = $3
+			WHERE organization_id = $1 AND action = 'user.mfa_required_set' AND resource_id = $2 AND actor_user_id = $3
 			  AND metadata->>'mfa_required' = $4`, home, member.ID, admin.ID, value)
 	}
 	if set("true") != 1 || set("false") != 1 {
@@ -185,15 +185,15 @@ func TestAccountViewsDescribeTheCallersOrganisation(t *testing.T) {
 	}
 }
 
-// TestSignInMethodsCountWhatTheOrganisationAllows checks that a password or
-// passkey counts only while the account's organisation allows it, that a
+// TestSignInMethodsCountWhatTheOrganizationAllows checks that a password or
+// passkey counts only while the account's organization allows it, that a
 // linked identity counts only while it can still sign in, and that a refused
 // removal of the last method is audited.
-func TestSignInMethodsCountWhatTheOrganisationAllows(t *testing.T) {
+func TestSignInMethodsCountWhatTheOrganizationAllows(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	tenant := dbtest.Tenant(t)
-	u := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	u := dbtest.User(t, organization, organization)
 	count := func() SignInMethods {
 		t.Helper()
 		m, err := CountSignInMethods(ctx, pool, u.ID)
@@ -207,18 +207,18 @@ func TestSignInMethodsCountWhatTheOrganisationAllows(t *testing.T) {
 	}
 	dbtest.SetPassword(t, u.ID, "Kx7mQ2vLp9Wz")
 	exec(t, `INSERT INTO auth.passkey_credentials (user_id, credential_id, public_key) VALUES ($1, convert_to(gen_random_uuid()::text, 'UTF8'), '\x02')`, u.ID)
-	exec(t, `INSERT INTO account.external_identities (user_id, tenant_id, provider, subject) VALUES ($1, $2, 'saml', 'saml-subject'), ($1, $2, 'google', 'google-subject')`, u.ID, tenant)
+	exec(t, `INSERT INTO account.external_identities (user_id, organization_id, provider, subject) VALUES ($1, $2, 'saml', 'saml-subject'), ($1, $2, 'google', 'google-subject')`, u.ID, organization)
 	exec(t, `INSERT INTO auth.platform_social_identities (user_id, provider, subject) VALUES ($1, 'github', $2)`, u.ID, dbtest.Unique("github"))
 	if m := count(); m != (SignInMethods{Password: true, Passkeys: 1, LinkedIdentities: 2}) {
 		t.Errorf("counted %+v, want the password, the passkey, SAML and the platform identity, not Google with no provider", m)
 	}
-	exec(t, `INSERT INTO tenant.social_providers (tenant_id, provider, client_id, client_secret_ct, client_secret_nonce) VALUES ($1, 'google', 'id', '\x00', '\x00')`, tenant)
-	exec(t, `INSERT INTO tenant.auth_policy (tenant_id, password_enabled, passkey_enabled) VALUES ($1, FALSE, FALSE)`, tenant)
+	exec(t, `INSERT INTO organization.social_providers (organization_id, provider, client_id, client_secret_ct, client_secret_nonce) VALUES ($1, 'google', 'id', '\x00', '\x00')`, organization)
+	exec(t, `INSERT INTO organization.auth_policy (organization_id, password_enabled, passkey_enabled) VALUES ($1, FALSE, FALSE)`, organization)
 	if m := count(); m != (SignInMethods{LinkedIdentities: 3}) || m.Total() != 3 {
 		t.Errorf("counted %+v, want only the three linked identities once the organisation turns off passwords and passkeys", m)
 	}
 
-	tx, err := pool.Begin(postgres.AcrossTenants(ctx))
+	tx, err := pool.Begin(postgres.AcrossOrganizations(ctx))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,29 +234,29 @@ func TestSignInMethodsCountWhatTheOrganisationAllows(t *testing.T) {
 	// an identity merely named "oidc" by no connection doesn't.
 	var conn uuid.UUID
 	if err := pool.QueryRow(ctx, `
-		INSERT INTO tenant.oidc_connections (tenant_id, name, issuer, client_id, client_secret_ct, client_secret_nonce)
+		INSERT INTO organization.oidc_connections (organization_id, name, issuer, client_id, client_secret_ct, client_secret_nonce)
 		VALUES ($1, 'Entra', 'https://idp.example.test', 'client', '\x00', '\x00') RETURNING id
-	`, tenant).Scan(&conn); err != nil {
+	`, organization).Scan(&conn); err != nil {
 		t.Fatal(err)
 	}
-	exec(t, `INSERT INTO account.external_identities (user_id, tenant_id, provider, connection_id, subject) VALUES ($1, $2, 'oidc', $3, 'oidc-subject'), ($1, $2, 'oidc', NULL, 'unconnected')`, u.ID, tenant, conn)
+	exec(t, `INSERT INTO account.external_identities (user_id, organization_id, provider, connection_id, subject) VALUES ($1, $2, 'oidc', $3, 'oidc-subject'), ($1, $2, 'oidc', NULL, 'unconnected')`, u.ID, organization, conn)
 	if m := count(); m.LinkedIdentities != 4 {
 		t.Errorf("counted %+v, want the connection's link as a fourth way in", m)
 	}
-	exec(t, `DELETE FROM tenant.oidc_connections WHERE id = $1`, conn)
+	exec(t, `DELETE FROM organization.oidc_connections WHERE id = $1`, conn)
 	if m := count(); m.LinkedIdentities != 3 {
 		t.Errorf("counted %+v once the connection is deleted, want its link no longer counted", m)
 	}
 
 	methodID := uuid.New()
-	err = RefuseLastMethodRemoval(ctx, pool, u.ID, &tenant, "passkey", methodID, Remover{UserID: &u.ID})
+	err = RefuseLastMethodRemoval(ctx, pool, u.ID, &organization, "passkey", methodID, Remover{UserID: &u.ID})
 	if !errors.Is(err, errs.ErrAuthLastSignInMethod) {
 		t.Errorf("refuse removing the last method: %v, want %v", err, errs.ErrAuthLastSignInMethod)
 	}
 	if n := dbtest.Count(t, `
 		SELECT count(*) FROM audit.events
-		WHERE tenant_id = $1 AND action = 'auth.sign_in_method_removal_refused' AND resource_id = $2 AND metadata->>'method_id' = $3
-	`, tenant, u.ID, methodID.String()); n != 1 {
+		WHERE organization_id = $1 AND action = 'auth.sign_in_method_removal_refused' AND resource_id = $2 AND metadata->>'method_id' = $3
+	`, organization, u.ID, methodID.String()); n != 1 {
 		t.Errorf("%d audit events record the refused removal, want 1", n)
 	}
 }

@@ -1,7 +1,7 @@
-// Package retention enforces per-tenant data-retention policy. Currently it
-// permanently purges soft-deleted users once they're older than the tenant's
-// retention window. It is opt-in per tenant (disabled by default) so the
-// background sweeper never deletes data a tenant hasn't explicitly allowed.
+// Package retention enforces per-organization data-retention policy. Currently it
+// permanently purges soft-deleted users once they're older than the organization's
+// retention window. It is opt-in per organization (disabled by default) so the
+// background sweeper never deletes data an organization hasn't explicitly allowed.
 package retention
 
 import (
@@ -27,9 +27,9 @@ import (
 
 const sweepInterval = time.Hour
 
-// Policy is a tenant's retention policy.
+// Policy is an organization's retention policy.
 // UpdatedAt and UpdatedBy say when, and by whom, it was last changed; nil
-// until the tenant sets one.
+// until the organization sets one.
 type Policy struct {
 	DeletedUsersEnabled bool       `json:"deleted_users_enabled"`
 	DeletedUsersDays    int        `json:"deleted_users_days"`
@@ -38,7 +38,7 @@ type Policy struct {
 	UpdatedByEmail      *string    `json:"updated_by_email,omitempty"`
 }
 
-// DefaultPolicy is the policy of a tenant that has set none.
+// DefaultPolicy is the policy of an organization that has set none.
 func DefaultPolicy() Policy { return Policy{DeletedUsersEnabled: false, DeletedUsersDays: 30} }
 
 func clampDays(d int) int {
@@ -51,7 +51,7 @@ func clampDays(d int) int {
 	return d
 }
 
-// Service stores each tenant's retention policy and enforces it.
+// Service stores each organization's retention policy and enforces it.
 type Service struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
@@ -65,9 +65,9 @@ func NewService(pool *pgxpool.Pool) *Service {
 // Pool returns the connection pool, for handlers that run their own transaction.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
-// Get returns the tenant's retention policy.
-func (s *Service) Get(ctx context.Context, tenantID uuid.UUID) (*Policy, error) {
-	row, err := s.q.GetRetentionPolicy(ctx, tenantID)
+// Get returns the organization's retention policy.
+func (s *Service) Get(ctx context.Context, organizationID uuid.UUID) (*Policy, error) {
+	row, err := s.q.GetRetentionPolicy(ctx, organizationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		def := DefaultPolicy()
 		return &def, nil
@@ -88,16 +88,16 @@ func (s *Service) Get(ctx context.Context, tenantID uuid.UUID) (*Policy, error) 
 	return p, nil
 }
 
-// Update stores the tenant's retention policy, as changed by by (nil: no one
+// Update stores the organization's retention policy, as changed by by (nil: no one
 // in particular).
-func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p Policy, by *uuid.UUID) (*Policy, error) {
+func (s *Service) Update(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, p Policy, by *uuid.UUID) (*Policy, error) {
 	p.DeletedUsersDays = clampDays(p.DeletedUsersDays)
 	var updatedBy pgtype.UUID
 	if by != nil {
 		updatedBy = pgtype.UUID{Bytes: *by, Valid: true}
 	}
 	row, err := s.q.WithTx(tx).UpsertRetentionPolicy(ctx, dbgen.UpsertRetentionPolicyParams{
-		TenantID:            tenantID,
+		OrganizationID:      organizationID,
 		DeletedUsersEnabled: p.DeletedUsersEnabled,
 		DeletedUsersDays:    int32(p.DeletedUsersDays), // #nosec G115 -- clamped to 1–3650 by clampDays
 		UpdatedBy:           updatedBy,
@@ -111,19 +111,19 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p P
 	return &p, nil
 }
 
-// RipeDeletedUsers counts soft-deleted users older than `days` for a tenant —
+// RipeDeletedUsers counts soft-deleted users older than `days` for an organization —
 // i.e. how many a purge would remove right now.
-func (s *Service) RipeDeletedUsers(ctx context.Context, tenantID uuid.UUID, days int) (int, error) {
-	// account.users.tenant_id is NOT NULL UUID; sqlc infers pgtype.UUID here due
+func (s *Service) RipeDeletedUsers(ctx context.Context, organizationID uuid.UUID, days int) (int, error) {
+	// account.users.organization_id is NOT NULL UUID; sqlc infers pgtype.UUID here due
 	// to the quoted "user" schema — pass Valid: true to match a non-null value.
 	n, err := s.q.CountRipeDeletedUsers(ctx, dbgen.CountRipeDeletedUsersParams{
-		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
-		Days:     int32(clampDays(days)), // #nosec G115 -- clamped to 1–3650 by clampDays
+		OrganizationID: pgtype.UUID{Bytes: organizationID, Valid: true},
+		Days:           int32(clampDays(days)), // #nosec G115 -- clamped to 1–3650 by clampDays
 	})
 	return int(n), err
 }
 
-// purgeListSize is how many ripe users PurgeTenant lists at a time.
+// purgeListSize is how many ripe users PurgeOrganization lists at a time.
 const purgeListSize = 500
 
 // userPurgeFailures counts deleted accounts the purge could not remove.
@@ -132,30 +132,30 @@ var userPurgeFailures = promauto.NewCounter(prometheus.CounterOpts{
 	Help: "Deleted accounts the retention purge failed to remove for good; each is tried again at the next run.",
 })
 
-// PurgeTenant permanently deletes soft-deleted users past the window, one at
+// PurgeOrganization permanently deletes soft-deleted users past the window, one at
 // a time, and returns the number purged. A user whose deletion fails is
 // counted in retention_user_purge_failures_total and left for the next run;
 // the others are still purged.
-func (s *Service) PurgeTenant(ctx context.Context, tenantID uuid.UUID, days int) (int, error) {
+func (s *Service) PurgeOrganization(ctx context.Context, organizationID uuid.UUID, days int) (int, error) {
 	// See RipeDeletedUsers for the pgtype.UUID note.
-	tenant := pgtype.UUID{Bytes: tenantID, Valid: true}
+	organization := pgtype.UUID{Bytes: organizationID, Valid: true}
 	window := int32(clampDays(days)) // #nosec G115 -- clamped to 1–3650 by clampDays
 	purged, after := 0, uuid.Nil
 	for {
 		ids, err := s.q.ListRipeDeletedUsers(ctx, dbgen.ListRipeDeletedUsersParams{
-			TenantID: tenant, Days: window, After: after, MaxRows: purgeListSize,
+			OrganizationID: organization, Days: window, After: after, MaxRows: purgeListSize,
 		})
 		if err != nil {
 			return purged, err
 		}
 		for _, id := range ids {
-			n, err := s.q.PurgeRipeDeletedUser(ctx, dbgen.PurgeRipeDeletedUserParams{ID: id, TenantID: tenant, Days: window})
+			n, err := s.q.PurgeRipeDeletedUser(ctx, dbgen.PurgeRipeDeletedUserParams{ID: id, OrganizationID: organization, Days: window})
 			if ctx.Err() != nil {
 				return purged, ctx.Err()
 			}
 			if err != nil {
 				userPurgeFailures.Inc()
-				slog.Warn("retention: purge a deleted user", "tenant", tenantID, "user", id, "err", err)
+				slog.Warn("retention: purge a deleted user", "tenant", organizationID, "user", id, "err", err)
 				continue
 			}
 			purged += int(n)
@@ -167,7 +167,7 @@ func (s *Service) PurgeTenant(ctx context.Context, tenantID uuid.UUID, days int)
 	}
 }
 
-// sweep purges ripe users for every tenant that has the policy enabled.
+// sweep purges ripe users for every organization that has the policy enabled.
 func (s *Service) sweep(ctx context.Context) error {
 	policies, err := s.q.ListEnabledRetentionPolicies(ctx)
 	if err != nil {
@@ -175,30 +175,30 @@ func (s *Service) sweep(ctx context.Context) error {
 	}
 	for _, p := range policies {
 		days := clampDays(int(p.DeletedUsersDays))
-		n, err := s.PurgeTenant(ctx, p.TenantID, days)
+		n, err := s.PurgeOrganization(ctx, p.OrganizationID, days)
 		if n > 0 {
-			slog.Info("retention sweep purged users", "tenant", p.TenantID, "count", n)
-			if err := s.recordSweep(ctx, p.TenantID, n, days); err != nil {
-				slog.Warn("retention sweep: record the purge", "tenant", p.TenantID, "err", err)
+			slog.Info("retention sweep purged users", "tenant", p.OrganizationID, "count", n)
+			if err := s.recordSweep(ctx, p.OrganizationID, n, days); err != nil {
+				slog.Warn("retention sweep: record the purge", "tenant", p.OrganizationID, "err", err)
 			}
 		}
 		if err != nil {
-			slog.Warn("retention sweep", "tenant", p.TenantID, "err", err)
+			slog.Warn("retention sweep", "tenant", p.OrganizationID, "err", err)
 		}
 	}
 	return nil
 }
 
-// recordSweep records in the tenant's audit trail, as the system, that the
+// recordSweep records in the organization's audit trail, as the system, that the
 // sweep purged n deleted users older than days, as a manual run is recorded.
-func (s *Service) recordSweep(ctx context.Context, tenantID uuid.UUID, n, days int) error {
+func (s *Service) recordSweep(ctx context.Context, organizationID uuid.UUID, n, days int) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID: &tenantID, ActorType: "system",
+		OrganizationID: &organizationID, ActorType: "system",
 		Action: "retention.purge_run", ResourceType: "retention_policy",
 		Metadata: map[string]any{"purged": n, "deleted_users_days": days},
 	}); err != nil {
@@ -207,7 +207,7 @@ func (s *Service) recordSweep(ctx context.Context, tenantID uuid.UUID, n, days i
 	return tx.Commit(ctx)
 }
 
-// Run is the background sweeper, registered as a worker. Only acts on tenants
+// Run is the background sweeper, registered as a worker. Only acts on organizations
 // that have explicitly enabled retention.
 func (s *Service) Run(ctx context.Context) {
 	tk := time.NewTicker(sweepInterval)
@@ -237,17 +237,17 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/tenants/{tenantID}/retention/run", h.run)
 }
 
-func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	return httpx.PathTenantOr(r, errs.ErrRetentionTenantInvalid, errs.ErrRetentionTenantMismatch)
+func requirePathOrganization(r *http.Request) (uuid.UUID, error) {
+	return httpx.PathOrganizationOr(r, errs.ErrRetentionOrganizationInvalid, errs.ErrRetentionOrganizationMismatch)
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	p, err := h.Service.Get(r.Context(), tenantID)
+	p, err := h.Service.Get(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -256,7 +256,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -274,14 +274,14 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(ctx)
 	actorID, actorType := audit.ActorOf(r).Identity()
-	p, err := h.Service.Update(ctx, tx, tenantID, in, actorID)
+	p, err := h.Service.Update(ctx, tx, organizationID, in, actorID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	tid := tenantID
+	tid := organizationID
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID: &tid, ActorUserID: actorID, ActorType: actorType,
+		OrganizationID: &tid, ActorUserID: actorID, ActorType: actorType,
 		Action: "retention.policy_updated", ResourceType: "retention_policy",
 		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
 		Metadata: map[string]any{"deleted_users_enabled": p.DeletedUsersEnabled, "deleted_users_days": p.DeletedUsersDays},
@@ -297,17 +297,17 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) preview(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	p, err := h.Service.Get(r.Context(), tenantID)
+	p, err := h.Service.Get(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	n, err := h.Service.RipeDeletedUsers(r.Context(), tenantID, p.DeletedUsersDays)
+	n, err := h.Service.RipeDeletedUsers(r.Context(), organizationID, p.DeletedUsersDays)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -316,18 +316,18 @@ func (h *Handler) preview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) run(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	p, err := h.Service.Get(r.Context(), tenantID)
+	p, err := h.Service.Get(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	ctx := r.Context()
-	n, err := h.Service.PurgeTenant(ctx, tenantID, p.DeletedUsersDays)
+	n, err := h.Service.PurgeOrganization(ctx, organizationID, p.DeletedUsersDays)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -337,9 +337,9 @@ func (h *Handler) run(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			defer tx.Rollback(ctx)
 			actorID, actorType := audit.ActorOf(r).Identity()
-			tid := tenantID
+			tid := organizationID
 			if aerr := audit.Record(ctx, tx, audit.Event{
-				TenantID: &tid, ActorUserID: actorID, ActorType: actorType,
+				OrganizationID: &tid, ActorUserID: actorID, ActorType: actorType,
 				Action: "retention.purge_run", ResourceType: "retention_policy",
 				IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
 				Metadata: map[string]any{"purged": n, "deleted_users_days": p.DeletedUsersDays},

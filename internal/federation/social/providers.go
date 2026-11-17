@@ -40,32 +40,32 @@ func changedBy(r *http.Request) ChangedBy {
 	return c
 }
 
-func (s *Service) recordProviderChange(ctx context.Context, tx pgx.Tx, by ChangedBy, tenantID, providerID uuid.UUID, action string, meta map[string]any) error {
-	tid, pid := tenantID, providerID
+func (s *Service) recordProviderChange(ctx context.Context, tx pgx.Tx, by ChangedBy, organizationID, providerID uuid.UUID, action string, meta map[string]any) error {
+	tid, pid := organizationID, providerID
 	actorType := by.ActorType
 	if actorType == "" {
 		actorType = "system"
 	}
 	return audit.Record(ctx, tx, audit.Event{
-		TenantID:     &tid,
-		ActorUserID:  by.UserID,
-		ActorType:    actorType,
-		Action:       action,
-		ResourceType: "social_provider",
-		ResourceID:   &pid,
-		IP:           by.IP,
-		UserAgent:    by.UserAgent,
-		RequestID:    by.RequestID,
-		Metadata:     meta,
+		OrganizationID: &tid,
+		ActorUserID:    by.UserID,
+		ActorType:      actorType,
+		Action:         action,
+		ResourceType:   "social_provider",
+		ResourceID:     &pid,
+		IP:             by.IP,
+		UserAgent:      by.UserAgent,
+		RequestID:      by.RequestID,
+		Metadata:       meta,
 	})
 }
 
 // sealSecret encrypts a provider secret for storage.
-func (s *Service) sealSecret(tenantID uuid.UUID, provider, secret string) (ciphertext, nonce []byte, err error) {
+func (s *Service) sealSecret(organizationID uuid.UUID, provider, secret string) (ciphertext, nonce []byte, err error) {
 	if s.box == nil {
 		return nil, nil, errs.ErrInternalServer.WithDetail("social provider secret encryption is unavailable")
 	}
-	return s.box.Seal(tenantID, "social-provider", provider, []byte(secret))
+	return s.box.Seal(organizationID, "social-provider", provider, []byte(secret))
 }
 
 // UpdateProviderInput changes some of a provider's settings; a field left nil
@@ -79,12 +79,12 @@ type UpdateProviderInput struct {
 	Enabled      *bool   `json:"enabled"`
 }
 
-// UpdateProvider changes the given fields of the organisation's provider and
-// returns it. ErrNotFound when the organisation has no such provider —
-// including one that belongs to another organisation. Switching it off is
+// UpdateProvider changes the given fields of the organization's provider and
+// returns it. ErrNotFound when the organization has no such provider —
+// including one that belongs to another organization. Switching it off is
 // refused with ErrSocialProviderInUse, as deleting it is, while anyone can
 // sign in only through it.
-func (s *Service) UpdateProvider(ctx context.Context, tenantID uuid.UUID, provider string, in UpdateProviderInput, by ChangedBy) (*Provider, error) {
+func (s *Service) UpdateProvider(ctx context.Context, organizationID uuid.UUID, provider string, in UpdateProviderInput, by ChangedBy) (*Provider, error) {
 	var bad []errs.FieldError
 	if in.ClientID != nil && strings.TrimSpace(*in.ClientID) == "" {
 		bad = append(bad, errs.FieldError{Field: "client_id", Code: "required", Message: "Enter the client ID."})
@@ -116,7 +116,7 @@ func (s *Service) UpdateProvider(ctx context.Context, tenantID uuid.UUID, provid
 	var ciphertext, nonce []byte
 	if replaceSecret {
 		var err error
-		if ciphertext, nonce, err = s.sealSecret(tenantID, provider, *in.ClientSecret); err != nil {
+		if ciphertext, nonce, err = s.sealSecret(organizationID, provider, *in.ClientSecret); err != nil {
 			return nil, err
 		}
 	}
@@ -131,8 +131,8 @@ func (s *Service) UpdateProvider(ctx context.Context, tenantID uuid.UUID, provid
 	var clientID string
 	var teamID, keyID *string
 	if err := tx.QueryRow(ctx, `
-		SELECT id, enabled, client_id, apple_team_id, apple_key_id FROM tenant.social_providers
-		WHERE tenant_id = $1 AND provider = $2 FOR UPDATE`, tenantID, provider).Scan(&id, &wasEnabled, &clientID, &teamID, &keyID); errors.Is(err, pgx.ErrNoRows) {
+		SELECT id, enabled, client_id, apple_team_id, apple_key_id FROM organization.social_providers
+		WHERE organization_id = $1 AND provider = $2 FOR UPDATE`, organizationID, provider).Scan(&id, &wasEnabled, &clientID, &teamID, &keyID); errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
 	} else if err != nil {
 		return nil, err
@@ -156,7 +156,7 @@ func (s *Service) UpdateProvider(ctx context.Context, tenantID uuid.UUID, provid
 		}
 	}
 	if wasEnabled && in.Enabled != nil && !*in.Enabled {
-		dependent, _, err := providerDependents(ctx, tx, tenantID, provider)
+		dependent, _, err := providerDependents(ctx, tx, organizationID, provider)
 		if err != nil {
 			return nil, err
 		}
@@ -166,7 +166,7 @@ func (s *Service) UpdateProvider(ctx context.Context, tenantID uuid.UUID, provid
 	}
 	var p Provider
 	if err := tx.QueryRow(ctx, `
-		UPDATE tenant.social_providers SET
+		UPDATE organization.social_providers SET
 		    client_id = COALESCE($2, client_id),
 		    discovery_url = CASE WHEN $3::boolean THEN NULLIF($4, '') ELSE discovery_url END,
 		    enabled = COALESCE($5, enabled),
@@ -175,9 +175,9 @@ func (s *Service) UpdateProvider(ctx context.Context, tenantID uuid.UUID, provid
 		    apple_team_id = COALESCE($9, apple_team_id),
 		    apple_key_id = COALESCE($10, apple_key_id)
 		WHERE id = $1
-		RETURNING id, tenant_id, provider, client_id, discovery_url, enabled, created_at, apple_team_id, apple_key_id`,
+		RETURNING id, organization_id, provider, client_id, discovery_url, enabled, created_at, apple_team_id, apple_key_id`,
 		id, in.ClientID, in.DiscoveryURL != nil, in.DiscoveryURL, in.Enabled, replaceSecret, ciphertext, nonce, in.AppleTeamID, in.AppleKeyID).
-		Scan(&p.ID, &p.TenantID, &p.Provider, &p.ClientID, &p.DiscoveryURL, &p.Enabled, &p.CreatedAt, &p.AppleTeamID, &p.AppleKeyID); err != nil {
+		Scan(&p.ID, &p.OrganizationID, &p.Provider, &p.ClientID, &p.DiscoveryURL, &p.Enabled, &p.CreatedAt, &p.AppleTeamID, &p.AppleKeyID); err != nil {
 		return nil, err
 	}
 	p.Kind = kind
@@ -199,7 +199,7 @@ func (s *Service) UpdateProvider(ctx context.Context, tenantID uuid.UUID, provid
 		changed = append(changed, "client_secret")
 	}
 	if len(changed) > 0 {
-		if err := s.recordProviderChange(ctx, tx, by, tenantID, id, "social_provider.updated", map[string]any{
+		if err := s.recordProviderChange(ctx, tx, by, organizationID, id, "social_provider.updated", map[string]any{
 			"provider": provider, "fields": changed, "secret_replaced": replaceSecret,
 		}); err != nil {
 			return nil, err
@@ -210,7 +210,7 @@ func (s *Service) UpdateProvider(ctx context.Context, tenantID uuid.UUID, provid
 		if p.Enabled {
 			action = "social_provider.enabled"
 		}
-		if err := s.recordProviderChange(ctx, tx, by, tenantID, id, action, map[string]any{"provider": provider}); err != nil {
+		if err := s.recordProviderChange(ctx, tx, by, organizationID, id, action, map[string]any{"provider": provider}); err != nil {
 			return nil, err
 		}
 	}
@@ -220,10 +220,10 @@ func (s *Service) UpdateProvider(ctx context.Context, tenantID uuid.UUID, provid
 	return &p, nil
 }
 
-// DeleteProvider removes the organisation's provider. Refused with
-// ErrSocialProviderInUse while anyone in the organisation can sign in only
-// through it, and with ErrNotFound when the organisation has no such provider.
-func (s *Service) DeleteProvider(ctx context.Context, tenantID uuid.UUID, provider string, by ChangedBy) error {
+// DeleteProvider removes the organization's provider. Refused with
+// ErrSocialProviderInUse while anyone in the organization can sign in only
+// through it, and with ErrNotFound when the organization has no such provider.
+func (s *Service) DeleteProvider(ctx context.Context, organizationID uuid.UUID, provider string, by ChangedBy) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -231,23 +231,23 @@ func (s *Service) DeleteProvider(ctx context.Context, tenantID uuid.UUID, provid
 	defer tx.Rollback(ctx)
 	var id uuid.UUID
 	if err := tx.QueryRow(ctx, `
-		SELECT id FROM tenant.social_providers
-		WHERE tenant_id = $1 AND provider = $2 FOR UPDATE`, tenantID, provider).Scan(&id); errors.Is(err, pgx.ErrNoRows) {
+		SELECT id FROM organization.social_providers
+		WHERE organization_id = $1 AND provider = $2 FOR UPDATE`, organizationID, provider).Scan(&id); errors.Is(err, pgx.ErrNoRows) {
 		return errs.ErrNotFound
 	} else if err != nil {
 		return err
 	}
-	dependent, linked, err := providerDependents(ctx, tx, tenantID, provider)
+	dependent, linked, err := providerDependents(ctx, tx, organizationID, provider)
 	if err != nil {
 		return err
 	}
 	if dependent > 0 {
 		return errs.ErrSocialProviderInUse.WithMetadata(map[string]any{"people": dependent})
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM tenant.social_providers WHERE id = $1`, id); err != nil {
+	if _, err := tx.Exec(ctx, `DELETE FROM organization.social_providers WHERE id = $1`, id); err != nil {
 		return err
 	}
-	if err := s.recordProviderChange(ctx, tx, by, tenantID, id, "social_provider.deleted", map[string]any{
+	if err := s.recordProviderChange(ctx, tx, by, organizationID, id, "social_provider.deleted", map[string]any{
 		"provider": provider, "linked_identities_kept": linked,
 	}); err != nil {
 		return err
@@ -256,25 +256,25 @@ func (s *Service) DeleteProvider(ctx context.Context, tenantID uuid.UUID, provid
 }
 
 // providerDependents counts, on tx, the people who can sign in to the
-// organisation only through provider, and every identity linked to it.
-func providerDependents(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, provider string) (dependent, linked int64, err error) {
+// organization only through provider, and every identity linked to it.
+func providerDependents(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, provider string) (dependent, linked int64, err error) {
 	err = tx.QueryRow(ctx, `
 		SELECT count(*) FILTER (WHERE
 		           NOT EXISTS (SELECT 1 FROM auth.password_credentials pc WHERE pc.user_id = ei.user_id)
 		       AND NOT EXISTS (SELECT 1 FROM auth.passkey_credentials pk WHERE pk.user_id = ei.user_id)
 		       AND NOT EXISTS (SELECT 1 FROM account.external_identities other
 		                       WHERE other.user_id = ei.user_id AND other.id <> ei.id
-		                         AND NOT (other.tenant_id = ei.tenant_id AND other.provider = ei.provider))
+		                         AND NOT (other.organization_id = ei.organization_id AND other.provider = ei.provider))
 		       AND NOT EXISTS (SELECT 1 FROM auth.platform_social_identities ps WHERE ps.user_id = ei.user_id)),
 		       count(*)
 		FROM account.external_identities ei
 		JOIN account.users u ON u.id = ei.user_id AND u.deleted_at IS NULL
-		WHERE ei.tenant_id = $1 AND ei.provider = $2`, tenantID, provider).Scan(&dependent, &linked)
+		WHERE ei.organization_id = $1 AND ei.provider = $2`, organizationID, provider).Scan(&dependent, &linked)
 	return dependent, linked, err
 }
 
 func (h *Handler) updateProvider(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.RequireTenant(r)
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -285,12 +285,12 @@ func (h *Handler) updateProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.DiscoveryURL != nil {
-		if err := h.checkTrust(r, tenantID, chi.URLParam(r, "provider"), *in.DiscoveryURL); err != nil {
+		if err := h.checkTrust(r, organizationID, chi.URLParam(r, "provider"), *in.DiscoveryURL); err != nil {
 			httpx.WriteError(w, r, err)
 			return
 		}
 	}
-	p, err := h.Service.UpdateProvider(r.Context(), tenantID, chi.URLParam(r, "provider"), in, changedBy(r))
+	p, err := h.Service.UpdateProvider(r.Context(), organizationID, chi.URLParam(r, "provider"), in, changedBy(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -299,12 +299,12 @@ func (h *Handler) updateProvider(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) deleteProvider(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.RequireTenant(r)
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.DeleteProvider(r.Context(), tenantID, chi.URLParam(r, "provider"), changedBy(r)); err != nil {
+	if err := h.Service.DeleteProvider(r.Context(), organizationID, chi.URLParam(r, "provider"), changedBy(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

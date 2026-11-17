@@ -15,10 +15,10 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// GetSubscription returns the tenant's subscription, or one with Status "none"
+// GetSubscription returns the organization's subscription, or one with Status "none"
 // if it has none.
-func (s *Service) GetSubscription(ctx context.Context, tenantID uuid.UUID) (*Subscription, error) {
-	row, err := s.q.GetSubscription(ctx, tenantID)
+func (s *Service) GetSubscription(ctx context.Context, organizationID uuid.UUID) (*Subscription, error) {
+	row, err := s.q.GetSubscription(ctx, organizationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return &Subscription{Status: "none"}, nil
 	}
@@ -74,10 +74,10 @@ func (s *Subscription) Grants(now time.Time) bool {
 // trialDuration is the length of a no-card trial.
 const trialDuration = 14 * 24 * time.Hour
 
-// StartTrial starts a 14-day no-card trial of Starter or Pro for a tenant that
+// StartTrial starts a 14-day no-card trial of Starter or Pro for an organization that
 // has never had a subscription. The tier's entitlements last until the trial
-// ends, then revert to free unless the tenant pays. No invoice is issued.
-func (s *Service) StartTrial(ctx context.Context, tenantID uuid.UUID, planCode, currency string) (*Subscription, error) {
+// ends, then revert to free unless the organization pays. No invoice is issued.
+func (s *Service) StartTrial(ctx context.Context, organizationID uuid.UUID, planCode, currency string) (*Subscription, error) {
 	tier := strings.TrimSuffix(planCode, "_year")
 	if tier != "starter" && tier != "pro" {
 		return nil, errs.ErrBillingTrialNotEligible.WithMessage("Trials are available for the Starter and Pro plans.")
@@ -86,7 +86,7 @@ func (s *Service) StartTrial(ctx context.Context, tenantID uuid.UUID, planCode, 
 	if !ok {
 		cur = "USD"
 	}
-	existing, err := s.GetSubscription(ctx, tenantID)
+	existing, err := s.GetSubscription(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -106,15 +106,15 @@ func (s *Service) StartTrial(ctx context.Context, tenantID uuid.UUID, planCode, 
 	defer tx.Rollback(ctx)
 	qTx := s.q.WithTx(tx)
 	if err := qTx.InsertTrialSubscription(ctx, dbgen.InsertTrialSubscriptionParams{
-		TenantID: tenantID,
-		PlanID:   planID,
-		Currency: cur,
-		TrialEnd: trialEnd,
+		OrganizationID: organizationID,
+		PlanID:         planID,
+		Currency:       cur,
+		TrialEnd:       trialEnd,
 	}); err != nil {
 		return nil, err
 	}
-	// Billing is the only writer of the tenant's plan label.
-	if err := qTx.SetTenantPlan(ctx, dbgen.SetTenantPlanParams{Plan: tier, TenantID: tenantID}); err != nil {
+	// Billing is the only writer of the organization's plan label.
+	if err := qTx.SetOrganizationPlan(ctx, dbgen.SetOrganizationPlanParams{Plan: tier, OrganizationID: organizationID}); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -133,51 +133,51 @@ func periodEnd(start time.Time, interval string) time.Time {
 	return start.AddDate(0, 1, 0)
 }
 
-// ChangePlan sets or switches the tenant's subscription within tx and issues an
+// ChangePlan sets or switches the organization's subscription within tx and issues an
 // invoice for the new period, taxed by the billing profile. The plan must have
 // a price in currency. It takes no payment, so a paid plan's invoice is left
 // open; callers check that the plan may be granted unpaid first.
-func (s *Service) ChangePlan(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, planCode, currency string) (*Subscription, error) {
-	return s.activateUnpaid(ctx, s.q.WithTx(tx), tenantID, planCode, currency, "")
+func (s *Service) ChangePlan(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, planCode, currency string) (*Subscription, error) {
+	return s.activateUnpaid(ctx, s.q.WithTx(tx), organizationID, planCode, currency, "")
 }
 
 // activateUnpaid is ChangePlan through q, taxing by country, the billing
 // country of the request, when the profile names none.
-func (s *Service) activateUnpaid(ctx context.Context, q *dbgen.Queries, tenantID uuid.UUID, planCode, currency, country string) (*Subscription, error) {
+func (s *Service) activateUnpaid(ctx context.Context, q *dbgen.Queries, organizationID uuid.UUID, planCode, currency, country string) (*Subscription, error) {
 	p, err := lookupPlanPrice(ctx, q, planCode, currency)
 	if err != nil {
 		return nil, err
 	}
-	return s.activate(ctx, q, tenantID, p, s.taxFor(ctx, q, tenantID, p.amountMinor, country), false)
+	return s.activate(ctx, q, organizationID, p, s.taxFor(ctx, q, organizationID, p.amountMinor, country), false)
 }
 
-// activatePaid puts the tenant on planCode within tx for a period a completed
+// activatePaid puts the organization on planCode within tx for a period a completed
 // checkout paid for. The invoice records what the checkout charged.
-func (s *Service) activatePaid(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, planCode, currency string, charged TaxResult) error {
+func (s *Service) activatePaid(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, planCode, currency string, charged TaxResult) error {
 	q := s.q.WithTx(tx)
 	p, err := lookupPlanPrice(ctx, q, planCode, currency)
 	if err != nil {
 		return err
 	}
-	_, err = s.activate(ctx, q, tenantID, p, charged, true)
+	_, err = s.activate(ctx, q, organizationID, p, charged, true)
 	return err
 }
 
-// SwitchPlan is ChangePlan for a tenant changing its own plan without a
+// SwitchPlan is ChangePlan for an organization changing its own plan without a
 // checkout. A free plan starts a new period. A paid plan that costsNoMore than
 // the current subscription takes over its paid period, with no new invoice;
 // any other returns errs.ErrBillingCheckoutRequired, unless invoice-only
 // billing activates the plan in that currency.
-func (s *Service) SwitchPlan(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, planCode, currency string) (*Subscription, error) {
+func (s *Service) SwitchPlan(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, planCode, currency string) (*Subscription, error) {
 	q := s.q.WithTx(tx)
 	p, err := lookupPlanPrice(ctx, q, planCode, currency)
 	if err != nil {
 		return nil, err
 	}
 	if p.amountMinor == 0 || s.unpaidActivation(p.currency) {
-		return s.activate(ctx, q, tenantID, p, s.taxFor(ctx, q, tenantID, p.amountMinor, ""), false)
+		return s.activate(ctx, q, organizationID, p, s.taxFor(ctx, q, organizationID, p.amountMinor, ""), false)
 	}
-	current, err := q.GetSubscription(ctx, tenantID)
+	current, err := q.GetSubscription(ctx, organizationID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
@@ -191,10 +191,10 @@ func (s *Service) SwitchPlan(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID,
 		sub.grace = s.paymentGrace
 		return sub, nil
 	}
-	if err := q.SwitchSubscriptionPlan(ctx, dbgen.SwitchSubscriptionPlanParams{PlanID: p.id, TenantID: tenantID}); err != nil {
+	if err := q.SwitchSubscriptionPlan(ctx, dbgen.SwitchSubscriptionPlanParams{PlanID: p.id, OrganizationID: organizationID}); err != nil {
 		return nil, err
 	}
-	if err := q.SetTenantPlan(ctx, dbgen.SetTenantPlanParams{Plan: strings.TrimSuffix(p.code, "_year"), TenantID: tenantID}); err != nil {
+	if err := q.SetOrganizationPlan(ctx, dbgen.SetOrganizationPlanParams{Plan: strings.TrimSuffix(p.code, "_year"), OrganizationID: organizationID}); err != nil {
 		return nil, err
 	}
 	sub := subscriptionFromRow(current)
@@ -221,33 +221,33 @@ func (s *Service) unpaidActivation(currency string) bool {
 	return s.allowUnpaidActivation && s.payments.forCurrency(currency) == nil
 }
 
-// activate puts the tenant on p through q, which must run on a transaction, and
+// activate puts the organization on p through q, which must run on a transaction, and
 // issues an invoice for the new period charging tr. The invoice is paid when a
 // payment was captured, or it charges nothing, and open otherwise. A renewal
 // left unpaid is no longer owed once a plan is bought.
-func (s *Service) activate(ctx context.Context, q *dbgen.Queries, tenantID uuid.UUID, p planPrice, tr TaxResult, paid bool) (*Subscription, error) {
+func (s *Service) activate(ctx context.Context, q *dbgen.Queries, organizationID uuid.UUID, p planPrice, tr TaxResult, paid bool) (*Subscription, error) {
 	start := time.Now().UTC()
 	end := periodEnd(start, p.interval)
-	if _, err := q.VoidOpenRenewals(ctx, tenantID); err != nil {
+	if _, err := q.VoidOpenRenewals(ctx, organizationID); err != nil {
 		return nil, err
 	}
 	if err := q.UpsertSubscription(ctx, dbgen.UpsertSubscriptionParams{
-		TenantID:    tenantID,
-		PlanID:      p.id,
-		Currency:    p.currency,
-		PeriodStart: start,
-		PeriodEnd:   end,
+		OrganizationID: organizationID,
+		PlanID:         p.id,
+		Currency:       p.currency,
+		PeriodStart:    start,
+		PeriodEnd:      end,
 	}); err != nil {
 		return nil, err
 	}
-	if _, err := s.issueInvoice(ctx, q, tenantID, p.code, p.currency, invoiceKindPurchase, start, end, tr, paid); err != nil {
+	if _, err := s.issueInvoice(ctx, q, organizationID, p.code, p.currency, invoiceKindPurchase, start, end, tr, paid); err != nil {
 		return nil, err
 	}
-	// Billing is the only writer of tenants.plan, which holds the tier without
+	// Billing is the only writer of organizations.plan, which holds the tier without
 	// the "_year" suffix.
-	if err := q.SetTenantPlan(ctx, dbgen.SetTenantPlanParams{
-		Plan:     strings.TrimSuffix(p.code, "_year"),
-		TenantID: tenantID,
+	if err := q.SetOrganizationPlan(ctx, dbgen.SetOrganizationPlanParams{
+		Plan:           strings.TrimSuffix(p.code, "_year"),
+		OrganizationID: organizationID,
 	}); err != nil {
 		return nil, err
 	}
@@ -270,7 +270,7 @@ const (
 // is owed, and otherwise open, due after the payment grace. It numbers a
 // charged invoice in the GST series and keeps the billing profile it was
 // issued to, with the supplier's GSTIN and SAC.
-func (s *Service) issueInvoice(ctx context.Context, q *dbgen.Queries, tenantID uuid.UUID, plan, currency, kind string, start, end time.Time, tr TaxResult, paid bool) (uuid.UUID, error) {
+func (s *Service) issueInvoice(ctx context.Context, q *dbgen.Queries, organizationID uuid.UUID, plan, currency, kind string, start, end time.Time, tr TaxResult, paid bool) (uuid.UUID, error) {
 	status := "open"
 	due := pgtype.Timestamptz{Time: time.Now().UTC().Add(s.paymentGrace), Valid: true}
 	if paid || tr.TotalMinor == 0 {
@@ -290,7 +290,7 @@ func (s *Service) issueInvoice(ctx context.Context, q *dbgen.Queries, tenantID u
 		v := invoiceNumber(fy, n)
 		number = &v
 	}
-	profile, err := billingProfile(ctx, q, tenantID)
+	profile, err := billingProfile(ctx, q, organizationID)
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -299,7 +299,7 @@ func (s *Service) issueInvoice(ctx context.Context, q *dbgen.Queries, tenantID u
 		return uuid.Nil, err
 	}
 	return q.InsertInvoice(ctx, dbgen.InsertInvoiceParams{
-		TenantID:           tenantID,
+		OrganizationID:     organizationID,
 		PlanCode:           plan,
 		Currency:           currency,
 		AmountMinor:        tr.TotalMinor,
@@ -320,10 +320,10 @@ func (s *Service) issueInvoice(ctx context.Context, q *dbgen.Queries, tenantID u
 	})
 }
 
-// Cancel sets the tenant's subscription to end with its current period, within
+// Cancel sets the organization's subscription to end with its current period, within
 // tx. It returns errs.ErrBillingNoActiveSubscription if there is no subscription.
-func (s *Service) Cancel(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) error {
-	ct, err := s.q.WithTx(tx).CancelSubscription(ctx, tenantID)
+func (s *Service) Cancel(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID) error {
+	ct, err := s.q.WithTx(tx).CancelSubscription(ctx, organizationID)
 	if err != nil {
 		return err
 	}
@@ -333,9 +333,9 @@ func (s *Service) Cancel(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) err
 	return nil
 }
 
-// ListInvoices returns the tenant's 100 most recent invoices, newest first.
-func (s *Service) ListInvoices(ctx context.Context, tenantID uuid.UUID) ([]Invoice, error) {
-	rows, err := s.q.ListInvoices(ctx, tenantID)
+// ListInvoices returns the organization's 100 most recent invoices, newest first.
+func (s *Service) ListInvoices(ctx context.Context, organizationID uuid.UUID) ([]Invoice, error) {
+	rows, err := s.q.ListInvoices(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}

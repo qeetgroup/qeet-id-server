@@ -70,36 +70,36 @@ func TestRotationKeepsStoredSecretsReadable(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
 	oldKey, newKey := bytes.Repeat([]byte{1}, 32), bytes.Repeat([]byte{2}, 32)
 	before := reencryptCipher(t, oldKey)
-	tenant := dbtest.Tenant(t)
-	person := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	person := dbtest.User(t, organization, organization)
 
-	sec, err := secret.NewService(pool, before).Create(ctx, tenant, "api-key", "", "secret-value", nil)
+	sec, err := secret.NewService(pool, before).Create(ctx, organization, "api-key", "", "secret-value", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ct, nonce := sealedTheOldestWay(t, oldKey, "legacy-secret")
-	if _, err := pool.Exec(ctx, `INSERT INTO tenant.secrets (tenant_id, name, ciphertext, nonce) VALUES ($1, 'legacy', $2, $3)`,
-		tenant, ct, nonce); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO organization.secrets (organization_id, name, ciphertext, nonce) VALUES ($1, 'legacy', $2, $3)`,
+		organization, ct, nonce); err != nil {
 		t.Fatal(err)
 	}
 
-	accessCT, accessNonce, err := before.Seal(tenant, "token-vault-access", person.ID.String()+":github", []byte("access-1"))
+	accessCT, accessNonce, err := before.Seal(organization, "token-vault-access", person.ID.String()+":github", []byte("access-1"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	legacyCT, legacyNonce := sealedTheOldestWay(t, oldKey, "access-legacy")
 	for provider, sealed := range map[string][2][]byte{"github": {accessCT, accessNonce}, "gitlab": {legacyCT, legacyNonce}} {
 		if _, err := pool.Exec(ctx, `
-			INSERT INTO tenant.token_vault_grants (tenant_id, user_id, provider, access_token_ct, access_token_nonce)
-			VALUES ($1, $2, $3, $4, $5)`, tenant, person.ID, provider, sealed[0], sealed[1]); err != nil {
+			INSERT INTO organization.token_vault_grants (organization_id, user_id, provider, access_token_ct, access_token_nonce)
+			VALUES ($1, $2, $3, $4, $5)`, organization, person.ID, provider, sealed[0], sealed[1]); err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	keyCT, keyNonce := sealedTheOldestWay(t, oldKey, "sk-ant-legacy")
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO qeetai.provider_settings (tenant_id, provider, model, key_ciphertext, key_nonce)
-		VALUES ($1, 'anthropic', 'model', $2, $3)`, tenant, keyCT, keyNonce); err != nil {
+		INSERT INTO qeetai.provider_settings (organization_id, provider, model, key_ciphertext, key_nonce)
+		VALUES ($1, 'anthropic', 'model', $2, $3)`, organization, keyCT, keyNonce); err != nil {
 		t.Fatal(err)
 	}
 
@@ -110,7 +110,7 @@ func TestRotationKeepsStoredSecretsReadable(t *testing.T) {
 		}))
 		r := httptest.NewRequest(http.MethodPost, "/v1/things", strings.NewReader(`{}`))
 		r.Header.Set(idempotency.Header, "key-1")
-		r = r.WithContext(httpx.WithPrincipal(r.Context(), dbtest.Principal(person.ID, tenant)))
+		r = r.WithContext(httpx.WithPrincipal(r.Context(), dbtest.Principal(person.ID, organization)))
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, r)
 		return rec
@@ -142,19 +142,19 @@ func TestRotationKeepsStoredSecretsReadable(t *testing.T) {
 
 	after := reencryptCipher(t, newKey)
 	secrets := secret.NewService(pool, after)
-	if _, value, err := secrets.Reveal(ctx, tenant, sec.ID); err != nil || value != "secret-value" {
+	if _, value, err := secrets.Reveal(ctx, organization, sec.ID); err != nil || value != "secret-value" {
 		t.Errorf("secret = %q, %v", value, err)
 	}
-	if _, value, err := secrets.GetByName(ctx, tenant, "legacy"); err != nil || value != "legacy-secret" {
+	if _, value, err := secrets.GetByName(ctx, organization, "legacy"); err != nil || value != "legacy-secret" {
 		t.Errorf("oldest-scheme secret = %q, %v", value, err)
 	}
 	vault := tokenvault.NewService(pool, after)
 	for provider, want := range map[string]string{"github": "access-1", "gitlab": "access-legacy"} {
-		if got, err := vault.GetAccessToken(ctx, tenant, person.ID, provider); err != nil || got != want {
+		if got, err := vault.GetAccessToken(ctx, organization, person.ID, provider); err != nil || got != want {
 			t.Errorf("%s access token = %q, %v", provider, got, err)
 		}
 	}
-	if _, err := qeetai.NewProviderConfig(pool, after, qeetai.PlatformProvider{}).ProviderFor(ctx, tenant); err != nil {
+	if _, err := qeetai.NewProviderConfig(pool, after, qeetai.PlatformProvider{}).ProviderFor(ctx, organization); err != nil {
 		t.Errorf("Qeet AI provider key: %v", err)
 	}
 	if rec := answer(after); rec.Header().Get("Idempotent-Replayed") != "true" || rec.Body.String() != `{"shown":"once"}` {

@@ -1,7 +1,7 @@
-// Package tenantguard_test fails when SQL that touches a tenant-owned table
-// does not filter on tenant_id. Qeet ID has no row-level security, so a missing
-// tenant condition is a cross-tenant leak that the database will not catch.
-package tenantguard_test
+// Package organizationguard_test fails when SQL that touches an organization-owned table
+// does not filter on organization_id. Qeet ID has no row-level security, so a missing
+// organization condition is a cross-organization leak that the database will not catch.
+package organizationguard_test
 
 import (
 	"bufio"
@@ -21,18 +21,18 @@ import (
 )
 
 const (
-	allowlistPath  = "internal/platform/database/tenantguard/allowlist_test.go"
+	allowlistPath  = "internal/platform/database/organizationguard/allowlist_test.go"
 	migrationsGlob = "internal/platform/database/migrations/*.up.sql"
 )
 
-// categories are the accepted reasons for a query to skip tenant_id.
+// categories are the accepted reasons for a query to skip organization_id.
 var categories = map[string]bool{
 	"secret-lookup":     true,
 	"session-scoped":    true,
 	"background-sweep":  true,
 	"parent-scoped":     true,
 	"global-client":     true,
-	"pre-tenant":        true,
+	"pre-organization":  true,
 	"global-table-join": true,
 	"platform-wide":     true,
 	"pending-review":    true,
@@ -43,17 +43,17 @@ var categories = map[string]bool{
 var sqlCalls = map[string]bool{"Query": true, "QueryRow": true, "Exec": true}
 
 var (
-	createTableRe = regexp.MustCompile(`(?i)\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w."]+)\s*\(`)
-	alterTableRe  = regexp.MustCompile(`(?i)\bALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?([\w."]+)([^;]*)`)
-	addTenantRe   = regexp.MustCompile(`(?i)\bADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?"?tenant_id"?\s`)
-	tableRefRe    = regexp.MustCompile(`"?(\w+)"?\."?(\w+)"?`)
-	sqlTokenRe    = regexp.MustCompile(`"(\w+)"|\w+|[();]`)
-	sqlVerbRe     = regexp.MustCompile(`(?i)\b(SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM)\b`)
-	sqlTableRe    = regexp.MustCompile(`(?i)\b(FROM|INTO|UPDATE|JOIN)\s+"?\w+"?\.`)
-	sqlcNameRe    = regexp.MustCompile(`^--\s*name:\s*(\w+)`)
-	lineCommentRe = regexp.MustCompile(`--[^\n]*`)
-	blockCommRe   = regexp.MustCompile(`(?s)/\*.*?\*/`)
-	sqlStringRe   = regexp.MustCompile(`'(?:[^']|'')*'`)
+	createTableRe     = regexp.MustCompile(`(?i)\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w."]+)\s*\(`)
+	alterTableRe      = regexp.MustCompile(`(?i)\bALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?([\w."]+)([^;]*)`)
+	addOrganizationRe = regexp.MustCompile(`(?i)\bADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?"?organization_id"?\s`)
+	tableRefRe        = regexp.MustCompile(`"?(\w+)"?\."?(\w+)"?`)
+	sqlTokenRe        = regexp.MustCompile(`"(\w+)"|\w+|[();]`)
+	sqlVerbRe         = regexp.MustCompile(`(?i)\b(SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM)\b`)
+	sqlTableRe        = regexp.MustCompile(`(?i)\b(FROM|INTO|UPDATE|JOIN)\s+"?\w+"?\.`)
+	sqlcNameRe        = regexp.MustCompile(`^--\s*name:\s*(\w+)`)
+	lineCommentRe     = regexp.MustCompile(`--[^\n]*`)
+	blockCommRe       = regexp.MustCompile(`(?s)/\*.*?\*/`)
+	sqlStringRe       = regexp.MustCompile(`'(?:[^']|'')*'`)
 )
 
 // query is one SQL statement found in the repository.
@@ -63,16 +63,16 @@ type query struct {
 	text string // SQL without comments and string literals
 }
 
-// TestTenantFilter requires tenant_id in a WHERE, ON or USING clause at any depth
+// TestOrganizationFilter requires organization_id in a WHERE, ON or USING clause at any depth
 // (subqueries and CTEs count; the select list, SET and RETURNING do not). An INSERT
-// names it in its column list instead, an INSERT … SELECT from a tenant-owned table
+// names it in its column list instead, an INSERT … SELECT from an organization-owned table
 // also filters it, and ON CONFLICT … DO UPDATE names it in the target or WHERE.
-func TestTenantFilter(t *testing.T) {
+func TestOrganizationFilter(t *testing.T) {
 	root := repoRoot(t)
-	tables := tenantTables(t, root)
+	tables := organizationTables(t, root)
 	sqlc, inline := sqlcQueries(t, root), goQueries(t, root)
 	if len(tables) == 0 || len(sqlc) == 0 || len(inline) == 0 {
-		t.Fatalf("found %d tenant-owned tables, %d sqlc queries and %d Go queries; the scanner is broken",
+		t.Fatalf("found %d organization-owned tables, %d sqlc queries and %d Go queries; the scanner is broken",
 			len(tables), len(sqlc), len(inline))
 	}
 	queries := append(sqlc, inline...)
@@ -80,29 +80,29 @@ func TestTenantFilter(t *testing.T) {
 	for _, problem := range check(tables, queries, allow) {
 		t.Error(problem)
 	}
-	t.Logf("checked %d queries against %d tenant-owned tables; %d allowlisted", len(queries), len(tables), len(allow))
+	t.Logf("checked %d queries against %d organization-owned tables; %d allowlisted", len(queries), len(tables), len(allow))
 }
 
-// TestTenantFilterRule runs check on fixed SQL: tenant_id that is only read back
-// is flagged, and tenant_id in a WHERE, a join condition or an INSERT's columns
+// TestOrganizationFilterRule runs check on fixed SQL: organization_id that is only read back
+// is flagged, and organization_id in a WHERE, a join condition or an INSERT's columns
 // is not.
-func TestTenantFilterRule(t *testing.T) {
-	tables := map[string]bool{"tenant.widgets": true, "tenant.parts": true}
+func TestOrganizationFilterRule(t *testing.T) {
+	tables := map[string]bool{"organization.widgets": true, "organization.parts": true}
 	for _, c := range []struct {
 		sql    string
 		scoped bool
 	}{
-		{`SELECT id, tenant_id FROM tenant.widgets WHERE id = $1`, false},
-		{`UPDATE tenant.widgets SET name = $2 WHERE id = $1 RETURNING tenant_id`, false},
-		{`DELETE FROM tenant.widgets WHERE id = $1 RETURNING tenant_id`, false},
-		{`SELECT DISTINCT ON (tenant_id) id FROM tenant.widgets WHERE id = $1`, false},
-		{`SELECT id FROM tenant.widgets WHERE tenant_id = $1 AND id = $2`, true},
-		{`SELECT p.id FROM tenant.parts p JOIN tenant.widgets t ON t.tenant_id = p.tenant_id AND t.id = p.widget_id WHERE p.id = $1`, true},
-		{`SELECT id FROM tenant.widgets WHERE id IN (SELECT widget_id FROM tenant.parts WHERE tenant_id = $1)`, true},
-		{`INSERT INTO tenant.widgets (tenant_id, name) VALUES ($1, $2) RETURNING id`, true},
-		{`INSERT INTO tenant.widgets (tenant_id, name) SELECT tenant_id, name FROM tenant.parts WHERE id = $1`, false},
-		{`INSERT INTO tenant.widgets (tenant_id, name) VALUES ($1, $2) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name`, false},
-		{`INSERT INTO tenant.widgets (tenant_id, name) VALUES ($1, $2) ON CONFLICT (tenant_id, name) DO UPDATE SET name = EXCLUDED.name`, true},
+		{`SELECT id, organization_id FROM organization.widgets WHERE id = $1`, false},
+		{`UPDATE organization.widgets SET name = $2 WHERE id = $1 RETURNING organization_id`, false},
+		{`DELETE FROM organization.widgets WHERE id = $1 RETURNING organization_id`, false},
+		{`SELECT DISTINCT ON (organization_id) id FROM organization.widgets WHERE id = $1`, false},
+		{`SELECT id FROM organization.widgets WHERE organization_id = $1 AND id = $2`, true},
+		{`SELECT p.id FROM organization.parts p JOIN organization.widgets t ON t.organization_id = p.organization_id AND t.id = p.widget_id WHERE p.id = $1`, true},
+		{`SELECT id FROM organization.widgets WHERE id IN (SELECT widget_id FROM organization.parts WHERE organization_id = $1)`, true},
+		{`INSERT INTO organization.widgets (organization_id, name) VALUES ($1, $2) RETURNING id`, true},
+		{`INSERT INTO organization.widgets (organization_id, name) SELECT organization_id, name FROM organization.parts WHERE id = $1`, false},
+		{`INSERT INTO organization.widgets (organization_id, name) VALUES ($1, $2) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name`, false},
+		{`INSERT INTO organization.widgets (organization_id, name) VALUES ($1, $2) ON CONFLICT (organization_id, name) DO UPDATE SET name = EXCLUDED.name`, true},
 	} {
 		q := query{key: "rule#Query", pos: "rule:1", text: cleanSQL(c.sql)}
 		if scoped := len(check(tables, []query{q}, map[string]int{})) == 0; scoped != c.scoped {
@@ -126,8 +126,8 @@ func check(tables map[string]bool, queries []query, allow map[string]int) []stri
 		unscoped[q.key] = true
 		if _, ok := allow[q.key]; !ok {
 			problems = append(problems, fmt.Sprintf(
-				"%s: query on tenant-owned table %s does not filter on tenant_id.\n"+
-					"\tAdd a tenant_id condition, with the tenant from httpx.RequireTenant.\n"+
+				"%s: query on organization-owned table %s does not filter on organization_id.\n"+
+					"\tAdd an organization_id condition, with the organization from httpx.RequireOrganization.\n"+
 					"\tIf the query is safe without one, add this line to %s\n"+
 					"\t(categories are listed at the top of the file):\n"+
 					"\t%s  <category>: <why it is safe>",
@@ -141,18 +141,18 @@ func check(tables map[string]bool, queries []query, allow map[string]int) []stri
 				"%s:%d: %s matches no query (renamed or removed?); delete the line.", allowlistPath, line, key))
 		case !unscoped[key]:
 			problems = append(problems, fmt.Sprintf(
-				"%s:%d: %s now filters on tenant_id; delete the line.", allowlistPath, line, key))
+				"%s:%d: %s now filters on organization_id; delete the line.", allowlistPath, line, key))
 		}
 	}
 	sort.Strings(problems)
 	return problems
 }
 
-// unscopedTable returns a tenant-owned table read or written by a statement in
-// sql that is not scoped to a tenant, or "" when every statement is.
+// unscopedTable returns an organization-owned table read or written by a statement in
+// sql that is not scoped to an organization, or "" when every statement is.
 func unscopedTable(tables map[string]bool, sql string) string {
 	for _, stmt := range statements(sql) {
-		if table := tenantTable(tables, stmt); table != "" && !scoped(tables, stmt) {
+		if table := organizationTable(tables, stmt); table != "" && !scoped(tables, stmt) {
 			return table
 		}
 	}
@@ -196,9 +196,9 @@ func sqlTokens(sql string) []sqlToken {
 	return out
 }
 
-// scoped applies the rule described on TestTenantFilter to one statement. It
-// tracks the clause each parenthesis level is in, so tenant_id inside a WHERE
-// or a subquery's WHERE is a filter and tenant_id in a select list is not.
+// scoped applies the rule described on TestOrganizationFilter to one statement. It
+// tracks the clause each parenthesis level is in, so organization_id inside a WHERE
+// or a subquery's WHERE is a filter and organization_id in a select list is not.
 func scoped(tables map[string]bool, sql string) bool {
 	toks := sqlTokens(sql)
 	word := func(i int) string {
@@ -210,10 +210,10 @@ func scoped(tables map[string]bool, sql string) bool {
 	clause := []string{""} // the clause at each parenthesis depth
 	var (
 		verb                         string // the depth-0 SELECT, INSERT, UPDATE or DELETE
-		filters                      []int  // offsets of tenant_id used as a filter
+		filters                      []int  // offsets of organization_id used as a filter
 		target                       string // INSERT: text naming the target table
 		targetAt                     = -1
-		inColumns                    bool // INSERT: tenant_id in the column list
+		inColumns                    bool // INSERT: organization_id in the column list
 		source, sourceEnd            = -1, len(sql)
 		conflictUpdate, conflictUses bool
 	)
@@ -222,7 +222,7 @@ func scoped(tables map[string]bool, sql string) bool {
 		top := &clause[depth]
 		w := word(i)
 		switch {
-		case tok.word == "TENANT_ID":
+		case tok.word == "ORGANIZATION_ID":
 			switch *top {
 			case "WHERE", "ON", "USING":
 				filters = append(filters, tok.at)
@@ -283,17 +283,17 @@ func scoped(tables map[string]bool, sql string) bool {
 		return len(filters) > 0
 	}
 	if target == "" {
-		target = sql // target not found: treat any tenant-owned table as the target
+		target = sql // target not found: treat any organization-owned table as the target
 	}
-	ok := inColumns || tenantTable(tables, target) == ""
-	if source >= 0 && tenantTable(tables, sql[source:sourceEnd]) != "" {
+	ok := inColumns || organizationTable(tables, target) == ""
+	if source >= 0 && organizationTable(tables, sql[source:sourceEnd]) != "" {
 		ok = ok && slices.ContainsFunc(filters, func(at int) bool { return at >= source && at < sourceEnd })
 	}
 	return ok && (!conflictUpdate || conflictUses)
 }
 
-// tenantTable returns the first tenant-owned table the SQL references, or "".
-func tenantTable(tables map[string]bool, sql string) string {
+// organizationTable returns the first organization-owned table the SQL references, or "".
+func organizationTable(tables map[string]bool, sql string) string {
 	for _, m := range tableRefRe.FindAllStringSubmatch(sql, -1) {
 		name := strings.ToLower(m[1] + "." + m[2])
 		if tables[name] {
@@ -303,9 +303,9 @@ func tenantTable(tables map[string]bool, sql string) string {
 	return ""
 }
 
-// tenantTables returns the schema-qualified tables that have a tenant_id
+// organizationTables returns the schema-qualified tables that have an organization_id
 // column, either at creation or through a later ALTER TABLE.
-func tenantTables(t *testing.T, root string) map[string]bool {
+func organizationTables(t *testing.T, root string) map[string]bool {
 	t.Helper()
 	files, err := filepath.Glob(filepath.Join(root, migrationsGlob))
 	if err != nil {
@@ -316,12 +316,12 @@ func tenantTables(t *testing.T, root string) map[string]bool {
 	for _, file := range files {
 		sql := stripComments(readFile(t, file))
 		for _, loc := range createTableRe.FindAllStringSubmatchIndex(sql, -1) {
-			if hasTenantColumn(sql[loc[1]:]) {
+			if hasOrganizationColumn(sql[loc[1]:]) {
 				tables[tableName(sql[loc[2]:loc[3]])] = true
 			}
 		}
 		for _, m := range alterTableRe.FindAllStringSubmatch(sql, -1) {
-			if addTenantRe.MatchString(m[2]) {
+			if addOrganizationRe.MatchString(m[2]) {
 				tables[tableName(m[1])] = true
 			}
 		}
@@ -329,9 +329,9 @@ func tenantTables(t *testing.T, root string) map[string]bool {
 	return tables
 }
 
-// hasTenantColumn reports whether the column list that body starts with
-// (just after the opening parenthesis) defines a tenant_id column.
-func hasTenantColumn(body string) bool {
+// hasOrganizationColumn reports whether the column list that body starts with
+// (just after the opening parenthesis) defines an organization_id column.
+func hasOrganizationColumn(body string) bool {
 	depth, start := 0, 0
 	for i, r := range body {
 		switch {
@@ -341,7 +341,7 @@ func hasTenantColumn(body string) bool {
 			depth--
 		case depth == 0 && (r == ',' || r == ')'):
 			fields := strings.Fields(body[start:i])
-			if len(fields) > 0 && strings.EqualFold(strings.Trim(fields[0], `"`), "tenant_id") {
+			if len(fields) > 0 && strings.EqualFold(strings.Trim(fields[0], `"`), "organization_id") {
 				return true
 			}
 			if r == ')' {

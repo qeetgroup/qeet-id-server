@@ -1,4 +1,4 @@
-// Package authhook runs an organisation's synchronous sign-in hooks: after the
+// Package authhook runs an organization's synchronous sign-in hooks: after the
 // credentials check, Run POSTs a signed event to each enabled hook's URL, which
 // answers allow or deny. When a hook gives no answer, its fail_open decides
 // (allow by default, so an outage never locks everyone out) and the skip is
@@ -64,7 +64,7 @@ func init() {
 	}
 }
 
-// hookState is an organisation's enabled sign-in hooks as last read: whether
+// hookState is an organization's enabled sign-in hooks as last read: whether
 // there are any, whether all fail open, and the hook a skip names (the first
 // that fails closed, else the first).
 type hookState struct {
@@ -73,7 +73,7 @@ type hookState struct {
 	failOpen bool
 }
 
-// stateOf returns the hookState of an organisation's enabled hooks.
+// stateOf returns the hookState of an organization's enabled hooks.
 func stateOf(hooks []dbgen.ListEnabledSignInHooksRow) hookState {
 	if len(hooks) == 0 {
 		return hookState{}
@@ -86,7 +86,7 @@ func stateOf(hooks []dbgen.ListEnabledSignInHooksRow) hookState {
 	return hookState{present: true, id: hooks[0].ID, failOpen: true}
 }
 
-// Hook is a tenant's login hook, without its signing secret. LastOutcome is
+// Hook is an organization's login hook, without its signing secret. LastOutcome is
 // how its last sign-in call ended: allowed, denied or skipped (no answer).
 // PreviousSecretExpiresAt is when a replaced secret stops signing its calls
 // beside the new one (nil: none does).
@@ -106,7 +106,7 @@ type Hook struct {
 	PreviousSecretExpiresAt *time.Time `json:"previous_secret_expires_at"`
 }
 
-// Service manages and runs sign-in hooks. known holds each organisation's hooks
+// Service manages and runs sign-in hooks. known holds each organization's hooks
 // as last read (uuid.UUID → hookState), for a sign-in made while they can't be
 // read.
 type Service struct {
@@ -127,39 +127,39 @@ func NewService(pool *pgxpool.Pool, policies ...*egress.Policy) *Service {
 // SetCipher sets the cipher that encrypts login hook secrets at rest.
 func (s *Service) SetCipher(box *envelope.Cipher) { s.box = box }
 
-// Run implements auth.LoginHook. It calls each of the organisation's enabled
+// Run implements auth.LoginHook. It calls each of the organization's enabled
 // hooks, oldest first. The first to deny refuses the sign-in with
 // ErrAuthHookDenied; otherwise Run returns the claims they asked to add to the
 // access token, a later hook's replacing an earlier one's of the same name.
 // A hook that gives no answer is handled by skipped.
-func (s *Service) Run(ctx context.Context, tenantID, userID uuid.UUID, email string) (map[string]any, error) {
-	if tenantID == uuid.Nil {
+func (s *Service) Run(ctx context.Context, organizationID, userID uuid.UUID, email string) (map[string]any, error) {
+	if organizationID == uuid.Nil {
 		return nil, nil
 	}
-	hooks, err := s.q.ListEnabledSignInHooks(ctx, tenantID)
+	hooks, err := s.q.ListEnabledSignInHooks(ctx, organizationID)
 	if err != nil {
-		// Whether the organisation's hooks fail open can't be read now, so it
+		// Whether the organization's hooks fail open can't be read now, so it
 		// is taken from the last time they were read here: a fail-closed
-		// organisation stays fail-closed. Never read, the hooks' default
+		// organization stays fail-closed. Never read, the hooks' default
 		// (fail open) applies.
-		last, _ := s.known.Load(tenantID)
+		last, _ := s.known.Load(organizationID)
 		state, seen := last.(hookState)
-		return s.skipped(ctx, tenantID, userID, state.id, skipUnreadable, !seen || !state.present || state.failOpen, err)
+		return s.skipped(ctx, organizationID, userID, state.id, skipUnreadable, !seen || !state.present || state.failOpen, err)
 	}
-	s.known.Store(tenantID, stateOf(hooks))
+	s.known.Store(organizationID, stateOf(hooks))
 	if len(hooks) == 0 {
 		return nil, nil
 	}
 	payload, _ := json.Marshal(map[string]any{
 		"trigger":   "post_login",
-		"tenant_id": tenantID,
+		"tenant_id": organizationID,
 		"user_id":   userID,
 		"email":     email,
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	})
 	var claims map[string]any
 	for _, hook := range hooks {
-		got, err := s.runHook(ctx, tenantID, userID, hook, payload)
+		got, err := s.runHook(ctx, organizationID, userID, hook, payload)
 		if err != nil {
 			return nil, err
 		}
@@ -176,29 +176,29 @@ func (s *Service) Run(ctx context.Context, tenantID, userID uuid.UUID, email str
 // runHook calls one hook with payload, signed with its secrets, and returns
 // the claims it asked for, ErrAuthHookDenied when it denies, or skipped's
 // answer when it gives none.
-func (s *Service) runHook(ctx context.Context, tenantID, userID uuid.UUID, hook dbgen.ListEnabledSignInHooksRow, payload []byte) (map[string]any, error) {
-	secrets, err := s.secretsOf(tenantID, hook.ID, hook.SecretCt, hook.SecretNonce,
+func (s *Service) runHook(ctx context.Context, organizationID, userID uuid.UUID, hook dbgen.ListEnabledSignInHooksRow, payload []byte) (map[string]any, error) {
+	secrets, err := s.secretsOf(organizationID, hook.ID, hook.SecretCt, hook.SecretNonce,
 		previousSecret{hook.PreviousSecretCt, hook.PreviousSecretNonce, hook.PreviousSecretExpiresAt})
 	if err != nil {
-		s.counted(ctx, tenantID, hook.ID, outcomeSkipped, 0)
-		return s.skipped(ctx, tenantID, userID, hook.ID, skipSecretUnavailable, hook.FailOpen, err)
+		s.counted(ctx, organizationID, hook.ID, outcomeSkipped, 0)
+		return s.skipped(ctx, organizationID, userID, hook.ID, skipSecretUnavailable, hook.FailOpen, err)
 	}
 
 	body, status, err := s.call(ctx, hook.Url, secrets, payload)
 	if err != nil {
-		s.counted(ctx, tenantID, hook.ID, outcomeSkipped, status)
-		return s.skipped(ctx, tenantID, userID, hook.ID, skipCallFailed, hook.FailOpen, err)
+		s.counted(ctx, organizationID, hook.ID, outcomeSkipped, status)
+		return s.skipped(ctx, organizationID, userID, hook.ID, skipCallFailed, hook.FailOpen, err)
 	}
 	if _, ok := parseAnswer(body); !ok {
-		s.counted(ctx, tenantID, hook.ID, outcomeSkipped, status)
-		return s.skipped(ctx, tenantID, userID, hook.ID, skipUnparseable, hook.FailOpen, errors.New("the hook's answer isn't a JSON object"))
+		s.counted(ctx, organizationID, hook.ID, outcomeSkipped, status)
+		return s.skipped(ctx, organizationID, userID, hook.ID, skipUnparseable, hook.FailOpen, errors.New("the hook's answer isn't a JSON object"))
 	}
 	msg, denied, claims := decide(hook.FailOpen, nil, body)
 	if denied {
-		s.counted(ctx, tenantID, hook.ID, outcomeDenied, status)
+		s.counted(ctx, organizationID, hook.ID, outcomeDenied, status)
 		return nil, errs.ErrAuthHookDenied.WithMessage(msg)
 	}
-	s.counted(ctx, tenantID, hook.ID, outcomeAllowed, status)
+	s.counted(ctx, organizationID, hook.ID, outcomeAllowed, status)
 	return claims, nil
 }
 
@@ -211,14 +211,14 @@ const (
 
 // counted adds one call to the hook's figures. Losing it costs the figures
 // only, so it is logged, not returned.
-func (s *Service) counted(ctx context.Context, tenantID, hookID uuid.UUID, outcome string, status int) {
+func (s *Service) counted(ctx context.Context, organizationID, hookID uuid.UUID, outcome string, status int) {
 	var code *int32
 	if status > 0 {
 		c := int32(status) // #nosec G115 -- an HTTP status
 		code = &c
 	}
 	if err := s.q.RecordHookCall(context.WithoutCancel(ctx), dbgen.RecordHookCallParams{
-		Outcome: &outcome, StatusCode: code, ID: hookID, TenantID: tenantID,
+		Outcome: &outcome, StatusCode: code, ID: hookID, OrganizationID: organizationID,
 	}); err != nil {
 		slog.Warn("authhook: count a call", "hook_id", hookID, "err", err)
 	}
@@ -237,17 +237,17 @@ type previousSecret struct {
 // secretsOf is what a hook's calls are signed with: its secret, opened, then
 // while it overlaps the one it replaced. A replaced secret that can't be
 // opened is left out, with a warning, rather than stop the calls.
-func (s *Service) secretsOf(tenantID, hookID uuid.UUID, ct, nonce []byte, previous previousSecret) ([]string, error) {
+func (s *Service) secretsOf(organizationID, hookID uuid.UUID, ct, nonce []byte, previous previousSecret) ([]string, error) {
 	if s.box == nil {
 		return nil, errors.New("no cipher to open the signing secret")
 	}
-	current, err := s.box.Open(tenantID, "auth-hook-signing", hookID.String(), ct, nonce)
+	current, err := s.box.Open(organizationID, "auth-hook-signing", hookID.String(), ct, nonce)
 	if err != nil {
 		return nil, err
 	}
 	secrets := []string{string(current)}
 	if len(previous.ct) > 0 && previous.until.Valid && time.Now().Before(previous.until.Time) {
-		if plain, err := s.box.Open(tenantID, "auth-hook-signing", hookID.String(), previous.ct, previous.nonce); err == nil {
+		if plain, err := s.box.Open(organizationID, "auth-hook-signing", hookID.String(), previous.ct, previous.nonce); err == nil {
 			secrets = append(secrets, string(plain))
 		} else {
 			slog.Warn("authhook: replaced secret unreadable; signing with the current one only", "hook_id", hookID, "err", err)
@@ -259,13 +259,13 @@ func (s *Service) secretsOf(tenantID, hookID uuid.UUID, ct, nonce []byte, previo
 // skipped answers a sign-in the hook gave no answer for, refusing it with
 // hookUnavailable unless failOpen, and records the skip (an auth_hook.skipped
 // audit event and the auth_hook_skipped_total metric) so an alert can fire.
-func (s *Service) skipped(ctx context.Context, tenantID, userID, hookID uuid.UUID, reason string, failOpen bool, cause error) (map[string]any, error) {
+func (s *Service) skipped(ctx context.Context, organizationID, userID, hookID uuid.UUID, reason string, failOpen bool, cause error) (map[string]any, error) {
 	outcome := "allowed"
 	if !failOpen {
 		outcome = "refused"
 	}
 	hookSkips.WithLabelValues(reason, outcome).Inc()
-	slog.Warn("authhook: the sign-in hook gave no answer", "tenant_id", tenantID, "hook_id", hookID, "reason", reason, "outcome", outcome, "err", cause)
+	slog.Warn("authhook: the sign-in hook gave no answer", "tenant_id", organizationID, "hook_id", hookID, "reason", reason, "outcome", outcome, "err", cause)
 	var resource *uuid.UUID
 	if hookID != uuid.Nil {
 		resource = &hookID
@@ -274,11 +274,11 @@ func (s *Service) skipped(ctx context.Context, tenantID, userID, hookID uuid.UUI
 	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer cancel()
 	if err := s.record(rctx, audit.Event{
-		TenantID: &tenantID, ActorUserID: &userID, ActorType: "user",
+		OrganizationID: &organizationID, ActorUserID: &userID, ActorType: "user",
 		Action: "auth_hook.skipped", ResourceType: "auth_hook", ResourceID: resource,
 		Metadata: map[string]any{"reason": reason, "outcome": outcome, "fail_open": failOpen},
 	}); err != nil {
-		slog.Warn("authhook: record a skipped hook", "tenant_id", tenantID, "reason", reason, "err", err)
+		slog.Warn("authhook: record a skipped hook", "tenant_id", organizationID, "reason", reason, "err", err)
 	}
 	if !failOpen {
 		return nil, errs.ErrAuthHookDenied.WithMessage(hookUnavailable)
@@ -370,7 +370,7 @@ func decide(failOpen bool, callErr error, body []byte) (denyMsg string, denied b
 
 // Create registers a login hook at url, its signing secret encrypted, recorded
 // as actor's. The URL must be an allowed outbound destination.
-func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, url, secret string, failOpen bool, actor audit.Actor) (*Hook, error) {
+func (s *Service) Create(ctx context.Context, organizationID uuid.UUID, url, secret string, failOpen bool, actor audit.Actor) (*Hook, error) {
 	if _, err := s.egress.ValidateHTTPURL(url); err != nil {
 		return nil, errs.ErrAuthHookURLInvalid
 	}
@@ -378,7 +378,7 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, url, secret st
 		return nil, errs.ErrInternalServer.WithDetail("auth-hook secret encryption is unavailable")
 	}
 	id := uuid.New()
-	ciphertext, nonce, err := s.box.Seal(tenantID, "auth-hook-signing", id.String(), []byte(secret))
+	ciphertext, nonce, err := s.box.Seal(organizationID, "auth-hook-signing", id.String(), []byte(secret))
 	if err != nil {
 		return nil, err
 	}
@@ -396,11 +396,11 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, url, secret st
 	}
 	defer tx.Rollback(ctx)
 	err = tx.QueryRow(ctx, `
-		INSERT INTO tenant.auth_hooks
-		    (id, tenant_id, url, secret_ct, secret_nonce, fail_open, created_by)
+		INSERT INTO organization.auth_hooks
+		    (id, organization_id, url, secret_ct, secret_nonce, fail_open, created_by)
 		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7::uuid, '00000000-0000-0000-0000-000000000000'))
 		RETURNING id, trigger, url, enabled, fail_open, created_at
-	`, id, tenantID, url, ciphertext, nonce, failOpen, httpx.PrincipalUserID(ctx)).Scan(
+	`, id, organizationID, url, ciphertext, nonce, failOpen, httpx.PrincipalUserID(ctx)).Scan(
 		&row.ID, &row.Trigger, &row.URL, &row.Enabled, &row.FailOpen, &row.CreatedAt,
 	)
 	if err != nil {
@@ -414,13 +414,13 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, url, secret st
 		FailOpen:  row.FailOpen,
 		CreatedAt: row.CreatedAt,
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "auth_hook.created", "auth_hook", hook.ID,
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "auth_hook.created", "auth_hook", hook.ID,
 		map[string]any{"url": hook.URL, "fail_open": hook.FailOpen})); err != nil {
 		return nil, err
 	}
 	if err := outbox.Enqueue(ctx, tx, outbox.Event{
 		AggregateID: hook.ID, Topic: "auth-hook.events", EventType: "auth_hook.created",
-		Payload: map[string]any{"hook_id": hook.ID, "tenant_id": tenantID, "url": hook.URL, "fail_open": hook.FailOpen},
+		Payload: map[string]any{"hook_id": hook.ID, "tenant_id": organizationID, "url": hook.URL, "fail_open": hook.FailOpen},
 	}); err != nil {
 		return nil, err
 	}
@@ -430,9 +430,9 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, url, secret st
 	return hook, nil
 }
 
-// List returns the tenant's hooks.
-func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Hook, error) {
-	rows, err := s.q.ListHooks(ctx, tenantID)
+// List returns the organization's hooks.
+func (s *Service) List(ctx context.Context, organizationID uuid.UUID) ([]Hook, error) {
+	rows, err := s.q.ListHooks(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -476,25 +476,25 @@ type HookSettings struct {
 	Secret   *string `json:"secret"`
 }
 
-// Update sets whichever of the settings are given on one of the tenant's
+// Update sets whichever of the settings are given on one of the organization's
 // hooks, keeping the rest, and returns whether it is now enabled and fails
 // open. It is recorded as actor's.
-func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in HookSettings, actor audit.Actor) (enabled, failOpen bool, err error) {
+func (s *Service) Update(ctx context.Context, id, organizationID uuid.UUID, in HookSettings, actor audit.Actor) (enabled, failOpen bool, err error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return false, false, err
 	}
 	defer tx.Rollback(ctx)
 	if in.URL != nil || in.Secret != nil {
-		if err := s.setEndpoint(ctx, tx, id, tenantID, in.URL, in.Secret); err != nil {
+		if err := s.setEndpoint(ctx, tx, id, organizationID, in.URL, in.Secret); err != nil {
 			return false, false, err
 		}
 	}
 	row, err := s.q.WithTx(tx).UpdateHook(ctx, dbgen.UpdateHookParams{
-		Enabled:  in.Enabled,
-		FailOpen: in.FailOpen,
-		ID:       id,
-		TenantID: tenantID,
+		Enabled:        in.Enabled,
+		FailOpen:       in.FailOpen,
+		ID:             id,
+		OrganizationID: organizationID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, false, errs.ErrAuthHookNotFound
@@ -506,32 +506,32 @@ func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in HookSet
 	if in.URL != nil {
 		metadata["url"] = *in.URL
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "auth_hook.updated", "auth_hook", id, metadata)); err != nil {
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "auth_hook.updated", "auth_hook", id, metadata)); err != nil {
 		return false, false, err
 	}
 	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "auth-hook.events", EventType: "auth_hook.updated",
-		Payload: map[string]any{"hook_id": id, "tenant_id": tenantID, "enabled": row.Enabled, "fail_open": row.FailOpen}}); err != nil {
+		Payload: map[string]any{"hook_id": id, "tenant_id": organizationID, "enabled": row.Enabled, "fail_open": row.FailOpen}}); err != nil {
 		return false, false, err
 	}
 	return row.Enabled, row.FailOpen, tx.Commit(ctx)
 }
 
-// setEndpoint gives one of the tenant's hooks a new URL, checked as on
+// setEndpoint gives one of the organization's hooks a new URL, checked as on
 // creation, a new signing secret, encrypted, or both, within tx. The secret a
 // new one replaces signs beside it for SecretRotationOverlap; replacing it
 // again within that ends the older one's at once.
-func (s *Service) setEndpoint(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID, url, secret *string) error {
+func (s *Service) setEndpoint(ctx context.Context, tx pgx.Tx, id, organizationID uuid.UUID, url, secret *string) error {
 	if url != nil {
 		if _, err := s.egress.ValidateHTTPURL(*url); err != nil {
 			return errs.ErrAuthHookURLInvalid
 		}
 	}
-	params := dbgen.SetHookEndpointParams{Url: url, ID: id, TenantID: tenantID}
+	params := dbgen.SetHookEndpointParams{Url: url, ID: id, OrganizationID: organizationID}
 	if secret != nil {
 		if s.box == nil {
 			return errs.ErrInternalServer.WithDetail("auth-hook secret encryption is unavailable")
 		}
-		cur, err := s.q.WithTx(tx).LockHookSecret(ctx, dbgen.LockHookSecretParams{ID: id, TenantID: tenantID})
+		cur, err := s.q.WithTx(tx).LockHookSecret(ctx, dbgen.LockHookSecretParams{ID: id, OrganizationID: organizationID})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errs.ErrAuthHookNotFound
 		}
@@ -540,7 +540,7 @@ func (s *Service) setEndpoint(ctx context.Context, tx pgx.Tx, id, tenantID uuid.
 		}
 		params.PreviousCt, params.PreviousNonce = cur.SecretCt, cur.SecretNonce
 		params.PreviousExpiresAt = pgtype.Timestamptz{Time: time.Now().UTC().Add(SecretRotationOverlap), Valid: true}
-		ct, nonce, err := s.box.Seal(tenantID, "auth-hook-signing", id.String(), []byte(*secret))
+		ct, nonce, err := s.box.Seal(organizationID, "auth-hook-signing", id.String(), []byte(*secret))
 		if err != nil {
 			return err
 		}
@@ -568,11 +568,11 @@ type TestResult struct {
 	Error      string         `json:"error,omitempty"`
 }
 
-// Test calls one of the tenant's hooks as a sign-in would, with "test": true
+// Test calls one of the organization's hooks as a sign-in would, with "test": true
 // and a placeholder person, and reports how it answered. It doesn't count
 // toward the hook's figures. It is recorded as actor's.
-func (s *Service) Test(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) (*TestResult, error) {
-	hook, err := s.q.GetHookForCall(ctx, dbgen.GetHookForCallParams{ID: id, TenantID: tenantID})
+func (s *Service) Test(ctx context.Context, id, organizationID uuid.UUID, actor audit.Actor) (*TestResult, error) {
+	hook, err := s.q.GetHookForCall(ctx, dbgen.GetHookForCallParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrAuthHookNotFound
 	}
@@ -580,13 +580,13 @@ func (s *Service) Test(ctx context.Context, id, tenantID uuid.UUID, actor audit.
 		return nil, err
 	}
 	out := &TestResult{Decision: "none"}
-	secrets, err := s.secretsOf(tenantID, hook.ID, hook.SecretCt, hook.SecretNonce,
+	secrets, err := s.secretsOf(organizationID, hook.ID, hook.SecretCt, hook.SecretNonce,
 		previousSecret{hook.PreviousSecretCt, hook.PreviousSecretNonce, hook.PreviousSecretExpiresAt})
 	if err != nil {
 		out.Error = "the signing secret can't be read"
 	} else {
 		payload, _ := json.Marshal(map[string]any{
-			"trigger": "post_login", "test": true, "tenant_id": tenantID, "user_id": uuid.Nil,
+			"trigger": "post_login", "test": true, "tenant_id": organizationID, "user_id": uuid.Nil,
 			"email": "test@example.invalid", "timestamp": time.Now().UTC().Format(time.RFC3339),
 		})
 		started := time.Now()
@@ -608,31 +608,31 @@ func (s *Service) Test(ctx context.Context, id, tenantID uuid.UUID, actor audit.
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "auth_hook.tested", "auth_hook", id,
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "auth_hook.tested", "auth_hook", id,
 		map[string]any{"status_code": out.StatusCode, "decision": out.Decision, "duration_ms": out.DurationMS})); err != nil {
 		return nil, err
 	}
 	return out, tx.Commit(ctx)
 }
 
-// Delete removes one of the tenant's hooks, recorded as actor's.
-func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
+// Delete removes one of the organization's hooks, recorded as actor's.
+func (s *Service) Delete(ctx context.Context, id, organizationID uuid.UUID, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	n, err := s.q.WithTx(tx).DeleteHook(ctx, dbgen.DeleteHookParams{ID: id, TenantID: tenantID})
+	n, err := s.q.WithTx(tx).DeleteHook(ctx, dbgen.DeleteHookParams{ID: id, OrganizationID: organizationID})
 	if err != nil {
 		return err
 	}
 	if n == 0 {
 		return errs.ErrAuthHookNotFound
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "auth_hook.deleted", "auth_hook", id, nil)); err != nil {
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "auth_hook.deleted", "auth_hook", id, nil)); err != nil {
 		return err
 	}
-	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "auth-hook.events", EventType: "auth_hook.deleted", Payload: map[string]any{"hook_id": id, "tenant_id": tenantID}}); err != nil {
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "auth-hook.events", EventType: "auth_hook.deleted", Payload: map[string]any{"hook_id": id, "tenant_id": organizationID}}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -652,17 +652,17 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Delete("/tenants/{tenantID}/auth-hooks/{id}", h.del)
 }
 
-func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	return httpx.PathTenantOr(r, errs.ErrAuthHookInvalidID, errs.ErrAuthHookTenantMismatch)
+func requirePathOrganization(r *http.Request) (uuid.UUID, error) {
+	return httpx.PathOrganizationOr(r, errs.ErrAuthHookInvalidID, errs.ErrAuthHookOrganizationMismatch)
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out, err := h.Service.List(r.Context(), tenantID)
+	out, err := h.Service.List(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -671,7 +671,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -689,7 +689,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	if in.FailOpen != nil {
 		failOpen = *in.FailOpen
 	}
-	hook, err := h.Service.Create(r.Context(), tenantID, in.URL, in.Secret, failOpen, audit.ActorOf(r))
+	hook, err := h.Service.Create(r.Context(), organizationID, in.URL, in.Secret, failOpen, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -698,7 +698,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) patch(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -713,7 +713,7 @@ func (h *Handler) patch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	enabled, failOpen, err := h.Service.Update(r.Context(), id, tenantID, in, audit.ActorOf(r))
+	enabled, failOpen, err := h.Service.Update(r.Context(), id, organizationID, in, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -722,7 +722,7 @@ func (h *Handler) patch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -732,7 +732,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrAuthHookInvalidID)
 		return
 	}
-	if err := h.Service.Delete(r.Context(), id, tenantID, audit.ActorOf(r)); err != nil {
+	if err := h.Service.Delete(r.Context(), id, organizationID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -741,7 +741,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 
 // test handles POST /v1/tenants/{tenantID}/auth-hooks/{id}/test.
 func (h *Handler) test(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -751,7 +751,7 @@ func (h *Handler) test(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrAuthHookInvalidID)
 		return
 	}
-	out, err := h.Service.Test(r.Context(), id, tenantID, audit.ActorOf(r))
+	out, err := h.Service.Test(r.Context(), id, organizationID, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

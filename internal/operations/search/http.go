@@ -26,8 +26,8 @@ func (h *Handler) Mount(r chi.Router) {
 // comma-separated list of resource types; cursor comes from a previous
 // response; limit outside 1..50 becomes 20.
 func (h *Handler) search(w http.ResponseWriter, r *http.Request) {
-	// Tenant comes from the authenticated principal, never the URL or body.
-	tenantID, err := httpx.RequireTenant(r)
+	// Organization comes from the authenticated principal, never the URL or body.
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -57,7 +57,7 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFromCtx(r.Context())
 	userID := p.UserID // *uuid.UUID; nil for non-user principals
 
-	results, nextCursor, err := h.Service.Search(r.Context(), tenantID, userID, q, types, cursor, limit)
+	results, nextCursor, err := h.Service.Search(r.Context(), organizationID, userID, q, types, cursor, limit)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

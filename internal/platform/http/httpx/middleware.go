@@ -84,8 +84,8 @@ func AccessLog(next http.Handler) http.Handler {
 
 		// Identity fields, from the authentication below, if any.
 		if p := slot.p.Load(); p != nil {
-			if p.TenantID != nil {
-				attrs = append(attrs, slog.String("tenant_id", p.TenantID.String()))
+			if p.OrganizationID != nil {
+				attrs = append(attrs, slog.String("tenant_id", p.OrganizationID.String()))
 			}
 			if p.UserID != nil {
 				attrs = append(attrs, slog.String("user_id", p.UserID.String()))

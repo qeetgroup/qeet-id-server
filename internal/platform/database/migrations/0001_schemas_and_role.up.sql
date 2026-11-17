@@ -5,19 +5,19 @@
 -- grant them as each table and function is made. Row-level security (0011)
 -- applies to qeet_app because it owns nothing.
 
--- What the platform itself keeps, for no one organisation: signing keys,
+-- What the platform itself keeps, for no one organization: signing keys,
 -- jobs, the outbox, billing plans, audit checkpoints.
 CREATE SCHEMA platform;
 
 -- Accounts: the people who sign in, and what belongs to a person across
--- organisations.
+-- organizations.
 CREATE SCHEMA account;
 
--- Organisations and what each one configures: connections, groups, policies,
+-- Organizations and what each one configures: connections, groups, policies,
 -- secrets, billing.
-CREATE SCHEMA tenant;
+CREATE SCHEMA organization;
 
--- Roles, permissions and who holds which role in which organisation.
+-- Roles, permissions and who holds which role in which organization.
 CREATE SCHEMA rbac;
 
 -- Sign-in: sessions, credentials, second factors, applications, tokens and
@@ -39,11 +39,11 @@ END
 $$;
 GRANT qeet_app TO CURRENT_USER;
 
-GRANT USAGE ON SCHEMA account, audit, auth, platform, public, qeetai, rbac, tenant TO qeet_app;
+GRANT USAGE ON SCHEMA account, audit, auth, platform, public, qeetai, rbac, organization TO qeet_app;
 GRANT ALL ON ALL TABLES IN SCHEMA public TO qeet_app;
-ALTER DEFAULT PRIVILEGES IN SCHEMA account, audit, auth, platform, public, qeetai, rbac, tenant
+ALTER DEFAULT PRIVILEGES IN SCHEMA account, audit, auth, platform, public, qeetai, rbac, organization
     GRANT ALL ON TABLES TO qeet_app;
-ALTER DEFAULT PRIVILEGES IN SCHEMA account, audit, auth, platform, public, qeetai, rbac, tenant
+ALTER DEFAULT PRIVILEGES IN SCHEMA account, audit, auth, platform, public, qeetai, rbac, organization
     GRANT ALL ON SEQUENCES TO qeet_app;
-ALTER DEFAULT PRIVILEGES IN SCHEMA account, audit, auth, platform, public, qeetai, rbac, tenant
+ALTER DEFAULT PRIVILEGES IN SCHEMA account, audit, auth, platform, public, qeetai, rbac, organization
     GRANT EXECUTE ON FUNCTIONS TO qeet_app;

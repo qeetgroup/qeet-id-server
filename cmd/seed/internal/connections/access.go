@@ -12,14 +12,14 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ssosync"
 )
 
-// groupMapping is the groups attribute an organisation's identity provider
-// sends, and which of its groups land in which of the organisation's.
+// groupMapping is the groups attribute an organization's identity provider
+// sends, and which of its groups land in which of the organization's.
 type groupMapping struct {
 	attribute string
-	groups    [][2]string // identity-provider group, the organisation's group
+	groups    [][2]string // identity-provider group, the organization's group
 }
 
-// groupMappings are each organisation's: Okta sends group names, Microsoft
+// groupMappings are each organization's: Okta sends group names, Microsoft
 // Entra ID the groups' object IDs. Only ordinary groups are mapped: one whose
 // roles carry administration can't be handed out by the identity provider.
 var groupMappings = map[string]groupMapping{
@@ -45,7 +45,7 @@ func (f *fed) groupSync(o *world.Org, conn uuid.UUID, live time.Time) {
 	at := w.WorkHours(live.Add(24*time.Hour), o.Loc)
 	by := adminAt(o, at)
 	w.At(at, func() {
-		w.Exec("groups attribute", `UPDATE tenant.saml_connections SET groups_attribute = $3 WHERE id = $1 AND tenant_id = $2`, conn, o.ID, m.attribute)
+		w.Exec("groups attribute", `UPDATE organization.saml_connections SET groups_attribute = $3 WHERE id = $1 AND organization_id = $2`, conn, o.ID, m.attribute)
 	})
 	f.record(at, o, by, "saml.connection_updated", "saml_connection", &conn, map[string]any{"groups_attribute": m.attribute})
 	for i, g := range m.groups {
@@ -136,7 +136,7 @@ func (f *fed) assign(o *world.Org, by *world.Person, t time.Time, sp uuid.UUID, 
 // email.
 type spec struct{ groups, users []string }
 
-// oidcConnections are organisations' OpenID Connect identity providers: Lumen
+// oidcConnections are organizations' OpenID Connect identity providers: Lumen
 // Labs signs in its contract developers from their agency's Microsoft Entra ID.
 var oidcConnections = map[string]struct {
 	name, entraTenant string
@@ -175,7 +175,7 @@ func (f *fed) oidcConnection(o *world.Org) {
 	f.record(created, o, by, "oidc_connection.created", "oidc_connection", &id, map[string]any{"name": c.name, "issuer": in.Issuer})
 	live := created.Add(26 * time.Hour)
 	w.At(live, func() {
-		w.Exec("OIDC connection live", `UPDATE tenant.oidc_connections SET status = 'active', updated_at = NOW() WHERE id = $1 AND tenant_id = $2`, id, o.ID)
+		w.Exec("OIDC connection live", `UPDATE organization.oidc_connections SET status = 'active', updated_at = NOW() WHERE id = $1 AND organization_id = $2`, id, o.ID)
 	})
 	f.record(live, o, by, "oidc_connection.updated", "oidc_connection", &id, map[string]any{"status": "active"})
 
@@ -191,13 +191,13 @@ func (f *fed) oidcConnection(o *world.Org) {
 		}
 		linked := f.workTime(from, w.Now.Add(-2*time.Hour), p.Loc)
 		last = later(last, linked)
-		batch.Queue(`INSERT INTO account.external_identities (id, user_id, tenant_id, provider, connection_id, subject, email, metadata, linked_at)
+		batch.Queue(`INSERT INTO account.external_identities (id, user_id, organization_id, provider, connection_id, subject, email, metadata, linked_at)
 			VALUES ($1, $2, $3, 'oidc', $4, $5, $6, $7, $8)`, uuid.New(), p.ID, o.ID, id, f.token(alnum+"-_", 43), p.Email,
 			map[string]any{"tid": c.entraTenant, "iss": in.Issuer}, linked)
 	}
 	w.Check(w.Admin.SendBatch(w.Ctx, batch).Close(), "link OIDC identities in "+o.Spec.Slug)
 	if !last.IsZero() {
-		w.Exec("OIDC last sign-in", `UPDATE tenant.oidc_connections SET last_login_at = $3 WHERE id = $1 AND tenant_id = $2`,
+		w.Exec("OIDC last sign-in", `UPDATE organization.oidc_connections SET last_login_at = $3 WHERE id = $1 AND organization_id = $2`,
 			id, o.ID, f.ago(20*time.Minute, 3*time.Hour))
 	}
 }

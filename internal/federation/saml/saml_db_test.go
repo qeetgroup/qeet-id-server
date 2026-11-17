@@ -20,7 +20,7 @@ func TestConnectionUpdateRunsOnItsTransaction(t *testing.T) {
 	}
 	t.Cleanup(pool.Close)
 	svc := NewService(pool, nil, testPublicBase)
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	cert, _ := selfSignedCert(t)
 
 	tx, err := pool.Begin(ctx)
@@ -28,18 +28,18 @@ func TestConnectionUpdateRunsOnItsTransaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	conn, err := svc.Create(ctx, tx, tenant, CreateInput{
+	conn, err := svc.Create(ctx, tx, organization, CreateInput{
 		Name: "IdP", IdpEntityID: "https://idp.example.com", IdpSSOURL: "https://idp.example.com/sso", IdpCertificate: cert,
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	allow := true
-	if _, err := svc.Update(ctx, tx, conn.ID, tenant, UpdateInput{AllowIdPInitiated: &allow}); err != nil {
+	if _, err := svc.Update(ctx, tx, conn.ID, organization, UpdateInput{AllowIdPInitiated: &allow}); err != nil {
 		t.Fatalf("allow IdP-initiated: %v", err)
 	}
 	name := "Renamed"
-	got, err := svc.Update(ctx, tx, conn.ID, tenant, UpdateInput{Name: &name})
+	got, err := svc.Update(ctx, tx, conn.ID, organization, UpdateInput{Name: &name})
 	if err != nil {
 		t.Fatalf("rename: %v", err)
 	}

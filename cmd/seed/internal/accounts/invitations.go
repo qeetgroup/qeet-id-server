@@ -17,12 +17,12 @@ type invitePlan struct {
 	ago    float64 // days since it was sent
 	role   string
 	email  string // an existing account's address, for a declined one
-	domain string // the invitee's domain when not the organisation's own
+	domain string // the invitee's domain when not the organization's own
 }
 
-// invitePlans are each organisation's open and closed invitations. Vertex,
+// invitePlans are each organization's open and closed invitations. Vertex,
 // nine days into its trial, still has most of its team to bring in; one of
-// Lumen's lapses tomorrow. Free organisations stay inside five seats.
+// Lumen's lapses tomorrow. Free organizations stay inside five seats.
 var invitePlans = map[string][]invitePlan{
 	"qeet": {
 		{state: "pending", ago: 3.2, role: world.RoleDeveloper},
@@ -66,14 +66,14 @@ var invitePlans = map[string][]invitePlan{
 	"fjord":  {{state: "pending", ago: 1.5, role: world.RoleOwner}, {state: "pending", ago: 0.8, role: world.RoleOwner}},
 }
 
-// acceptedShare is the share of each organisation's directly added people who
+// acceptedShare is the share of each organization's directly added people who
 // came in by accepting an invitation (the rest were added by an administrator
 // or provisioned).
 var acceptedShare = map[string]float64{
 	"qeet": 0.4, "lumen": 0.5, "aster": 0.6, "vertex": 1, "kestrel": 0.6, "cobalt": 1,
 }
 
-// invitations writes each organisation's invitations: the accepted ones its
+// invitations writes each organization's invitations: the accepted ones its
 // people joined through, and pending, expired, revoked and declined ones.
 func (s *seeder) invitations(o *world.Org) {
 	w := s.w
@@ -98,14 +98,14 @@ func (s *seeder) invitations(o *world.Org) {
 		role := o.Roles[p.Role]
 		var id uuid.UUID
 		w.At(sent, func() {
-			iv, token, err := svc.Create(ctx, invite.CreateInput{TenantID: o.ID, Email: p.Email, RoleID: &role}, inviter.Actor())
+			iv, token, err := svc.Create(ctx, invite.CreateInput{OrganizationID: o.ID, Email: p.Email, RoleID: &role}, inviter.Actor())
 			w.Check(err, "invite "+p.Email)
 			_, err = svc.AcceptAuthenticated(ctx, p.ID, token, p.Actor())
 			w.Check(err, "accept invitation as "+p.Email)
 			id = iv.ID
 		})
-		w.Exec("accepted "+p.Email, `UPDATE tenant.invites SET accepted_at = $3, expires_at = created_at + interval '14 days'
-			WHERE id = $1 AND tenant_id = $2`, id, o.ID, p.Joined)
+		w.Exec("accepted "+p.Email, `UPDATE organization.invites SET accepted_at = $3, expires_at = created_at + interval '14 days'
+			WHERE id = $1 AND organization_id = $2`, id, o.ID, p.Joined)
 		if p.Joined.After(w.Days(21)) {
 			s.tell(o, event{at: p.Joined.Add(time.Minute), kind: "success", title: p.Name() + " joined " + o.Spec.Name,
 				detail: fmt.Sprintf("%s accepted the invitation and joined as %s.", p.Email, roleName(p.Role)),
@@ -138,7 +138,7 @@ func (s *seeder) invitations(o *world.Org) {
 		var token string
 		var id uuid.UUID
 		w.At(sent, func() {
-			iv, raw, err := svc.Create(ctx, invite.CreateInput{TenantID: o.ID, Email: email, RoleID: &role}, inviter.Actor())
+			iv, raw, err := svc.Create(ctx, invite.CreateInput{OrganizationID: o.ID, Email: email, RoleID: &role}, inviter.Actor())
 			w.Check(err, "invite "+email+" to "+o.Spec.Slug)
 			id, token = iv.ID, raw
 			switch plan.state {
@@ -149,12 +149,12 @@ func (s *seeder) invitations(o *world.Org) {
 			}
 		})
 		// The service set the expiry from the clock, which At doesn't move.
-		w.Exec("expiry of invitation "+email, `UPDATE tenant.invites SET expires_at = created_at + interval '14 days'
-			WHERE id = $1 AND tenant_id = $2`, id, o.ID)
+		w.Exec("expiry of invitation "+email, `UPDATE organization.invites SET expires_at = created_at + interval '14 days'
+			WHERE id = $1 AND organization_id = $2`, id, o.ID)
 		switch plan.state {
 		case "expired":
 			// Opened after it lapsed, which marks it expired.
-			w.Exec("expire invitation "+email, `UPDATE tenant.invites SET status = 'expired' WHERE id = $1 AND tenant_id = $2`, id, o.ID)
+			w.Exec("expire invitation "+email, `UPDATE organization.invites SET status = 'expired' WHERE id = $1 AND organization_id = $2`, id, o.ID)
 		case "pending":
 			link := w.Cfg.AppBaseURL + "/invite/accept?token=" + token
 			if left := sent.Add(14 * 24 * time.Hour).Sub(w.Now); left < 24*time.Hour {
@@ -169,7 +169,7 @@ func (s *seeder) invitations(o *world.Org) {
 	}
 }
 
-// person is the seeded person with email, in any organisation.
+// person is the seeded person with email, in any organization.
 func (s *seeder) person(email string) *world.Person {
 	for _, o := range s.w.Orgs {
 		if p := o.Person(email); p != nil {
@@ -183,7 +183,7 @@ func (s *seeder) person(email string) *world.Person {
 var invited = map[string]bool{}
 
 // newcomer returns an unused first.last address for someone joining o, at
-// domain or, when domain is empty, at the organisation's own.
+// domain or, when domain is empty, at the organization's own.
 func (s *seeder) newcomer(o *world.Org, domain string) string {
 	w := s.w
 	if domain == "" {

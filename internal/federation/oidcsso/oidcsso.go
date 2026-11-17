@@ -1,4 +1,4 @@
-// Package oidcsso signs people in through an organisation's own OpenID Connect
+// Package oidcsso signs people in through an organization's own OpenID Connect
 // identity provider, such as Microsoft Entra ID, Okta or Google Workspace: an
 // authorization-code sign-in with PKCE, state and nonce, bound to the browser
 // that began it, whose ID token is checked against the provider's published
@@ -50,12 +50,12 @@ type ClaimMapping struct {
 	Groups     string `json:"groups"`
 }
 
-// Connection is an organisation's connection to its own OpenID Connect
+// Connection is an organization's connection to its own OpenID Connect
 // provider. The client secret is never returned. RedirectURI is where the
 // provider must send the browser back, filled in by the handler.
 type Connection struct {
 	ID                  uuid.UUID    `json:"id"`
-	TenantID            uuid.UUID    `json:"tenant_id"`
+	OrganizationID      uuid.UUID    `json:"tenant_id"`
 	Name                string       `json:"name"`
 	Issuer              string       `json:"issuer"`
 	DiscoveryURL        string       `json:"discovery_url"`
@@ -79,12 +79,12 @@ func (c *Connection) discoveryURL() string {
 }
 
 // PlanGate reports whether a plan-gated boolean feature is included in the
-// tenant's plan. Satisfied by *entitlements.Service.
+// organization's plan. Satisfied by *entitlements.Service.
 type PlanGate interface {
-	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
+	FeatureAllowed(ctx context.Context, organizationID uuid.UUID, feature string) (bool, error)
 }
 
-// Service manages an organisation's OpenID Connect connections and signs
+// Service manages an organization's OpenID Connect connections and signs
 // people in through them. A nil gate leaves connection creation ungated.
 type Service struct {
 	pool       *pgxpool.Pool
@@ -130,14 +130,14 @@ func (s *Service) SetPlanGate(g PlanGate) { s.gate = g }
 // Pool returns the connection pool, for handlers that run their own transaction.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
-// RequireSSO refuses with ErrUpgradeRequired when the tenant's plan doesn't
+// RequireSSO refuses with ErrUpgradeRequired when the organization's plan doesn't
 // include enterprise single sign-on. It reads on the pool, so a handler runs
 // it before opening the transaction Create joins.
-func (s *Service) RequireSSO(ctx context.Context, tenantID uuid.UUID) error {
+func (s *Service) RequireSSO(ctx context.Context, organizationID uuid.UUID) error {
 	if s.gate == nil {
 		return nil
 	}
-	ok, err := s.gate.FeatureAllowed(ctx, tenantID, planFeature)
+	ok, err := s.gate.FeatureAllowed(ctx, organizationID, planFeature)
 	if err != nil {
 		return err
 	}
@@ -157,7 +157,7 @@ func toConnection(r dbgen.GetOidcConnectionRow) *Connection {
 	}
 	return &Connection{
 		ID:                  r.ID,
-		TenantID:            r.TenantID,
+		OrganizationID:      r.OrganizationID,
 		Name:                r.Name,
 		Issuer:              r.Issuer,
 		DiscoveryURL:        r.DiscoveryUrl,
@@ -354,7 +354,7 @@ func normaliseTenantIDs(ids []string) ([]string, error) {
 }
 
 // requireTenantIDs refuses a Microsoft issuer that signs in every
-// organisation's accounts (common, organizations, consumers) unless the
+// organization's accounts (common, organizations, consumers) unless the
 // connection lists the tenants it accepts, or anyone with a Microsoft account
 // could sign in.
 func requireTenantIDs(issuer string, tenantIDs []string) error {
@@ -378,9 +378,9 @@ func requireTenantIDs(issuer string, tenantIDs []string) error {
 	return nil
 }
 
-// Create stores a connection in tenantID within tx, sealing its client secret.
+// Create stores a connection in organizationID within tx, sealing its client secret.
 // Callers check the plan first, with RequireSSO.
-func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in CreateInput) (*Connection, error) {
+func (s *Service) Create(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, in CreateInput) (*Connection, error) {
 	if err := in.check(s.egress); err != nil {
 		return nil, err
 	}
@@ -388,7 +388,7 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in 
 		return nil, errs.ErrOIDCSSOSecretEncryptionMissing
 	}
 	id := uuid.New()
-	ciphertext, nonce, err := s.box.Seal(tenantID, secretPurpose, id.String(), []byte(in.ClientSecret))
+	ciphertext, nonce, err := s.box.Seal(organizationID, secretPurpose, id.String(), []byte(in.ClientSecret))
 	if err != nil {
 		return nil, err
 	}
@@ -409,7 +409,7 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in 
 	}
 	row, err := s.q.WithTx(tx).InsertOidcConnection(ctx, dbgen.InsertOidcConnectionParams{
 		ID:                  id,
-		TenantID:            tenantID,
+		OrganizationID:      organizationID,
 		Name:                in.Name,
 		Issuer:              in.Issuer,
 		DiscoveryUrl:        in.DiscoveryURL,
@@ -431,9 +431,9 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in 
 	return toConnection(dbgen.GetOidcConnectionRow(row)), nil
 }
 
-// List returns the tenant's connections.
-func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Connection, error) {
-	rows, err := s.q.ListOidcConnections(ctx, tenantID)
+// List returns the organization's connections.
+func (s *Service) List(ctx context.Context, organizationID uuid.UUID) ([]Connection, error) {
+	rows, err := s.q.ListOidcConnections(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -444,9 +444,9 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Connection, e
 	return out, nil
 }
 
-// Get returns one of the tenant's connections.
-func (s *Service) Get(ctx context.Context, id, tenantID uuid.UUID) (*Connection, error) {
-	r, err := s.q.GetOidcConnection(ctx, dbgen.GetOidcConnectionParams{ID: id, TenantID: tenantID})
+// Get returns one of the organization's connections.
+func (s *Service) Get(ctx context.Context, id, organizationID uuid.UUID) (*Connection, error) {
+	r, err := s.q.GetOidcConnection(ctx, dbgen.GetOidcConnectionParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
 	}
@@ -544,16 +544,16 @@ func (in *UpdateInput) changed() []string {
 	return fields
 }
 
-// Update changes the given fields of a connection in tenantID within tx,
+// Update changes the given fields of a connection in organizationID within tx,
 // refusing input that fails check, or a result that would let a multi-tenant
-// issuer sign in any organisation's accounts.
-func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID, in UpdateInput) (*Connection, error) {
+// issuer sign in any organization's accounts.
+func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, organizationID uuid.UUID, in UpdateInput) (*Connection, error) {
 	if err := in.check(s.egress); err != nil {
 		return nil, err
 	}
 	params := dbgen.UpdateOidcConnectionParams{
 		ID:                  id,
-		TenantID:            tenantID,
+		OrganizationID:      organizationID,
 		Name:                in.Name,
 		Issuer:              in.Issuer,
 		DiscoveryUrl:        in.DiscoveryURL,
@@ -570,7 +570,7 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID,
 		if s.box == nil {
 			return nil, errs.ErrOIDCSSOSecretEncryptionMissing
 		}
-		ciphertext, nonce, err := s.box.Seal(tenantID, secretPurpose, id.String(), []byte(*in.ClientSecret))
+		ciphertext, nonce, err := s.box.Seal(organizationID, secretPurpose, id.String(), []byte(*in.ClientSecret))
 		if err != nil {
 			return nil, err
 		}
@@ -589,10 +589,10 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID,
 	return toConnection(dbgen.GetOidcConnectionRow(r)), nil
 }
 
-// Delete removes one of the tenant's connections, and with it the sign-ins
+// Delete removes one of the organization's connections, and with it the sign-ins
 // and login codes it has in flight.
-func (s *Service) Delete(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID) error {
-	n, err := s.q.WithTx(tx).DeleteOidcConnection(ctx, dbgen.DeleteOidcConnectionParams{ID: id, TenantID: tenantID})
+func (s *Service) Delete(ctx context.Context, tx pgx.Tx, id, organizationID uuid.UUID) error {
+	n, err := s.q.WithTx(tx).DeleteOidcConnection(ctx, dbgen.DeleteOidcConnectionParams{ID: id, OrganizationID: organizationID})
 	if err != nil {
 		return err
 	}
@@ -621,7 +621,7 @@ func (s *Service) loadForSignIn(ctx context.Context, id uuid.UUID) (*signInConne
 		return nil, err
 	}
 	c := &signInConnection{Connection: *toConnection(dbgen.GetOidcConnectionRow{
-		ID: r.ID, TenantID: r.TenantID, Name: r.Name, Issuer: r.Issuer, DiscoveryUrl: r.DiscoveryUrl,
+		ID: r.ID, OrganizationID: r.OrganizationID, Name: r.Name, Issuer: r.Issuer, DiscoveryUrl: r.DiscoveryUrl,
 		ClientID: r.ClientID, Scopes: r.Scopes, AllowedIdpTenantIds: r.AllowedIdpTenantIds,
 		EmailClaim: r.EmailClaim, NameClaim: r.NameClaim, GivenNameClaim: r.GivenNameClaim,
 		FamilyNameClaim: r.FamilyNameClaim, GroupsClaim: r.GroupsClaim, Status: r.Status,
@@ -633,7 +633,7 @@ func (s *Service) loadForSignIn(ctx context.Context, id uuid.UUID) (*signInConne
 	if s.box == nil {
 		return c, errs.ErrOIDCSSOSecretEncryptionMissing
 	}
-	plain, err := s.box.Open(c.TenantID, secretPurpose, c.ID.String(), r.ClientSecretCt, r.ClientSecretNonce)
+	plain, err := s.box.Open(c.OrganizationID, secretPurpose, c.ID.String(), r.ClientSecretCt, r.ClientSecretNonce)
 	if err != nil {
 		return c, errs.ErrOIDCSSOMisconfigured.Wrap(err)
 	}
@@ -654,7 +654,7 @@ func signInStatus(status string) error {
 
 // touchLastLogin stamps the connection's last sign-in. Best effort.
 func (s *Service) touchLastLogin(ctx context.Context, c *signInConnection) {
-	_ = s.q.TouchOidcConnectionLastLogin(ctx, dbgen.TouchOidcConnectionLastLoginParams{ID: c.ID, TenantID: c.TenantID})
+	_ = s.q.TouchOidcConnectionLastLogin(ctx, dbgen.TouchOidcConnectionLastLoginParams{ID: c.ID, OrganizationID: c.OrganizationID})
 }
 
 // pgUUID is id as a nullable UUID column value.

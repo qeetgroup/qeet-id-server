@@ -181,13 +181,13 @@ UPDATE auth.magic_links SET expires_at = NOW() - INTERVAL '1 minute'
 WHERE LOWER(email) = (SELECT LOWER(u.email) FROM account.users u WHERE u.id = @user_id)
   AND used_at IS NULL AND expires_at > NOW() - INTERVAL '1 minute';
 
--- AddressHolder returns the account's address and organisation, and whether
--- that organisation's directory or single sign-on provides the address: SCIM
+-- AddressHolder returns the account's address and organization, and whether
+-- that organization's directory or single sign-on provides the address: SCIM
 -- provisioned the account, or it is linked to one of its connections.
 -- name: AddressHolder :one
-SELECT u.email, u.tenant_id,
+SELECT u.email, u.organization_id,
        ((u.provisioned_via IS NOT DISTINCT FROM 'scim') OR EXISTS (
            SELECT 1 FROM account.external_identities e
-           WHERE e.user_id = u.id AND e.tenant_id = u.tenant_id AND e.connection_id IS NOT NULL
+           WHERE e.user_id = u.id AND e.organization_id = u.organization_id AND e.connection_id IS NOT NULL
        ))::bool AS provided
 FROM account.users u WHERE u.id = @user_id;

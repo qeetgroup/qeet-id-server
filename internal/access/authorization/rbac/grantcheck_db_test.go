@@ -25,61 +25,61 @@ import (
 func TestCredentialsCarryNoMoreThanTheirIssuer(t *testing.T) {
 	ctx := dbtest.Context(t)
 	repo := NewRepository(dbtest.Pool(t))
-	tenant := dbtest.Tenant(t)
-	developer := dbtest.User(t, tenant)
-	devRole := dbtest.Role(t, tenant, "apikey.write", "user.read")
-	dbtest.Assign(t, developer.ID, tenant, devRole)
-	owner := dbtest.User(t, tenant)
+	organization := dbtest.Organization(t)
+	developer := dbtest.User(t, organization)
+	devRole := dbtest.Role(t, organization, "apikey.write", "user.read")
+	dbtest.Assign(t, developer.ID, organization, devRole)
+	owner := dbtest.User(t, organization)
 	var ownerRole uuid.UUID
 	if err := dbtest.Pool(t).QueryRow(ctx, `
-		INSERT INTO rbac.roles (tenant_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, tenant).Scan(&ownerRole); err != nil {
+		INSERT INTO rbac.roles (organization_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, organization).Scan(&ownerRole); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.Assign(t, owner.ID, tenant, ownerRole)
+	dbtest.Assign(t, owner.ID, organization, ownerRole)
 
 	refused := func(err error, permission string) bool {
 		e := errs.As(err)
 		return errors.Is(err, errs.ErrRBACGrantExceedsCaller) && e != nil && e.Metadata["permission"] == permission
 	}
-	asDeveloper := dbtest.Principal(developer.ID, tenant)
-	if err := repo.CheckGrantScopes(ctx, asDeveloper, tenant, []string{"user.read", "apikey.write"}); err != nil {
+	asDeveloper := dbtest.Principal(developer.ID, organization)
+	if err := repo.CheckGrantScopes(ctx, asDeveloper, organization, []string{"user.read", "apikey.write"}); err != nil {
 		t.Errorf("a developer issues their own permissions: %v", err)
 	}
-	if err := repo.CheckGrantScopes(ctx, asDeveloper, tenant, []string{"user.read", "role.write"}); !refused(err, "role.write") {
+	if err := repo.CheckGrantScopes(ctx, asDeveloper, organization, []string{"user.read", "role.write"}); !refused(err, "role.write") {
 		t.Errorf("a developer issues role.write: %v, want %v naming it", err, errs.ErrRBACGrantExceedsCaller)
 	}
-	if err := repo.CheckGrantScopes(ctx, asDeveloper, tenant, []string{"vault:read"}); !refused(err, "vault:read") {
+	if err := repo.CheckGrantScopes(ctx, asDeveloper, organization, []string{"vault:read"}); !refused(err, "vault:read") {
 		t.Errorf("a developer without secret.read issues vault:read: %v", err)
 	}
-	if err := repo.CheckGrantScopes(ctx, dbtest.Principal(owner.ID, tenant), tenant, []string{"role.write", "tenant.write", "vault:read"}); err != nil {
+	if err := repo.CheckGrantScopes(ctx, dbtest.Principal(owner.ID, organization), organization, []string{"role.write", "tenant.write", "vault:read"}); err != nil {
 		t.Errorf("an owner issues anything: %v", err)
 	}
 
 	// The owner's own key, narrowly scoped, holds only its scopes.
-	ownersKey := &httpx.Principal{UserID: &owner.ID, TenantID: &tenant, ActorType: "api_key", Scopes: []string{"apikey.write", "role.write", "vault:payments"}}
-	if err := repo.CheckGrantScopes(ctx, ownersKey, tenant, []string{"role.write", "vault:payments"}); err != nil {
+	ownersKey := &httpx.Principal{UserID: &owner.ID, OrganizationID: &organization, ActorType: "api_key", Scopes: []string{"apikey.write", "role.write", "vault:payments"}}
+	if err := repo.CheckGrantScopes(ctx, ownersKey, organization, []string{"role.write", "vault:payments"}); err != nil {
 		t.Errorf("a key issues its own scopes: %v", err)
 	}
-	if err := repo.CheckGrantScopes(ctx, ownersKey, tenant, []string{"user.write"}); !refused(err, "user.write") {
+	if err := repo.CheckGrantScopes(ctx, ownersKey, organization, []string{"user.write"}); !refused(err, "user.write") {
 		t.Errorf("an owner's key issues beyond its scopes: %v", err)
 	}
-	if err := repo.CheckGrantScopes(ctx, ownersKey, tenant, []string{"vault:read"}); !refused(err, "vault:read") {
+	if err := repo.CheckGrantScopes(ctx, ownersKey, organization, []string{"vault:read"}); !refused(err, "vault:read") {
 		t.Errorf("a key holding one vault secret issues all of them: %v", err)
 	}
-	if err := repo.CheckGrantRole(ctx, ownersKey, tenant, ownerRole); !errors.Is(err, errs.ErrRBACOwnerOnly) {
+	if err := repo.CheckGrantRole(ctx, ownersKey, organization, ownerRole); !errors.Is(err, errs.ErrRBACOwnerOnly) {
 		t.Errorf("an owner's key gives the owner role: %v, want %v", err, errs.ErrRBACOwnerOnly)
 	}
 
 	// A key outlives a demotion only within what its person still holds.
-	developersKey := &httpx.Principal{UserID: &developer.ID, TenantID: &tenant, ActorType: "api_key", Scopes: []string{"apikey.write", "user.read", "role.write"}}
-	if err := repo.CheckGrantScopes(ctx, developersKey, tenant, []string{"role.write"}); !refused(err, "role.write") {
+	developersKey := &httpx.Principal{UserID: &developer.ID, OrganizationID: &organization, ActorType: "api_key", Scopes: []string{"apikey.write", "user.read", "role.write"}}
+	if err := repo.CheckGrantScopes(ctx, developersKey, organization, []string{"role.write"}); !refused(err, "role.write") {
 		t.Errorf("a key issues a scope its person no longer holds: %v", err)
 	}
-	service := &httpx.Principal{TenantID: &tenant, ActorType: "service", Scopes: []string{"apikey.write", "vault:read"}}
-	if err := repo.CheckGrantScopes(ctx, service, tenant, []string{"vault:payments", "apikey.write"}); err != nil {
+	service := &httpx.Principal{OrganizationID: &organization, ActorType: "service", Scopes: []string{"apikey.write", "vault:read"}}
+	if err := repo.CheckGrantScopes(ctx, service, organization, []string{"vault:payments", "apikey.write"}); err != nil {
 		t.Errorf("a service principal issues within its scopes: %v", err)
 	}
-	if err := repo.CheckGrantScopes(ctx, service, tenant, []string{"secret.read"}); !refused(err, "secret.read") {
+	if err := repo.CheckGrantScopes(ctx, service, organization, []string{"secret.read"}); !refused(err, "secret.read") {
 		t.Errorf("a service principal issues a permission it lacks: %v", err)
 	}
 }
@@ -92,18 +92,18 @@ func TestOwnersAndTheOwnerRoleStayProtected(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	repo := NewRepository(pool)
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	var ownerRole uuid.UUID
-	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, tenant).Scan(&ownerRole); err != nil {
+	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (organization_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, organization).Scan(&ownerRole); err != nil {
 		t.Fatal(err)
 	}
-	owner, coOwner := dbtest.User(t, tenant), dbtest.User(t, tenant)
-	dbtest.Assign(t, owner.ID, tenant, ownerRole)
-	dbtest.Assign(t, coOwner.ID, tenant, ownerRole)
-	reviewers := dbtest.Role(t, tenant, "audit.read")
-	dbtest.Assign(t, coOwner.ID, tenant, reviewers)
-	admin := dbtest.User(t, tenant)
-	dbtest.Assign(t, admin.ID, tenant, dbtest.Role(t, tenant, "role.read", "role.write", "user.read"))
+	owner, coOwner := dbtest.User(t, organization), dbtest.User(t, organization)
+	dbtest.Assign(t, owner.ID, organization, ownerRole)
+	dbtest.Assign(t, coOwner.ID, organization, ownerRole)
+	reviewers := dbtest.Role(t, organization, "audit.read")
+	dbtest.Assign(t, coOwner.ID, organization, reviewers)
+	admin := dbtest.User(t, organization)
+	dbtest.Assign(t, admin.ID, organization, dbtest.Role(t, organization, "role.read", "role.write", "user.read"))
 	var auditRead, roleWrite uuid.UUID
 	for key, id := range map[string]*uuid.UUID{"audit.read": &auditRead, "role.write": &roleWrite} {
 		if err := pool.QueryRow(ctx, `SELECT id FROM rbac.permissions WHERE key = $1`, key).Scan(id); err != nil {
@@ -112,7 +112,7 @@ func TestOwnersAndTheOwnerRoleStayProtected(t *testing.T) {
 	}
 
 	h := &Handler{Repo: repo, Service: NewService(repo), Validate: validator.New(validator.WithRequiredStructEnabled())}
-	as := func(u uuid.UUID) http.Handler { return dbtest.Serve(dbtest.Principal(u, tenant), h.Mount) }
+	as := func(u uuid.UUID) http.Handler { return dbtest.Serve(dbtest.Principal(u, organization), h.Mount) }
 	for _, tc := range []struct {
 		name         string
 		caller       uuid.UUID
@@ -123,9 +123,9 @@ func TestOwnersAndTheOwnerRoleStayProtected(t *testing.T) {
 		{"an owner revokes from the owner role", owner.ID, http.MethodDelete, "/roles/" + ownerRole.String() + "/permissions/" + roleWrite.String(), http.StatusForbidden, errs.CodeRBACSystemRoleFixed},
 		{"an admin grants to the owner role", admin.ID, http.MethodPost, "/roles/" + ownerRole.String() + "/permissions/" + roleWrite.String(), http.StatusForbidden, errs.CodeRBACSystemRoleFixed},
 		{"an admin revokes a permission they lack", admin.ID, http.MethodDelete, "/roles/" + reviewers.String() + "/permissions/" + auditRead.String(), http.StatusForbidden, errs.CodeRBACGrantExceedsCaller},
-		{"an admin removes an owner's owner role", admin.ID, http.MethodDelete, "/users/" + coOwner.ID.String() + "/tenants/" + tenant.String() + "/roles/" + ownerRole.String(), http.StatusForbidden, errs.CodeRBACTargetIsOwner},
-		{"an admin strips an owner of another role", admin.ID, http.MethodDelete, "/users/" + coOwner.ID.String() + "/tenants/" + tenant.String() + "/roles/" + reviewers.String(), http.StatusForbidden, errs.CodeRBACTargetIsOwner},
-		{"an owner removes a co-owner's owner role", owner.ID, http.MethodDelete, "/users/" + coOwner.ID.String() + "/tenants/" + tenant.String() + "/roles/" + ownerRole.String(), http.StatusNoContent, ""},
+		{"an admin removes an owner's owner role", admin.ID, http.MethodDelete, "/users/" + coOwner.ID.String() + "/tenants/" + organization.String() + "/roles/" + ownerRole.String(), http.StatusForbidden, errs.CodeRBACTargetIsOwner},
+		{"an admin strips an owner of another role", admin.ID, http.MethodDelete, "/users/" + coOwner.ID.String() + "/tenants/" + organization.String() + "/roles/" + reviewers.String(), http.StatusForbidden, errs.CodeRBACTargetIsOwner},
+		{"an owner removes a co-owner's owner role", owner.ID, http.MethodDelete, "/users/" + coOwner.ID.String() + "/tenants/" + organization.String() + "/roles/" + ownerRole.String(), http.StatusNoContent, ""},
 	} {
 		rec := dbtest.Do(t, as(tc.caller), tc.method, tc.path, nil)
 		if rec.Code != tc.status || !strings.Contains(rec.Body.String(), tc.code) {
@@ -138,7 +138,7 @@ func TestOwnersAndTheOwnerRoleStayProtected(t *testing.T) {
 }
 
 // TestBuiltinRolesHoldTheirDefinitions checks that seeding at boot gives an
-// organisation's built-in roles what their definitions cover of the catalogue
+// organization's built-in roles what their definitions cover of the catalogue
 // (owner everything, admin all but tenant.delete, viewer every read but
 // secret.read, member nothing), that nobody changes them, and that none counts
 // as a custom role.
@@ -146,11 +146,11 @@ func TestBuiltinRolesHoldTheirDefinitions(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	repo := NewRepository(pool)
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	roles := map[string]uuid.UUID{}
 	for _, name := range []string{"owner", "admin", "member", "viewer"} {
 		var id uuid.UUID
-		if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name, is_system) VALUES ($1, $2, true) RETURNING id`, tenant, name).Scan(&id); err != nil {
+		if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (organization_id, name, is_system) VALUES ($1, $2, true) RETURNING id`, organization, name).Scan(&id); err != nil {
 			t.Fatal(err)
 		}
 		roles[name] = id
@@ -175,22 +175,22 @@ func TestBuiltinRolesHoldTheirDefinitions(t *testing.T) {
 			}
 		}
 	}
-	if n, err := repo.CountCustomRoles(ctx, tenant); err != nil || n != 0 {
+	if n, err := repo.CountCustomRoles(ctx, organization); err != nil || n != 0 {
 		t.Errorf("custom roles: %d, %v; want the built-in ones not counted", n, err)
 	}
 
-	owner := dbtest.User(t, tenant)
-	dbtest.Assign(t, owner.ID, tenant, roles["owner"])
-	var tenantDelete, auditRead uuid.UUID
-	for key, id := range map[string]*uuid.UUID{"tenant.delete": &tenantDelete, "audit.read": &auditRead} {
+	owner := dbtest.User(t, organization)
+	dbtest.Assign(t, owner.ID, organization, roles["owner"])
+	var organizationDelete, auditRead uuid.UUID
+	for key, id := range map[string]*uuid.UUID{"tenant.delete": &organizationDelete, "audit.read": &auditRead} {
 		if err := pool.QueryRow(ctx, `SELECT id FROM rbac.permissions WHERE key = $1`, key).Scan(id); err != nil {
 			t.Fatal(err)
 		}
 	}
 	h := &Handler{Repo: repo, Service: NewService(repo), Validate: validator.New(validator.WithRequiredStructEnabled())}
-	asOwner := dbtest.Serve(dbtest.Principal(owner.ID, tenant), h.Mount)
+	asOwner := dbtest.Serve(dbtest.Principal(owner.ID, organization), h.Mount)
 	for _, tc := range []struct{ name, method, path string }{
-		{"an owner grants tenant.delete to admin", http.MethodPost, "/roles/" + roles["admin"].String() + "/permissions/" + tenantDelete.String()},
+		{"an owner grants tenant.delete to admin", http.MethodPost, "/roles/" + roles["admin"].String() + "/permissions/" + organizationDelete.String()},
 		{"an owner takes audit.read from viewer", http.MethodDelete, "/roles/" + roles["viewer"].String() + "/permissions/" + auditRead.String()},
 		{"an owner grants audit.read to member", http.MethodPost, "/roles/" + roles["member"].String() + "/permissions/" + auditRead.String()},
 	} {
@@ -221,26 +221,26 @@ func TestRemovingARoleFromAGroupNeedsTheRole(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	repo := NewRepository(pool)
-	tenant := dbtest.Tenant(t)
-	editor := dbtest.User(t, tenant)
-	dbtest.Assign(t, editor.ID, tenant, dbtest.Role(t, tenant, "role.write", "group.read"))
+	organization := dbtest.Organization(t)
+	editor := dbtest.User(t, organization)
+	dbtest.Assign(t, editor.ID, organization, dbtest.Role(t, organization, "role.write", "group.read"))
 	var ownerRole, group uuid.UUID
-	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, tenant).Scan(&ownerRole); err != nil {
+	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (organization_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, organization).Scan(&ownerRole); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.QueryRow(ctx, `INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, 'Owners') RETURNING id`, tenant).Scan(&group); err != nil {
+	if err := pool.QueryRow(ctx, `INSERT INTO organization.groups (organization_id, name) VALUES ($1, 'Owners') RETURNING id`, organization).Scan(&group); err != nil {
 		t.Fatal(err)
 	}
-	powerful, held := dbtest.Role(t, tenant, "user.write"), dbtest.Role(t, tenant, "group.read")
+	powerful, held := dbtest.Role(t, organization, "user.write"), dbtest.Role(t, organization, "group.read")
 	for _, role := range []uuid.UUID{ownerRole, powerful, held} {
-		if _, err := pool.Exec(ctx, `INSERT INTO rbac.group_roles (tenant_id, group_id, role_id) VALUES ($1, $2, $3)`, tenant, group, role); err != nil {
+		if _, err := pool.Exec(ctx, `INSERT INTO rbac.group_roles (organization_id, group_id, role_id) VALUES ($1, $2, $3)`, organization, group, role); err != nil {
 			t.Fatal(err)
 		}
 	}
-	h := dbtest.Serve(dbtest.Principal(editor.ID, tenant),
+	h := dbtest.Serve(dbtest.Principal(editor.ID, organization),
 		(&Handler{Repo: repo, Service: NewService(repo), Validate: validator.New(validator.WithRequiredStructEnabled())}).Mount)
 	unassign := func(role uuid.UUID) (int, string) {
-		rec := dbtest.Do(t, h, http.MethodDelete, "/tenants/"+tenant.String()+"/groups/"+group.String()+"/roles/"+role.String(), nil)
+		rec := dbtest.Do(t, h, http.MethodDelete, "/tenants/"+organization.String()+"/groups/"+group.String()+"/roles/"+role.String(), nil)
 		return rec.Code, rec.Body.String()
 	}
 
@@ -253,7 +253,7 @@ func TestRemovingARoleFromAGroupNeedsTheRole(t *testing.T) {
 	if status, body := unassign(held); status != http.StatusNoContent {
 		t.Errorf("a role editor takes off a role they hold: %d %s, want 204", status, body)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM rbac.group_roles WHERE tenant_id = $1 AND group_id = $2`, tenant, group); n != 2 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM rbac.group_roles WHERE organization_id = $1 AND group_id = $2`, organization, group); n != 2 {
 		t.Errorf("the group holds %d roles, want the 2 the editor couldn't take off", n)
 	}
 }

@@ -31,14 +31,14 @@ func newService(t *testing.T) *Service {
 	return NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
 }
 
-// member creates a tenant and an active member of it who signs in with
+// member creates an organization and an active member of it who signs in with
 // testPassword.
 func member(t *testing.T) (dbtest.Account, uuid.UUID) {
 	t.Helper()
-	tenant := dbtest.Tenant(t)
-	a := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	a := dbtest.User(t, organization, organization)
 	dbtest.SetPassword(t, a.ID, testPassword)
-	return a, tenant
+	return a, organization
 }
 
 // signIn signs a in with testPassword, failing t unless tokens are issued.
@@ -52,27 +52,27 @@ func signIn(t *testing.T, svc *Service, a dbtest.Account) *TokenPair {
 }
 
 // TestPasswordSignIn checks that the right password signs a user in to their
-// tenant with a live session, an access token naming it, and an audit record.
+// organization with a live session, an access token naming it, and an audit record.
 func TestPasswordSignIn(t *testing.T) {
 	svc := newService(t)
-	a, tenant := member(t)
+	a, organization := member(t)
 
 	pair := signIn(t, svc, a)
-	if pair.UserID != a.ID || pair.TenantID == nil || *pair.TenantID != tenant || pair.RefreshToken == "" {
-		t.Fatalf("token pair %+v; want user %s in tenant %s with a refresh token", pair, a.ID, tenant)
+	if pair.UserID != a.ID || pair.OrganizationID == nil || *pair.OrganizationID != organization || pair.RefreshToken == "" {
+		t.Fatalf("token pair %+v; want user %s in tenant %s with a refresh token", pair, a.ID, organization)
 	}
 	claims, err := svc.tokens.VerifyAccess(pair.AccessToken)
-	if err != nil || claims.UserID != a.ID || claims.TenantID != tenant || claims.SessionID != pair.SessionID {
+	if err != nil || claims.UserID != a.ID || claims.OrganizationID != organization || claims.SessionID != pair.SessionID {
 		t.Fatalf("access token claims %+v, %v", claims, err)
 	}
 	if n := dbtest.Count(t, `
-		SELECT count(*) FROM auth.sessions WHERE id = $1 AND user_id = $2 AND tenant_id = $3 AND revoked_at IS NULL
-	`, pair.SessionID, a.ID, tenant); n != 1 {
+		SELECT count(*) FROM auth.sessions WHERE id = $1 AND user_id = $2 AND organization_id = $3 AND revoked_at IS NULL
+	`, pair.SessionID, a.ID, organization); n != 1 {
 		t.Error("no live session for the sign-in")
 	}
 	if n := dbtest.Count(t, `
-		SELECT count(*) FROM audit.events WHERE action = 'auth.login_succeeded' AND resource_id = $1 AND tenant_id = $2
-	`, pair.SessionID, tenant); n != 1 {
+		SELECT count(*) FROM audit.events WHERE action = 'auth.login_succeeded' AND resource_id = $1 AND organization_id = $2
+	`, pair.SessionID, organization); n != 1 {
 		t.Error("the sign-in was not audited")
 	}
 }
@@ -227,10 +227,10 @@ func (noFactors) LoginFactorsTx(context.Context, pgx.Tx, uuid.UUID) ([]LoginFact
 }
 
 // hookFunc is a LoginHook.
-type hookFunc func(ctx context.Context, tenantID, userID uuid.UUID, email string) (map[string]any, error)
+type hookFunc func(ctx context.Context, organizationID, userID uuid.UUID, email string) (map[string]any, error)
 
-func (f hookFunc) Run(ctx context.Context, tenantID, userID uuid.UUID, email string) (map[string]any, error) {
-	return f(ctx, tenantID, userID, email)
+func (f hookFunc) Run(ctx context.Context, organizationID, userID uuid.UUID, email string) (map[string]any, error) {
+	return f(ctx, organizationID, userID, email)
 }
 
 // riskStub assesses every sign-in as risky or not, and counts the sign-ins
@@ -247,14 +247,14 @@ func (r *riskStub) ShouldForceMFA(context.Context, uuid.UUID, uuid.UUID, string,
 func (r *riskStub) RecordSignIn(context.Context, uuid.UUID, uuid.UUID, string, string) { r.recorded++ }
 
 // addressFunc is an AddressPolicy.
-type addressFunc func(ctx context.Context, tenantID, userID uuid.UUID, ip, path string) error
+type addressFunc func(ctx context.Context, organizationID, userID uuid.UUID, ip, path string) error
 
-func (f addressFunc) CheckSignIn(ctx context.Context, tenantID, userID uuid.UUID, ip, path string) error {
-	return f(ctx, tenantID, userID, ip, path)
+func (f addressFunc) CheckSignIn(ctx context.Context, organizationID, userID uuid.UUID, ip, path string) error {
+	return f(ctx, organizationID, userID, ip, path)
 }
 
-func (f addressFunc) CheckSignInTx(ctx context.Context, _ pgx.Tx, tenantID, userID uuid.UUID, ip, path string) error {
-	return f(ctx, tenantID, userID, ip, path)
+func (f addressFunc) CheckSignInTx(ctx context.Context, _ pgx.Tx, organizationID, userID uuid.UUID, ip, path string) error {
+	return f(ctx, organizationID, userID, ip, path)
 }
 
 // anyPassword accepts every new password.
@@ -263,7 +263,9 @@ type anyPassword struct{}
 func (anyPassword) SelfRegistrationEnabled(context.Context, uuid.UUID) (bool, error) {
 	return true, nil
 }
-func (anyPassword) ValidateForTenant(context.Context, uuid.UUID, string, string) error { return nil }
+func (anyPassword) ValidateForOrganization(context.Context, uuid.UUID, string, string) error {
+	return nil
+}
 
 // TestExternalSignIn checks that a sign-in whose first factor is checked
 // elsewhere gets the lockout, hook, second-factor and risk decisions of a
@@ -271,8 +273,8 @@ func (anyPassword) ValidateForTenant(context.Context, uuid.UUID, string, string)
 func TestExternalSignIn(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	a, tenant := member(t)
-	in := ExternalSignIn{TenantID: tenant, Account: "test:" + a.Email, Method: "ldap", IP: "192.0.2.10"}
+	a, organization := member(t)
+	in := ExternalSignIn{OrganizationID: organization, Account: "test:" + a.Email, Method: "ldap", IP: "192.0.2.10"}
 	proved := func(context.Context) (uuid.UUID, bool, error) { return a.ID, false, nil }
 
 	t.Run("signs in", func(t *testing.T) {
@@ -285,8 +287,8 @@ func TestExternalSignIn(t *testing.T) {
 			t.Fatalf("sign in: %+v, %v", res, err)
 		}
 		pair := res.Pair
-		if pair.UserID != a.ID || pair.TenantID == nil || *pair.TenantID != tenant {
-			t.Fatalf("signed in as %s to %v, want %s to %s", pair.UserID, pair.TenantID, a.ID, tenant)
+		if pair.UserID != a.ID || pair.OrganizationID == nil || *pair.OrganizationID != organization {
+			t.Fatalf("signed in as %s to %v, want %s to %s", pair.UserID, pair.OrganizationID, a.ID, organization)
 		}
 		if risk.recorded != 1 {
 			t.Errorf("a completed sign-in was recorded for risk %d times, want 1", risk.recorded)
@@ -336,13 +338,13 @@ func TestExternalSignIn(t *testing.T) {
 	t.Run("hook", func(t *testing.T) {
 		svc := newService(t)
 		denied := errs.ErrForbidden.WithDetail("denied by hook")
-		var hookTenant uuid.UUID
-		svc.SetLoginHook(hookFunc(func(_ context.Context, tenantID, _ uuid.UUID, _ string) (map[string]any, error) {
-			hookTenant = tenantID
+		var hookOrganization uuid.UUID
+		svc.SetLoginHook(hookFunc(func(_ context.Context, organizationID, _ uuid.UUID, _ string) (map[string]any, error) {
+			hookOrganization = organizationID
 			return nil, denied
 		}))
-		if _, err := svc.SignInExternal(ctx, in, proved); !errors.Is(err, errs.ErrForbidden) || hookTenant != tenant {
-			t.Errorf("hook denies: %v for tenant %s, want %v for %s", err, hookTenant, errs.ErrForbidden, tenant)
+		if _, err := svc.SignInExternal(ctx, in, proved); !errors.Is(err, errs.ErrForbidden) || hookOrganization != organization {
+			t.Errorf("hook denies: %v for tenant %s, want %v for %s", err, hookOrganization, errs.ErrForbidden, organization)
 		}
 	})
 
@@ -394,17 +396,17 @@ func TestChangePasswordEndsSignIns(t *testing.T) {
 	pool := dbtest.Pool(t)
 	svc := newService(t)
 	svc.SetRegistrationPolicy(anyPassword{})
-	a, tenant := member(t)
+	a, organization := member(t)
 	current, other := signIn(t, svc, a), signIn(t, svc, a)
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO auth.trusted_devices (user_id, tenant_id, token_hash, expires_at) VALUES ($1, $2, $3, NOW() + INTERVAL '1 day')
-	`, a.ID, tenant, dbtest.Unique("device")); err != nil {
+		INSERT INTO auth.trusted_devices (user_id, organization_id, token_hash, expires_at) VALUES ($1, $2, $3, NOW() + INTERVAL '1 day')
+	`, a.ID, organization, dbtest.Unique("device")); err != nil {
 		t.Fatalf("trusted device: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO auth.oidc_refresh_tokens (token_hash, client_id, user_id, tenant_id, expires_at)
+		INSERT INTO auth.oidc_refresh_tokens (token_hash, client_id, user_id, organization_id, expires_at)
 		VALUES ($1, 'app', $2, $3, NOW() + INTERVAL '1 day')
-	`, dbtest.Unique("grant"), a.ID, tenant); err != nil {
+	`, dbtest.Unique("grant"), a.ID, organization); err != nil {
 		t.Fatalf("application grant: %v", err)
 	}
 
@@ -438,13 +440,13 @@ func TestSignupAnswersAlike(t *testing.T) {
 	svc := newService(t)
 	svc.SetRegistrationPolicy(anyPassword{})
 	h := &Handler{Service: svc, Validate: validator.New()}
-	a, tenant := member(t)
+	a, organization := member(t)
 	srv := chi.NewRouter()
 	h.Mount(srv)
 
 	for path, body := range map[string]map[string]any{
 		"/auth/signup":   {"email": a.Email, "password": testPassword},
-		"/auth/register": {"tenant_id": tenant, "email": a.Email, "password": testPassword},
+		"/auth/register": {"tenant_id": organization, "email": a.Email, "password": testPassword},
 	} {
 		rec := dbtest.Do(t, srv, http.MethodPost, path, body)
 		var got struct {

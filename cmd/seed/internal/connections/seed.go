@@ -1,4 +1,4 @@
-// Package connections seeds how each organisation connects to other systems:
+// Package connections seeds how each organization connects to other systems:
 // OIDC applications and their grants, SAML and OpenID Connect identity
 // providers with their group mappings and break-glass members, SAML service
 // providers and who is assigned to them, LDAP directories, SCIM provisioning
@@ -21,7 +21,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// Seed connects every organisation's identity providers and applications.
+// Seed connects every organization's identity providers and applications.
 func Seed(w *world.World) {
 	f := &fed{w: w, alertFired: map[uuid.UUID]time.Time{}, portalUses: map[uuid.UUID]portalUse{}, setups: map[uuid.UUID]setup{}}
 	for _, o := range w.Orgs {
@@ -39,22 +39,22 @@ func Seed(w *world.World) {
 // fed is the step's state: what later parts and the summary need.
 type fed struct {
 	w *world.World
-	// hosted are the applications a tester signs in to, one per organisation.
+	// hosted are the applications a tester signs in to, one per organization.
 	hosted []hostedApp
 	// device is the application the device-flow test uses.
 	device *hostedApp
-	// scim are the SCIM bearer tokens minted, by organisation name.
+	// scim are the SCIM bearer tokens minted, by organization name.
 	scim []scimNote
 	// portalURL is the active enterprise-setup link and whose it is.
 	portalURL, portalOrg string
 	// locked describes the application left locked out, for the summary.
 	locked string
-	// alertFired is when each organisation's first directory alert last fired.
+	// alertFired is when each organization's first directory alert last fired.
 	alertFired map[uuid.UUID]time.Time
 	// portalUses are enterprise-setup links an identity provider's
-	// administrator used, by organisation.
+	// administrator used, by organization.
 	portalUses map[uuid.UUID]portalUse
-	// setups are each organisation's set-up times, decided once.
+	// setups are each organization's set-up times, decided once.
 	setups map[uuid.UUID]setup
 }
 
@@ -138,7 +138,7 @@ func (f *fed) record(t time.Time, o *world.Org, by *world.Person, action, resour
 
 // event is the audit row of by's change, by nil meaning the platform itself.
 func (f *fed) event(o *world.Org, by *world.Person, action, resourceType string, resourceID *uuid.UUID, meta map[string]any) audit.Event {
-	e := audit.Event{TenantID: &o.ID, Action: action, ResourceType: resourceType, ResourceID: resourceID,
+	e := audit.Event{OrganizationID: &o.ID, Action: action, ResourceType: resourceType, ResourceID: resourceID,
 		RequestID: f.requestID(), Metadata: meta}
 	if by != nil {
 		id := by.ID

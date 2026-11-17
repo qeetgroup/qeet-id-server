@@ -98,7 +98,7 @@ type Config struct {
 	// off; at most RefreshTokenReuseGraceMax.
 	RefreshTokenReuseGrace time.Duration `envconfig:"REFRESH_TOKEN_REUSE_GRACE" default:"30s"`
 	// SessionMaxAge and SessionIdleTimeout bound API and console sessions when the
-	// organisation's policy sets none (or there is no organisation): a session ends
+	// organization's policy sets none (or there is no organization): a session ends
 	// SessionMaxAge after sign-in, or after SessionIdleTimeout without renewal.
 	// SessionMaxAge also bounds an application's grant. See checkSessionLifetime.
 	SessionMaxAge      time.Duration `envconfig:"SESSION_MAX_AGE" default:"720h"`
@@ -180,7 +180,7 @@ type Config struct {
 	// no load balancer in front.
 	ShutdownDrainDelay time.Duration `envconfig:"SHUTDOWN_DRAIN_DELAY" default:"5s"`
 
-	// EgressProxyURL routes tenant-configured outbound HTTP (webhooks, auth
+	// EgressProxyURL routes organization-configured outbound HTTP (webhooks, auth
 	// hooks, SIEM sinks, social/token-vault calls) through a forward proxy.
 	// Ambient HTTPS_PROXY is ignored on purpose — see egress.Options.ProxyURL.
 	// When set, the proxy resolves destinations, so it owns address filtering.
@@ -212,7 +212,7 @@ type Config struct {
 	SalesEmail string `envconfig:"SALES_EMAIL" default:"sales@qeet.in"`
 
 	// Platform social login (Google, Microsoft, GitHub, Apple) for the console's
-	// own Qeet ID accounts, distinct from the per-tenant providers admins set up
+	// own Qeet ID accounts, distinct from the per-organization providers admins set up
 	// for their users. Each provider is off until its credentials are set.
 	GoogleClientID        string `envconfig:"GOOGLE_CLIENT_ID" default:""`
 	GoogleClientSecret    string `envconfig:"GOOGLE_CLIENT_SECRET" default:""`
@@ -247,9 +247,9 @@ type Config struct {
 	// client) so endpoint resolution never fails on a missing region.
 	AWSRegion string `envconfig:"AWS_REGION" default:""`
 	// HostingRegion is the region this deployment runs in, which every
-	// organisation is created in and shows as its region; empty means
+	// organization is created in and shows as its region; empty means
 	// AWS_REGION, else us-east-1. One deployment holds its data in one region,
-	// so an organisation can't choose another.
+	// so an organization can't choose another.
 	HostingRegion string `envconfig:"HOSTING_REGION" default:""`
 
 	// Email (SMTP) — provider-agnostic (Amazon SES, SendGrid, Mailgun, Postmark).
@@ -356,7 +356,7 @@ type Config struct {
 
 	// Sign-in lockout defaults: LOGIN_LOCKOUT_THRESHOLD failed password sign-ins to
 	// one account from one network, each within LOGIN_LOCKOUT_WINDOW of the last,
-	// lock it there for LOGIN_LOCKOUT_DURATION. A tenant policy may only tighten
+	// lock it there for LOGIN_LOCKOUT_DURATION. An organization policy may only tighten
 	// them, down to the _MIN threshold and up to the _MAX window and lock.
 	// Windows and durations are whole minutes.
 	LoginLockoutThreshold    int           `envconfig:"LOGIN_LOCKOUT_THRESHOLD" default:"5"`
@@ -412,8 +412,8 @@ type Config struct {
 	// Android app.
 	FCMServiceAccount string `envconfig:"FCM_SERVICE_ACCOUNT" default:""`
 
-	// Qeet AI platform provider, used by organisations without their own key; with
-	// QeetaiProvider empty there is none and such organisations get 409
+	// Qeet AI platform provider, used by organizations without their own key; with
+	// QeetaiProvider empty there is none and such organizations get 409
 	// qeetai_unconfigured. QeetaiProvider is "anthropic", "openai" (or any compatible
 	// API via QeetaiBaseURL) or "azure"; QeetaiAPIKey never leaves the server.
 	QeetaiProvider  string `envconfig:"QEETAI_PROVIDER" default:""`
@@ -467,7 +467,7 @@ func (c *Config) checkPasswordHashing() error {
 }
 
 // Session lifetime limits, for the platform defaults here and for an
-// organisation's own policy alike. The idle timeout must outlast an access
+// organization's own policy alike. The idle timeout must outlast an access
 // token: a client renews when its access token runs out, and a renewal is what
 // keeps a session from going idle.
 const (
@@ -486,7 +486,7 @@ const RefreshTokenReuseGraceMax = time.Minute
 
 // checkSessionLifetime rejects session bounds outside the limits above, an
 // idle timeout longer than the maximum age, access tokens that outlive the
-// shortest idle timeout an organisation may set, and a refresh reuse grace,
+// shortest idle timeout an organization may set, and a refresh reuse grace,
 // shutdown timeout or shutdown drain delay out of range.
 func (c *Config) checkSessionLifetime() error {
 	var problems []string

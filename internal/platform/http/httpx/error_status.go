@@ -79,15 +79,15 @@ var statusByCode = map[string]int{
 	errs.CodePasskeyExists:      http.StatusConflict,
 	errs.CodePasskeyLoginFailed: http.StatusUnauthorized,
 
-	// Organization / tenant.
-	errs.CodeOrgSlugTaken:               http.StatusConflict,
-	errs.CodeTenantLastOwner:            http.StatusConflict,
-	errs.CodeTenantOwnerOnly:            http.StatusForbidden,
-	errs.CodeTenantSelfSuspend:          http.StatusForbidden,
-	errs.CodeTenantDeletionScheduled:    http.StatusConflict,
-	errs.CodeTenantDeletionNotScheduled: http.StatusConflict,
-	errs.CodeTenantRegionReadOnly:       http.StatusUnprocessableEntity,
-	errs.CodeTenantRegionUnavailable:    http.StatusUnprocessableEntity,
+	// Organization.
+	errs.CodeOrgSlugTaken:                     http.StatusConflict,
+	errs.CodeOrganizationLastOwner:            http.StatusConflict,
+	errs.CodeOrganizationOwnerOnly:            http.StatusForbidden,
+	errs.CodeOrganizationSelfSuspend:          http.StatusForbidden,
+	errs.CodeOrganizationDeletionScheduled:    http.StatusConflict,
+	errs.CodeOrganizationDeletionNotScheduled: http.StatusConflict,
+	errs.CodeOrganizationRegionReadOnly:       http.StatusUnprocessableEntity,
+	errs.CodeOrganizationRegionUnavailable:    http.StatusUnprocessableEntity,
 }
 
 // registerStatuses adds a domain's code→status entries to statusByCode; each

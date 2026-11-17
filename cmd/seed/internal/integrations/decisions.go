@@ -11,11 +11,11 @@ import (
 	"github.com/qeetgroup/qeet-id-server/cmd/seed/internal/world"
 )
 
-// decisionSpec is one kind of access decision an organisation's applications
+// decisionSpec is one kind of access decision an organization's applications
 // ask Qeet ID for, answered as the policies the seed gives it answer it.
 type decisionSpec struct {
 	source string // check, relation_check, authzen or abac_evaluate
-	caller string // the application asking, by name ("" an organisation API key)
+	caller string // the application asking, by name ("" an organization API key)
 	about  who    // whom it is about
 	// resource is the resource type, with an id in its form when id is set;
 	// action is what is asked.
@@ -36,7 +36,7 @@ const (
 
 var anyone who = func(*world.Person) bool { return true }
 
-// decisionSpecs are each organisation's applications' questions over the last
+// decisionSpecs are each organization's applications' questions over the last
 // month. Most are allowed; the refusals are the ones its policies exist for.
 var decisionSpecs = map[string][]decisionSpec{
 	"qeet": {
@@ -108,7 +108,7 @@ func (d *dev) decisions(o *world.Org) {
 			continue
 		}
 		var clientID string
-		err := w.Admin.QueryRow(w.Ctx, `SELECT client_id FROM auth.oidc_clients WHERE tenant_id = $1 AND name = $2`, o.ID, s.caller).Scan(&clientID)
+		err := w.Admin.QueryRow(w.Ctx, `SELECT client_id FROM auth.oidc_clients WHERE organization_id = $1 AND name = $2`, o.ID, s.caller).Scan(&clientID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			continue // the plan's application limit left it out
 		}
@@ -139,7 +139,7 @@ func (d *dev) decisions(o *world.Org) {
 		if at.After(w.Now) {
 			continue
 		}
-		batch.Queue(`INSERT INTO auth.authz_decisions (tenant_id, decided_at, source, caller_type, caller_client, subject, resource, action,
+		batch.Queue(`INSERT INTO auth.authz_decisions (organization_id, decided_at, source, caller_type, caller_client, subject, resource, action,
 			allowed, model, rule, reason_code) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 			o.ID, at, s.source, caller[0], caller[1], p.ID.String(), resource, s.action, s.allowed, s.model, s.rule, s.reason)
 	}

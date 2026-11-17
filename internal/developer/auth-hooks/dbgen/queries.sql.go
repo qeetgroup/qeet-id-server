@@ -14,16 +14,16 @@ import (
 )
 
 const deleteHook = `-- name: DeleteHook :execrows
-DELETE FROM tenant.auth_hooks WHERE id = $1 AND tenant_id = $2
+DELETE FROM organization.auth_hooks WHERE id = $1 AND organization_id = $2
 `
 
 type DeleteHookParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) DeleteHook(ctx context.Context, arg DeleteHookParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteHook, arg.ID, arg.TenantID)
+	result, err := q.db.Exec(ctx, deleteHook, arg.ID, arg.OrganizationID)
 	if err != nil {
 		return 0, err
 	}
@@ -33,12 +33,12 @@ func (q *Queries) DeleteHook(ctx context.Context, arg DeleteHookParams) (int64, 
 const getHookForCall = `-- name: GetHookForCall :one
 SELECT id, url, secret_ct, secret_nonce, fail_open,
        previous_secret_ct, previous_secret_nonce, previous_secret_expires_at
-FROM tenant.auth_hooks WHERE id = $1 AND tenant_id = $2
+FROM organization.auth_hooks WHERE id = $1 AND organization_id = $2
 `
 
 type GetHookForCallParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type GetHookForCallRow struct {
@@ -54,7 +54,7 @@ type GetHookForCallRow struct {
 
 // A hook's URL and secrets, to call it outside a sign-in.
 func (q *Queries) GetHookForCall(ctx context.Context, arg GetHookForCallParams) (GetHookForCallRow, error) {
-	row := q.db.QueryRow(ctx, getHookForCall, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, getHookForCall, arg.ID, arg.OrganizationID)
 	var i GetHookForCallRow
 	err := row.Scan(
 		&i.ID,
@@ -72,8 +72,8 @@ func (q *Queries) GetHookForCall(ctx context.Context, arg GetHookForCallParams) 
 const listEnabledSignInHooks = `-- name: ListEnabledSignInHooks :many
 SELECT id, url, secret_ct, secret_nonce, fail_open,
        previous_secret_ct, previous_secret_nonce, previous_secret_expires_at
-FROM tenant.auth_hooks
-WHERE tenant_id = $1 AND enabled AND trigger = 'post_login'
+FROM organization.auth_hooks
+WHERE organization_id = $1 AND enabled AND trigger = 'post_login'
 ORDER BY created_at, id
 `
 
@@ -88,10 +88,10 @@ type ListEnabledSignInHooksRow struct {
 	PreviousSecretExpiresAt pgtype.Timestamptz
 }
 
-// ListEnabledSignInHooks returns the tenant's enabled sign-in hooks with their
+// ListEnabledSignInHooks returns the organization's enabled sign-in hooks with their
 // secrets, oldest first: the order Run calls them in.
-func (q *Queries) ListEnabledSignInHooks(ctx context.Context, tenantID uuid.UUID) ([]ListEnabledSignInHooksRow, error) {
-	rows, err := q.db.Query(ctx, listEnabledSignInHooks, tenantID)
+func (q *Queries) ListEnabledSignInHooks(ctx context.Context, organizationID uuid.UUID) ([]ListEnabledSignInHooksRow, error) {
+	rows, err := q.db.Query(ctx, listEnabledSignInHooks, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +123,7 @@ const listHooks = `-- name: ListHooks :many
 
 SELECT id, trigger, url, enabled, fail_open, created_at,
        last_called_at, last_outcome, last_status_code, call_count, skip_count, deny_count, previous_secret_expires_at
-FROM tenant.auth_hooks WHERE tenant_id = $1 ORDER BY created_at DESC
+FROM organization.auth_hooks WHERE organization_id = $1 ORDER BY created_at DESC
 LIMIT 1001
 `
 
@@ -146,8 +146,8 @@ type ListHooksRow struct {
 // Queries for the auth-hooks domain.
 // All queries are static; no dynamic SQL in this domain.
 // At most paging.MaxListItems+1 rows: the API truncates the rest.
-func (q *Queries) ListHooks(ctx context.Context, tenantID uuid.UUID) ([]ListHooksRow, error) {
-	rows, err := q.db.Query(ctx, listHooks, tenantID)
+func (q *Queries) ListHooks(ctx context.Context, organizationID uuid.UUID) ([]ListHooksRow, error) {
+	rows, err := q.db.Query(ctx, listHooks, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -181,13 +181,13 @@ func (q *Queries) ListHooks(ctx context.Context, tenantID uuid.UUID) ([]ListHook
 }
 
 const lockHookSecret = `-- name: LockHookSecret :one
-SELECT secret_ct, secret_nonce FROM tenant.auth_hooks
-WHERE id = $1 AND tenant_id = $2 FOR UPDATE
+SELECT secret_ct, secret_nonce FROM organization.auth_hooks
+WHERE id = $1 AND organization_id = $2 FOR UPDATE
 `
 
 type LockHookSecretParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type LockHookSecretRow struct {
@@ -195,29 +195,29 @@ type LockHookSecretRow struct {
 	SecretNonce []byte
 }
 
-// LockHookSecret holds one of the tenant's hooks while its secret is replaced,
+// LockHookSecret holds one of the organization's hooks while its secret is replaced,
 // returning the secret it has now.
 func (q *Queries) LockHookSecret(ctx context.Context, arg LockHookSecretParams) (LockHookSecretRow, error) {
-	row := q.db.QueryRow(ctx, lockHookSecret, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, lockHookSecret, arg.ID, arg.OrganizationID)
 	var i LockHookSecretRow
 	err := row.Scan(&i.SecretCt, &i.SecretNonce)
 	return i, err
 }
 
 const recordHookCall = `-- name: RecordHookCall :exec
-UPDATE tenant.auth_hooks
+UPDATE organization.auth_hooks
 SET last_called_at = NOW(), last_outcome = $1, last_status_code = $2,
     call_count = call_count + 1,
     skip_count = skip_count + CASE WHEN $1 = 'skipped' THEN 1 ELSE 0 END,
     deny_count = deny_count + CASE WHEN $1 = 'denied' THEN 1 ELSE 0 END
-WHERE id = $3 AND tenant_id = $4
+WHERE id = $3 AND organization_id = $4
 `
 
 type RecordHookCallParams struct {
-	Outcome    *string
-	StatusCode *int32
-	ID         uuid.UUID
-	TenantID   uuid.UUID
+	Outcome        *string
+	StatusCode     *int32
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 // RecordHookCall counts one sign-in's call to a hook: its outcome (allowed,
@@ -227,13 +227,13 @@ func (q *Queries) RecordHookCall(ctx context.Context, arg RecordHookCallParams) 
 		arg.Outcome,
 		arg.StatusCode,
 		arg.ID,
-		arg.TenantID,
+		arg.OrganizationID,
 	)
 	return err
 }
 
 const setHookEndpoint = `-- name: SetHookEndpoint :execrows
-UPDATE tenant.auth_hooks
+UPDATE organization.auth_hooks
 SET url = COALESCE($1, url),
     secret_ct = COALESCE($2::bytea, secret_ct),
     secret_nonce = COALESCE($3::bytea, secret_nonce),
@@ -241,7 +241,7 @@ SET url = COALESCE($1, url),
     previous_secret_nonce = CASE WHEN $2::bytea IS NULL THEN previous_secret_nonce ELSE $5::bytea END,
     previous_secret_expires_at = CASE WHEN $2::bytea IS NULL THEN previous_secret_expires_at
                                       ELSE $6::timestamptz END
-WHERE id = $7 AND tenant_id = $8
+WHERE id = $7 AND organization_id = $8
 `
 
 type SetHookEndpointParams struct {
@@ -252,10 +252,10 @@ type SetHookEndpointParams struct {
 	PreviousNonce     []byte
 	PreviousExpiresAt pgtype.Timestamptz
 	ID                uuid.UUID
-	TenantID          uuid.UUID
+	OrganizationID    uuid.UUID
 }
 
-// A new URL, a new secret, or both, for one of the tenant's hooks. A new
+// A new URL, a new secret, or both, for one of the organization's hooks. A new
 // secret keeps the one it replaces, previous_ct, signing until
 // previous_expires_at.
 func (q *Queries) SetHookEndpoint(ctx context.Context, arg SetHookEndpointParams) (int64, error) {
@@ -267,7 +267,7 @@ func (q *Queries) SetHookEndpoint(ctx context.Context, arg SetHookEndpointParams
 		arg.PreviousNonce,
 		arg.PreviousExpiresAt,
 		arg.ID,
-		arg.TenantID,
+		arg.OrganizationID,
 	)
 	if err != nil {
 		return 0, err
@@ -276,18 +276,18 @@ func (q *Queries) SetHookEndpoint(ctx context.Context, arg SetHookEndpointParams
 }
 
 const updateHook = `-- name: UpdateHook :one
-UPDATE tenant.auth_hooks
+UPDATE organization.auth_hooks
 SET enabled = COALESCE($1::boolean, enabled),
     fail_open = COALESCE($2::boolean, fail_open)
-WHERE id = $3 AND tenant_id = $4
+WHERE id = $3 AND organization_id = $4
 RETURNING enabled, fail_open
 `
 
 type UpdateHookParams struct {
-	Enabled  *bool
-	FailOpen *bool
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	Enabled        *bool
+	FailOpen       *bool
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type UpdateHookRow struct {
@@ -302,7 +302,7 @@ func (q *Queries) UpdateHook(ctx context.Context, arg UpdateHookParams) (UpdateH
 		arg.Enabled,
 		arg.FailOpen,
 		arg.ID,
-		arg.TenantID,
+		arg.OrganizationID,
 	)
 	var i UpdateHookRow
 	err := row.Scan(&i.Enabled, &i.FailOpen)

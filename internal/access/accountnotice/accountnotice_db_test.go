@@ -12,12 +12,12 @@ import (
 func TestMain(m *testing.M) { dbtest.Main(m) }
 
 // TestTellEmailsTheAccountHolder checks that a notice goes to the account's
-// address with its organisation, says what to do if it wasn't them, and isn't
+// address with its organization, says what to do if it wasn't them, and isn't
 // sent for a deleted account or without a sender.
 func TestTellEmailsTheAccountHolder(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
-	tenant := dbtest.Tenant(t)
-	a, gone := dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	a, gone := dbtest.User(t, organization, organization), dbtest.User(t, organization, organization)
 	if _, err := pool.Exec(ctx, `UPDATE account.users SET deleted_at = NOW() WHERE id = $1`, gone.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +25,7 @@ func TestTellEmailsTheAccountHolder(t *testing.T) {
 
 	Tell(ctx, pool, mail, a.ID, "Your password was changed", "A new password was set.")
 	m := mail.Last(t)
-	if m.To != a.Email || m.Channel != "email" || m.TenantID != tenant.String() || m.Subject != "Your password was changed" ||
+	if m.To != a.Email || m.Channel != "email" || m.OrganizationID != organization.String() || m.Subject != "Your password was changed" ||
 		!strings.Contains(m.Body, wasntYou) || !strings.Contains(m.HTML, "reset your password") {
 		t.Errorf("notice %+v; want it to the person, in their organisation, saying what to do", m)
 	}

@@ -43,7 +43,7 @@ type Handler struct {
 	Throttle func(http.Handler) http.Handler
 	// ActOnCheck refuses an administrator changing the sign-in methods of a
 	// member who outranks them (rbac CheckActOn); nil refuses every change.
-	ActOnCheck func(ctx context.Context, caller *httpx.Principal, tenantID, targetID uuid.UUID) error
+	ActOnCheck func(ctx context.Context, caller *httpx.Principal, organizationID, targetID uuid.UUID) error
 }
 
 // evalBot runs the bot scorer for an auth attempt when detection is wired. The
@@ -85,14 +85,14 @@ func (h *Handler) Mount(r chi.Router) {
 // MountAuthed mounts endpoints that require the RequireAuth middleware.
 func (h *Handler) MountAuthed(r chi.Router) {
 	r.Post("/auth/logout", h.logout)
-	r.Post("/auth/switch-tenant", h.switchTenant)
+	r.Post("/auth/switch-tenant", h.switchOrganization)
 	r.Get("/auth/sessions", h.listSessions)
 	r.Get("/auth/trusted-devices/count", h.trustedDeviceCount)
 	r.Get("/auth/trusted-devices", h.listOwnTrustedDevices)
 	r.Delete("/auth/trusted-devices", h.forgetOwnTrustedDevices)
 	r.Delete("/auth/trusted-devices/{id}", h.forgetOwnTrustedDevices)
 	// An administrator's view of a member's remembered devices, in the
-	// administrator's own organisation (user.read / user.credentials).
+	// administrator's own organization (user.read / user.credentials).
 	r.Get("/users/{id}/trusted-devices", h.listMemberTrustedDevices)
 	r.Delete("/users/{id}/trusted-devices", h.forgetMemberTrustedDevices)
 	r.Delete("/users/{id}/trusted-devices/{deviceID}", h.forgetMemberTrustedDevices)
@@ -117,7 +117,7 @@ type signupInput struct {
 
 // NeutralSignupError keeps a sign-up's answer from saying whether the email
 // already has an account: ErrAuthEmailExists, a generic conflict, and an
-// address on a domain another organisation manages become one neutral 422.
+// address on a domain another organization manages become one neutral 422.
 // Other errors are returned unchanged.
 func NeutralSignupError(err error) error {
 	if errors.Is(err, errs.ErrAuthEmailExists) || errors.Is(err, errs.ErrConflict) || errors.Is(err, errs.ErrUserDomainManaged) {
@@ -154,7 +154,7 @@ func (h *Handler) signup(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, NeutralSignupError(err))
 		return
 	}
-	// Tenant-less: no tenant or roles; the user creates one from the UI.
+	// Organization-less: no organization or roles; the user creates one from the UI.
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
 		"user":          u,
 		"access_token":  pair.AccessToken,
@@ -213,7 +213,7 @@ type mfaLoginInput struct {
 	Skip     bool          `json:"skip"`
 	// Remember opts into adaptive MFA on the hosted flow: trust this device so
 	// future logins from it can skip the second factor (honoured only when the
-	// tenant has enabled it). Ignored by the token-flow /v1/auth/mfa endpoint.
+	// organization has enabled it). Ignored by the token-flow /v1/auth/mfa endpoint.
 	Remember bool `json:"remember"`
 }
 
@@ -253,7 +253,7 @@ func (h *Handler) mfaLogin(w http.ResponseWriter, r *http.Request) {
 type sessionInput struct {
 	Email    string `json:"email" validate:"required,email"`
 	Password string `json:"password" validate:"required,min=1"`
-	// ClientID is the OAuth client the hosted login is serving; its tenant's
+	// ClientID is the OAuth client the hosted login is serving; its organization's
 	// sign-in lockout settings apply. Optional (none = the platform defaults).
 	ClientID string `json:"client_id" validate:"omitempty,max=255"`
 }
@@ -273,7 +273,7 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.evalBot(r, in.Email)
-	// A trusted-device cookie (when the tenant allows adaptive MFA) lets an
+	// A trusted-device cookie (when the organization allows adaptive MFA) lets an
 	// enrolled user skip the second factor on a previously-remembered device.
 	trusted := ""
 	if c, cerr := r.Cookie(TrustedDeviceCookie); cerr == nil {
@@ -324,10 +324,10 @@ func (h *Handler) createSessionMFA(w http.ResponseWriter, r *http.Request) {
 	}
 	SetLoginSessionCookie(w, res.RawCookie, h.CookieSecure)
 	// Trust this device when asked — MaybeRememberDevice is a no-op unless the
-	// tenant has opted into adaptive MFA, so a client-supplied flag can't grant
+	// organization has opted into adaptive MFA, so a client-supplied flag can't grant
 	// trust the policy forbids. A skipped setup met no factor, so earns none.
 	if in.Remember && !res.Deferred {
-		if draw, ttl, derr := h.Service.MaybeRememberDevice(r.Context(), res.UserID, res.TenantID, r.UserAgent()); derr == nil && draw != "" {
+		if draw, ttl, derr := h.Service.MaybeRememberDevice(r.Context(), res.UserID, res.OrganizationID, r.UserAgent()); derr == nil && draw != "" {
 			SetTrustedDeviceCookie(w, draw, ttl, h.CookieSecure)
 		}
 	}
@@ -339,15 +339,15 @@ func (h *Handler) createSessionMFA(w http.ResponseWriter, r *http.Request) {
 }
 
 type registerInput struct {
-	TenantID    uuid.UUID `json:"tenant_id" validate:"required"`
-	Email       string    `json:"email" validate:"required,email"`
-	Password    string    `json:"password" validate:"required,max=256"`
-	DisplayName string    `json:"display_name" validate:"omitempty,max=200"`
+	OrganizationID uuid.UUID `json:"tenant_id" validate:"required"`
+	Email          string    `json:"email" validate:"required,email"`
+	Password       string    `json:"password" validate:"required,max=256"`
+	DisplayName    string    `json:"display_name" validate:"omitempty,max=200"`
 }
 
 // register is the hosted self-registration endpoint. It creates the user in the
-// client's tenant, if self-registration is enabled, and sets the SSO cookie, or
-// returns an enrolment challenge when the tenant requires MFA. Like signup, it
+// client's organization, if self-registration is enabled, and sets the SSO cookie, or
+// returns an enrolment challenge when the organization requires MFA. Like signup, it
 // answers an email that already has an account neutrally, under a timing floor.
 func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 	const registerFloor = 250 * time.Millisecond
@@ -363,7 +363,7 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
-	u, res, err := h.Service.RegisterInTenant(r.Context(), in.TenantID, in.Email, in.Password, in.DisplayName, httpx.ClientIP(r), r.UserAgent())
+	u, res, err := h.Service.RegisterInOrganization(r.Context(), in.OrganizationID, in.Email, in.Password, in.DisplayName, httpx.ClientIP(r), r.UserAgent())
 	if err != nil {
 		httpx.WriteError(w, r, NeutralSignupError(err))
 		return
@@ -476,7 +476,7 @@ func (h *Handler) passwordStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // changePassword rotates (or sets) a signed-in user's password — self-service
-// and tenant-independent (works before any org). Re-proving the current
+// and organization-independent (works before any org). Re-proving the current
 // password is required only when one is already set; either way, other sessions
 // are revoked.
 func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
@@ -497,7 +497,7 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := h.Service.ChangePassword(r.Context(), ChangePasswordInput{
-		UserID: *p.UserID, KeepSessionID: *p.SessionID, TenantID: p.TenantID,
+		UserID: *p.UserID, KeepSessionID: *p.SessionID, OrganizationID: p.OrganizationID,
 		Current: in.CurrentPassword, Next: in.NewPassword,
 		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
 	}); err != nil {
@@ -520,23 +520,23 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"message": "You've been signed out."})
 }
 
-type switchTenantInput struct {
-	TenantID string `json:"tenant_id" validate:"required,uuid"`
+type switchOrganizationInput struct {
+	OrganizationID string `json:"tenant_id" validate:"required,uuid"`
 }
 
-// switchTenant → POST /v1/auth/switch-tenant. Replaces the caller's session
-// with one in another organization they belong to (Service.SwitchTenant); the
+// switchOrganization → POST /v1/auth/switch-tenant. Replaces the caller's session
+// with one in another organization they belong to (Service.SwitchOrganization); the
 // session in the presented access token is the one that ends.
-func (h *Handler) switchTenant(w http.ResponseWriter, r *http.Request) {
-	// The switch reads the target organisation's policies and roles, so it runs
-	// across organisations; membership of the target is checked below.
-	r = r.WithContext(postgres.AcrossTenants(r.Context()))
+func (h *Handler) switchOrganization(w http.ResponseWriter, r *http.Request) {
+	// The switch reads the target organization's policies and roles, so it runs
+	// across organizations; membership of the target is checked below.
+	r = r.WithContext(postgres.AcrossOrganizations(r.Context()))
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil || p.SessionID == nil {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
 		return
 	}
-	var in switchTenantInput
+	var in switchOrganizationInput
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -545,13 +545,13 @@ func (h *Handler) switchTenant(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
-	tid, err := uuid.Parse(in.TenantID)
+	tid, err := uuid.Parse(in.OrganizationID)
 	if err != nil {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenant_id"))
 		return
 	}
-	pair, err := h.Service.SwitchTenant(r.Context(), SwitchTenantInput{
-		UserID: *p.UserID, FromSessionID: *p.SessionID, TenantID: tid,
+	pair, err := h.Service.SwitchOrganization(r.Context(), SwitchOrganizationInput{
+		UserID: *p.UserID, FromSessionID: *p.SessionID, OrganizationID: tid,
 		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(),
 	})
 	if err != nil {
@@ -617,7 +617,7 @@ func (h *Handler) revokeOtherSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n, err := h.Service.RevokeOtherSessions(r.Context(), RevokeOtherSessionsInput{
-		UserID: *p.UserID, CurrentSessionID: *p.SessionID, TenantID: p.TenantID,
+		UserID: *p.UserID, CurrentSessionID: *p.SessionID, OrganizationID: p.OrganizationID,
 		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
 	})
 	if err != nil {
@@ -637,7 +637,7 @@ func (h *Handler) revokeAllSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ended, err := h.Service.RevokeAllSessions(r.Context(), RevokeAllSessionsInput{
-		UserID: *p.UserID, SessionID: *p.SessionID, TenantID: p.TenantID,
+		UserID: *p.UserID, SessionID: *p.SessionID, OrganizationID: p.OrganizationID,
 		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
 	})
 	if err != nil {
@@ -665,23 +665,23 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"user_id":    p.UserID,
-		"tenant_id":  p.TenantID,
+		"tenant_id":  p.OrganizationID,
 		"session_id": p.SessionID,
 		"actor":      p.ActorType,
 		"scopes":     p.Scopes,
 	})
 }
 
-// trustedDeviceCount reports how many live trusted devices the caller's tenant
-// has. Scoped from the principal, never a path or query parameter, so one tenant
+// trustedDeviceCount reports how many live trusted devices the caller's organization
+// has. Scoped from the principal, never a path or query parameter, so one organization
 // can't read another's estate.
 func (h *Handler) trustedDeviceCount(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.RequireTenant(r)
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out, err := h.Service.CountTrustedDevices(r.Context(), tenantID)
+	out, err := h.Service.CountTrustedDevices(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -814,7 +814,7 @@ func trustedDeviceActor(r *http.Request) audit.Actor {
 }
 
 // listOwnTrustedDevices → GET /v1/auth/trusted-devices: the caller's own
-// remembered devices, in every organisation.
+// remembered devices, in every organization.
 func (h *Handler) listOwnTrustedDevices(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {
@@ -855,14 +855,14 @@ func (h *Handler) forgetOwnTrustedDevices(w http.ResponseWriter, r *http.Request
 }
 
 // listMemberTrustedDevices → GET /v1/users/{id}/trusted-devices: a member's
-// devices remembered in the caller's organisation.
+// devices remembered in the caller's organization.
 func (h *Handler) listMemberTrustedDevices(w http.ResponseWriter, r *http.Request) {
-	userID, tenantID, err := httpx.Member(r, "id", h.Service.IsMember)
+	userID, organizationID, err := httpx.Member(r, "id", h.Service.IsMember)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out, err := h.Service.ListTrustedDevices(r.Context(), userID, &tenantID, "")
+	out, err := h.Service.ListTrustedDevices(r.Context(), userID, &organizationID, "")
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -871,15 +871,15 @@ func (h *Handler) listMemberTrustedDevices(w http.ResponseWriter, r *http.Reques
 }
 
 // forgetMemberTrustedDevices → DELETE /v1/users/{id}/trusted-devices[/{deviceID}]:
-// forget one or all of the devices remembered in the caller's organisation of
+// forget one or all of the devices remembered in the caller's organization of
 // a member they outrank.
 func (h *Handler) forgetMemberTrustedDevices(w http.ResponseWriter, r *http.Request) {
-	userID, tenantID, err := httpx.MemberToActOn(r, "id", h.Service.IsMember, h.ActOnCheck)
+	userID, organizationID, err := httpx.MemberToActOn(r, "id", h.Service.IsMember, h.ActOnCheck)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	in := ForgetTrustedDevicesInput{UserID: userID, TenantID: &tenantID, Actor: trustedDeviceActor(r)}
+	in := ForgetTrustedDevicesInput{UserID: userID, OrganizationID: &organizationID, Actor: trustedDeviceActor(r)}
 	if raw := chi.URLParam(r, "deviceID"); raw != "" {
 		id, err := uuid.Parse(raw)
 		if err != nil {

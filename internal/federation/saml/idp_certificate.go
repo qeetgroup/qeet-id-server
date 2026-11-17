@@ -260,14 +260,14 @@ func sealAssertion(assertion *etree.Element, cert *x509.Certificate) (*etree.Ele
 	return encrypted, nil
 }
 
-// idpCertificate serves the certificate the organisation's IdP signs
+// idpCertificate serves the certificate the organization's IdP signs
 // assertions with, as PEM, for an SP that asks for the certificate on its own.
 func (h *Handler) idpCertificate(w http.ResponseWriter, r *http.Request) {
 	if h.IdP == nil {
 		httpx.WriteError(w, r, errs.ErrSAMLIdPNotConfigured)
 		return
 	}
-	if _, err := h.idpTenant(r); err != nil {
+	if _, err := h.idpOrganization(r); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

@@ -84,12 +84,12 @@ func NewStore(pool *pgxpool.Pool) *Store { return &Store{pool: pool, q: dbgen.Ne
 
 // Suppression is an address no mail goes to.
 type Suppression struct {
-	ID          uuid.UUID  `json:"id"`
-	AddressHint string     `json:"address,omitempty"`
-	Reason      string     `json:"reason"`
-	Detail      string     `json:"detail,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
-	TenantID    *uuid.UUID `json:"-"`
+	ID             uuid.UUID  `json:"id"`
+	AddressHint    string     `json:"address,omitempty"`
+	Reason         string     `json:"reason"`
+	Detail         string     `json:"detail,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	OrganizationID *uuid.UUID `json:"-"`
 }
 
 // Suppressed returns the active suppression of address, or nil.
@@ -102,15 +102,15 @@ func (s *Store) Suppressed(ctx context.Context, address string) (*Suppression, e
 		return nil, err
 	}
 	sup := &Suppression{ID: row.ID, Reason: row.Reason, Detail: row.Detail, CreatedAt: row.CreatedAt}
-	if row.TenantID.Valid {
-		sup.TenantID = &row.TenantID.UUID
+	if row.OrganizationID.Valid {
+		sup.OrganizationID = &row.OrganizationID.UUID
 	}
 	return sup, nil
 }
 
 // Record is one email as it left (or didn't leave) the platform.
 type Record struct {
-	TenantID          string // the message's organisation; "" for none
+	OrganizationID    string // the message's organization; "" for none
 	To, Template      string // the recipient and the template key
 	Provider          string // the provider that sent it
 	ProviderMessageID string // the provider's ID for the message
@@ -119,16 +119,16 @@ type Record struct {
 
 // RecordSend stores one send.
 func (s *Store) RecordSend(ctx context.Context, r Record) (uuid.UUID, error) {
-	var tenant uuid.NullUUID
-	if id, err := uuid.Parse(r.TenantID); err == nil {
-		tenant = uuid.NullUUID{UUID: id, Valid: true}
+	var organization uuid.NullUUID
+	if id, err := uuid.Parse(r.OrganizationID); err == nil {
+		organization = uuid.NullUUID{UUID: id, Valid: true}
 	}
 	var providerID *string
 	if r.ProviderMessageID != "" {
 		providerID = &r.ProviderMessageID
 	}
 	return s.q.InsertMessage(ctx, dbgen.InsertMessageParams{
-		TenantID: tenant, ToHash: HashAddress(r.To), ToHint: Hint(r.To), Template: r.Template,
+		OrganizationID: organization, ToHash: HashAddress(r.To), ToHint: Hint(r.To), Template: r.Template,
 		Provider: r.Provider, ProviderMessageID: providerID, Status: r.Status, StatusReason: r.Reason,
 	})
 }
@@ -154,14 +154,14 @@ func (s *Store) Apply(ctx context.Context, ev Event) error {
 	template := ""
 	defer func() { count(template, ev.Status) }()
 
-	var tenant, message uuid.NullUUID
+	var organization, message uuid.NullUUID
 	msg, err := q.MessageByProviderID(ctx, dbgen.MessageByProviderIDParams{Provider: ev.Provider, ProviderMessageID: &ev.ProviderMessageID})
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 	case err != nil:
 		return err
 	default:
-		tenant, message, template = msg.TenantID, uuid.NullUUID{UUID: msg.ID, Valid: true}, msg.Template
+		organization, message, template = msg.OrganizationID, uuid.NullUUID{UUID: msg.ID, Valid: true}, msg.Template
 		if rank[ev.Status] > rank[msg.Status] {
 			if err := q.SetMessageStatus(ctx, dbgen.SetMessageStatusParams{ID: msg.ID, Status: ev.Status, StatusReason: ev.Reason}); err != nil {
 				return err
@@ -174,7 +174,7 @@ func (s *Store) Apply(ctx context.Context, ev Event) error {
 	}
 	for _, address := range ev.Suppress {
 		if err := q.Suppress(ctx, dbgen.SuppressParams{
-			TenantID: tenant, AddressHash: HashAddress(address), AddressHint: Hint(address),
+			OrganizationID: organization, AddressHash: HashAddress(address), AddressHint: Hint(address),
 			Reason: reason, Detail: ev.Reason, MessageID: message,
 		}); err != nil {
 			return err
@@ -193,11 +193,11 @@ type MessageView struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// MessagesTo lists a page of the organisation's messages to address, newest
+// MessagesTo lists a page of the organization's messages to address, newest
 // first, after the cursor when one is set, with the next page's cursor: empty
 // on the last page.
-func (s *Store) MessagesTo(ctx context.Context, tenantID uuid.UUID, address string, limit int32, after paging.Cursor) ([]MessageView, string, error) {
-	params := dbgen.ListMessagesToParams{TenantID: uuid.NullUUID{UUID: tenantID, Valid: true}, ToHash: HashAddress(address), Lim: limit + 1}
+func (s *Store) MessagesTo(ctx context.Context, organizationID uuid.UUID, address string, limit int32, after paging.Cursor) ([]MessageView, string, error) {
+	params := dbgen.ListMessagesToParams{OrganizationID: uuid.NullUUID{UUID: organizationID, Valid: true}, ToHash: HashAddress(address), Lim: limit + 1}
 	params.BeforeTs, params.BeforeID = before(after)
 	rows, err := s.q.ListMessagesTo(ctx, params)
 	if err != nil {
@@ -219,11 +219,11 @@ func before(after paging.Cursor) (pgtype.Timestamptz, uuid.NullUUID) {
 	return pgtype.Timestamptz{Time: after.Time, Valid: true}, uuid.NullUUID{UUID: after.ID, Valid: true}
 }
 
-// Suppressions lists a page of the active suppressions the organisation's mail
+// Suppressions lists a page of the active suppressions the organization's mail
 // caused, newest first, after the cursor when one is set, with the next page's
 // cursor: empty on the last page.
-func (s *Store) Suppressions(ctx context.Context, tenantID uuid.UUID, limit int32, after paging.Cursor) ([]Suppression, string, error) {
-	params := dbgen.ListSuppressionsParams{TenantID: uuid.NullUUID{UUID: tenantID, Valid: true}, Lim: limit + 1}
+func (s *Store) Suppressions(ctx context.Context, organizationID uuid.UUID, limit int32, after paging.Cursor) ([]Suppression, string, error) {
+	params := dbgen.ListSuppressionsParams{OrganizationID: uuid.NullUUID{UUID: organizationID, Valid: true}, Lim: limit + 1}
 	params.BeforeTs, params.BeforeID = before(after)
 	rows, err := s.q.ListSuppressions(ctx, params)
 	if err != nil {
@@ -237,15 +237,15 @@ func (s *Store) Suppressions(ctx context.Context, tenantID uuid.UUID, limit int3
 	return out, next, nil
 }
 
-// ClearSuppression lifts suppression id in tx, if the organisation's mail
+// ClearSuppression lifts suppression id in tx, if the organization's mail
 // caused it; errs.ErrNotFound otherwise. The caller audits it in the same tx.
-func (s *Store) ClearSuppression(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, by *uuid.UUID) (*Suppression, error) {
+func (s *Store) ClearSuppression(ctx context.Context, tx pgx.Tx, organizationID, id uuid.UUID, by *uuid.UUID) (*Suppression, error) {
 	var clearedBy uuid.NullUUID
 	if by != nil {
 		clearedBy = uuid.NullUUID{UUID: *by, Valid: true}
 	}
 	row, err := s.q.WithTx(tx).ClearSuppression(ctx, dbgen.ClearSuppressionParams{
-		ID: id, TenantID: uuid.NullUUID{UUID: tenantID, Valid: true}, ClearedBy: clearedBy,
+		ID: id, OrganizationID: uuid.NullUUID{UUID: organizationID, Valid: true}, ClearedBy: clearedBy,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
@@ -289,7 +289,7 @@ func (t Tracker) Send(ctx context.Context, m notifier.Message) error {
 	if m.Channel != "" && m.Channel != "email" {
 		return t.Next.Send(ctx, m)
 	}
-	rec := Record{TenantID: m.TenantID, To: m.To, Template: m.TemplateKey, Provider: t.Provider}
+	rec := Record{OrganizationID: m.OrganizationID, To: m.To, Template: m.TemplateKey, Provider: t.Provider}
 
 	// A failed look-up doesn't stop the mail: the list protects the sending
 	// domain's reputation, not anyone's access.

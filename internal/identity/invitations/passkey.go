@@ -23,44 +23,44 @@ import (
 // /invites/accept/passkey/begin and /finish); this file finds the invitation a
 // link names and accepts it for the account the ceremony creates.
 
-// AcceptMethods reports which ways of signing in an organisation allows.
+// AcceptMethods reports which ways of signing in an organization allows.
 // Satisfied by *authpolicy.Service; an interface so this package doesn't import
 // it.
 type AcceptMethods interface {
-	AllowedSignInMethods(ctx context.Context, tenantID uuid.UUID) (password, passkey, magicLink bool, err error)
+	AllowedSignInMethods(ctx context.Context, organizationID uuid.UUID) (password, passkey, magicLink bool, err error)
 }
 
-// SetAcceptMethods sets the source of each organisation's sign-in methods, used
+// SetAcceptMethods sets the source of each organization's sign-in methods, used
 // by Accept and Lookup. Without it every invitation offers a password only.
 func (s *Service) SetAcceptMethods(m AcceptMethods) { s.methods = m }
 
 // acceptMethods reports whether a new account may accept an invitation to
-// tenantID with a password, and with a passkey.
-func (s *Service) acceptMethods(ctx context.Context, tenantID uuid.UUID) (passwordOn, passkeyOn bool, err error) {
+// organizationID with a password, and with a passkey.
+func (s *Service) acceptMethods(ctx context.Context, organizationID uuid.UUID) (passwordOn, passkeyOn bool, err error) {
 	if s.methods == nil {
 		return true, false, nil
 	}
-	passwordOn, passkeyOn, _, err = s.methods.AllowedSignInMethods(ctx, tenantID)
+	passwordOn, passkeyOn, _, err = s.methods.AllowedSignInMethods(ctx, organizationID)
 	return passwordOn, passkeyOn, err
 }
 
-// InvitationForNewAccount returns the id, organisation and email of the
+// InvitationForNewAccount returns the id, organization and email of the
 // invitation token names when a new account may accept it now; otherwise the
 // refusal Accept gives. An invitation found expired is marked so.
 func (s *Service) InvitationForNewAccount(ctx context.Context, token string) (uuid.UUID, uuid.UUID, string, error) {
-	id, tenantID, email, err := s.pendingForNewAccount(ctx, token)
+	id, organizationID, email, err := s.pendingForNewAccount(ctx, token)
 	if err != nil {
 		return uuid.Nil, uuid.Nil, "", err
 	}
 	if err := s.CheckInvitationSender(ctx, id); err != nil {
 		return uuid.Nil, uuid.Nil, "", err
 	}
-	// On a domain another organisation manages, only that organisation
+	// On a domain another organization manages, only that organization
 	// creates the account, however the invitation came.
-	if err := domainverify.CheckNewAccount(ctx, s.pool, tenantID, email); err != nil {
+	if err := domainverify.CheckNewAccount(ctx, s.pool, organizationID, email); err != nil {
 		return uuid.Nil, uuid.Nil, "", err
 	}
-	return id, tenantID, email, nil
+	return id, organizationID, email, nil
 }
 
 // pendingForNewAccount is InvitationForNewAccount before the domain check.
@@ -91,14 +91,14 @@ func (s *Service) pendingForNewAccount(ctx context.Context, token string) (uuid.
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, uuid.Nil, "", err
 	}
-	return inv.ID, inv.TenantID, inv.Email, nil
+	return inv.ID, inv.OrganizationID, inv.Email, nil
 }
 
 // AcceptForNewAccountTx accepts invitation id for userID, the account just
-// created in tx for email in tenantID. The invitation, read under lock, must be
-// pending, unexpired and for that email and tenant; then the invited role is
+// created in tx for email in organizationID. The invitation, read under lock, must be
+// pending, unexpired and for that email and organization; then the invited role is
 // granted, the account activated and the acceptance recorded from ip and ua.
-func (s *Service) AcceptForNewAccountTx(ctx context.Context, tx pgx.Tx, id, tenantID, userID uuid.UUID, email, ip, ua string) error {
+func (s *Service) AcceptForNewAccountTx(ctx context.Context, tx pgx.Tx, id, organizationID, userID uuid.UUID, email, ip, ua string) error {
 	qtx := s.q.WithTx(tx)
 	inv, err := qtx.GetInviteByIDForAccept(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -107,7 +107,7 @@ func (s *Service) AcceptForNewAccountTx(ctx context.Context, tx pgx.Tx, id, tena
 	if err != nil {
 		return err
 	}
-	if inv.Status != "pending" || inv.TenantID != tenantID ||
+	if inv.Status != "pending" || inv.OrganizationID != organizationID ||
 		!strings.EqualFold(strings.TrimSpace(inv.Email), strings.TrimSpace(email)) {
 		return errs.ErrInviteInvalid
 	}
@@ -116,9 +116,9 @@ func (s *Service) AcceptForNewAccountTx(ctx context.Context, tx pgx.Tx, id, tena
 	}
 	if roleID := pgtypeToUUIDPtr(inv.RoleID); roleID != nil {
 		if err := qtx.GrantUserRole(ctx, dbgen.GrantUserRoleParams{
-			UserID:   userID,
-			TenantID: inv.TenantID,
-			RoleID:   *roleID,
+			UserID:         userID,
+			OrganizationID: inv.OrganizationID,
+			RoleID:         *roleID,
 		}); err != nil {
 			return err
 		}
@@ -152,7 +152,7 @@ type InvitationPreview struct {
 }
 
 // Lookup previews the invitation token names, refusing it as Accept would when
-// it isn't pending or has expired. Methods are the ways the organisation lets
+// it isn't pending or has expired. Methods are the ways the organization lets
 // a new account accept it, as Accept and the passkey ceremony decide.
 func (s *Service) Lookup(ctx context.Context, token string) (*InvitationPreview, error) {
 	row, err := s.q.LookupInvite(ctx, codes.Hash(token))
@@ -173,8 +173,8 @@ func (s *Service) Lookup(ctx context.Context, token string) (*InvitationPreview,
 		return nil, err
 	}
 	out := &InvitationPreview{Email: row.Email, ExpiresAt: row.ExpiresAt, AccountExists: row.AccountExists}
-	out.Organization.Name, out.Organization.Slug = row.TenantName, row.TenantSlug
-	if out.Methods.Password, out.Methods.Passkey, err = s.acceptMethods(ctx, row.TenantID); err != nil {
+	out.Organization.Name, out.Organization.Slug = row.OrganizationName, row.OrganizationSlug
+	if out.Methods.Password, out.Methods.Passkey, err = s.acceptMethods(ctx, row.OrganizationID); err != nil {
 		return nil, err
 	}
 	return out, nil

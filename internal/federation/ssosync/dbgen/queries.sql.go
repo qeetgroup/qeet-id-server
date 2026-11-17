@@ -13,16 +13,16 @@ import (
 )
 
 const addSyncedMembership = `-- name: AddSyncedMembership :execrows
-INSERT INTO tenant.group_members (group_id, user_id, tenant_id, source_connection_id)
+INSERT INTO organization.group_members (group_id, user_id, organization_id, source_connection_id)
 VALUES ($1, $2, $3, $4::uuid)
 ON CONFLICT (group_id, user_id) DO NOTHING
 `
 
 type AddSyncedMembershipParams struct {
-	GroupID      uuid.UUID
-	UserID       uuid.UUID
-	TenantID     uuid.UUID
-	ConnectionID uuid.UUID
+	GroupID        uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
+	ConnectionID   uuid.UUID
 }
 
 // AddSyncedMembership adds the person to the group as the connection's, and
@@ -31,7 +31,7 @@ func (q *Queries) AddSyncedMembership(ctx context.Context, arg AddSyncedMembersh
 	result, err := q.db.Exec(ctx, addSyncedMembership,
 		arg.GroupID,
 		arg.UserID,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.ConnectionID,
 	)
 	if err != nil {
@@ -41,32 +41,32 @@ func (q *Queries) AddSyncedMembership(ctx context.Context, arg AddSyncedMembersh
 }
 
 const countGroupMappings = `-- name: CountGroupMappings :one
-SELECT count(*) FROM tenant.sso_group_mappings
-WHERE tenant_id = $1 AND connection_id = $2
+SELECT count(*) FROM organization.sso_group_mappings
+WHERE organization_id = $1 AND connection_id = $2
 `
 
 type CountGroupMappingsParams struct {
-	TenantID     uuid.UUID
-	ConnectionID uuid.UUID
+	OrganizationID uuid.UUID
+	ConnectionID   uuid.UUID
 }
 
 func (q *Queries) CountGroupMappings(ctx context.Context, arg CountGroupMappingsParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countGroupMappings, arg.TenantID, arg.ConnectionID)
+	row := q.db.QueryRow(ctx, countGroupMappings, arg.OrganizationID, arg.ConnectionID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
 }
 
 const deleteGroupMapping = `-- name: DeleteGroupMapping :one
-DELETE FROM tenant.sso_group_mappings
-WHERE id = $1 AND tenant_id = $2 AND connection_id = $3
+DELETE FROM organization.sso_group_mappings
+WHERE id = $1 AND organization_id = $2 AND connection_id = $3
 RETURNING idp_group, group_id
 `
 
 type DeleteGroupMappingParams struct {
-	ID           uuid.UUID
-	TenantID     uuid.UUID
-	ConnectionID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	ConnectionID   uuid.UUID
 }
 
 type DeleteGroupMappingRow struct {
@@ -75,7 +75,7 @@ type DeleteGroupMappingRow struct {
 }
 
 func (q *Queries) DeleteGroupMapping(ctx context.Context, arg DeleteGroupMappingParams) (DeleteGroupMappingRow, error) {
-	row := q.db.QueryRow(ctx, deleteGroupMapping, arg.ID, arg.TenantID, arg.ConnectionID)
+	row := q.db.QueryRow(ctx, deleteGroupMapping, arg.ID, arg.OrganizationID, arg.ConnectionID)
 	var i DeleteGroupMappingRow
 	err := row.Scan(&i.IdpGroup, &i.GroupID)
 	return i, err
@@ -85,13 +85,13 @@ const getAccountProfile = `-- name: GetAccountProfile :one
 
 
 SELECT email, display_name FROM account.users
-WHERE id = $1 AND tenant_id = $2::uuid AND deleted_at IS NULL
+WHERE id = $1 AND organization_id = $2::uuid AND deleted_at IS NULL
 FOR UPDATE
 `
 
 type GetAccountProfileParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type GetAccountProfileRow struct {
@@ -106,7 +106,7 @@ type GetAccountProfileRow struct {
 // Profile refresh
 // ==========================================================================
 func (q *Queries) GetAccountProfile(ctx context.Context, arg GetAccountProfileParams) (GetAccountProfileRow, error) {
-	row := q.db.QueryRow(ctx, getAccountProfile, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, getAccountProfile, arg.ID, arg.OrganizationID)
 	var i GetAccountProfileRow
 	err := row.Scan(&i.Email, &i.DisplayName)
 	return i, err
@@ -115,19 +115,19 @@ func (q *Queries) GetAccountProfile(ctx context.Context, arg GetAccountProfilePa
 const groupPrivileged = `-- name: GroupPrivileged :one
 SELECT g.name, EXISTS (
     SELECT 1 FROM rbac.group_roles gr
-    JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.tenant_id = gr.tenant_id
+    JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.organization_id = gr.organization_id
     LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
     LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
-    WHERE gr.tenant_id = g.tenant_id AND gr.group_id = g.id
+    WHERE gr.organization_id = g.organization_id AND gr.group_id = g.id
       AND ((ro.is_system AND ro.name = 'owner') OR (p.key IS NOT NULL AND NOT (p.key = ANY($1::text[]))))
 ) AS privileged
-FROM tenant.groups g WHERE g.id = $2 AND g.tenant_id = $3
+FROM organization.groups g WHERE g.id = $2 AND g.organization_id = $3
 `
 
 type GroupPrivilegedParams struct {
 	MemberPermissions []string
 	GroupID           uuid.UUID
-	TenantID          uuid.UUID
+	OrganizationID    uuid.UUID
 }
 
 type GroupPrivilegedRow struct {
@@ -135,27 +135,27 @@ type GroupPrivilegedRow struct {
 	Privileged bool
 }
 
-// GroupPrivileged returns no row for a group that isn't the tenant's, else its
+// GroupPrivileged returns no row for a group that isn't the organization's, else its
 // name and whether its roles carry the owner role or a permission outside
 // member_permissions.
 func (q *Queries) GroupPrivileged(ctx context.Context, arg GroupPrivilegedParams) (GroupPrivilegedRow, error) {
-	row := q.db.QueryRow(ctx, groupPrivileged, arg.MemberPermissions, arg.GroupID, arg.TenantID)
+	row := q.db.QueryRow(ctx, groupPrivileged, arg.MemberPermissions, arg.GroupID, arg.OrganizationID)
 	var i GroupPrivilegedRow
 	err := row.Scan(&i.Name, &i.Privileged)
 	return i, err
 }
 
 const insertGroupMapping = `-- name: InsertGroupMapping :one
-INSERT INTO tenant.sso_group_mappings (tenant_id, connection_id, idp_group, group_id)
+INSERT INTO organization.sso_group_mappings (organization_id, connection_id, idp_group, group_id)
 VALUES ($1, $2, $3, $4)
 RETURNING id, created_at
 `
 
 type InsertGroupMappingParams struct {
-	TenantID     uuid.UUID
-	ConnectionID uuid.UUID
-	IdpGroup     string
-	GroupID      uuid.UUID
+	OrganizationID uuid.UUID
+	ConnectionID   uuid.UUID
+	IdpGroup       string
+	GroupID        uuid.UUID
 }
 
 type InsertGroupMappingRow struct {
@@ -165,7 +165,7 @@ type InsertGroupMappingRow struct {
 
 func (q *Queries) InsertGroupMapping(ctx context.Context, arg InsertGroupMappingParams) (InsertGroupMappingRow, error) {
 	row := q.db.QueryRow(ctx, insertGroupMapping,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.ConnectionID,
 		arg.IdpGroup,
 		arg.GroupID,
@@ -176,16 +176,16 @@ func (q *Queries) InsertGroupMapping(ctx context.Context, arg InsertGroupMapping
 }
 
 const lDAPConnectionExists = `-- name: LDAPConnectionExists :one
-SELECT EXISTS (SELECT 1 FROM tenant.ldap_connections WHERE id = $1 AND tenant_id = $2)
+SELECT EXISTS (SELECT 1 FROM organization.ldap_connections WHERE id = $1 AND organization_id = $2)
 `
 
 type LDAPConnectionExistsParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) LDAPConnectionExists(ctx context.Context, arg LDAPConnectionExistsParams) (bool, error) {
-	row := q.db.QueryRow(ctx, lDAPConnectionExists, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, lDAPConnectionExists, arg.ID, arg.OrganizationID)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
@@ -193,15 +193,15 @@ func (q *Queries) LDAPConnectionExists(ctx context.Context, arg LDAPConnectionEx
 
 const listGroupMappings = `-- name: ListGroupMappings :many
 SELECT m.id, m.idp_group, m.group_id, g.name AS group_name, m.created_at
-FROM tenant.sso_group_mappings m
-JOIN tenant.groups g ON g.tenant_id = m.tenant_id AND g.id = m.group_id
-WHERE m.tenant_id = $1 AND m.connection_id = $2
+FROM organization.sso_group_mappings m
+JOIN organization.groups g ON g.organization_id = m.organization_id AND g.id = m.group_id
+WHERE m.organization_id = $1 AND m.connection_id = $2
 ORDER BY lower(m.idp_group), g.name, m.id
 `
 
 type ListGroupMappingsParams struct {
-	TenantID     uuid.UUID
-	ConnectionID uuid.UUID
+	OrganizationID uuid.UUID
+	ConnectionID   uuid.UUID
 }
 
 type ListGroupMappingsRow struct {
@@ -213,7 +213,7 @@ type ListGroupMappingsRow struct {
 }
 
 func (q *Queries) ListGroupMappings(ctx context.Context, arg ListGroupMappingsParams) ([]ListGroupMappingsRow, error) {
-	rows, err := q.db.Query(ctx, listGroupMappings, arg.TenantID, arg.ConnectionID)
+	rows, err := q.db.Query(ctx, listGroupMappings, arg.OrganizationID, arg.ConnectionID)
 	if err != nil {
 		return nil, err
 	}
@@ -239,21 +239,21 @@ func (q *Queries) ListGroupMappings(ctx context.Context, arg ListGroupMappingsPa
 }
 
 const removeSyncedMembership = `-- name: RemoveSyncedMembership :execrows
-DELETE FROM tenant.group_members
-WHERE tenant_id = $1 AND group_id = $2 AND user_id = $3
+DELETE FROM organization.group_members
+WHERE organization_id = $1 AND group_id = $2 AND user_id = $3
   AND source_connection_id = $4::uuid
 `
 
 type RemoveSyncedMembershipParams struct {
-	TenantID     uuid.UUID
-	GroupID      uuid.UUID
-	UserID       uuid.UUID
-	ConnectionID uuid.UUID
+	OrganizationID uuid.UUID
+	GroupID        uuid.UUID
+	UserID         uuid.UUID
+	ConnectionID   uuid.UUID
 }
 
 func (q *Queries) RemoveSyncedMembership(ctx context.Context, arg RemoveSyncedMembershipParams) (int64, error) {
 	result, err := q.db.Exec(ctx, removeSyncedMembership,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.GroupID,
 		arg.UserID,
 		arg.ConnectionID,
@@ -265,25 +265,25 @@ func (q *Queries) RemoveSyncedMembership(ctx context.Context, arg RemoveSyncedMe
 }
 
 const removeUnmappedMemberships = `-- name: RemoveUnmappedMemberships :many
-DELETE FROM tenant.group_members gm
-WHERE gm.tenant_id = $1 AND gm.group_id = $2 AND gm.source_connection_id = $3::uuid
+DELETE FROM organization.group_members gm
+WHERE gm.organization_id = $1 AND gm.group_id = $2 AND gm.source_connection_id = $3::uuid
   AND NOT EXISTS (
-      SELECT 1 FROM tenant.sso_group_mappings m
-      WHERE m.tenant_id = gm.tenant_id AND m.group_id = gm.group_id AND m.connection_id = $3::uuid
+      SELECT 1 FROM organization.sso_group_mappings m
+      WHERE m.organization_id = gm.organization_id AND m.group_id = gm.group_id AND m.connection_id = $3::uuid
   )
 RETURNING gm.user_id
 `
 
 type RemoveUnmappedMembershipsParams struct {
-	TenantID     uuid.UUID
-	GroupID      uuid.UUID
-	ConnectionID uuid.UUID
+	OrganizationID uuid.UUID
+	GroupID        uuid.UUID
+	ConnectionID   uuid.UUID
 }
 
 // RemoveUnmappedMemberships removes the memberships of the group the
 // connection's sign-ins made once none of its mappings reaches the group.
 func (q *Queries) RemoveUnmappedMemberships(ctx context.Context, arg RemoveUnmappedMembershipsParams) ([]uuid.UUID, error) {
-	rows, err := q.db.Query(ctx, removeUnmappedMemberships, arg.TenantID, arg.GroupID, arg.ConnectionID)
+	rows, err := q.db.Query(ctx, removeUnmappedMemberships, arg.OrganizationID, arg.GroupID, arg.ConnectionID)
 	if err != nil {
 		return nil, err
 	}
@@ -304,19 +304,19 @@ func (q *Queries) RemoveUnmappedMemberships(ctx context.Context, arg RemoveUnmap
 
 const sAMLConnectionExists = `-- name: SAMLConnectionExists :one
 
-SELECT EXISTS (SELECT 1 FROM tenant.saml_connections WHERE id = $1 AND tenant_id = $2)
+SELECT EXISTS (SELECT 1 FROM organization.saml_connections WHERE id = $1 AND organization_id = $2)
 `
 
 type SAMLConnectionExistsParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 // ==========================================================================
 // Group mappings
 // ==========================================================================
 func (q *Queries) SAMLConnectionExists(ctx context.Context, arg SAMLConnectionExistsParams) (bool, error) {
-	row := q.db.QueryRow(ctx, sAMLConnectionExists, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, sAMLConnectionExists, arg.ID, arg.OrganizationID)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
@@ -324,33 +324,33 @@ func (q *Queries) SAMLConnectionExists(ctx context.Context, arg SAMLConnectionEx
 
 const setDisplayName = `-- name: SetDisplayName :exec
 UPDATE account.users SET display_name = $1, updated_at = NOW()
-WHERE id = $2 AND tenant_id = $3::uuid
+WHERE id = $2 AND organization_id = $3::uuid
 `
 
 type SetDisplayNameParams struct {
-	DisplayName *string
-	ID          uuid.UUID
-	TenantID    uuid.UUID
+	DisplayName    *string
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) SetDisplayName(ctx context.Context, arg SetDisplayNameParams) error {
-	_, err := q.db.Exec(ctx, setDisplayName, arg.DisplayName, arg.ID, arg.TenantID)
+	_, err := q.db.Exec(ctx, setDisplayName, arg.DisplayName, arg.ID, arg.OrganizationID)
 	return err
 }
 
 const setEmail = `-- name: SetEmail :exec
 UPDATE account.users SET email = $1, email_verified_at = NOW(), updated_at = NOW()
-WHERE id = $2 AND tenant_id = $3::uuid
+WHERE id = $2 AND organization_id = $3::uuid
 `
 
 type SetEmailParams struct {
-	Email    string
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	Email          string
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) SetEmail(ctx context.Context, arg SetEmailParams) error {
-	_, err := q.db.Exec(ctx, setEmail, arg.Email, arg.ID, arg.TenantID)
+	_, err := q.db.Exec(ctx, setEmail, arg.Email, arg.ID, arg.OrganizationID)
 	return err
 }
 
@@ -359,29 +359,29 @@ const syncTargets = `-- name: SyncTargets :many
 WITH asserted AS (
     SELECT DISTINCT lower(v) AS value FROM unnest($4::text[]) AS v
 )
-SELECT g.id FROM tenant.groups g
-WHERE g.tenant_id = $1
+SELECT g.id FROM organization.groups g
+WHERE g.organization_id = $1
   AND (
       EXISTS (
-          SELECT 1 FROM tenant.sso_group_mappings m
+          SELECT 1 FROM organization.sso_group_mappings m
           JOIN asserted a ON a.value = lower(m.idp_group)
-          WHERE m.tenant_id = g.tenant_id AND m.group_id = g.id AND m.connection_id = $2
+          WHERE m.organization_id = g.organization_id AND m.group_id = g.id AND m.connection_id = $2
       )
       OR (g.provisioned_via = 'scim' AND lower(g.external_id) IN (SELECT value FROM asserted))
   )
   AND NOT EXISTS (
       SELECT 1 FROM rbac.group_roles gr
-      JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.tenant_id = gr.tenant_id
+      JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.organization_id = gr.organization_id
       LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
       LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
-      WHERE gr.tenant_id = g.tenant_id AND gr.group_id = g.id
+      WHERE gr.organization_id = g.organization_id AND gr.group_id = g.id
         AND ((ro.is_system AND ro.name = 'owner') OR (p.key IS NOT NULL AND NOT (p.key = ANY($3::text[]))))
   )
 ORDER BY g.id
 `
 
 type SyncTargetsParams struct {
-	TenantID          uuid.UUID
+	OrganizationID    uuid.UUID
 	ConnectionID      uuid.UUID
 	MemberPermissions []string
 	IdpGroups         []string
@@ -396,7 +396,7 @@ type SyncTargetsParams struct {
 // outside member_permissions is left out.
 func (q *Queries) SyncTargets(ctx context.Context, arg SyncTargetsParams) ([]uuid.UUID, error) {
 	rows, err := q.db.Query(ctx, syncTargets,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.ConnectionID,
 		arg.MemberPermissions,
 		arg.IdpGroups,
@@ -420,19 +420,19 @@ func (q *Queries) SyncTargets(ctx context.Context, arg SyncTargetsParams) ([]uui
 }
 
 const syncedMemberships = `-- name: SyncedMemberships :many
-SELECT group_id FROM tenant.group_members
-WHERE tenant_id = $1 AND user_id = $2 AND source_connection_id = $3::uuid
+SELECT group_id FROM organization.group_members
+WHERE organization_id = $1 AND user_id = $2 AND source_connection_id = $3::uuid
 ORDER BY group_id
 `
 
 type SyncedMembershipsParams struct {
-	TenantID     uuid.UUID
-	UserID       uuid.UUID
-	ConnectionID uuid.UUID
+	OrganizationID uuid.UUID
+	UserID         uuid.UUID
+	ConnectionID   uuid.UUID
 }
 
 func (q *Queries) SyncedMemberships(ctx context.Context, arg SyncedMembershipsParams) ([]uuid.UUID, error) {
-	rows, err := q.db.Query(ctx, syncedMemberships, arg.TenantID, arg.UserID, arg.ConnectionID)
+	rows, err := q.db.Query(ctx, syncedMemberships, arg.OrganizationID, arg.UserID, arg.ConnectionID)
 	if err != nil {
 		return nil, err
 	}

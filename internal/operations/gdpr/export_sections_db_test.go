@@ -15,8 +15,8 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
-// signedIn records a sign-in of the account to tenant in the audit trail.
-func signedIn(t *testing.T, tenant, userID uuid.UUID, action string) {
+// signedIn records a sign-in of the account to organization in the audit trail.
+func signedIn(t *testing.T, organization, userID uuid.UUID, action string) {
 	t.Helper()
 	ctx := dbtest.Context(t)
 	tx, err := dbtest.Pool(t).Begin(ctx)
@@ -24,7 +24,7 @@ func signedIn(t *testing.T, tenant, userID uuid.UUID, action string) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	if err := audit.Record(ctx, tx, audit.Event{TenantID: &tenant, ActorUserID: &userID, Action: action,
+	if err := audit.Record(ctx, tx, audit.Event{OrganizationID: &organization, ActorUserID: &userID, Action: action,
 		ResourceType: "user", ResourceID: &userID, IP: "203.0.113.7", UserAgent: "Firefox",
 		Metadata: map[string]any{"method": "password"}}); err != nil {
 		t.Fatal(err)
@@ -34,9 +34,9 @@ func signedIn(t *testing.T, tenant, userID uuid.UUID, action string) {
 	}
 }
 
-// orgTraces gives the account, in a second organisation, a linked account, a
+// orgTraces gives the account, in a second organization, a linked account, a
 // consent and a grant to one of its applications, and a group.
-func orgTraces(t *testing.T, tenant uuid.UUID, a dbtest.Account) {
+func orgTraces(t *testing.T, organization uuid.UUID, a dbtest.Account) {
 	t.Helper()
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
 	client, group := dbtest.Unique("app"), uuid.New()
@@ -44,12 +44,12 @@ func orgTraces(t *testing.T, tenant uuid.UUID, a dbtest.Account) {
 		sql  string
 		args []any
 	}{
-		{`INSERT INTO auth.oidc_clients (tenant_id, client_id, name) VALUES ($1, $2, 'Payroll')`, []any{tenant, client}},
+		{`INSERT INTO auth.oidc_clients (organization_id, client_id, name) VALUES ($1, $2, 'Payroll')`, []any{organization, client}},
 		{`INSERT INTO auth.oidc_consents (user_id, client_id, scopes) VALUES ($1, $2, '{openid}')`, []any{a.ID, client}},
-		{`INSERT INTO auth.oidc_refresh_tokens (token_hash, client_id, user_id, tenant_id, expires_at) VALUES ($1, $2, $3, $4, NOW() + INTERVAL '1 hour')`, []any{dbtest.Unique("rt"), client, a.ID, tenant}},
-		{`INSERT INTO account.external_identities (user_id, tenant_id, provider, subject) VALUES ($1, $2, 'saml', $3)`, []any{a.ID, tenant, dbtest.Unique("sub")}},
-		{`INSERT INTO tenant.groups (id, tenant_id, name) VALUES ($1, $2, 'Finance')`, []any{group, tenant}},
-		{`INSERT INTO tenant.group_members (group_id, user_id, tenant_id) VALUES ($1, $2, $3)`, []any{group, a.ID, tenant}},
+		{`INSERT INTO auth.oidc_refresh_tokens (token_hash, client_id, user_id, organization_id, expires_at) VALUES ($1, $2, $3, $4, NOW() + INTERVAL '1 hour')`, []any{dbtest.Unique("rt"), client, a.ID, organization}},
+		{`INSERT INTO account.external_identities (user_id, organization_id, provider, subject) VALUES ($1, $2, 'saml', $3)`, []any{a.ID, organization, dbtest.Unique("sub")}},
+		{`INSERT INTO organization.groups (id, organization_id, name) VALUES ($1, $2, 'Finance')`, []any{group, organization}},
+		{`INSERT INTO organization.group_members (group_id, user_id, organization_id) VALUES ($1, $2, $3)`, []any{group, a.ID, organization}},
 	} {
 		if _, err := pool.Exec(ctx, s.sql, s.args...); err != nil {
 			t.Fatalf("%s: %v", s.sql, err)
@@ -71,36 +71,36 @@ type exported struct {
 	SignIns     []exportSignIn    `json:"sign_ins"`
 }
 
-// TestExportsCoverEveryPart checks that both an organisation's export of a
+// TestExportsCoverEveryPart checks that both an organization's export of a
 // member and the person's own export carry their metadata, linked accounts,
 // masked email and SMS factors, application consents and grants, groups and
-// sign-ins, and that the organisation's export leaves out another
-// organisation's part.
+// sign-ins, and that the organization's export leaves out another
+// organization's part.
 func TestExportsCoverEveryPart(t *testing.T) {
 	ctx := dbtest.Context(t)
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	a := dbtest.User(t, tenant, tenant, other)
-	leaveTraces(t, tenant, a)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	a := dbtest.User(t, organization, organization, other)
+	leaveTraces(t, organization, a)
 	orgTraces(t, other, a)
-	signedIn(t, tenant, a.ID, "auth.login_succeeded")
-	signedIn(t, tenant, a.ID, "auth.sign_in_failed")
+	signedIn(t, organization, a.ID, "auth.login_succeeded")
+	signedIn(t, organization, a.ID, "auth.sign_in_failed")
 	signedIn(t, other, a.ID, "auth.login_succeeded")
 
 	svc := NewService(dbtest.Pool(t), 0)
 	h := requests(t, svc)
 	var own exported
-	rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(a.ID, tenant), h.Mount), http.MethodPost, "/account/export", nil)
+	rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(a.ID, organization), h.Mount), http.MethodPost, "/account/export", nil)
 	dbtest.Decode(t, rec, &own)
 
-	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), h.Mount)
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)
 	var req ExportRequest
 	dbtest.Decode(t, dbtest.Do(t, asAdmin, http.MethodPost, "/gdpr/export", map[string]any{"user_id": a.ID}), &req)
 	if err := svc.exportSweepTick(ctx); err != nil {
 		t.Fatal(err)
 	}
 	var ready ExportRequest
-	dbtest.Decode(t, dbtest.Do(t, asAdmin, http.MethodGet, "/tenants/"+tenant.String()+"/gdpr/export/"+req.ID.String(), nil), &ready)
+	dbtest.Decode(t, dbtest.Do(t, asAdmin, http.MethodGet, "/tenants/"+organization.String()+"/gdpr/export/"+req.ID.String(), nil), &ready)
 	raw, err := json.Marshal(ready.Payload)
 	if err != nil {
 		t.Fatal(err)
@@ -112,13 +112,13 @@ func TestExportsCoverEveryPart(t *testing.T) {
 
 	for name, c := range map[string]struct {
 		got  exported
-		orgs int // organisations covered
+		orgs int // organizations covered
 	}{"own export": {own, 2}, "organisation's export": {org, 1}} {
 		e := c.got
 		if e.Profile.Metadata["team"] != "core" || e.Profile.AvatarURL == "" {
 			t.Errorf("%s: profile %+v, want the metadata and avatar", name, e.Profile)
 		}
-		// One per organisation, and the platform's own social sign-in.
+		// One per organization, and the platform's own social sign-in.
 		if want := c.orgs + 1; len(e.Identities) != want {
 			t.Errorf("%s: %d linked accounts, want %d", name, len(e.Identities), want)
 		}
@@ -146,11 +146,11 @@ func TestExportsCoverEveryPart(t *testing.T) {
 // export still within the window is kept.
 func TestExportPayloadExpires(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	old, fresh, gone := account(t, tenant), account(t, tenant), account(t, tenant)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	old, fresh, gone := account(t, organization), account(t, organization), account(t, organization)
 	svc := NewService(pool, 0)
-	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), requests(t, svc).Mount)
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), requests(t, svc).Mount)
 	queue := func(userID uuid.UUID) uuid.UUID {
 		var req ExportRequest
 		dbtest.Decode(t, dbtest.Do(t, asAdmin, http.MethodPost, "/gdpr/export", map[string]any{"user_id": userID}), &req)
@@ -176,7 +176,7 @@ func TestExportPayloadExpires(t *testing.T) {
 	}
 	get := func(id uuid.UUID) ExportRequest {
 		var out ExportRequest
-		dbtest.Decode(t, dbtest.Do(t, asAdmin, http.MethodGet, "/tenants/"+tenant.String()+"/gdpr/export/"+id.String(), nil), &out)
+		dbtest.Decode(t, dbtest.Do(t, asAdmin, http.MethodGet, "/tenants/"+organization.String()+"/gdpr/export/"+id.String(), nil), &out)
 		return out
 	}
 	if got := get(goneReq); got.Status != "expired" || got.Payload != nil || got.UserID != gone.ID {

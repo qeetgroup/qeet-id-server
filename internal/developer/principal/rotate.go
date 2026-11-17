@@ -36,10 +36,10 @@ func previousSecretWorks(ctx context.Context, hash *string, until pgtype.Timesta
 	return ok, err
 }
 
-// RotateSecret gives one of the tenant's service principals a new secret,
+// RotateSecret gives one of the organization's service principals a new secret,
 // returned only now, and leaves the old one working for overlap (0: it stops
 // at once). Recorded as actor's.
-func (s *Service) RotateSecret(ctx context.Context, tenantID, id uuid.UUID, overlap time.Duration, actor audit.Actor) (string, time.Time, error) {
+func (s *Service) RotateSecret(ctx context.Context, organizationID, id uuid.UUID, overlap time.Duration, actor audit.Actor) (string, time.Time, error) {
 	if overlap < 0 || overlap > MaxRotationOverlap {
 		return "", time.Time{}, errs.ErrValidationFailed.WithFields([]errs.FieldError{{
 			Field: "overlap_hours", Code: "out_of_range", Message: "Keep the old secret working for 0 to 168 hours.",
@@ -57,7 +57,7 @@ func (s *Service) RotateSecret(ctx context.Context, tenantID, id uuid.UUID, over
 	defer tx.Rollback(ctx)
 	name, err := s.q.WithTx(tx).RotateServicePrincipalSecret(ctx, dbgen.RotateServicePrincipalSecretParams{
 		PreviousExpiresAt: pgtype.Timestamptz{Time: until, Valid: true}, SecretHash: password.HashSecret(raw),
-		ID: id, TenantID: tenantID,
+		ID: id, OrganizationID: organizationID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", time.Time{}, errs.ErrPrincipalNotFound
@@ -65,7 +65,7 @@ func (s *Service) RotateSecret(ctx context.Context, tenantID, id uuid.UUID, over
 	if err != nil {
 		return "", time.Time{}, err
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "service_principal.secret_rotated", "service_principal", id,
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "service_principal.secret_rotated", "service_principal", id,
 		map[string]any{"name": name, "old_secret_ends": until})); err != nil {
 		return "", time.Time{}, err
 	}
@@ -75,22 +75,22 @@ func (s *Service) RotateSecret(ctx context.Context, tenantID, id uuid.UUID, over
 	return raw, until, nil
 }
 
-// Enable turns one of the tenant's disabled service principals back on,
+// Enable turns one of the organization's disabled service principals back on,
 // recorded as actor's. Enabling one that is on changes nothing.
-func (s *Service) Enable(ctx context.Context, tenantID, id uuid.UUID, actor audit.Actor) error {
+func (s *Service) Enable(ctx context.Context, organizationID, id uuid.UUID, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	name, err := s.q.WithTx(tx).EnableServicePrincipal(ctx, dbgen.EnableServicePrincipalParams{ID: id, TenantID: tenantID})
+	name, err := s.q.WithTx(tx).EnableServicePrincipal(ctx, dbgen.EnableServicePrincipalParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return errs.ErrPrincipalNotFound
 	}
 	if err != nil {
 		return err
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "service_principal.enabled", "service_principal", id,
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "service_principal.enabled", "service_principal", id,
 		map[string]any{"name": name})); err != nil {
 		return err
 	}
@@ -113,9 +113,9 @@ func overlapOf(r *http.Request) (time.Duration, error) {
 	return time.Duration(*in.OverlapHours) * time.Hour, nil
 }
 
-// pathIDs returns the tenant and service principal a request names.
+// pathIDs returns the organization and service principal a request names.
 func pathIDs(r *http.Request) (uuid.UUID, uuid.UUID, error) {
-	tid, err := httpx.PathTenantOr(r, errs.ErrPrincipalInvalidID, errs.ErrForbidden)
+	tid, err := httpx.PathOrganizationOr(r, errs.ErrPrincipalInvalidID, errs.ErrForbidden)
 	if err != nil {
 		return uuid.Nil, uuid.Nil, err
 	}
@@ -171,9 +171,9 @@ func (h *Handler) enable(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// Scopes returns the scopes of service principal id of tenantID, or ErrPrincipalNotFound.
-func (s *Service) Scopes(ctx context.Context, tenantID, id uuid.UUID) ([]string, error) {
-	scopes, err := s.q.ServicePrincipalScopes(ctx, dbgen.ServicePrincipalScopesParams{ID: id, TenantID: tenantID})
+// Scopes returns the scopes of service principal id of organizationID, or ErrPrincipalNotFound.
+func (s *Service) Scopes(ctx context.Context, organizationID, id uuid.UUID) ([]string, error) {
+	scopes, err := s.q.ServicePrincipalScopes(ctx, dbgen.ServicePrincipalScopesParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrPrincipalNotFound
 	}
@@ -181,14 +181,14 @@ func (s *Service) Scopes(ctx context.Context, tenantID, id uuid.UUID) ([]string,
 }
 
 // checkScopes refuses the caller taking over credential id's scopes in
-// tenantID (GrantCheck); without the check it refuses every caller.
-func (h *Handler) checkScopes(r *http.Request, tenantID, id uuid.UUID) error {
+// organizationID (GrantCheck); without the check it refuses every caller.
+func (h *Handler) checkScopes(r *http.Request, organizationID, id uuid.UUID) error {
 	if h.GrantCheck == nil {
 		return errs.ErrNotImplemented
 	}
-	scopes, err := h.Service.Scopes(r.Context(), tenantID, id)
+	scopes, err := h.Service.Scopes(r.Context(), organizationID, id)
 	if err != nil {
 		return err
 	}
-	return h.GrantCheck(r.Context(), httpx.PrincipalFromCtx(r.Context()), tenantID, scopes)
+	return h.GrantCheck(r.Context(), httpx.PrincipalFromCtx(r.Context()), organizationID, scopes)
 }

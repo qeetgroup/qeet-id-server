@@ -14,12 +14,12 @@ import (
 )
 
 // Handler serves access requests: a person's own under /me, and an
-// organisation's under /tenants/{tenantID}, for the people who can grant roles.
+// organization's under /tenants/{tenantID}, for the people who can grant roles.
 type Handler struct {
 	Service *Service
 	// GrantCheck refuses an approval whose role would give authority the
 	// approver doesn't hold (rbac.Repository.CheckGrantRole).
-	GrantCheck func(ctx context.Context, caller *httpx.Principal, tenantID, roleID uuid.UUID) error
+	GrantCheck func(ctx context.Context, caller *httpx.Principal, organizationID, roleID uuid.UUID) error
 }
 
 // Mount registers the routes on the authenticated /v1 router.
@@ -35,9 +35,9 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/tenants/{tenantID}/access-requests/{id}/deny", h.deny)
 }
 
-// caller is the signed-in person and the organisation they're signed in to.
-func caller(r *http.Request) (tenantID, userID uuid.UUID, err error) {
-	if tenantID, err = httpx.RequireTenant(r); err != nil {
+// caller is the signed-in person and the organization they're signed in to.
+func caller(r *http.Request) (organizationID, userID uuid.UUID, err error) {
+	if organizationID, err = httpx.RequireOrganization(r); err != nil {
 		return
 	}
 	userID, err = httpx.RequireUser(r)
@@ -122,7 +122,7 @@ func (h *Handler) cancel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tid, err := httpx.RequireTenant(r)
+	tid, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -148,7 +148,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
-	tid, err := httpx.RequireTenant(r)
+	tid, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

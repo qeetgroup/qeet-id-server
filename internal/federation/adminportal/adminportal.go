@@ -33,7 +33,7 @@ import (
 const (
 	CapabilitySAML               = "saml"
 	CapabilitySCIM               = "scim"
-	CapabilityDomainVerification = "domain_verification" // prove the organisation owns a domain
+	CapabilityDomainVerification = "domain_verification" // prove the organization owns a domain
 
 	minTTL              = 15 * time.Minute
 	maxTTL              = 24 * time.Hour
@@ -47,14 +47,14 @@ var validCapabilities = []string{CapabilitySAML, CapabilitySCIM, CapabilityDomai
 
 // Link is an admin-portal link, without its token.
 type Link struct {
-	ID           uuid.UUID  `json:"id"`
-	TenantID     uuid.UUID  `json:"tenant_id"`
-	Capabilities []string   `json:"capabilities"`
-	CreatedBy    *uuid.UUID `json:"created_by"`
-	ExpiresAt    time.Time  `json:"expires_at"`
-	RevokedAt    *time.Time `json:"revoked_at"`
-	LastUsedAt   *time.Time `json:"last_used_at"`
-	CreatedAt    time.Time  `json:"created_at"`
+	ID             uuid.UUID  `json:"id"`
+	OrganizationID uuid.UUID  `json:"tenant_id"`
+	Capabilities   []string   `json:"capabilities"`
+	CreatedBy      *uuid.UUID `json:"created_by"`
+	ExpiresAt      time.Time  `json:"expires_at"`
+	RevokedAt      *time.Time `json:"revoked_at"`
+	LastUsedAt     *time.Time `json:"last_used_at"`
+	CreatedAt      time.Time  `json:"created_at"`
 }
 
 // Has reports whether the link authorizes the given capability.
@@ -72,7 +72,7 @@ type Service struct {
 // interface so adminportal doesn't import the branding types, matching the
 // one-way dependency oidc.BrandingLister already establishes.
 type brandingLister interface {
-	LoginBranding(ctx context.Context, tenantID uuid.UUID) (logoURL, primaryColor, secondaryColor, backgroundColor string)
+	LoginBranding(ctx context.Context, organizationID uuid.UUID) (logoURL, primaryColor, secondaryColor, backgroundColor string)
 }
 
 // NewService returns the admin portal service.
@@ -140,7 +140,7 @@ func linkTTL(d time.Duration) (time.Duration, error) {
 
 // Generate mints a new admin portal link. The raw token is returned exactly
 // once — only the hash is persisted.
-func (s *Service) Generate(ctx context.Context, tx pgx.Tx, tenantID, createdBy uuid.UUID, capabilities []string, ttl time.Duration) (*Link, string, error) {
+func (s *Service) Generate(ctx context.Context, tx pgx.Tx, organizationID, createdBy uuid.UUID, capabilities []string, ttl time.Duration) (*Link, string, error) {
 	caps, err := normalizeCapabilities(capabilities)
 	if err != nil {
 		return nil, "", err
@@ -155,24 +155,24 @@ func (s *Service) Generate(ctx context.Context, tx pgx.Tx, tenantID, createdBy u
 	}
 	expires := time.Now().UTC().Add(ttl)
 	row, err := s.q.WithTx(tx).InsertAdminPortalLink(ctx, dbgen.InsertAdminPortalLinkParams{
-		TenantID:     tenantID,
-		TokenHash:    hash,
-		Capabilities: caps,
-		CreatedBy:    pgtype.UUID{Bytes: createdBy, Valid: createdBy != uuid.Nil},
-		ExpiresAt:    expires,
+		OrganizationID: organizationID,
+		TokenHash:      hash,
+		Capabilities:   caps,
+		CreatedBy:      pgtype.UUID{Bytes: createdBy, Valid: createdBy != uuid.Nil},
+		ExpiresAt:      expires,
 	})
 	if err != nil {
 		return nil, "", err
 	}
 	l := &Link{
-		ID:           row.ID,
-		TenantID:     row.TenantID,
-		Capabilities: row.Capabilities,
-		CreatedBy:    pgUUIDToPtr(row.CreatedBy),
-		ExpiresAt:    row.ExpiresAt,
-		RevokedAt:    pgTimeToPtr(row.RevokedAt),
-		LastUsedAt:   pgTimeToPtr(row.LastUsedAt),
-		CreatedAt:    row.CreatedAt,
+		ID:             row.ID,
+		OrganizationID: row.OrganizationID,
+		Capabilities:   row.Capabilities,
+		CreatedBy:      pgUUIDToPtr(row.CreatedBy),
+		ExpiresAt:      row.ExpiresAt,
+		RevokedAt:      pgTimeToPtr(row.RevokedAt),
+		LastUsedAt:     pgTimeToPtr(row.LastUsedAt),
+		CreatedAt:      row.CreatedAt,
 	}
 	return l, raw, nil
 }
@@ -187,33 +187,33 @@ func (s *Service) URL(rawToken string) string {
 // PortalURL returns the hosted enterprise-setup page's address.
 func (s *Service) PortalURL() string { return s.loginBaseURL + "/enterprise-setup" }
 
-// List returns the tenant's portal links.
-func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Link, error) {
-	rows, err := s.q.ListAdminPortalLinksByTenant(ctx, tenantID)
+// List returns the organization's portal links.
+func (s *Service) List(ctx context.Context, organizationID uuid.UUID) ([]Link, error) {
+	rows, err := s.q.ListAdminPortalLinksByOrganization(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]Link, len(rows))
 	for i, r := range rows {
 		out[i] = Link{
-			ID:           r.ID,
-			TenantID:     r.TenantID,
-			Capabilities: r.Capabilities,
-			CreatedBy:    pgUUIDToPtr(r.CreatedBy),
-			ExpiresAt:    r.ExpiresAt,
-			RevokedAt:    pgTimeToPtr(r.RevokedAt),
-			LastUsedAt:   pgTimeToPtr(r.LastUsedAt),
-			CreatedAt:    r.CreatedAt,
+			ID:             r.ID,
+			OrganizationID: r.OrganizationID,
+			Capabilities:   r.Capabilities,
+			CreatedBy:      pgUUIDToPtr(r.CreatedBy),
+			ExpiresAt:      r.ExpiresAt,
+			RevokedAt:      pgTimeToPtr(r.RevokedAt),
+			LastUsedAt:     pgTimeToPtr(r.LastUsedAt),
+			CreatedAt:      r.CreatedAt,
 		}
 	}
 	return out, nil
 }
 
-// Revoke revokes one of the tenant's portal links.
-func (s *Service) Revoke(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) error {
+// Revoke revokes one of the organization's portal links.
+func (s *Service) Revoke(ctx context.Context, tx pgx.Tx, organizationID, id uuid.UUID) error {
 	n, err := s.q.WithTx(tx).RevokeAdminPortalLink(ctx, dbgen.RevokeAdminPortalLinkParams{
-		ID:       id,
-		TenantID: tenantID,
+		ID:             id,
+		OrganizationID: organizationID,
 	})
 	if err != nil {
 		return err
@@ -237,23 +237,23 @@ func (s *Service) Exchange(ctx context.Context, rawToken string) (*Link, string,
 	}
 	defer tx.Rollback(ctx)
 	var row struct {
-		ID           uuid.UUID
-		TenantID     uuid.UUID
-		Capabilities []string
-		CreatedBy    pgtype.UUID
-		ExpiresAt    time.Time
-		RevokedAt    pgtype.Timestamptz
-		LastUsedAt   pgtype.Timestamptz
-		CreatedAt    time.Time
-		RedeemedAt   pgtype.Timestamptz
+		ID             uuid.UUID
+		OrganizationID uuid.UUID
+		Capabilities   []string
+		CreatedBy      pgtype.UUID
+		ExpiresAt      time.Time
+		RevokedAt      pgtype.Timestamptz
+		LastUsedAt     pgtype.Timestamptz
+		CreatedAt      time.Time
+		RedeemedAt     pgtype.Timestamptz
 	}
 	err = tx.QueryRow(ctx, `
-		SELECT id, tenant_id, capabilities, created_by, expires_at, revoked_at,
+		SELECT id, organization_id, capabilities, created_by, expires_at, revoked_at,
 		       last_used_at, created_at, redeemed_at
-		FROM tenant.admin_portal_links
+		FROM organization.admin_portal_links
 		WHERE token_hash = $1
 		FOR UPDATE
-	`, hash).Scan(&row.ID, &row.TenantID, &row.Capabilities, &row.CreatedBy, &row.ExpiresAt,
+	`, hash).Scan(&row.ID, &row.OrganizationID, &row.Capabilities, &row.CreatedBy, &row.ExpiresAt,
 		&row.RevokedAt, &row.LastUsedAt, &row.CreatedAt, &row.RedeemedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, "", time.Time{}, errs.ErrAdminPortalLinkInvalid
@@ -262,14 +262,14 @@ func (s *Service) Exchange(ctx context.Context, rawToken string) (*Link, string,
 		return nil, "", time.Time{}, err
 	}
 	l := &Link{
-		ID:           row.ID,
-		TenantID:     row.TenantID,
-		Capabilities: row.Capabilities,
-		CreatedBy:    pgUUIDToPtr(row.CreatedBy),
-		ExpiresAt:    row.ExpiresAt,
-		RevokedAt:    pgTimeToPtr(row.RevokedAt),
-		LastUsedAt:   pgTimeToPtr(row.LastUsedAt),
-		CreatedAt:    row.CreatedAt,
+		ID:             row.ID,
+		OrganizationID: row.OrganizationID,
+		Capabilities:   row.Capabilities,
+		CreatedBy:      pgUUIDToPtr(row.CreatedBy),
+		ExpiresAt:      row.ExpiresAt,
+		RevokedAt:      pgTimeToPtr(row.RevokedAt),
+		LastUsedAt:     pgTimeToPtr(row.LastUsedAt),
+		CreatedAt:      row.CreatedAt,
 	}
 	if l.RevokedAt != nil {
 		return nil, "", time.Time{}, errs.ErrAdminPortalLinkRevoked
@@ -295,7 +295,7 @@ func (s *Service) Exchange(ctx context.Context, rawToken string) (*Link, string,
 		return nil, "", time.Time{}, err
 	}
 	if _, err := tx.Exec(ctx, `
-		UPDATE tenant.admin_portal_links
+		UPDATE organization.admin_portal_links
 		SET redeemed_at = NOW(), last_used_at = NOW()
 		WHERE id = $1
 	`, l.ID); err != nil {
@@ -321,13 +321,13 @@ func (s *Service) ResolveSession(ctx context.Context, rawSession string) (*Link,
 	var sessionExpires time.Time
 	err := s.pool.QueryRow(ctx, `
 		SELECT s.id, s.expires_at, s.revoked_at,
-		       l.id, l.tenant_id, l.capabilities, l.created_by, l.expires_at,
+		       l.id, l.organization_id, l.capabilities, l.created_by, l.expires_at,
 		       l.revoked_at, l.last_used_at, l.created_at
 		FROM auth.admin_portal_sessions s
-		JOIN tenant.admin_portal_links l ON l.id = s.link_id
+		JOIN organization.admin_portal_links l ON l.id = s.link_id
 		WHERE s.token_hash = $1
 	`, codes.Hash(rawSession)).Scan(&sessionID, &sessionExpires, &sessionRevoked,
-		&l.ID, &l.TenantID, &l.Capabilities, &createdBy, &l.ExpiresAt,
+		&l.ID, &l.OrganizationID, &l.Capabilities, &createdBy, &l.ExpiresAt,
 		&linkRevoked, &l.LastUsedAt, &l.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrAdminPortalSessionInvalid
@@ -369,8 +369,8 @@ func (s *Service) RevokeSession(ctx context.Context, rawSession string) error {
 	return nil
 }
 
-func (s *Service) tenantName(ctx context.Context, tenantID uuid.UUID) (string, error) {
-	return s.q.GetTenantNameByID(ctx, tenantID)
+func (s *Service) organizationName(ctx context.Context, organizationID uuid.UUID) (string, error) {
+	return s.q.GetOrganizationNameByID(ctx, organizationID)
 }
 
 // PortalBranding is the subset of branding.Branding a hosted, unauthenticated
@@ -387,22 +387,22 @@ type PortalBranding struct {
 // long it has left. SCIMBaseURL, where the IdP provisions to, is set only for
 // a link that may set up SCIM.
 type PortalContext struct {
-	TenantName   string          `json:"tenant_name"`
-	Capabilities []string        `json:"capabilities"`
-	ExpiresAt    time.Time       `json:"expires_at"`
-	Branding     *PortalBranding `json:"branding,omitempty"`
-	SCIMBaseURL  string          `json:"scim_base_url,omitempty"`
+	OrganizationName string          `json:"tenant_name"`
+	Capabilities     []string        `json:"capabilities"`
+	ExpiresAt        time.Time       `json:"expires_at"`
+	Branding         *PortalBranding `json:"branding,omitempty"`
+	SCIMBaseURL      string          `json:"scim_base_url,omitempty"`
 }
 
-// Context returns what the portal shows for a link: the tenant's name, the
+// Context returns what the portal shows for a link: the organization's name, the
 // link's capabilities and when it expires.
 func (s *Service) Context(ctx context.Context, l *Link) (*PortalContext, error) {
-	name, err := s.tenantName(ctx, l.TenantID)
+	name, err := s.organizationName(ctx, l.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
-	pc := &PortalContext{TenantName: name, Capabilities: l.Capabilities, ExpiresAt: l.ExpiresAt}
-	logo, primary, secondary, background := s.brandingRepo.LoginBranding(ctx, l.TenantID)
+	pc := &PortalContext{OrganizationName: name, Capabilities: l.Capabilities, ExpiresAt: l.ExpiresAt}
+	logo, primary, secondary, background := s.brandingRepo.LoginBranding(ctx, l.OrganizationID)
 	if logo != "" || primary != "" || secondary != "" || background != "" {
 		pc.Branding = &PortalBranding{LogoURL: logo, PrimaryColor: primary, SecondaryColor: secondary, BackgroundColor: background}
 	}
@@ -410,40 +410,40 @@ func (s *Service) Context(ctx context.Context, l *Link) (*PortalContext, error) 
 }
 
 // samlService is the slice of saml.Service the portal needs to let an IT
-// admin manage their tenant's SP-side connection(s).
+// admin manage their organization's SP-side connection(s).
 type samlService interface {
-	RequireSSO(ctx context.Context, tenantID uuid.UUID) error
-	List(ctx context.Context, tenantID uuid.UUID) ([]saml.Connection, error)
-	Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in saml.CreateInput) (*saml.Connection, error)
-	Get(ctx context.Context, id, tenantID uuid.UUID) (*saml.Connection, error)
-	Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID, in saml.UpdateInput) (*saml.Connection, error)
-	Delete(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID) error
-	TestConnection(ctx context.Context, id, tenantID uuid.UUID) (*saml.TestResult, error)
-	TestSignIn(ctx context.Context, id, connectionID, tenantID uuid.UUID) (*saml.TestSignIn, error)
+	RequireSSO(ctx context.Context, organizationID uuid.UUID) error
+	List(ctx context.Context, organizationID uuid.UUID) ([]saml.Connection, error)
+	Create(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, in saml.CreateInput) (*saml.Connection, error)
+	Get(ctx context.Context, id, organizationID uuid.UUID) (*saml.Connection, error)
+	Update(ctx context.Context, tx pgx.Tx, id, organizationID uuid.UUID, in saml.UpdateInput) (*saml.Connection, error)
+	Delete(ctx context.Context, tx pgx.Tx, id, organizationID uuid.UUID) error
+	TestConnection(ctx context.Context, id, organizationID uuid.UUID) (*saml.TestResult, error)
+	TestSignIn(ctx context.Context, id, connectionID, organizationID uuid.UUID) (*saml.TestSignIn, error)
 	Pool() *pgxpool.Pool
 }
 
 // samlSignIn is the slice of saml.Handler the portal needs to begin a test
 // sign-in in the IT admin's browser.
 type samlSignIn interface {
-	BeginTestSignIn(w http.ResponseWriter, r *http.Request, tx pgx.Tx, tenantID, id uuid.UUID, returnURL string) (*saml.TestSignIn, error)
+	BeginTestSignIn(w http.ResponseWriter, r *http.Request, tx pgx.Tx, organizationID, id uuid.UUID, returnURL string) (*saml.TestSignIn, error)
 }
 
 // domainService is the slice of domainverify.Service the portal needs to
-// claim and verify the tenant's domains.
+// claim and verify the organization's domains.
 type domainService interface {
-	List(ctx context.Context, tenantID uuid.UUID) ([]domainverify.Domain, error)
-	Add(ctx context.Context, tenantID uuid.UUID, raw string, actor audit.Actor) (*domainverify.Domain, error)
-	Verify(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) (*domainverify.Domain, error)
-	UpdateSettings(ctx context.Context, id, tenantID uuid.UUID, sso, jit *bool, actor audit.Actor) (*domainverify.Domain, error)
+	List(ctx context.Context, organizationID uuid.UUID) ([]domainverify.Domain, error)
+	Add(ctx context.Context, organizationID uuid.UUID, raw string, actor audit.Actor) (*domainverify.Domain, error)
+	Verify(ctx context.Context, id, organizationID uuid.UUID, actor audit.Actor) (*domainverify.Domain, error)
+	UpdateSettings(ctx context.Context, id, organizationID uuid.UUID, sso, jit *bool, actor audit.Actor) (*domainverify.Domain, error)
 }
 
 // scimService is the slice of scim.Service the portal needs to manage the
-// tenant's SCIM bearer token — never the provisioned-users list.
+// organization's SCIM bearer token — never the provisioned-users list.
 type scimService interface {
-	Config(ctx context.Context, tenantID uuid.UUID) (*scim.ConfigView, error)
-	Rotate(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) (string, error)
-	Revoke(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) error
+	Config(ctx context.Context, organizationID uuid.UUID) (*scim.ConfigView, error)
+	Rotate(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID) (string, error)
+	Revoke(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID) error
 	Pool() *pgxpool.Pool
 }
 
@@ -461,7 +461,7 @@ type Handler struct {
 }
 
 // Mount registers the authed link-management endpoints (generate/list/revoke)
-// under the normal /v1/tenants/{tenantID} group — this is the tenant admin's
+// under the normal /v1/tenants/{tenantID} group — this is the organization admin's
 // own action, gated by connection.write/connection.read like the rest of SSO
 // config.
 func (h *Handler) Mount(r chi.Router) {
@@ -507,30 +507,30 @@ func adminPortalHeaders(next http.Handler) http.Handler {
 	})
 }
 
-func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	return httpx.PathTenantOr(r, errs.ErrAdminPortalTenantIDInvalid, errs.ErrAdminPortalTenantMismatch)
+func requirePathOrganization(r *http.Request) (uuid.UUID, error) {
+	return httpx.PathOrganizationOr(r, errs.ErrAdminPortalOrganizationIDInvalid, errs.ErrAdminPortalOrganizationMismatch)
 }
 
-func (h *Handler) recordAudit(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, action string, resourceID *uuid.UUID, actorID *uuid.UUID, actorType, ip, ua, requestID string, meta map[string]any) error {
-	tid := tenantID
+func (h *Handler) recordAudit(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, action string, resourceID *uuid.UUID, actorID *uuid.UUID, actorType, ip, ua, requestID string, meta map[string]any) error {
+	tid := organizationID
 	return audit.Record(ctx, tx, audit.Event{
-		TenantID:     &tid,
-		ActorUserID:  actorID,
-		ActorType:    actorType,
-		Action:       action,
-		ResourceType: "admin_portal_link",
-		ResourceID:   resourceID,
-		IP:           ip,
-		UserAgent:    ua,
-		RequestID:    requestID,
-		Metadata:     meta,
+		OrganizationID: &tid,
+		ActorUserID:    actorID,
+		ActorType:      actorType,
+		Action:         action,
+		ResourceType:   "admin_portal_link",
+		ResourceID:     resourceID,
+		IP:             ip,
+		UserAgent:      ua,
+		RequestID:      requestID,
+		Metadata:       meta,
 	})
 }
 
 // --- authed: link management ---
 
 func (h *Handler) generate(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -555,13 +555,13 @@ func (h *Handler) generate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	link, raw, err := h.Service.Generate(ctx, tx, tenantID, *p.UserID, in.Capabilities, time.Duration(in.TTLSeconds)*time.Second)
+	link, raw, err := h.Service.Generate(ctx, tx, organizationID, *p.UserID, in.Capabilities, time.Duration(in.TTLSeconds)*time.Second)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	actorID, actorType := audit.ActorOf(r).Identity()
-	if err := h.recordAudit(ctx, tx, tenantID, "admin_portal.link_generated", &link.ID, actorID, actorType,
+	if err := h.recordAudit(ctx, tx, organizationID, "admin_portal.link_generated", &link.ID, actorID, actorType,
 		httpx.ClientIP(r), r.UserAgent(), httpx.RequestID(r), map[string]any{"capabilities": link.Capabilities}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -578,12 +578,12 @@ func (h *Handler) generate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out, err := h.Service.List(r.Context(), tenantID)
+	out, err := h.Service.List(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -592,7 +592,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -609,12 +609,12 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	if err := h.Service.Revoke(ctx, tx, tenantID, id); err != nil {
+	if err := h.Service.Revoke(ctx, tx, organizationID, id); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	actorID, actorType := audit.ActorOf(r).Identity()
-	if err := h.recordAudit(ctx, tx, tenantID, "admin_portal.link_revoked", &id, actorID, actorType,
+	if err := h.recordAudit(ctx, tx, organizationID, "admin_portal.link_revoked", &id, actorID, actorType,
 		httpx.ClientIP(r), r.UserAgent(), httpx.RequestID(r), nil); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -707,18 +707,18 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 
 func portalAudit(action string, resourceID *uuid.UUID) func(ctx context.Context, tx pgx.Tx, l *Link, r *http.Request, meta map[string]any) error {
 	return func(ctx context.Context, tx pgx.Tx, l *Link, r *http.Request, meta map[string]any) error {
-		tid := l.TenantID
+		tid := l.OrganizationID
 		return audit.Record(ctx, tx, audit.Event{
-			TenantID:     &tid,
-			ActorUserID:  l.CreatedBy,
-			ActorType:    "admin_portal",
-			Action:       action,
-			ResourceType: "saml_connection",
-			ResourceID:   resourceID,
-			IP:           httpx.ClientIP(r),
-			UserAgent:    r.UserAgent(),
-			RequestID:    httpx.RequestID(r),
-			Metadata:     meta,
+			OrganizationID: &tid,
+			ActorUserID:    l.CreatedBy,
+			ActorType:      "admin_portal",
+			Action:         action,
+			ResourceType:   "saml_connection",
+			ResourceID:     resourceID,
+			IP:             httpx.ClientIP(r),
+			UserAgent:      r.UserAgent(),
+			RequestID:      httpx.RequestID(r),
+			Metadata:       meta,
 		})
 	}
 }
@@ -783,7 +783,7 @@ func (h *Handler) samlList(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	conns, err := h.SAML.List(r.Context(), l.TenantID)
+	conns, err := h.SAML.List(r.Context(), l.OrganizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -816,7 +816,7 @@ func (h *Handler) samlCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	if err := h.SAML.RequireSSO(ctx, l.TenantID); err != nil {
+	if err := h.SAML.RequireSSO(ctx, l.OrganizationID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -826,7 +826,7 @@ func (h *Handler) samlCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	conn, err := h.SAML.Create(ctx, tx, l.TenantID, in)
+	conn, err := h.SAML.Create(ctx, tx, l.OrganizationID, in)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -853,7 +853,7 @@ func (h *Handler) samlGet(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrAdminPortalIDInvalid)
 		return
 	}
-	conn, err := h.SAML.Get(r.Context(), id, l.TenantID)
+	conn, err := h.SAML.Get(r.Context(), id, l.OrganizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -884,13 +884,13 @@ func (h *Handler) samlUpdate(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	// A portal session is no person who could outrank anyone, so it changes
 	// what a connection trusts only while no administrator is linked to it.
-	current, err := h.SAML.Get(ctx, id, l.TenantID)
+	current, err := h.SAML.Get(ctx, id, l.OrganizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	if in.ChangesTrust(current) {
-		if err := identitylink.CheckTrustChange(ctx, h.SAML.Pool(), nil, nil, l.TenantID, id, ""); err != nil {
+		if err := identitylink.CheckTrustChange(ctx, h.SAML.Pool(), nil, nil, l.OrganizationID, id, ""); err != nil {
 			httpx.WriteError(w, r, err)
 			return
 		}
@@ -901,7 +901,7 @@ func (h *Handler) samlUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	conn, err := h.SAML.Update(ctx, tx, id, l.TenantID, in)
+	conn, err := h.SAML.Update(ctx, tx, id, l.OrganizationID, in)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -928,7 +928,7 @@ func (h *Handler) samlTest(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrAdminPortalIDInvalid)
 		return
 	}
-	res, err := h.SAML.TestConnection(r.Context(), id, l.TenantID)
+	res, err := h.SAML.TestConnection(r.Context(), id, l.OrganizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -957,7 +957,7 @@ func (h *Handler) samlTestSignInBegin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	test, err := h.SAMLSignIn.BeginTestSignIn(w, r, tx, l.TenantID, id, h.Service.PortalURL())
+	test, err := h.SAMLSignIn.BeginTestSignIn(w, r, tx, l.OrganizationID, id, h.Service.PortalURL())
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -989,7 +989,7 @@ func (h *Handler) samlTestSignInGet(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrAdminPortalIDInvalid)
 		return
 	}
-	test, err := h.SAML.TestSignIn(r.Context(), testID, id, l.TenantID)
+	test, err := h.SAML.TestSignIn(r.Context(), testID, id, l.OrganizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1015,7 +1015,7 @@ func (h *Handler) samlDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	if err := h.SAML.Delete(ctx, tx, id, l.TenantID); err != nil {
+	if err := h.SAML.Delete(ctx, tx, id, l.OrganizationID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -1038,7 +1038,7 @@ func (h *Handler) scimConfig(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	cfg, err := h.SCIM.Config(r.Context(), l.TenantID)
+	cfg, err := h.SCIM.Config(r.Context(), l.OrganizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1059,20 +1059,20 @@ func (h *Handler) scimRotate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	full, err := h.SCIM.Rotate(ctx, tx, l.TenantID)
+	full, err := h.SCIM.Rotate(ctx, tx, l.OrganizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     &l.TenantID,
-		ActorUserID:  l.CreatedBy,
-		ActorType:    "admin_portal",
-		Action:       "scim.token_rotated",
-		ResourceType: "scim_token",
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
+		OrganizationID: &l.OrganizationID,
+		ActorUserID:    l.CreatedBy,
+		ActorType:      "admin_portal",
+		Action:         "scim.token_rotated",
+		ResourceType:   "scim_token",
+		IP:             httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
+		RequestID:      httpx.RequestID(r),
 	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1081,7 +1081,7 @@ func (h *Handler) scimRotate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	cfg, err := h.SCIM.Config(ctx, l.TenantID)
+	cfg, err := h.SCIM.Config(ctx, l.OrganizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1102,19 +1102,19 @@ func (h *Handler) scimRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	if err := h.SCIM.Revoke(ctx, tx, l.TenantID); err != nil {
+	if err := h.SCIM.Revoke(ctx, tx, l.OrganizationID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     &l.TenantID,
-		ActorUserID:  l.CreatedBy,
-		ActorType:    "admin_portal",
-		Action:       "scim.token_revoked",
-		ResourceType: "scim_token",
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
+		OrganizationID: &l.OrganizationID,
+		ActorUserID:    l.CreatedBy,
+		ActorType:      "admin_portal",
+		Action:         "scim.token_revoked",
+		ResourceType:   "scim_token",
+		IP:             httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
+		RequestID:      httpx.RequestID(r),
 	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1134,7 +1134,7 @@ func (h *Handler) domainList(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out, err := h.Domains.List(r.Context(), l.TenantID)
+	out, err := h.Domains.List(r.Context(), l.OrganizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1142,7 +1142,7 @@ func (h *Handler) domainList(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, paging.List(out))
 }
 
-// domainAdd claims a domain for the tenant and answers with the DNS record to
+// domainAdd claims a domain for the organization and answers with the DNS record to
 // publish, as the admin API does.
 func (h *Handler) domainAdd(w http.ResponseWriter, r *http.Request) {
 	l, err := h.resolve(r, CapabilityDomainVerification)
@@ -1157,7 +1157,7 @@ func (h *Handler) domainAdd(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	d, err := h.Domains.Add(r.Context(), l.TenantID, in.Domain, portalActor(l, r))
+	d, err := h.Domains.Add(r.Context(), l.OrganizationID, in.Domain, portalActor(l, r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1165,8 +1165,8 @@ func (h *Handler) domainAdd(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, d)
 }
 
-// domainVerify checks the DNS record of the tenant's domain, as the admin API
-// does: a domain another organisation verified stays theirs.
+// domainVerify checks the DNS record of the organization's domain, as the admin API
+// does: a domain another organization verified stays theirs.
 func (h *Handler) domainVerify(w http.ResponseWriter, r *http.Request) {
 	l, err := h.resolve(r, CapabilityDomainVerification)
 	if err != nil {
@@ -1178,7 +1178,7 @@ func (h *Handler) domainVerify(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrAdminPortalIDInvalid)
 		return
 	}
-	d, err := h.Domains.Verify(r.Context(), id, l.TenantID, portalActor(l, r))
+	d, err := h.Domains.Verify(r.Context(), id, l.OrganizationID, portalActor(l, r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1186,7 +1186,7 @@ func (h *Handler) domainVerify(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, d)
 }
 
-// domainUpdate turns single sign-on on or off for one of the organisation's verified domains, so
+// domainUpdate turns single sign-on on or off for one of the organization's verified domains, so
 // its people are sent to the identity provider the link is setting up (the guided setup's last
 // step). It needs both domain verification and SAML in the link, and touches no other setting.
 func (h *Handler) domainUpdate(w http.ResponseWriter, r *http.Request) {
@@ -1215,7 +1215,7 @@ func (h *Handler) domainUpdate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("sso_enabled is required"))
 		return
 	}
-	d, err := h.Domains.UpdateSettings(r.Context(), id, l.TenantID, in.SSOEnabled, nil, portalActor(l, r))
+	d, err := h.Domains.UpdateSettings(r.Context(), id, l.OrganizationID, in.SSOEnabled, nil, portalActor(l, r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

@@ -19,7 +19,7 @@ import (
 // over the past months. An older run reports its day's state where the data
 // records it, so early runs fail what the security team fixed later.
 
-// evidencePlan is an organisation's evidence cadence for one framework.
+// evidencePlan is an organization's evidence cadence for one framework.
 type evidencePlan struct {
 	slug, framework string
 	start, every    time.Duration // first run after sign-up, then every
@@ -42,7 +42,7 @@ type evidenceRun struct {
 	run *gdpr.EvidenceRun
 }
 
-// evidence generates each organisation's evidence runs and dates them.
+// evidence generates each organization's evidence runs and dates them.
 func evidence(w *world.World) {
 	w.Rechain()
 	var runs []evidenceRun
@@ -67,12 +67,12 @@ func evidence(w *world.World) {
 		controls, err := json.Marshal(r.run.Controls)
 		w.Check(err, "encode evidence controls")
 		w.Exec("date an evidence run", `
-			UPDATE tenant.compliance_evidence_runs SET generated_at = $3, pass_count = $4, fail_count = $5, na_count = $6, controls = $7
-			WHERE id = $1 AND tenant_id = $2`, r.run.ID, r.o.ID, date, pass, fail, na, controls)
+			UPDATE organization.compliance_evidence_runs SET generated_at = $3, pass_count = $4, fail_count = $5, na_count = $6, controls = $7
+			WHERE id = $1 AND organization_id = $2`, r.run.ID, r.o.ID, date, pass, fail, na, controls)
 		w.Exec("date an evidence record", `
 			UPDATE audit.events SET created_at = $3,
 			       metadata = metadata || jsonb_build_object('pass_count', $4::int, 'fail_count', $5::int, 'na_count', $6::int)
-			WHERE tenant_id = $1 AND resource_id = $2 AND action = 'compliance.evidence_generated'`,
+			WHERE organization_id = $1 AND resource_id = $2 AND action = 'compliance.evidence_generated'`,
 			r.o.ID, r.run.ID, date, pass, fail, na)
 	}
 	for _, o := range w.Orgs {
@@ -127,7 +127,7 @@ func asOf(w *world.World, r evidenceRun) time.Time {
 		}
 		switch control := c.ID; {
 		case strings.HasSuffix(control, "-MFA"):
-			if at, ok := since(`SELECT mfa_enforced_since FROM tenant.security_policies WHERE tenant_id = $1 AND mfa_enforced_since IS NOT NULL`); ok && at.After(t) {
+			if at, ok := since(`SELECT mfa_enforced_since FROM organization.security_policies WHERE organization_id = $1 AND mfa_enforced_since IS NOT NULL`); ok && at.After(t) {
 				set(gdpr.ControlFail, "MFA is not enforced: it is optional, so sign-in challenges only people who chose to set up a second factor — set mfa_enforcement to 'required'")
 			}
 		case control == "CC6.1-BREACH":
@@ -135,11 +135,11 @@ func asOf(w *world.World, r evidenceRun) time.Time {
 				set(gdpr.ControlFail, "adaptive risk detection not configured; HIBP breach check is disabled — enable at least one protection layer")
 			}
 		case strings.HasSuffix(control, "-RETAIN"):
-			if at, ok := since(`SELECT updated_at FROM tenant.retention_policy WHERE tenant_id = $1`); ok && at.After(t) {
+			if at, ok := since(`SELECT updated_at FROM organization.retention_policy WHERE organization_id = $1`); ok && at.After(t) {
 				set(gdpr.ControlFail, "no retention policy configured; enable deleted-user purge to enforce data disposal")
 			}
 		case control == "CC6.6-IP-ACL" || control == "A.13.1-IP":
-			rules := count(`SELECT count(*) FROM tenant.ip_rules WHERE tenant_id = $1 AND created_at <= $2`)
+			rules := count(`SELECT count(*) FROM organization.ip_rules WHERE organization_id = $1 AND created_at <= $2`)
 			on, enforced := enforcedSince[o.Spec.Slug]
 			switch {
 			case rules == 0:
@@ -150,33 +150,33 @@ func asOf(w *world.World, r evidenceRun) time.Time {
 				set(gdpr.ControlFail, "IP access rules are configured but enforcement is disabled — enable to protect the network boundary")
 			}
 		case control == "CC6.7-SECRETS" || control == "A.10.1-ENCRYPT":
-			if n := count(`SELECT count(*) FROM tenant.secrets WHERE tenant_id = $1 AND created_at <= $2`); n == 0 {
+			if n := count(`SELECT count(*) FROM organization.secrets WHERE organization_id = $1 AND created_at <= $2`); n == 0 {
 				set(gdpr.ControlNA, "no secrets stored in vault yet; the vault (AES-256-GCM, platform key provider) is available but unused — consider storing tenant credentials here")
 			} else {
 				set(gdpr.ControlPass, "%d secret(s) stored encrypted at rest (AES-256-GCM, key via platform provider)", n)
 			}
 		case control == "CC6.3-RBAC-ROLES" || control == "A.9.2-RBAC":
-			if n := count(`SELECT count(*) FROM rbac.roles WHERE tenant_id = $1 AND created_at <= $2`); n > 0 {
+			if n := count(`SELECT count(*) FROM rbac.roles WHERE organization_id = $1 AND created_at <= $2`); n > 0 {
 				set(gdpr.ControlPass, "%d RBAC role(s) defined (least-privilege model active)", n)
 			}
 		case control == "CC6.3-RBAC-ASSIGN":
-			if n := count(`SELECT count(*) FROM rbac.user_roles WHERE tenant_id = $1 AND granted_at <= $2`); n > 0 {
+			if n := count(`SELECT count(*) FROM rbac.user_roles WHERE organization_id = $1 AND granted_at <= $2`); n > 0 {
 				set(gdpr.ControlPass, "%d role assignment(s) active across tenant users", n)
 			}
 		case strings.HasSuffix(control, "-CHAIN"):
 			if c.Status == gdpr.ControlPass {
 				set(gdpr.ControlPass, "audit hash chain intact: %d events verified",
-					count(`SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND created_at <= $2`))
+					count(`SELECT count(*) FROM audit.events WHERE organization_id = $1 AND created_at <= $2`))
 			}
 		case control == "CC7.2-ACTIVE" || control == "A.12.4.1-AUDIT":
 			// Sign-in history is written after this step, so a month with no
 			// events yet keeps the run's own count rather than failing.
-			if n := count(`SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND created_at <= $2 AND created_at > $2 - interval '30 days'`); n > 0 {
+			if n := count(`SELECT count(*) FROM audit.events WHERE organization_id = $1 AND created_at <= $2 AND created_at > $2 - interval '30 days'`); n > 0 {
 				set(gdpr.ControlPass, "%d audit event(s) recorded in the last 30 days", n)
 			}
 		case strings.HasSuffix(control, "-SIEM"):
-			sinks := count(`SELECT count(*) FROM tenant.log_sinks WHERE tenant_id = $1 AND enabled AND created_at <= $2`)
-			hooks := count(`SELECT count(*) FROM tenant.webhook_subscriptions WHERE tenant_id = $1 AND created_at <= $2
+			sinks := count(`SELECT count(*) FROM organization.log_sinks WHERE organization_id = $1 AND enabled AND created_at <= $2`)
+			hooks := count(`SELECT count(*) FROM organization.webhook_subscriptions WHERE organization_id = $1 AND created_at <= $2
 				AND (disabled_at IS NULL OR disabled_at > $2)`)
 			if sinks == 0 && hooks == 0 {
 				set(gdpr.ControlFail, "no SIEM log sinks or webhook subscriptions configured; set up log forwarding for external monitoring")
@@ -191,8 +191,8 @@ func asOf(w *world.World, r evidenceRun) time.Time {
 			}
 			set(gdpr.ControlPass, "audit forwarding configured: %s", strings.Join(parts, ", "))
 		case control == "A.18.1-GDPR":
-			purges := count(`SELECT count(*) FROM account.purge_requests WHERE tenant_id = $1 AND created_at <= $2`)
-			exports := count(`SELECT count(*) FROM account.export_requests WHERE tenant_id = $1 AND created_at <= $2`)
+			purges := count(`SELECT count(*) FROM account.purge_requests WHERE organization_id = $1 AND created_at <= $2`)
+			exports := count(`SELECT count(*) FROM account.export_requests WHERE organization_id = $1 AND created_at <= $2`)
 			if purges+exports == 0 {
 				set(gdpr.ControlNA, "data-subject rights (right-to-erasure, data portability) are implemented but no requests have been processed for this tenant yet")
 			} else {
@@ -220,7 +220,7 @@ func tally(cs []gdpr.ControlResult) (pass, fail, na int) {
 
 // verificationRuns records the scheduler's nightly verification of every audit
 // chain over the last 60 days, each finding them intact.
-// The counts are of the seeded organisations' chains and the platform's, as
+// The counts are of the seeded organizations' chains and the platform's, as
 // they stood at each run.
 func verificationRuns(w *world.World) {
 	orgs := make([]uuid.UUID, 0, len(w.Orgs))
@@ -232,12 +232,12 @@ func verificationRuns(w *world.World) {
 		var rows int64
 		var chains int
 		w.Check(w.Admin.QueryRow(w.Ctx, `
-			SELECT count(*), count(DISTINCT tenant_id) FROM audit.events
-			WHERE (tenant_id IS NULL OR tenant_id = ANY($1)) AND created_at <= $2`, orgs, started).Scan(&rows, &chains),
+			SELECT count(*), count(DISTINCT organization_id) FROM audit.events
+			WHERE (organization_id IS NULL OR organization_id = ANY($1)) AND created_at <= $2`, orgs, started).Scan(&rows, &chains),
 			"count audit rows")
 		finished := started.Add(time.Duration(400+rows/40) * time.Millisecond)
 		w.Exec("record an audit verification", `
-			INSERT INTO platform.audit_verification_runs (id, started_at, finished_at, scope, tenants_walked, rows_checked, outcome)
+			INSERT INTO platform.audit_verification_runs (id, started_at, finished_at, scope, organizations_walked, rows_checked, outcome)
 			VALUES ($1, $2, $3, 'all', $4, $5, 'intact')`, uuid.New(), started, finished, chains, rows)
 	}
 }

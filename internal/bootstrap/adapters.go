@@ -15,36 +15,36 @@ import (
 	apikey "github.com/qeetgroup/qeet-id-server/internal/developer/api-keys"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc"
 	invite "github.com/qeetgroup/qeet-id-server/internal/identity/invitations"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/organization"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/billing"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// billingOrgProvisioner adapts the tenant repository to billing.OrgProvisioner,
+// billingOrgProvisioner adapts the organization repository to billing.OrgProvisioner,
 // so billing can create an organization after a paid checkout.
-type billingOrgProvisioner struct{ tenants *tenant.Repository }
+type billingOrgProvisioner struct{ organizations *organization.Repository }
 
 func (p billingOrgProvisioner) ProvisionOrg(ctx context.Context, ownerID uuid.UUID, name, slug, region, plan string) (uuid.UUID, error) {
-	t, err := p.tenants.CreateWithOwner(ctx, tenant.CreateInput{Slug: slug, Name: name, Plan: plan, Region: region}, ownerID)
+	t, err := p.organizations.CreateWithOwner(ctx, organization.CreateInput{Slug: slug, Name: name, Plan: plan, Region: region}, ownerID)
 	if err != nil {
 		return uuid.Nil, err
 	}
 	return t.ID, nil
 }
 
-// entitlementPlanResolver returns a tenant's effective plan: the billing
-// subscription first, then the tenant's plan label, otherwise free.
+// entitlementPlanResolver returns an organization's effective plan: the billing
+// subscription first, then the organization's plan label, otherwise free.
 type entitlementPlanResolver struct {
-	billing *billing.Service
-	tenants *tenant.Repository
+	billing       *billing.Service
+	organizations *organization.Repository
 }
 
-func (r entitlementPlanResolver) EffectivePlan(ctx context.Context, tenantID uuid.UUID) (string, error) {
+func (r entitlementPlanResolver) EffectivePlan(ctx context.Context, organizationID uuid.UUID) (string, error) {
 	if r.billing != nil {
-		if sub, err := r.billing.GetSubscription(ctx, tenantID); err == nil && sub != nil && sub.PlanCode != "" {
+		if sub, err := r.billing.GetSubscription(ctx, organizationID); err == nil && sub != nil && sub.PlanCode != "" {
 			// A subscription past its paid period or trial, or canceled, grants
-			// nothing: the tenant is on free, not on the stale label. Evaluated
+			// nothing: the organization is on free, not on the stale label. Evaluated
 			// lazily here, with no scheduler.
 			if sub.Grants(time.Now()) {
 				return sub.PlanCode, nil
@@ -52,15 +52,15 @@ func (r entitlementPlanResolver) EffectivePlan(ctx context.Context, tenantID uui
 			return "free", nil
 		}
 	}
-	if r.tenants != nil {
-		if t, err := r.tenants.Get(ctx, tenantID); err == nil && t != nil {
+	if r.organizations != nil {
+		if t, err := r.organizations.Get(ctx, organizationID); err == nil && t != nil {
 			return t.Plan, nil
 		}
 	}
 	return "free", nil
 }
 
-// entitlementUsageResolver reports a tenant's current consumption for the
+// entitlementUsageResolver reports an organization's current consumption for the
 // billing usage-vs-limits display. It reuses the same count queries the plan
 // gates check against. Best-effort per resource: a failed count is omitted
 // rather than failing the whole response.
@@ -72,30 +72,30 @@ type entitlementUsageResolver struct {
 	users    *user.Repository
 }
 
-func (u entitlementUsageResolver) Usage(ctx context.Context, tenantID uuid.UUID) (map[string]int, error) {
+func (u entitlementUsageResolver) Usage(ctx context.Context, organizationID uuid.UUID) (map[string]int, error) {
 	out := map[string]int{}
 	if u.invites != nil {
-		if n, err := u.invites.CountSeats(ctx, tenantID); err == nil {
+		if n, err := u.invites.CountSeats(ctx, organizationID); err == nil {
 			out["seats"] = n
 		}
 	}
 	if u.oidc != nil {
-		if n, err := u.oidc.CountClients(ctx, tenantID); err == nil {
+		if n, err := u.oidc.CountClients(ctx, organizationID); err == nil {
 			out["apps"] = n
 		}
 	}
 	if u.apikeys != nil {
-		if n, err := u.apikeys.CountActive(ctx, tenantID); err == nil {
+		if n, err := u.apikeys.CountActive(ctx, organizationID); err == nil {
 			out["api_keys"] = n
 		}
 	}
 	if u.rbacRepo != nil {
-		if n, err := u.rbacRepo.CountCustomRoles(ctx, tenantID); err == nil {
+		if n, err := u.rbacRepo.CountCustomRoles(ctx, organizationID); err == nil {
 			out["custom_roles"] = int(n)
 		}
 	}
 	if u.users != nil {
-		if n, err := u.users.CountMonthlyActive(ctx, tenantID); err == nil {
+		if n, err := u.users.CountMonthlyActive(ctx, organizationID); err == nil {
 			out[entitlements.LimitMAU] = n
 		}
 	}
@@ -110,7 +110,7 @@ type importRoles struct {
 	seats rbac.SeatGuard
 }
 
-func (g importRoles) CheckGrant(r *http.Request, tenantID, roleID uuid.UUID) (int, error) {
+func (g importRoles) CheckGrant(r *http.Request, organizationID, roleID uuid.UUID) (int, error) {
 	caller := httpx.PrincipalFromCtx(r.Context())
 	ok, err := rbac.Holds(r.Context(), g.repo, caller, "role.write")
 	if err != nil {
@@ -119,15 +119,15 @@ func (g importRoles) CheckGrant(r *http.Request, tenantID, roleID uuid.UUID) (in
 	if !ok {
 		return 0, errs.ErrRBACPermissionDenied.WithDetail("giving a role needs role.write")
 	}
-	if err := g.repo.CheckGrantRole(r.Context(), caller, tenantID, roleID); err != nil {
+	if err := g.repo.CheckGrantRole(r.Context(), caller, organizationID, roleID); err != nil {
 		return 0, err
 	}
-	return g.seats.SeatLimit(r.Context(), tenantID)
+	return g.seats.SeatLimit(r.Context(), organizationID)
 }
 
-func (g importRoles) Assign(ctx context.Context, tx pgx.Tx, userID, tenantID, roleID uuid.UUID, grantedBy *uuid.UUID, seats int) error {
-	return g.seats.WithinSeats(ctx, tx, tenantID, seats, func() error {
-		return g.repo.AssignRole(ctx, tx, userID, tenantID, roleID, grantedBy)
+func (g importRoles) Assign(ctx context.Context, tx pgx.Tx, userID, organizationID, roleID uuid.UUID, grantedBy *uuid.UUID, seats int) error {
+	return g.seats.WithinSeats(ctx, tx, organizationID, seats, func() error {
+		return g.repo.AssignRole(ctx, tx, userID, organizationID, roleID, grantedBy)
 	})
 }
 
@@ -150,10 +150,10 @@ func (a streamAccess) Allowed(ctx context.Context, p *httpx.Principal) (bool, er
 	switch {
 	case p.ActorType == "api_key":
 		id, ok := subjectID(p)
-		if !ok || p.TenantID == nil {
+		if !ok || p.OrganizationID == nil {
 			return false, nil
 		}
-		if live, err := a.apiKeys.Live(ctx, *p.TenantID, id); err != nil || !live {
+		if live, err := a.apiKeys.Live(ctx, *p.OrganizationID, id); err != nil || !live {
 			return false, err
 		}
 	case p.ActorType == "service" && a.verifier.PrincipalLive != nil:

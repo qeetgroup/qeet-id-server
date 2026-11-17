@@ -103,16 +103,16 @@ const maxEvaluations = 100
 // rbacChecker is the slice of rbac.Repository this package needs, and
 // rebacChecker the slice of rebac.Service, so tests need no database.
 type rbacChecker interface {
-	Check(ctx context.Context, userID, tenantID uuid.UUID, permKey string) (bool, error)
-	Explain(ctx context.Context, userID, tenantID uuid.UUID, permKey string) (*rbac.Explanation, error)
+	Check(ctx context.Context, userID, organizationID uuid.UUID, permKey string) (bool, error)
+	Explain(ctx context.Context, userID, organizationID uuid.UUID, permKey string) (*rbac.Explanation, error)
 }
 
 type rebacChecker interface {
-	Check(ctx context.Context, tenantID uuid.UUID, object, relation, userID string) (bool, error)
-	CheckExplain(ctx context.Context, tenantID uuid.UUID, object, relation, userID string) (*rebac.Explanation, error)
+	Check(ctx context.Context, organizationID uuid.UUID, object, relation, userID string) (bool, error)
+	CheckExplain(ctx context.Context, organizationID uuid.UUID, object, relation, userID string) (*rebac.Explanation, error)
 }
 
-// Service answers AuthZEN evaluation requests from the tenant's roles and
+// Service answers AuthZEN evaluation requests from the organization's roles and
 // relationships.
 type Service struct {
 	rbac    rbacChecker
@@ -135,7 +135,7 @@ const permissionResourceType = "permission"
 // Evaluate translates one AuthZEN evaluation request into the composed
 // decision resource.type selects. The ABAC policy that decided is named only to
 // a caller who may read policies (decide.Decider.ForViewer).
-func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, req EvaluationRequest) (*EvaluationResponse, error) {
+func (s *Service) Evaluate(ctx context.Context, organizationID uuid.UUID, req EvaluationRequest) (*EvaluationResponse, error) {
 	if req.Subject.ID == "" {
 		return nil, errs.ErrAuthZENSubjectIDRequired
 	}
@@ -163,11 +163,11 @@ func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, req Evaluati
 		if perr != nil {
 			return nil, errs.ErrAuthZENSubjectIDInvalid
 		}
-		if dec, err = s.decider.PermissionWith(ctx, tenantID, userID, req.Action.Name, props); err != nil {
+		if dec, err = s.decider.PermissionWith(ctx, organizationID, userID, req.Action.Name, props); err != nil {
 			return nil, err
 		}
 		if explain {
-			exp, err := s.rbac.Explain(ctx, userID, tenantID, req.Action.Name)
+			exp, err := s.rbac.Explain(ctx, userID, organizationID, req.Action.Name)
 			if err != nil {
 				return nil, err
 			}
@@ -178,11 +178,11 @@ func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, req Evaluati
 			return nil, errs.ErrAuthZENResourceRequired
 		}
 		object := req.Resource.Type + ":" + req.Resource.ID
-		if dec, err = s.decider.RelationWith(ctx, tenantID, req.Subject.ID, object, req.Action.Name, props); err != nil {
+		if dec, err = s.decider.RelationWith(ctx, organizationID, req.Subject.ID, object, req.Action.Name, props); err != nil {
 			return nil, err
 		}
 		if explain {
-			exp, err := s.rebac.CheckExplain(ctx, tenantID, object, req.Action.Name, req.Subject.ID)
+			exp, err := s.rebac.CheckExplain(ctx, organizationID, object, req.Action.Name, req.Subject.ID)
 			if err != nil {
 				return nil, err
 			}
@@ -194,9 +194,9 @@ func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, req Evaluati
 	if resource != permissionResourceType {
 		resource += ":" + req.Resource.ID
 	}
-	s.Decisions.Record(ctx, decisionlog.Entry{TenantID: tenantID, Source: decisionlog.SourceAuthZEN, Subject: req.Subject.ID,
+	s.Decisions.Record(ctx, decisionlog.Entry{OrganizationID: organizationID, Source: decisionlog.SourceAuthZEN, Subject: req.Subject.ID,
 		Resource: resource, Action: req.Action.Name, Allowed: dec.Allow, Model: dec.Model, Rule: dec.Rule, ReasonCode: dec.ReasonCode})
-	dec = s.decider.ForViewer(ctx, httpx.PrincipalFromCtx(ctx), tenantID, dec)
+	dec = s.decider.ForViewer(ctx, httpx.PrincipalFromCtx(ctx), organizationID, dec)
 	out := &EvaluationResponse{Decision: dec.Allow, Context: map[string]any{"decided_by": dec.DecidedBy()}}
 	if explain {
 		for k, v := range path {
@@ -211,7 +211,7 @@ func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, req Evaluati
 // first deny or permit as its semantic asks. An evaluation the caller got
 // wrong is denied with the error in its context, as {status, code, message},
 // and counts as a deny; any other error fails the whole request.
-func (s *Service) EvaluateAll(ctx context.Context, tenantID uuid.UUID, req EvaluationsRequest) (*EvaluationsResponse, error) {
+func (s *Service) EvaluateAll(ctx context.Context, organizationID uuid.UUID, req EvaluationsRequest) (*EvaluationsResponse, error) {
 	semantic := req.Options.EvaluationsSemantic
 	switch semantic {
 	case "":
@@ -238,7 +238,7 @@ func (s *Service) EvaluateAll(ctx context.Context, tenantID uuid.UUID, req Evalu
 		if e.Context != nil {
 			one.Context = e.Context
 		}
-		res, err := s.Evaluate(ctx, tenantID, one)
+		res, err := s.Evaluate(ctx, organizationID, one)
 		var bad *errs.Error
 		if errors.As(err, &bad) && httpx.ErrorStatus(bad) < http.StatusInternalServerError {
 			res = &EvaluationResponse{Context: map[string]any{"error": map[string]any{
@@ -276,28 +276,28 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/tenants/{tenantID}/access/v1/evaluations", h.evaluations)
 }
 
-// tenant is the organisation the request decides in: the path's, which must
+// organization returns the one the request decides in: the path's, which must
 // be the caller's.
-func tenant(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
-	tenantID, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+func organization(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
+	organizationID, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
 		return uuid.Nil, false
 	}
-	scope, err := httpx.RequireTenant(r)
+	scope, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return uuid.Nil, false
 	}
-	if tenantID != scope {
+	if organizationID != scope {
 		httpx.WriteError(w, r, errs.ErrForbidden.WithDetail("tenant mismatch"))
 		return uuid.Nil, false
 	}
-	return tenantID, true
+	return organizationID, true
 }
 
 func (h *Handler) evaluations(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := tenant(w, r)
+	organizationID, ok := organization(w, r)
 	if !ok {
 		return
 	}
@@ -319,7 +319,7 @@ func (h *Handler) evaluations(w http.ResponseWriter, r *http.Request) {
 		if in.Action != nil {
 			one.Action = *in.Action
 		}
-		out, err := h.Service.Evaluate(r.Context(), tenantID, one)
+		out, err := h.Service.Evaluate(r.Context(), organizationID, one)
 		if err != nil {
 			httpx.WriteError(w, r, err)
 			return
@@ -327,7 +327,7 @@ func (h *Handler) evaluations(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, out)
 		return
 	}
-	out, err := h.Service.EvaluateAll(r.Context(), tenantID, in)
+	out, err := h.Service.EvaluateAll(r.Context(), organizationID, in)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -336,7 +336,7 @@ func (h *Handler) evaluations(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) evaluate(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := tenant(w, r)
+	organizationID, ok := organization(w, r)
 	if !ok {
 		return
 	}
@@ -346,7 +346,7 @@ func (h *Handler) evaluate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out, err := h.Service.Evaluate(r.Context(), tenantID, in)
+	out, err := h.Service.Evaluate(r.Context(), organizationID, in)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

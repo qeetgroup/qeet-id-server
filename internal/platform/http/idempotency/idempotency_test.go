@@ -10,19 +10,19 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// TestSealedAsReadsTheScope checks that the tenant a stored answer is sealed
+// TestSealedAsReadsTheScope checks that the organization a stored answer is sealed
 // under can be read back from its scope alone, as re-encryption must: the
-// caller's organisation, or the stand-in for a caller with none.
+// caller's organization, or the stand-in for a caller with none.
 func TestSealedAsReadsTheScope(t *testing.T) {
-	tenant, user := uuid.New(), uuid.New()
+	organization, user := uuid.New(), uuid.New()
 	for _, tc := range []struct {
 		principal *httpx.Principal
 		want      uuid.UUID
 	}{
 		{nil, platformScope},
 		{&httpx.Principal{ActorType: "user", Subject: user.String(), UserID: &user}, platformScope},
-		{&httpx.Principal{ActorType: "user", Subject: user.String(), UserID: &user, TenantID: &tenant}, tenant},
-		{&httpx.Principal{ActorType: "api_key", Subject: "key|with|bars", TenantID: &tenant}, tenant},
+		{&httpx.Principal{ActorType: "user", Subject: user.String(), UserID: &user, OrganizationID: &organization}, organization},
+		{&httpx.Principal{ActorType: "api_key", Subject: "key|with|bars", OrganizationID: &organization}, organization},
 	} {
 		r := httptest.NewRequest(http.MethodPost, "/v1/things", nil)
 		if tc.principal != nil {

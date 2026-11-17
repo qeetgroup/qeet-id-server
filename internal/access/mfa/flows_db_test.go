@@ -42,14 +42,14 @@ func services(t *testing.T, sender notifier.Sender) (*Service, *auth.Service) {
 	return mfaSvc, authSvc
 }
 
-// member creates a member of a new organisation who signs in with
+// member creates a member of a new organization who signs in with
 // testPassword.
 func member(t *testing.T) (dbtest.Account, uuid.UUID) {
 	t.Helper()
-	tenant := dbtest.Tenant(t)
-	a := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	a := dbtest.User(t, organization, organization)
 	dbtest.SetPassword(t, a.ID, testPassword)
-	return a, tenant
+	return a, organization
 }
 
 // inTx runs fn in a transaction, committed when fn succeeds.
@@ -174,9 +174,9 @@ func TestEmailCodes(t *testing.T) {
 	ctx := dbtest.Context(t)
 	mail := &dbtest.Mailbox{}
 	mfaSvc, authSvc := services(t, mail)
-	a, tenant := member(t)
+	a, organization := member(t)
 
-	factor, err := mfaSvc.EnrollOTPStart(ctx, a.ID, &tenant, "email", a.Email)
+	factor, err := mfaSvc.EnrollOTPStart(ctx, a.ID, &organization, "email", a.Email)
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestEmailCodes(t *testing.T) {
 	}
 	pastWait()
 	token := challenge(t, authSvc, a)
-	if err := mfaSvc.ChallengeOTP(ctx, a.ID, &tenant, factor); err != nil {
+	if err := mfaSvc.ChallengeOTP(ctx, a.ID, &organization, factor); err != nil {
 		t.Fatalf("send step-up code: %v", err)
 	}
 	stepUp := mail.Last(t)
@@ -297,10 +297,10 @@ func TestAttemptsAreLimited(t *testing.T) {
 func TestStepUpGate(t *testing.T) {
 	ctx := dbtest.Context(t)
 	mfaSvc, authSvc := services(t, notifier.LogSender{})
-	a, tenant := member(t)
+	a, organization := member(t)
 	signIn := func() *auth.TokenPair {
 		t.Helper()
-		pair, err := authSvc.IssuePair(ctx, a.ID, tenant, "192.0.2.1", "test", "password")
+		pair, err := authSvc.IssuePair(ctx, a.ID, organization, "192.0.2.1", "test", "password")
 		if err != nil {
 			t.Fatalf("sign in: %v", err)
 		}
@@ -309,7 +309,7 @@ func TestStepUpGate(t *testing.T) {
 	gate := mfaSvc.StepUpGate(map[string]StepUpRule{"POST /always": StepUpAlways, "POST /when-held": StepUpOrRecentSignIn})
 	ok := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }
 	serve := func(session uuid.UUID) http.Handler {
-		p := dbtest.Principal(a.ID, tenant)
+		p := dbtest.Principal(a.ID, organization)
 		p.SessionID = &session
 		return dbtest.Serve(p, func(r chi.Router) {
 			r.Use(gate)

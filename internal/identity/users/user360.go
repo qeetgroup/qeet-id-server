@@ -2,7 +2,7 @@ package user
 
 // User 360: the console's per-user investigation views (security posture,
 // sessions, access). Reads resolve {id} with memberID and actions with
-// scopedID, so a user outside the caller's tenant is ErrNotFound.
+// scopedID, so a user outside the caller's organization is ErrNotFound.
 
 import (
 	"context"
@@ -79,8 +79,8 @@ type OrganizationInfo struct {
 	Slug string    `json:"slug"`
 }
 
-// AccessSummary is what a user can access in the caller's tenant. Organization
-// is that tenant and Roles are direct assignments; the Permissions counts split
+// AccessSummary is what a user can access in the caller's organization. Organization
+// is that organization and Roles are direct assignments; the Permissions counts split
 // the effective set into direct and group-inherited.
 type AccessSummary struct {
 	Organization         *OrganizationInfo `json:"organization"`
@@ -93,7 +93,7 @@ type AccessSummary struct {
 	PermissionsTotal     int               `json:"permissions_total"`
 }
 
-// UserStats is the tenant-wide member summary shown in the Users KPI cards.
+// UserStats is the organization-wide member summary shown in the Users KPI cards.
 type UserStats struct {
 	Total      int `json:"total"`
 	Active     int `json:"active"`
@@ -114,9 +114,9 @@ type UserTrends struct {
 
 // ── Repository ────────────────────────────────────────────────────────────────
 
-// Stats returns the tenant-wide member counts for the Users summary.
-func (r *Repository) Stats(ctx context.Context, tenantID uuid.UUID) (*UserStats, error) {
-	row, err := r.q.GetUserStats(ctx, tenantID)
+// Stats returns the organization-wide member counts for the Users summary.
+func (r *Repository) Stats(ctx context.Context, organizationID uuid.UUID) (*UserStats, error) {
+	row, err := r.q.GetUserStats(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -132,8 +132,8 @@ func (r *Repository) Stats(ctx context.Context, tenantID uuid.UUID) (*UserStats,
 }
 
 // Trends returns the 30-day daily total/MFA-enabled series for the KPI cards.
-func (r *Repository) Trends(ctx context.Context, tenantID uuid.UUID) (*UserTrends, error) {
-	rows, err := r.q.GetUserTrends(ctx, tenantID)
+func (r *Repository) Trends(ctx context.Context, organizationID uuid.UUID) (*UserTrends, error) {
+	rows, err := r.q.GetUserTrends(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -146,10 +146,10 @@ func (r *Repository) Trends(ctx context.Context, tenantID uuid.UUID) (*UserTrend
 }
 
 // SecuritySummary aggregates a user's authentication posture, counting the
-// sessions ListUserSessions lists for tenantID. The two nullable timestamps come
+// sessions ListUserSessions lists for organizationID. The two nullable timestamps come
 // from dedicated queries whose ErrNoRows cleanly means "never".
-func (r *Repository) SecuritySummary(ctx context.Context, id, tenantID uuid.UUID) (*SecuritySummary, error) {
-	row, err := r.q.GetUserSecuritySummary(ctx, dbgen.GetUserSecuritySummaryParams{ID: id, TenantID: tenantID})
+func (r *Repository) SecuritySummary(ctx context.Context, id, organizationID uuid.UUID) (*SecuritySummary, error) {
+	row, err := r.q.GetUserSecuritySummary(ctx, dbgen.GetUserSecuritySummaryParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
 	}
@@ -186,10 +186,10 @@ func (r *Repository) SecuritySummary(ctx context.Context, id, tenantID uuid.UUID
 	return s, nil
 }
 
-// ListUserSessions returns a user's live sessions in tenantID, and, when it is
-// their home tenant, those in no tenant.
-func (r *Repository) ListUserSessions(ctx context.Context, id, tenantID uuid.UUID) ([]SessionInfo, error) {
-	rows, err := r.q.ListUserActiveSessions(ctx, dbgen.ListUserActiveSessionsParams{UserID: id, TenantID: tenantID})
+// ListUserSessions returns a user's live sessions in organizationID, and, when it is
+// their home organization, those in no organization.
+func (r *Repository) ListUserSessions(ctx context.Context, id, organizationID uuid.UUID) ([]SessionInfo, error) {
+	rows, err := r.q.ListUserActiveSessions(ctx, dbgen.ListUserActiveSessionsParams{UserID: id, OrganizationID: organizationID})
 	if err != nil {
 		return nil, err
 	}
@@ -219,9 +219,9 @@ func (r *Repository) ListUserSessions(ctx context.Context, id, tenantID uuid.UUI
 	return out, nil
 }
 
-// UserRolesInTenant returns the user's roles in the tenant.
-func (r *Repository) UserRolesInTenant(ctx context.Context, id, tenantID uuid.UUID) ([]RoleInfo, error) {
-	rows, err := r.q.ListUserRolesInTenant(ctx, dbgen.ListUserRolesInTenantParams{UserID: id, TenantID: tenantID})
+// UserRolesInOrganization returns the user's roles in the organization.
+func (r *Repository) UserRolesInOrganization(ctx context.Context, id, organizationID uuid.UUID) ([]RoleInfo, error) {
+	rows, err := r.q.ListUserRolesInOrganization(ctx, dbgen.ListUserRolesInOrganizationParams{UserID: id, OrganizationID: organizationID})
 	if err != nil {
 		return nil, err
 	}
@@ -232,9 +232,9 @@ func (r *Repository) UserRolesInTenant(ctx context.Context, id, tenantID uuid.UU
 	return out, nil
 }
 
-// UserGroupsInTenant returns the user's groups in the tenant.
-func (r *Repository) UserGroupsInTenant(ctx context.Context, id, tenantID uuid.UUID) ([]GroupInfo, error) {
-	rows, err := r.q.ListUserGroupsInTenant(ctx, dbgen.ListUserGroupsInTenantParams{UserID: id, TenantID: tenantID})
+// UserGroupsInOrganization returns the user's groups in the organization.
+func (r *Repository) UserGroupsInOrganization(ctx context.Context, id, organizationID uuid.UUID) ([]GroupInfo, error) {
+	rows, err := r.q.ListUserGroupsInOrganization(ctx, dbgen.ListUserGroupsInOrganizationParams{UserID: id, OrganizationID: organizationID})
 	if err != nil {
 		return nil, err
 	}
@@ -247,8 +247,8 @@ func (r *Repository) UserGroupsInTenant(ctx context.Context, id, tenantID uuid.U
 
 // accessOrganization is the organization an access view describes: the one the
 // admin is viewing the user from.
-func (r *Repository) accessOrganization(ctx context.Context, tenantID uuid.UUID) (*OrganizationInfo, error) {
-	row, err := r.q.GetAccessOrganization(ctx, tenantID)
+func (r *Repository) accessOrganization(ctx context.Context, organizationID uuid.UUID) (*OrganizationInfo, error) {
+	row, err := r.q.GetAccessOrganization(ctx, organizationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
 	}
@@ -258,33 +258,33 @@ func (r *Repository) accessOrganization(ctx context.Context, tenantID uuid.UUID)
 	return &OrganizationInfo{ID: row.ID, Name: row.Name, Slug: row.Slug}, nil
 }
 
-// AccessSummary composes the per-user access view for the caller's tenant.
-func (r *Repository) AccessSummary(ctx context.Context, id, tenantID uuid.UUID) (*AccessSummary, error) {
-	org, err := r.accessOrganization(ctx, tenantID)
+// AccessSummary composes the per-user access view for the caller's organization.
+func (r *Repository) AccessSummary(ctx context.Context, id, organizationID uuid.UUID) (*AccessSummary, error) {
+	org, err := r.accessOrganization(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
-	roles, err := r.UserRolesInTenant(ctx, id, tenantID)
+	roles, err := r.UserRolesInOrganization(ctx, id, organizationID)
 	if err != nil {
 		return nil, err
 	}
-	groups, err := r.UserGroupsInTenant(ctx, id, tenantID)
+	groups, err := r.UserGroupsInOrganization(ctx, id, organizationID)
 	if err != nil {
 		return nil, err
 	}
-	apps, err := r.q.CountUserApplications(ctx, dbgen.CountUserApplicationsParams{UserID: id, TenantID: tenantID})
+	apps, err := r.q.CountUserApplications(ctx, dbgen.CountUserApplicationsParams{UserID: id, OrganizationID: organizationID})
 	if err != nil {
 		return nil, err
 	}
-	policies, err := r.q.CountTenantEnabledPolicies(ctx, tenantID)
+	policies, err := r.q.CountOrganizationEnabledPolicies(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
-	direct, err := r.q.CountUserDirectPermissions(ctx, dbgen.CountUserDirectPermissionsParams{UserID: id, TenantID: tenantID})
+	direct, err := r.q.CountUserDirectPermissions(ctx, dbgen.CountUserDirectPermissionsParams{UserID: id, OrganizationID: organizationID})
 	if err != nil {
 		return nil, err
 	}
-	effective, err := r.q.CountUserEffectivePermissions(ctx, dbgen.CountUserEffectivePermissionsParams{UserID: id, TenantID: tenantID})
+	effective, err := r.q.CountUserEffectivePermissions(ctx, dbgen.CountUserEffectivePermissionsParams{UserID: id, OrganizationID: organizationID})
 	if err != nil {
 		return nil, err
 	}
@@ -319,19 +319,19 @@ func (r *Repository) SetMfaRequiredTx(ctx context.Context, tx pgx.Tx, id uuid.UU
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
-// getUserStats handles GET /v1/users/stats: member counts for the caller's tenant.
+// getUserStats handles GET /v1/users/stats: member counts for the caller's organization.
 func (h *Handler) getUserStats(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFromCtx(r.Context())
-	if p == nil || p.TenantID == nil {
+	if p == nil || p.OrganizationID == nil {
 		httpx.WriteError(w, r, errs.ErrUnauthorized.WithDetail("tenant scope required"))
 		return
 	}
-	stats, err := h.Repo.Stats(r.Context(), *p.TenantID)
+	stats, err := h.Repo.Stats(r.Context(), *p.OrganizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	counts, err := h.Repo.Counts(r.Context(), *p.TenantID)
+	counts, err := h.Repo.Counts(r.Context(), *p.OrganizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -343,14 +343,14 @@ func (h *Handler) getUserStats(w http.ResponseWriter, r *http.Request) {
 }
 
 // getUserTrends handles GET /v1/users/trends: 30-day daily series for the
-// caller's tenant.
+// caller's organization.
 func (h *Handler) getUserTrends(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFromCtx(r.Context())
-	if p == nil || p.TenantID == nil {
+	if p == nil || p.OrganizationID == nil {
 		httpx.WriteError(w, r, errs.ErrUnauthorized.WithDetail("tenant scope required"))
 		return
 	}
-	trends, err := h.Repo.Trends(r.Context(), *p.TenantID)
+	trends, err := h.Repo.Trends(r.Context(), *p.OrganizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -359,14 +359,14 @@ func (h *Handler) getUserTrends(w http.ResponseWriter, r *http.Request) {
 }
 
 // getSecurity handles GET /v1/users/{id}/security: the user's SecuritySummary
-// as the caller's tenant sees it.
+// as the caller's organization sees it.
 func (h *Handler) getSecurity(w http.ResponseWriter, r *http.Request) {
-	id, tenantID, err := h.memberID(r)
+	id, organizationID, err := h.memberID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	sum, err := h.Repo.SecuritySummary(r.Context(), id, tenantID)
+	sum, err := h.Repo.SecuritySummary(r.Context(), id, organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -375,14 +375,14 @@ func (h *Handler) getSecurity(w http.ResponseWriter, r *http.Request) {
 }
 
 // getSessions handles GET /v1/users/{id}/sessions: the user's live sessions
-// in the caller's tenant.
+// in the caller's organization.
 func (h *Handler) getSessions(w http.ResponseWriter, r *http.Request) {
-	id, tenantID, err := h.memberID(r)
+	id, organizationID, err := h.memberID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	items, err := h.Repo.ListUserSessions(r.Context(), id, tenantID)
+	items, err := h.Repo.ListUserSessions(r.Context(), id, organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -395,7 +395,7 @@ func (h *Handler) getSessions(w http.ResponseWriter, r *http.Request) {
 // reports {"revoked": total} with a count per kind. Access tokens already
 // issued stay valid until they expire.
 func (h *Handler) revokeAllSessions(w http.ResponseWriter, r *http.Request) {
-	id, tenantID, err := h.actOnID(r)
+	id, organizationID, err := h.actOnID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -421,14 +421,14 @@ func (h *Handler) revokeAllSessions(w http.ResponseWriter, r *http.Request) {
 		actorID = p.UserID
 	}
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     &tenantID,
-		ActorUserID:  actorID,
-		Action:       "session.admin_revoked_all",
-		ResourceType: "user",
-		ResourceID:   &id,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
+		OrganizationID: &organizationID,
+		ActorUserID:    actorID,
+		Action:         "session.admin_revoked_all",
+		ResourceType:   "user",
+		ResourceID:     &id,
+		IP:             httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
+		RequestID:      httpx.RequestID(r),
 		Metadata: map[string]any{
 			"revoked_sessions":             ended.Sessions,
 			"revoked_login_sessions":       ended.LoginSessions,
@@ -456,12 +456,12 @@ func (h *Handler) revokeAllSessions(w http.ResponseWriter, r *http.Request) {
 
 // getAccess handles GET /v1/users/{id}/access: the user's AccessSummary.
 func (h *Handler) getAccess(w http.ResponseWriter, r *http.Request) {
-	id, tenantID, err := h.memberID(r)
+	id, organizationID, err := h.memberID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	sum, err := h.Repo.AccessSummary(r.Context(), id, tenantID)
+	sum, err := h.Repo.AccessSummary(r.Context(), id, organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -477,7 +477,7 @@ type setMfaRequiredInput struct {
 // setMfaRequired handles PUT /v1/users/{id}/mfa-required: it sets the user's
 // MFA-required flag and audits it, with the value set, in one transaction.
 func (h *Handler) setMfaRequired(w http.ResponseWriter, r *http.Request) {
-	id, tenantID, err := h.actOnID(r)
+	id, organizationID, err := h.actOnID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -491,7 +491,7 @@ func (h *Handler) setMfaRequired(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("required is required"))
 		return
 	}
-	if err := h.withAudit(r, tenantID, id, "user.mfa_required_set", map[string]any{"mfa_required": *in.Required},
+	if err := h.withAudit(r, organizationID, id, "user.mfa_required_set", map[string]any{"mfa_required": *in.Required},
 		func(ctx context.Context, tx pgx.Tx) error { return h.Repo.SetMfaRequiredTx(ctx, tx, id, *in.Required) }); err != nil {
 		httpx.WriteError(w, r, err)
 		return

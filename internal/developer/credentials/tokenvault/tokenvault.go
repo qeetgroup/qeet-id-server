@@ -1,4 +1,4 @@
-// Package tokenvault stores each tenant's third-party OAuth tokens (Slack,
+// Package tokenvault stores each organization's third-party OAuth tokens (Slack,
 // GitHub, Google, or any registered OAuth2 provider), encrypted. A user connects
 // once through an authorization-code flow; GetAccessToken then returns a live
 // access token, never the refresh token.
@@ -41,7 +41,7 @@ const connectStateTTL = 10 * time.Minute
 // expires, so a slow caller never hands out a token that dies mid-flight.
 const expirySkew = 60 * time.Second
 
-// Provider is a tenant's registered OAuth2 endpoint config for one
+// Provider is an organization's registered OAuth2 endpoint config for one
 // third-party service. ClientSecret is never returned by the API.
 type Provider struct {
 	ID           uuid.UUID `json:"id"`
@@ -64,7 +64,7 @@ type GrantMeta struct {
 	UpdatedAt         time.Time  `json:"updated_at"`
 }
 
-// Service stores each tenant's OAuth provider settings and its users'
+// Service stores each organization's OAuth provider settings and its users'
 // third-party tokens, encrypted at rest.
 type Service struct {
 	pool   *pgxpool.Pool
@@ -90,14 +90,14 @@ func tsPtr(p pgtype.Timestamptz) *time.Time {
 	return &t
 }
 
-func (s *Service) encrypt(tenantID, userID uuid.UUID, provider, purpose, plaintext string) (ciphertext, nonce []byte, err error) {
+func (s *Service) encrypt(organizationID, userID uuid.UUID, provider, purpose, plaintext string) (ciphertext, nonce []byte, err error) {
 	resource := userID.String() + ":" + provider
-	return s.box.Seal(tenantID, purpose, resource, []byte(plaintext))
+	return s.box.Seal(organizationID, purpose, resource, []byte(plaintext))
 }
 
-func (s *Service) decrypt(tenantID, userID uuid.UUID, provider, purpose string, ciphertext, nonce []byte) (string, error) {
+func (s *Service) decrypt(organizationID, userID uuid.UUID, provider, purpose string, ciphertext, nonce []byte) (string, error) {
 	resource := userID.String() + ":" + provider
-	pt, err := s.box.Open(tenantID, purpose, resource, ciphertext, nonce)
+	pt, err := s.box.Open(organizationID, purpose, resource, ciphertext, nonce)
 	if err != nil {
 		return "", err
 	}
@@ -116,10 +116,10 @@ type RegisterProviderInput struct {
 	Scopes       string `json:"scopes"`
 }
 
-// RegisterProvider stores the tenant's settings for an OAuth provider. Its
+// RegisterProvider stores the organization's settings for an OAuth provider. Its
 // endpoints and client don't change while anyone is connected through it
 // (ErrTokenVaultProviderInUse): their refresh tokens would go to the new ones.
-func (s *Service) RegisterProvider(ctx context.Context, tenantID uuid.UUID, in RegisterProviderInput) (*Provider, error) {
+func (s *Service) RegisterProvider(ctx context.Context, organizationID uuid.UUID, in RegisterProviderInput) (*Provider, error) {
 	var missing []errs.FieldError
 	for field, value := range map[string]string{"provider": in.Provider, "client_id": in.ClientID, "client_secret": in.ClientSecret} {
 		if strings.TrimSpace(value) == "" {
@@ -136,7 +136,7 @@ func (s *Service) RegisterProvider(ctx context.Context, tenantID uuid.UUID, in R
 	if _, err := s.egress.ValidateHTTPURL(in.TokenURL); err != nil {
 		return nil, errs.ErrTokenVaultProviderTokenURLInvalid
 	}
-	ct, nonce, err := s.box.Seal(tenantID, "token-vault-provider", in.Provider, []byte(in.ClientSecret))
+	ct, nonce, err := s.box.Seal(organizationID, "token-vault-provider", in.Provider, []byte(in.ClientSecret))
 	if err != nil {
 		return nil, err
 	}
@@ -145,16 +145,16 @@ func (s *Service) RegisterProvider(ctx context.Context, tenantID uuid.UUID, in R
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	if err := refuseRepointing(ctx, s.q.WithTx(tx), tenantID, in); err != nil {
+	if err := refuseRepointing(ctx, s.q.WithTx(tx), organizationID, in); err != nil {
 		return nil, err
 	}
 	var provider Provider
 	err = tx.QueryRow(ctx, `
-		INSERT INTO tenant.token_vault_providers
-		    (tenant_id, provider, client_id, client_secret_ct, client_secret_nonce,
+		INSERT INTO organization.token_vault_providers
+		    (organization_id, provider, client_id, client_secret_ct, client_secret_nonce,
 		     authorize_url, token_url, scopes)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		ON CONFLICT (tenant_id, provider) DO UPDATE SET
+		ON CONFLICT (organization_id, provider) DO UPDATE SET
 		    client_id = EXCLUDED.client_id,
 		    client_secret_ct = EXCLUDED.client_secret_ct,
 		    client_secret_nonce = EXCLUDED.client_secret_nonce,
@@ -163,7 +163,7 @@ func (s *Service) RegisterProvider(ctx context.Context, tenantID uuid.UUID, in R
 		    scopes = EXCLUDED.scopes,
 		    updated_at = NOW()
 		RETURNING id, provider, client_id, authorize_url, token_url, scopes, created_at, updated_at
-	`, tenantID, in.Provider, in.ClientID, ct, nonce, in.AuthorizeURL, in.TokenURL, in.Scopes).Scan(
+	`, organizationID, in.Provider, in.ClientID, ct, nonce, in.AuthorizeURL, in.TokenURL, in.Scopes).Scan(
 		&provider.ID, &provider.Provider, &provider.ClientID, &provider.AuthorizeURL,
 		&provider.TokenURL, &provider.Scopes, &provider.CreatedAt, &provider.UpdatedAt,
 	)
@@ -177,15 +177,15 @@ func (s *Service) RegisterProvider(ctx context.Context, tenantID uuid.UUID, in R
 // or setting up again a name that still has grants, while anyone is connected
 // through it. Its row is locked first, so no grant is stored under the
 // settings being replaced (UpsertTokenGrant share-locks it).
-func refuseRepointing(ctx context.Context, q *dbgen.Queries, tenantID uuid.UUID, in RegisterProviderInput) error {
-	current, err := q.LockProvider(ctx, dbgen.LockProviderParams{TenantID: tenantID, Provider: in.Provider})
+func refuseRepointing(ctx context.Context, q *dbgen.Queries, organizationID uuid.UUID, in RegisterProviderInput) error {
+	current, err := q.LockProvider(ctx, dbgen.LockProviderParams{OrganizationID: organizationID, Provider: in.Provider})
 	if err == nil && current.ClientID == in.ClientID && current.AuthorizeUrl == in.AuthorizeURL && current.TokenUrl == in.TokenURL {
 		return nil
 	}
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	inUse, err := q.ProviderHasGrants(ctx, dbgen.ProviderHasGrantsParams{TenantID: tenantID, Provider: in.Provider})
+	inUse, err := q.ProviderHasGrants(ctx, dbgen.ProviderHasGrantsParams{OrganizationID: organizationID, Provider: in.Provider})
 	if err != nil {
 		return err
 	}
@@ -195,9 +195,9 @@ func refuseRepointing(ctx context.Context, q *dbgen.Queries, tenantID uuid.UUID,
 	return nil
 }
 
-// ListProviders returns the tenant's OAuth providers.
-func (s *Service) ListProviders(ctx context.Context, tenantID uuid.UUID) ([]Provider, error) {
-	rows, err := s.q.ListProviders(ctx, tenantID)
+// ListProviders returns the organization's OAuth providers.
+func (s *Service) ListProviders(ctx context.Context, organizationID uuid.UUID) ([]Provider, error) {
+	rows, err := s.q.ListProviders(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -212,10 +212,10 @@ func (s *Service) ListProviders(ctx context.Context, tenantID uuid.UUID) ([]Prov
 	return out, nil
 }
 
-// DeleteProvider removes the tenant's settings for an OAuth provider and
+// DeleteProvider removes the organization's settings for an OAuth provider and
 // disconnects everyone connected through it, so a provider set up again under
 // its name inherits no grant.
-func (s *Service) DeleteProvider(ctx context.Context, tenantID uuid.UUID, provider string) error {
+func (s *Service) DeleteProvider(ctx context.Context, organizationID uuid.UUID, provider string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -224,10 +224,10 @@ func (s *Service) DeleteProvider(ctx context.Context, tenantID uuid.UUID, provid
 	q := s.q.WithTx(tx)
 	// The grants go first: a refresh holds its grant's row while it waits to
 	// share the provider's.
-	if err := q.DeleteProviderGrants(ctx, dbgen.DeleteProviderGrantsParams{TenantID: tenantID, Provider: provider}); err != nil {
+	if err := q.DeleteProviderGrants(ctx, dbgen.DeleteProviderGrantsParams{OrganizationID: organizationID, Provider: provider}); err != nil {
 		return err
 	}
-	n, err := q.DeleteProvider(ctx, dbgen.DeleteProviderParams{TenantID: tenantID, Provider: provider})
+	n, err := q.DeleteProvider(ctx, dbgen.DeleteProviderParams{OrganizationID: organizationID, Provider: provider})
 	if err != nil {
 		return err
 	}
@@ -237,20 +237,20 @@ func (s *Service) DeleteProvider(ctx context.Context, tenantID uuid.UUID, provid
 	return tx.Commit(ctx)
 }
 
-func (s *Service) providerConfig(ctx context.Context, tenantID uuid.UUID, provider string) (clientID, clientSecret, authorizeURL, tokenURL, scopes string, err error) {
+func (s *Service) providerConfig(ctx context.Context, organizationID uuid.UUID, provider string) (clientID, clientSecret, authorizeURL, tokenURL, scopes string, err error) {
 	var ciphertext, nonce []byte
 	err = s.pool.QueryRow(ctx, `
 		SELECT client_id, client_secret_ct, client_secret_nonce, authorize_url, token_url, scopes
-		FROM tenant.token_vault_providers
-		WHERE tenant_id = $1 AND provider = $2
-	`, tenantID, provider).Scan(&clientID, &ciphertext, &nonce, &authorizeURL, &tokenURL, &scopes)
+		FROM organization.token_vault_providers
+		WHERE organization_id = $1 AND provider = $2
+	`, organizationID, provider).Scan(&clientID, &ciphertext, &nonce, &authorizeURL, &tokenURL, &scopes)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", "", "", "", errs.ErrTokenVaultProviderNotFound
 	}
 	if err != nil {
 		return "", "", "", "", "", err
 	}
-	plain, err := s.box.Open(tenantID, "token-vault-provider", provider, ciphertext, nonce)
+	plain, err := s.box.Open(organizationID, "token-vault-provider", provider, ciphertext, nonce)
 	return clientID, string(plain), authorizeURL, tokenURL, scopes, err
 }
 
@@ -260,12 +260,12 @@ func (s *Service) providerConfig(ctx context.Context, tenantID uuid.UUID, provid
 // caller-supplied, so there's no open-redirect surface on the return leg.
 func callbackURL(base string) string { return base + "/v1/vault/tokens/callback" }
 
-// BeginConnect starts an authorization-code ceremony for (tenantID, userID)
+// BeginConnect starts an authorization-code ceremony for (organizationID, userID)
 // to connect provider, returning the URL to redirect the user's browser to
 // and the ceremony's state, which the caller binds to that browser. The code
 // redeems only with this ceremony's PKCE verifier.
-func (s *Service) BeginConnect(ctx context.Context, tenantID, userID uuid.UUID, provider, base string) (string, string, error) {
-	clientID, _, authorizeURL, _, scopes, err := s.providerConfig(ctx, tenantID, provider)
+func (s *Service) BeginConnect(ctx context.Context, organizationID, userID uuid.UUID, provider, base string) (string, string, error) {
+	clientID, _, authorizeURL, _, scopes, err := s.providerConfig(ctx, organizationID, provider)
 	if err != nil {
 		return "", "", err
 	}
@@ -278,12 +278,12 @@ func (s *Service) BeginConnect(ctx context.Context, tenantID, userID uuid.UUID, 
 		return "", "", err
 	}
 	if err := s.q.InsertConnectState(ctx, dbgen.InsertConnectStateParams{
-		State:        state,
-		TenantID:     tenantID,
-		UserID:       userID,
-		Provider:     provider,
-		ExpiresAt:    time.Now().UTC().Add(connectStateTTL),
-		CodeVerifier: &verifier,
+		State:          state,
+		OrganizationID: organizationID,
+		UserID:         userID,
+		Provider:       provider,
+		ExpiresAt:      time.Now().UTC().Add(connectStateTTL),
+		CodeVerifier:   &verifier,
 	}); err != nil {
 		return "", "", err
 	}
@@ -338,12 +338,12 @@ func (s *Service) FinishConnect(ctx context.Context, state, code, base string) e
 	if err != nil {
 		return err
 	}
-	tenantID, userID, provider := cs.TenantID, cs.UserID, cs.Provider
+	organizationID, userID, provider := cs.OrganizationID, cs.UserID, cs.Provider
 	if time.Now().After(cs.ExpiresAt) {
 		return errs.ErrTokenVaultConnectExpired
 	}
 
-	clientID, clientSecret, _, tokenURL, _, err := s.providerConfig(ctx, tenantID, provider)
+	clientID, clientSecret, _, tokenURL, _, err := s.providerConfig(ctx, organizationID, provider)
 	if err != nil {
 		return err
 	}
@@ -361,21 +361,21 @@ func (s *Service) FinishConnect(ctx context.Context, state, code, base string) e
 	if err != nil {
 		return err
 	}
-	return s.storeGrant(ctx, s.q, tenantID, userID, provider, tokenURL, clientID, tok)
+	return s.storeGrant(ctx, s.q, organizationID, userID, provider, tokenURL, clientID, tok)
 }
 
 // storeGrant encrypts and stores tok, which tokenURL issued to clientID,
 // through q. It stores nothing, and refuses with ErrTokenVaultConnectStateInvalid,
 // once the provider has another token URL or client.
-func (s *Service) storeGrant(ctx context.Context, q *dbgen.Queries, tenantID, userID uuid.UUID, provider, tokenURL, clientID string, tok *oauthTokenResponse) error {
-	accessCT, accessNonce, err := s.encrypt(tenantID, userID, provider, "token-vault-access", tok.AccessToken)
+func (s *Service) storeGrant(ctx context.Context, q *dbgen.Queries, organizationID, userID uuid.UUID, provider, tokenURL, clientID string, tok *oauthTokenResponse) error {
+	accessCT, accessNonce, err := s.encrypt(organizationID, userID, provider, "token-vault-access", tok.AccessToken)
 	if err != nil {
 		return err
 	}
 	// nil []byte == SQL NULL for nullable bytea columns.
 	var refreshCT, refreshNonce []byte
 	if tok.RefreshToken != "" {
-		ct, nonce, err := s.encrypt(tenantID, userID, provider, "token-vault-refresh", tok.RefreshToken)
+		ct, nonce, err := s.encrypt(organizationID, userID, provider, "token-vault-refresh", tok.RefreshToken)
 		if err != nil {
 			return err
 		}
@@ -394,7 +394,7 @@ func (s *Service) storeGrant(ctx context.Context, q *dbgen.Queries, tenantID, us
 		scopeArg = &tok.Scope
 	}
 	n, err := q.UpsertTokenGrant(ctx, dbgen.UpsertTokenGrantParams{
-		TenantID:          tenantID,
+		OrganizationID:    organizationID,
 		UserID:            userID,
 		Provider:          provider,
 		AccessTokenCt:     accessCT,
@@ -446,12 +446,12 @@ func (s *Service) exchange(ctx context.Context, tokenURL string, form url.Values
 
 // --- runtime use ---
 
-// GetAccessToken returns a live access token for (tenantID, userID, provider),
+// GetAccessToken returns a live access token for (organizationID, userID, provider),
 // transparently refreshing it first if it's expired (or about to be) and a
 // refresh token is on file. The raw refresh token is never returned to the
 // caller — only ever used internally to mint a new access token.
-func (s *Service) GetAccessToken(ctx context.Context, tenantID, userID uuid.UUID, provider string) (string, error) {
-	grant, err := s.q.GetTokenGrant(ctx, dbgen.GetTokenGrantParams{TenantID: tenantID, UserID: userID, Provider: provider})
+func (s *Service) GetAccessToken(ctx context.Context, organizationID, userID uuid.UUID, provider string) (string, error) {
+	grant, err := s.q.GetTokenGrant(ctx, dbgen.GetTokenGrantParams{OrganizationID: organizationID, UserID: userID, Provider: provider})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", errs.ErrTokenVaultGrantNotFound
 	}
@@ -459,9 +459,9 @@ func (s *Service) GetAccessToken(ctx context.Context, tenantID, userID uuid.UUID
 		return "", err
 	}
 	if !dueForRefresh(grant.ExpiresAt) {
-		return s.decrypt(tenantID, userID, provider, "token-vault-access", grant.AccessTokenCt, grant.AccessTokenNonce)
+		return s.decrypt(organizationID, userID, provider, "token-vault-access", grant.AccessTokenCt, grant.AccessTokenNonce)
 	}
-	return s.refresh(ctx, tenantID, userID, provider)
+	return s.refresh(ctx, organizationID, userID, provider)
 }
 
 // dueForRefresh reports whether a token expiring at expiresAt (none: never)
@@ -475,8 +475,8 @@ func dueForRefresh(expiresAt pgtype.Timestamptz) bool {
 // grant's row is locked and read again first, so of two reads at once one
 // refreshes and the other gets what it got: a provider that rotates refresh
 // tokens never sees one presented twice.
-func (s *Service) refresh(ctx context.Context, tenantID, userID uuid.UUID, provider string) (string, error) {
-	clientID, clientSecret, _, tokenURL, _, err := s.providerConfig(ctx, tenantID, provider)
+func (s *Service) refresh(ctx context.Context, organizationID, userID uuid.UUID, provider string) (string, error) {
+	clientID, clientSecret, _, tokenURL, _, err := s.providerConfig(ctx, organizationID, provider)
 	if err != nil {
 		return "", err
 	}
@@ -486,7 +486,7 @@ func (s *Service) refresh(ctx context.Context, tenantID, userID uuid.UUID, provi
 	}
 	defer tx.Rollback(ctx)
 	q := s.q.WithTx(tx)
-	grant, err := q.LockTokenGrant(ctx, dbgen.LockTokenGrantParams{TenantID: tenantID, UserID: userID, Provider: provider})
+	grant, err := q.LockTokenGrant(ctx, dbgen.LockTokenGrantParams{OrganizationID: organizationID, UserID: userID, Provider: provider})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", errs.ErrTokenVaultGrantNotFound
 	}
@@ -494,13 +494,13 @@ func (s *Service) refresh(ctx context.Context, tenantID, userID uuid.UUID, provi
 		return "", err
 	}
 	if !dueForRefresh(grant.ExpiresAt) {
-		return s.decrypt(tenantID, userID, provider, "token-vault-access", grant.AccessTokenCt, grant.AccessTokenNonce)
+		return s.decrypt(organizationID, userID, provider, "token-vault-access", grant.AccessTokenCt, grant.AccessTokenNonce)
 	}
 	if grant.RefreshTokenCt == nil {
 		// Expired with no refresh token on file — the caller must reconnect.
 		return "", errs.ErrTokenVaultTokenExpired
 	}
-	refreshToken, err := s.decrypt(tenantID, userID, provider, "token-vault-refresh", grant.RefreshTokenCt, grant.RefreshTokenNonce)
+	refreshToken, err := s.decrypt(organizationID, userID, provider, "token-vault-refresh", grant.RefreshTokenCt, grant.RefreshTokenNonce)
 	if err != nil {
 		return "", err
 	}
@@ -518,7 +518,7 @@ func (s *Service) refresh(ctx context.Context, tenantID, userID uuid.UUID, provi
 	if tok.RefreshToken == "" {
 		tok.RefreshToken = refreshToken
 	}
-	if err := s.storeGrant(ctx, q, tenantID, userID, provider, tokenURL, clientID, tok); err != nil {
+	if err := s.storeGrant(ctx, q, organizationID, userID, provider, tokenURL, clientID, tok); err != nil {
 		return "", err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -529,8 +529,8 @@ func (s *Service) refresh(ctx context.Context, tenantID, userID uuid.UUID, provi
 
 // ListGrants returns the providers the user has connected, without their
 // tokens.
-func (s *Service) ListGrants(ctx context.Context, tenantID, userID uuid.UUID) ([]GrantMeta, error) {
-	rows, err := s.q.ListGrants(ctx, dbgen.ListGrantsParams{TenantID: tenantID, UserID: userID})
+func (s *Service) ListGrants(ctx context.Context, organizationID, userID uuid.UUID) ([]GrantMeta, error) {
+	rows, err := s.q.ListGrants(ctx, dbgen.ListGrantsParams{OrganizationID: organizationID, UserID: userID})
 	if err != nil {
 		return nil, err
 	}
@@ -549,8 +549,8 @@ func (s *Service) ListGrants(ctx context.Context, tenantID, userID uuid.UUID) ([
 }
 
 // Disconnect deletes the user's stored tokens for a provider.
-func (s *Service) Disconnect(ctx context.Context, tenantID, userID uuid.UUID, provider string) error {
-	n, err := s.q.DeleteGrant(ctx, dbgen.DeleteGrantParams{TenantID: tenantID, UserID: userID, Provider: provider})
+func (s *Service) Disconnect(ctx context.Context, organizationID, userID uuid.UUID, provider string) error {
+	n, err := s.q.DeleteGrant(ctx, dbgen.DeleteGrantParams{OrganizationID: organizationID, UserID: userID, Provider: provider})
 	if err != nil {
 		return err
 	}
@@ -604,7 +604,7 @@ func (h *Handler) MountPublic(r chi.Router) {
 }
 
 func (h *Handler) registerProvider(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -614,7 +614,7 @@ func (h *Handler) registerProvider(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	p, err := h.Service.RegisterProvider(r.Context(), tenantID, in)
+	p, err := h.Service.RegisterProvider(r.Context(), organizationID, in)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -623,12 +623,12 @@ func (h *Handler) registerProvider(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listProviders(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out, err := h.Service.ListProviders(r.Context(), tenantID)
+	out, err := h.Service.ListProviders(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -637,12 +637,12 @@ func (h *Handler) listProviders(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) deleteProvider(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.DeleteProvider(r.Context(), tenantID, chi.URLParam(r, "provider")); err != nil {
+	if err := h.Service.DeleteProvider(r.Context(), organizationID, chi.URLParam(r, "provider")); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -650,7 +650,7 @@ func (h *Handler) deleteProvider(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) beginConnect(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.RequireTenant(r)
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -660,7 +660,7 @@ func (h *Handler) beginConnect(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	authorizeURL, state, err := h.Service.BeginConnect(r.Context(), tenantID, userID, chi.URLParam(r, "provider"), httpx.PublicOrigin(r, h.PublicBaseURL))
+	authorizeURL, state, err := h.Service.BeginConnect(r.Context(), organizationID, userID, chi.URLParam(r, "provider"), httpx.PublicOrigin(r, h.PublicBaseURL))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -721,7 +721,7 @@ func htmlEscape(s string) string {
 }
 
 func (h *Handler) listGrants(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.RequireTenant(r)
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -731,7 +731,7 @@ func (h *Handler) listGrants(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out, err := h.Service.ListGrants(r.Context(), tenantID, userID)
+	out, err := h.Service.ListGrants(r.Context(), organizationID, userID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -749,7 +749,7 @@ func (h *Handler) getAccessToken(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
 		return
 	}
-	tenantID, err := httpx.RequireTenant(r)
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -760,7 +760,7 @@ func (h *Handler) getAccessToken(w http.ResponseWriter, r *http.Request) {
 	// application token carries a user id it was given, not one it proved, so
 	// it is refused, and the attempt is recorded as that credential.
 	if !signedInPerson(p) {
-		h.recordAccessRefused(r, p, tenantID, provider)
+		h.recordAccessRefused(r, p, organizationID, provider)
 		httpx.WriteError(w, r, errs.ErrTokenVaultPeopleOnly)
 		return
 	}
@@ -773,7 +773,7 @@ func (h *Handler) getAccessToken(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrTokenVaultScopeRequired)
 		return
 	}
-	token, err := h.Service.GetAccessToken(r.Context(), tenantID, userID, provider)
+	token, err := h.Service.GetAccessToken(r.Context(), organizationID, userID, provider)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -784,15 +784,15 @@ func (h *Handler) getAccessToken(w http.ResponseWriter, r *http.Request) {
 		defer tx.Rollback(ctx)
 		actorID := p.UserID
 		if aerr := audit.Record(ctx, tx, audit.Event{
-			TenantID:     &tenantID,
-			ActorUserID:  actorID,
-			ActorType:    "user",
-			Action:       "vault.tokens.accessed",
-			ResourceType: "token_vault_grant",
-			IP:           httpx.ClientIP(r),
-			UserAgent:    r.UserAgent(),
-			RequestID:    httpx.RequestID(r),
-			Metadata:     map[string]any{"provider": provider},
+			OrganizationID: &organizationID,
+			ActorUserID:    actorID,
+			ActorType:      "user",
+			Action:         "vault.tokens.accessed",
+			ResourceType:   "token_vault_grant",
+			IP:             httpx.ClientIP(r),
+			UserAgent:      r.UserAgent(),
+			RequestID:      httpx.RequestID(r),
+			Metadata:       map[string]any{"provider": provider},
 		}); aerr == nil {
 			_ = tx.Commit(ctx)
 		}
@@ -808,7 +808,7 @@ func signedInPerson(p *httpx.Principal) bool {
 
 // recordAccessRefused audits a refused token read under the credential that
 // tried, never under the user id that credential carries.
-func (h *Handler) recordAccessRefused(r *http.Request, p *httpx.Principal, tenantID uuid.UUID, provider string) {
+func (h *Handler) recordAccessRefused(r *http.Request, p *httpx.Principal, organizationID uuid.UUID, provider string) {
 	ctx := r.Context()
 	tx, err := h.Service.pool.Begin(ctx)
 	if err != nil {
@@ -827,14 +827,14 @@ func (h *Handler) recordAccessRefused(r *http.Request, p *httpx.Principal, tenan
 		actorType = "user"
 	}
 	if audit.Record(ctx, tx, audit.Event{
-		TenantID:     &tenantID,
-		ActorType:    actorType,
-		Action:       "vault.tokens.access_refused",
-		ResourceType: "token_vault_grant",
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
-		Metadata:     meta,
+		OrganizationID: &organizationID,
+		ActorType:      actorType,
+		Action:         "vault.tokens.access_refused",
+		ResourceType:   "token_vault_grant",
+		IP:             httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
+		RequestID:      httpx.RequestID(r),
+		Metadata:       meta,
 	}) == nil {
 		_ = tx.Commit(ctx)
 	}
@@ -850,7 +850,7 @@ func hasVaultScope(scopes []string, provider string) bool {
 }
 
 func (h *Handler) disconnect(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.RequireTenant(r)
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -860,7 +860,7 @@ func (h *Handler) disconnect(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.Disconnect(r.Context(), tenantID, userID, chi.URLParam(r, "provider")); err != nil {
+	if err := h.Service.Disconnect(r.Context(), organizationID, userID, chi.URLParam(r, "provider")); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

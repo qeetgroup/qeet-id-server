@@ -1,5 +1,5 @@
-// Package email manages per-tenant transactional email templates. The catalog of
-// known templates and their default subject/body lives in code; tenants store
+// Package email manages per-organization transactional email templates. The catalog of
+// known templates and their default subject/body lives in code; organizations store
 // only overrides. Render substitutes {{variable}} placeholders.
 package email
 
@@ -84,8 +84,8 @@ func defByKey(key string) (Definition, bool) {
 }
 
 // Resolved is a template as the API shows it: its catalog entry merged with any
-// tenant override. DeliveryScope is "tenant" for templates sent with the
-// tenant's customisation (invite, magic_link), else "platform".
+// organization override. DeliveryScope is "tenant" for templates sent with the
+// organization's customisation (invite, magic_link), else "platform".
 type Resolved struct {
 	Key           string        `json:"key"`
 	Name          string        `json:"name"`
@@ -127,7 +127,7 @@ func Render(s string, vars map[string]string) string {
 	})
 }
 
-// Service stores tenants' email template overrides.
+// Service stores organizations' email template overrides.
 type Service struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
@@ -141,9 +141,9 @@ func NewService(pool *pgxpool.Pool) *Service {
 // Pool returns the service's database pool.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
-// overrides returns the tenant's customised templates by template key.
-func (s *Service) overrides(ctx context.Context, tenantID uuid.UUID) (map[string]dbgen.ListEmailTemplateOverridesRow, error) {
-	rows, err := s.q.ListEmailTemplateOverrides(ctx, tenantID)
+// overrides returns the organization's customised templates by template key.
+func (s *Service) overrides(ctx context.Context, organizationID uuid.UUID) (map[string]dbgen.ListEmailTemplateOverridesRow, error) {
+	rows, err := s.q.ListEmailTemplateOverrides(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -154,9 +154,9 @@ func (s *Service) overrides(ctx context.Context, tenantID uuid.UUID) (map[string
 	return out, nil
 }
 
-// List returns every catalog template, with the tenant's overrides applied.
-func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Resolved, error) {
-	ov, err := s.overrides(ctx, tenantID)
+// List returns every catalog template, with the organization's overrides applied.
+func (s *Service) List(ctx context.Context, organizationID uuid.UUID) ([]Resolved, error) {
+	ov, err := s.overrides(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -175,15 +175,15 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Resolved, err
 	return out, nil
 }
 
-// Get returns one template with the tenant's override applied. An unknown key
+// Get returns one template with the organization's override applied. An unknown key
 // returns errs.ErrEmailTemplateNotFound.
-func (s *Service) Get(ctx context.Context, tenantID uuid.UUID, key string) (*Resolved, error) {
+func (s *Service) Get(ctx context.Context, organizationID uuid.UUID, key string) (*Resolved, error) {
 	d, ok := defByKey(key)
 	if !ok {
 		return nil, errs.ErrEmailTemplateNotFound
 	}
 	row, err := s.q.GetEmailTemplateOverride(ctx, dbgen.GetEmailTemplateOverrideParams{
-		TenantID: tenantID, TemplateKey: key,
+		OrganizationID: organizationID, TemplateKey: key,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		r := resolve(d, nil, nil)
@@ -200,9 +200,9 @@ func (s *Service) Get(ctx context.Context, tenantID uuid.UUID, key string) (*Res
 }
 
 // RecipientLocale returns the profile language of the account at address, or ""
-// when it has none or doesn't belong to the tenant.
-func (s *Service) RecipientLocale(ctx context.Context, tenantID uuid.UUID, address string) (string, error) {
-	locale, err := s.q.GetRecipientLocale(ctx, dbgen.GetRecipientLocaleParams{TenantID: tenantID, Email: address})
+// when it has none or doesn't belong to the organization.
+func (s *Service) RecipientLocale(ctx context.Context, organizationID uuid.UUID, address string) (string, error) {
+	locale, err := s.q.GetRecipientLocale(ctx, dbgen.GetRecipientLocaleParams{OrganizationID: organizationID, Email: address})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
@@ -210,13 +210,13 @@ func (s *Service) RecipientLocale(ctx context.Context, tenantID uuid.UUID, addre
 }
 
 // Upsert is UpsertEditor with only a subject and body.
-func (s *Service) Upsert(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, key, subject, body string) (*Resolved, error) {
-	return s.UpsertEditor(ctx, tx, tenantID, key, EditorInput{Subject: subject, Body: body})
+func (s *Service) Upsert(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, key, subject, body string) (*Resolved, error) {
+	return s.UpsertEditor(ctx, tx, organizationID, key, EditorInput{Subject: subject, Body: body})
 }
 
-// UpsertEditor validates input and saves it, in tx, as the tenant's override of
+// UpsertEditor validates input and saves it, in tx, as the organization's override of
 // a template.
-func (s *Service) UpsertEditor(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, key string, input EditorInput) (*Resolved, error) {
+func (s *Service) UpsertEditor(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, key string, input EditorInput) (*Resolved, error) {
 	d, ok := defByKey(key)
 	if !ok {
 		return nil, errs.ErrEmailTemplateNotFound
@@ -229,7 +229,7 @@ func (s *Service) UpsertEditor(ctx context.Context, tx pgx.Tx, tenantID uuid.UUI
 		return nil, err
 	}
 	if err := s.q.WithTx(tx).UpsertEmailTemplate(ctx, dbgen.UpsertEmailTemplateParams{
-		TenantID: tenantID, TemplateKey: key, Subject: input.Subject, Body: input.Body, Options: options,
+		OrganizationID: organizationID, TemplateKey: key, Subject: input.Subject, Body: input.Body, Options: options,
 	}); err != nil {
 		return nil, err
 	}
@@ -238,15 +238,15 @@ func (s *Service) UpsertEditor(ctx context.Context, tx pgx.Tx, tenantID uuid.UUI
 	return &r, nil
 }
 
-// Reset deletes the tenant's override of a template, in tx, restoring the
+// Reset deletes the organization's override of a template, in tx, restoring the
 // built-in default.
-func (s *Service) Reset(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, key string) (*Resolved, error) {
+func (s *Service) Reset(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, key string) (*Resolved, error) {
 	d, ok := defByKey(key)
 	if !ok {
 		return nil, errs.ErrEmailTemplateNotFound
 	}
 	if err := s.q.WithTx(tx).DeleteEmailTemplate(ctx, dbgen.DeleteEmailTemplateParams{
-		TenantID: tenantID, TemplateKey: key,
+		OrganizationID: organizationID, TemplateKey: key,
 	}); err != nil {
 		return nil, err
 	}
@@ -273,11 +273,11 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/tenants/{tenantID}/email-templates/{key}/test", h.testEmail)
 }
 
-func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	return httpx.PathTenantOr(r, errs.ErrEmailTenantInvalid, errs.ErrEmailTenantMismatch)
+func requirePathOrganization(r *http.Request) (uuid.UUID, error) {
+	return httpx.PathOrganizationOr(r, errs.ErrEmailOrganizationInvalid, errs.ErrEmailOrganizationMismatch)
 }
 
-func (h *Handler) audit(ctx context.Context, tx pgx.Tx, r *http.Request, tenantID uuid.UUID, action, key string) error {
+func (h *Handler) audit(ctx context.Context, tx pgx.Tx, r *http.Request, organizationID uuid.UUID, action, key string) error {
 	var actorID *uuid.UUID
 	actorType := "system"
 	if p := httpx.PrincipalFromCtx(ctx); p != nil {
@@ -286,9 +286,9 @@ func (h *Handler) audit(ctx context.Context, tx pgx.Tx, r *http.Request, tenantI
 			actorType = p.ActorType
 		}
 	}
-	tid := tenantID
+	tid := organizationID
 	return audit.Record(ctx, tx, audit.Event{
-		TenantID: &tid, ActorUserID: actorID, ActorType: actorType,
+		OrganizationID: &tid, ActorUserID: actorID, ActorType: actorType,
 		Action: action, ResourceType: "email_template",
 		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
 		Metadata: map[string]any{"template_key": key},
@@ -296,12 +296,12 @@ func (h *Handler) audit(ctx context.Context, tx pgx.Tx, r *http.Request, tenantI
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out, err := h.Service.List(r.Context(), tenantID)
+	out, err := h.Service.List(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -310,12 +310,12 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	res, err := h.Service.Get(r.Context(), tenantID, chi.URLParam(r, "key"))
+	res, err := h.Service.Get(r.Context(), organizationID, chi.URLParam(r, "key"))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -324,7 +324,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) upsert(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -342,12 +342,12 @@ func (h *Handler) upsert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	res, err := h.Service.UpsertEditor(ctx, tx, tenantID, key, in)
+	res, err := h.Service.UpsertEditor(ctx, tx, organizationID, key, in)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.audit(ctx, tx, r, tenantID, "email_template.updated", key); err != nil {
+	if err := h.audit(ctx, tx, r, organizationID, "email_template.updated", key); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -359,7 +359,7 @@ func (h *Handler) upsert(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -372,12 +372,12 @@ func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	res, err := h.Service.Reset(ctx, tx, tenantID, key)
+	res, err := h.Service.Reset(ctx, tx, organizationID, key)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.audit(ctx, tx, r, tenantID, "email_template.reset", key); err != nil {
+	if err := h.audit(ctx, tx, r, organizationID, "email_template.reset", key); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -389,7 +389,7 @@ func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) preview(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -405,14 +405,14 @@ func (h *Handler) preview(w http.ResponseWriter, r *http.Request) {
 	}
 	key := chi.URLParam(r, "key")
 	if in.Draft == nil {
-		res, err := h.Service.Get(r.Context(), tenantID, key)
+		res, err := h.Service.Get(r.Context(), organizationID, key)
 		if err != nil {
 			httpx.WriteError(w, r, err)
 			return
 		}
 		in.Draft = &EditorInput{Subject: res.Subject, Body: res.Body, Options: res.Options}
 	}
-	result, err := renderEditor(key, *in.Draft, in.Vars, in.Locale, h.appearance(r.Context(), tenantID))
+	result, err := renderEditor(key, *in.Draft, in.Vars, in.Locale, h.appearance(r.Context(), organizationID))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

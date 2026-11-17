@@ -3,8 +3,8 @@
 -- sqlc into ./dbgen. There are no dynamic queries in this domain.
 
 -- name: InsertNotification :exec
-INSERT INTO auth.notifications (user_id, tenant_id, kind, title, description, href)
-VALUES (@user_id, @tenant_id, @kind, @title, @description, @href);
+INSERT INTO auth.notifications (user_id, organization_id, kind, title, description, href)
+VALUES (@user_id, @organization_id, @kind, @title, @description, @href);
 
 -- name: ListNotifications :many
 SELECT id, kind, title, description, href, created_at, read_at

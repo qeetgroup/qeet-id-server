@@ -10,7 +10,7 @@ import (
 // lead is a "Contact sales" submission: from a customer's owner on the
 // billing page, or from someone still choosing a plan during onboarding.
 type lead struct {
-	slug, email   string // slug: the customer organisation it came from, if any
+	slug, email   string // slug: the customer organization it came from, if any
 	name, company string
 	teamSize      string
 	message       string
@@ -36,12 +36,12 @@ var leads = []lead{
 }
 
 // salesLeads submits the leads through the sales service, each on its day.
-// A customer's lead carries its organisation and owner.
+// A customer's lead carries its organization and owner.
 func (h *history) salesLeads() {
 	w := h.w
 	for _, l := range leads {
 		in := sales.Lead{Name: l.name, Email: l.email, Company: l.company, TeamSize: l.teamSize, Message: l.message, Source: "onboarding"}
-		var tenant, user *uuid.UUID
+		var organization, user *uuid.UUID
 		at := w.Days(l.daysAgo)
 		if l.slug != "" {
 			o := orgBySlug(w, l.slug)
@@ -53,16 +53,16 @@ func (h *history) salesLeads() {
 				continue
 			}
 			in.Name, in.Company, in.Source = p.Name(), o.Spec.Name, "billing"
-			tenant, user = ptr(o.ID), ptr(p.ID)
+			organization, user = ptr(o.ID), ptr(p.ID)
 			at = h.workTime(p, at)
 		}
 		w.At(at, func() {
-			w.Check(w.Deps.Sales.Service.Submit(w.Ctx, tenant, user, in), "sales lead from "+l.email)
+			w.Check(w.Deps.Sales.Service.Submit(w.Ctx, organization, user, in), "sales lead from "+l.email)
 		})
 	}
 }
 
-// orgBySlug is the seeded organisation with slug, or nil.
+// orgBySlug is the seeded organization with slug, or nil.
 func orgBySlug(w *world.World, slug string) *world.Org {
 	for _, o := range w.Orgs {
 		if o.Spec.Slug == slug {

@@ -1,7 +1,7 @@
-// Package servicehealth tells an organisation the state of each part of the
+// Package servicehealth tells an organization the state of each part of the
 // service it uses (the API, sign-in, email, webhooks and directories) and the
 // incidents operators have posted. A part's state comes from the
-// organisation's own recent figures, made worse by any incident still open.
+// organization's own recent figures, made worse by any incident still open.
 package servicehealth
 
 import (
@@ -31,7 +31,7 @@ const (
 	ComponentDirectory = "directory"
 )
 
-// States, from best to worst; NotConfigured is a part the organisation doesn't use.
+// States, from best to worst; NotConfigured is a part the organization doesn't use.
 const (
 	StateNotConfigured = "not_configured"
 	StateOperational   = "operational"
@@ -74,7 +74,7 @@ type Incident struct {
 	ResolvedAt *time.Time `json:"resolved_at"`
 }
 
-// Report is an organisation's view of the service: Status is the worst state
+// Report is an organization's view of the service: Status is the worst state
 // of its components.
 type Report struct {
 	Status     string      `json:"status"`
@@ -96,9 +96,9 @@ func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool)}
 }
 
-// Report returns the state of each component for tenantID, and the incidents
+// Report returns the state of each component for organizationID, and the incidents
 // open or resolved in the last 14 days.
-func (s *Service) Report(ctx context.Context, tenantID uuid.UUID) (*Report, error) {
+func (s *Service) Report(ctx context.Context, organizationID uuid.UUID) (*Report, error) {
 	api := Component{Name: ComponentAPI, State: StateOperational}
 	if err := s.pool.Ping(ctx); err != nil {
 		slog.Warn("service health: database unreachable", "err", err)
@@ -111,15 +111,15 @@ func (s *Service) Report(ctx context.Context, tenantID uuid.UUID) (*Report, erro
 			signIn.State, signIn.Reason = StateOutage, "sign_in.keys_unavailable"
 		}
 	}
-	email, err := s.email(ctx, tenantID)
+	email, err := s.email(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
-	webhooks, err := s.webhooks(ctx, tenantID)
+	webhooks, err := s.webhooks(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
-	directory, err := s.directory(ctx, tenantID)
+	directory, err := s.directory(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -157,9 +157,9 @@ func assemble(components []Component, incidents []Incident, now time.Time) *Repo
 }
 
 // email is degraded when the provider refused at least a quarter of the
-// organisation's emails of the last hour.
-func (s *Service) email(ctx context.Context, tenantID uuid.UUID) (Component, error) {
-	row, err := s.q.EmailHealth(ctx, pgtype.UUID{Bytes: tenantID, Valid: true})
+// organization's emails of the last hour.
+func (s *Service) email(ctx context.Context, organizationID uuid.UUID) (Component, error) {
+	row, err := s.q.EmailHealth(ctx, pgtype.UUID{Bytes: organizationID, Valid: true})
 	if err != nil {
 		return Component{}, fmt.Errorf("email health: %w", err)
 	}
@@ -173,8 +173,8 @@ func (s *Service) email(ctx context.Context, tenantID uuid.UUID) (Component, err
 
 // webhooks is degraded while a subscription's deliveries are failing or one
 // was disabled for failing, and not configured without an enabled one.
-func (s *Service) webhooks(ctx context.Context, tenantID uuid.UUID) (Component, error) {
-	row, err := s.q.WebhookHealth(ctx, tenantID)
+func (s *Service) webhooks(ctx context.Context, organizationID uuid.UUID) (Component, error) {
+	row, err := s.q.WebhookHealth(ctx, organizationID)
 	if err != nil {
 		return Component{}, fmt.Errorf("webhook health: %w", err)
 	}
@@ -193,8 +193,8 @@ func (s *Service) webhooks(ctx context.Context, tenantID uuid.UUID) (Component, 
 // directory is degraded while a directory operation of the last day failed and
 // is still open, and not configured without an active LDAP connection or SCIM
 // token.
-func (s *Service) directory(ctx context.Context, tenantID uuid.UUID) (Component, error) {
-	row, err := s.q.DirectoryHealth(ctx, tenantID)
+func (s *Service) directory(ctx context.Context, organizationID uuid.UUID) (Component, error) {
+	row, err := s.q.DirectoryHealth(ctx, organizationID)
 	if err != nil {
 		return Component{}, fmt.Errorf("directory health: %w", err)
 	}
@@ -249,7 +249,7 @@ func (h *Handler) Mount(r chi.Router) {
 }
 
 func (h *Handler) report(w http.ResponseWriter, r *http.Request) {
-	tid, err := httpx.PathTenantOr(r, errs.ErrBadRequest.WithMessage("The organisation id is not valid."), errs.ErrForbidden)
+	tid, err := httpx.PathOrganizationOr(r, errs.ErrBadRequest.WithMessage("The organisation id is not valid."), errs.ErrForbidden)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

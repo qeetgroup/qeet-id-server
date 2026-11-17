@@ -33,7 +33,7 @@ Please include:
 | Severity | Acknowledgement | Initial assessment | Fix target |
 |---|---|---|---|
 | **Critical** — remote auth bypass, full account takeover, key compromise, data exfil | < 24 hours | < 72 hours | 7 days |
-| **High** — privilege escalation, MFA bypass, tenant-isolation break | < 48 hours | < 5 business days | 14 days |
+| **High** — privilege escalation, MFA bypass, organization-isolation break | < 48 hours | < 5 business days | 14 days |
 | **Medium** — info disclosure (non-PII), CSRF, persistent XSS in admin | < 5 business days | < 10 business days | 30 days |
 | **Low** — best-practice deviations, hardening suggestions | < 10 business days | < 20 business days | next release |
 

@@ -8,7 +8,7 @@ import (
 
 func date(y int, m time.Month, d int) time.Time { return time.Date(y, m, d, 9, 0, 0, 0, time.UTC) }
 
-// specs are the seeded organisations: Qeet Group itself, its sandbox, and
+// specs are the seeded organizations: Qeet Group itself, its sandbox, and
 // customers of every plan, size and stage. Domains are unregistered (checked
 // with DNS), so no seeded webhook, sink or email reaches a real company.
 func specs(w *world.World) []world.OrgSpec {

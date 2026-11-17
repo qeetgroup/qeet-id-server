@@ -22,22 +22,22 @@ func TestForgettingAnOwnersTrustedDevicesNeedsToOutrankThem(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
 	svc := newService(t)
 	h := newHandler(svc)
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	var ownerRole uuid.UUID
-	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name, is_system) VALUES ($1, 'owner', TRUE) RETURNING id`, tenant).Scan(&ownerRole); err != nil {
+	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (organization_id, name, is_system) VALUES ($1, 'owner', TRUE) RETURNING id`, organization).Scan(&ownerRole); err != nil {
 		t.Fatal(err)
 	}
-	owner, otherOwner := dbtest.User(t, tenant), dbtest.User(t, tenant)
-	dbtest.Assign(t, owner.ID, tenant, ownerRole)
-	dbtest.Assign(t, otherOwner.ID, tenant, ownerRole)
-	admin := dbtest.User(t, tenant)
-	dbtest.Assign(t, admin.ID, tenant, dbtest.Role(t, tenant, "user.read", "user.credentials"))
-	billing := dbtest.User(t, tenant)
-	dbtest.Assign(t, billing.ID, tenant, dbtest.Role(t, tenant, "billing.write"))
-	member := dbtest.User(t, tenant, tenant)
+	owner, otherOwner := dbtest.User(t, organization), dbtest.User(t, organization)
+	dbtest.Assign(t, owner.ID, organization, ownerRole)
+	dbtest.Assign(t, otherOwner.ID, organization, ownerRole)
+	admin := dbtest.User(t, organization)
+	dbtest.Assign(t, admin.ID, organization, dbtest.Role(t, organization, "user.read", "user.credentials"))
+	billing := dbtest.User(t, organization)
+	dbtest.Assign(t, billing.ID, organization, dbtest.Role(t, organization, "billing.write"))
+	member := dbtest.User(t, organization, organization)
 	remember := func(userID uuid.UUID) string {
 		t.Helper()
-		if _, err := svc.CreateTrustedDevice(ctx, userID, tenant, testUserAgent, time.Hour); err != nil {
+		if _, err := svc.CreateTrustedDevice(ctx, userID, organization, testUserAgent, time.Hour); err != nil {
 			t.Fatal(err)
 		}
 		var id uuid.UUID
@@ -47,7 +47,7 @@ func TestForgettingAnOwnersTrustedDevicesNeedsToOutrankThem(t *testing.T) {
 		return "/users/" + userID.String() + "/trusted-devices/" + id.String()
 	}
 	forget := func(as dbtest.Account, path string) (int, string) {
-		rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(as.ID, tenant), h.MountAuthed), http.MethodDelete, path, nil)
+		rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(as.ID, organization), h.MountAuthed), http.MethodDelete, path, nil)
 		return rec.Code, rec.Body.String()
 	}
 

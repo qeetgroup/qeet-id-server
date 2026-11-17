@@ -50,24 +50,24 @@ type errorFilter struct {
 	Resolution string
 }
 
-const errorWhere = `tenant_id=$1 AND started_at >= $2 AND ($3='' OR connection_id=$3) AND ($4='' OR severity=$4) AND ($5='' OR resolution=$5) AND ($6='' OR message ILIKE '%'||$6||'%' OR error_code ILIKE '%'||$6||'%' OR reason ILIKE '%'||$6||'%' OR subject ILIKE '%'||$6||'%' OR resource_id ILIKE '%'||$6||'%') AND status <> 'success' AND status <> 'warning'`
+const errorWhere = `organization_id=$1 AND started_at >= $2 AND ($3='' OR connection_id=$3) AND ($4='' OR severity=$4) AND ($5='' OR resolution=$5) AND ($6='' OR message ILIKE '%'||$6||'%' OR error_code ILIKE '%'||$6||'%' OR reason ILIKE '%'||$6||'%' OR subject ILIKE '%'||$6||'%' OR resource_id ILIKE '%'||$6||'%') AND status <> 'success' AND status <> 'warning'`
 
-// Errors returns one page of the tenant's directory errors.
-func (service *Service) Errors(ctx context.Context, tenantID uuid.UUID, filter errorFilter) (ErrorPage, error) {
+// Errors returns one page of the organization's directory errors.
+func (service *Service) Errors(ctx context.Context, organizationID uuid.UUID, filter errorFilter) (ErrorPage, error) {
 	page := ErrorPage{Items: []Event{}, Categories: []Breakdown{}, Connections: []Breakdown{}, Remediations: []Event{}, Limit: filter.Limit}
-	if tenantID == uuid.Nil || service.pool == nil {
+	if organizationID == uuid.Nil || service.pool == nil {
 		return page, errs.ErrUnauthorized
 	}
-	args := []any{tenantID, filter.Since, filter.ConnectionID, filter.Severity, filter.Resolution, postgres.EscapeLike(filter.Search)}
+	args := []any{organizationID, filter.Since, filter.ConnectionID, filter.Severity, filter.Resolution, postgres.EscapeLike(filter.Search)}
 	var impacted, unknown int
-	err := service.pool.QueryRow(ctx, `SELECT count(*),count(*) FILTER(WHERE resolution='open'),count(*) FILTER(WHERE resolution='open' AND severity='critical'),count(*) FILTER(WHERE resolution='open' AND severity='warning'),count(*) FILTER(WHERE resolution='retried'),count(DISTINCT NULLIF(resource_id,'')) FILTER(WHERE resource_type='user'),count(*) FILTER(WHERE resource_type='user' AND resource_id='') FROM tenant.directory_events WHERE `+errorWhere, args...).Scan(&page.Total, &page.Summary.Open, &page.Summary.Critical, &page.Summary.Warning, &page.Summary.Retried, &impacted, &unknown)
+	err := service.pool.QueryRow(ctx, `SELECT count(*),count(*) FILTER(WHERE resolution='open'),count(*) FILTER(WHERE resolution='open' AND severity='critical'),count(*) FILTER(WHERE resolution='open' AND severity='warning'),count(*) FILTER(WHERE resolution='retried'),count(DISTINCT NULLIF(resource_id,'')) FILTER(WHERE resource_type='user'),count(*) FILTER(WHERE resource_type='user' AND resource_id='') FROM organization.directory_events WHERE `+errorWhere, args...).Scan(&page.Total, &page.Summary.Open, &page.Summary.Critical, &page.Summary.Warning, &page.Summary.Retried, &impacted, &unknown)
 	if err != nil {
 		return page, err
 	}
 	if unknown == 0 {
 		page.Summary.ImpactedUsers = &impacted
 	}
-	rows, err := service.pool.Query(ctx, `SELECT `+eventColumns+` FROM tenant.directory_events WHERE `+errorWhere+` AND (NOT $8::boolean OR (started_at,id) < ($9::timestamptz,$10::uuid)) ORDER BY started_at DESC,id DESC LIMIT $7`, append(args, filter.Limit+1, filter.After.Set, filter.After.Time, filter.After.ID)...)
+	rows, err := service.pool.Query(ctx, `SELECT `+eventColumns+` FROM organization.directory_events WHERE `+errorWhere+` AND (NOT $8::boolean OR (started_at,id) < ($9::timestamptz,$10::uuid)) ORDER BY started_at DESC,id DESC LIMIT $7`, append(args, filter.Limit+1, filter.After.Set, filter.After.Time, filter.After.ID)...)
 	if err != nil {
 		return page, err
 	}
@@ -89,7 +89,7 @@ func (service *Service) Errors(ctx context.Context, tenantID uuid.UUID, filter e
 		column      string
 		destination *[]Breakdown
 	}{{"category", &page.Categories}, {"connection_id", &page.Connections}} {
-		rows, err := service.pool.Query(ctx, `SELECT `+group.column+`,count(*) FROM tenant.directory_events WHERE `+errorWhere+` GROUP BY 1 ORDER BY 2 DESC,1 LIMIT 20`, args...)
+		rows, err := service.pool.Query(ctx, `SELECT `+group.column+`,count(*) FROM organization.directory_events WHERE `+errorWhere+` GROUP BY 1 ORDER BY 2 DESC,1 LIMIT 20`, args...)
 		if err != nil {
 			return page, err
 		}
@@ -107,7 +107,7 @@ func (service *Service) Errors(ctx context.Context, tenantID uuid.UUID, filter e
 			return page, err
 		}
 	}
-	rows, err = service.pool.Query(ctx, `SELECT `+eventColumns+` FROM tenant.directory_events WHERE tenant_id=$1 AND resolved_at IS NOT NULL AND ($2='' OR connection_id=$2) ORDER BY resolved_at DESC,id DESC LIMIT 5`, tenantID, filter.ConnectionID)
+	rows, err = service.pool.Query(ctx, `SELECT `+eventColumns+` FROM organization.directory_events WHERE organization_id=$1 AND resolved_at IS NOT NULL AND ($2='' OR connection_id=$2) ORDER BY resolved_at DESC,id DESC LIMIT 5`, organizationID, filter.ConnectionID)
 	if err != nil {
 		return page, err
 	}
@@ -123,7 +123,7 @@ func (service *Service) Errors(ctx context.Context, tenantID uuid.UUID, filter e
 }
 
 func (handler *Handler) errors(response http.ResponseWriter, request *http.Request) {
-	tenantID, err := requireTenant(request)
+	organizationID, err := requireOrganization(request)
 	if err != nil {
 		httpx.WriteError(response, request, err)
 		return
@@ -142,7 +142,7 @@ func (handler *Handler) errors(response http.ResponseWriter, request *http.Reque
 		httpx.WriteError(response, request, errs.ErrBadRequest)
 		return
 	}
-	page, err := handler.Service.Errors(request.Context(), tenantID, filter)
+	page, err := handler.Service.Errors(request.Context(), organizationID, filter)
 	if err != nil {
 		httpx.WriteError(response, request, err)
 		return
@@ -161,7 +161,7 @@ func canRetry(event Event) bool {
 	return event.Status != "success" && event.Resolution == "open" && event.Operation == "test" && !strings.HasPrefix(event.ConnectionID, "scim:")
 }
 
-func recordErrorAudit(ctx context.Context, tx pgx.Tx, request *http.Request, tenantID, eventID uuid.UUID, action string, success bool) error {
+func recordErrorAudit(ctx context.Context, tx pgx.Tx, request *http.Request, organizationID, eventID uuid.UUID, action string, success bool) error {
 	principal := httpx.PrincipalFromCtx(ctx)
 	var actor *uuid.UUID
 	actorType := "system"
@@ -169,7 +169,7 @@ func recordErrorAudit(ctx context.Context, tx pgx.Tx, request *http.Request, ten
 		actor = principal.UserID
 		actorType = principal.ActorType
 	}
-	return audit.Record(ctx, tx, audit.Event{TenantID: &tenantID, ActorUserID: actor, ActorType: actorType, Action: action, ResourceType: "directory_error", ResourceID: &eventID, IP: httpx.ClientIP(request), RequestID: httpx.RequestID(request), Metadata: map[string]any{"success": success}})
+	return audit.Record(ctx, tx, audit.Event{OrganizationID: &organizationID, ActorUserID: actor, ActorType: actorType, Action: action, ResourceType: "directory_error", ResourceID: &eventID, IP: httpx.ClientIP(request), RequestID: httpx.RequestID(request), Metadata: map[string]any{"success": success}})
 }
 
 func (handler *Handler) resolveError(response http.ResponseWriter, request *http.Request) {
@@ -181,7 +181,7 @@ func (handler *Handler) retryError(response http.ResponseWriter, request *http.R
 }
 
 func (handler *Handler) changeError(response http.ResponseWriter, request *http.Request, retry bool) {
-	tenantID, err := requireTenant(request)
+	organizationID, err := requireOrganization(request)
 	if err != nil {
 		httpx.WriteError(response, request, err)
 		return
@@ -192,12 +192,12 @@ func (handler *Handler) changeError(response http.ResponseWriter, request *http.
 		return
 	}
 	ctx := request.Context()
-	const openError = `SELECT ` + eventColumns + ` FROM tenant.directory_events WHERE tenant_id=$1 AND id=$2 AND status = 'failed'`
+	const openError = `SELECT ` + eventColumns + ` FROM organization.directory_events WHERE organization_id=$1 AND id=$2 AND status = 'failed'`
 	resolution, action, success := "resolved", "directory.error_resolved", true
 	if retry {
 		// The check runs before the error's row is locked: it records its own
 		// event, pointing back at this error, which a held lock would block.
-		event, err := scanEvent(handler.Service.pool.QueryRow(ctx, openError, tenantID, eventID))
+		event, err := scanEvent(handler.Service.pool.QueryRow(ctx, openError, organizationID, eventID))
 		if errors.Is(err, pgx.ErrNoRows) {
 			httpx.WriteError(response, request, errs.ErrNotFound)
 			return
@@ -212,7 +212,7 @@ func (handler *Handler) changeError(response http.ResponseWriter, request *http.
 			httpx.WriteError(response, request, errs.ErrConflict)
 			return
 		}
-		err = tester.TestConnection(context.WithValue(ctx, retryContextKey{}, eventID), tenantID, connectionID)
+		err = tester.TestConnection(context.WithValue(ctx, retryContextKey{}, eventID), organizationID, connectionID)
 		success = err == nil
 		resolution, action = "retried", "directory.error_retried"
 	}
@@ -224,7 +224,7 @@ func (handler *Handler) changeError(response http.ResponseWriter, request *http.
 	defer tx.Rollback(ctx)
 	// NO KEY UPDATE still stops two requests settling the error, and lets a
 	// new event that refers to it be inserted meanwhile.
-	event, err := scanEvent(tx.QueryRow(ctx, openError+` FOR NO KEY UPDATE`, tenantID, eventID))
+	event, err := scanEvent(tx.QueryRow(ctx, openError+` FOR NO KEY UPDATE`, organizationID, eventID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		httpx.WriteError(response, request, errs.ErrNotFound)
 		return
@@ -242,12 +242,12 @@ func (handler *Handler) changeError(response http.ResponseWriter, request *http.
 		if principal := httpx.PrincipalFromCtx(ctx); principal != nil {
 			actor = principal.UserID
 		}
-		if _, err := tx.Exec(ctx, `UPDATE tenant.directory_events SET resolution=$3,resolved_at=NOW(),resolved_by=$4 WHERE tenant_id=$1 AND id=$2`, tenantID, eventID, resolution, actor); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE organization.directory_events SET resolution=$3,resolved_at=NOW(),resolved_by=$4 WHERE organization_id=$1 AND id=$2`, organizationID, eventID, resolution, actor); err != nil {
 			httpx.WriteError(response, request, err)
 			return
 		}
 	}
-	if err := recordErrorAudit(ctx, tx, request, tenantID, eventID, action, success); err != nil {
+	if err := recordErrorAudit(ctx, tx, request, organizationID, eventID, action, success); err != nil {
 		httpx.WriteError(response, request, err)
 		return
 	}

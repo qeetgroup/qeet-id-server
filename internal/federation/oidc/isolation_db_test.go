@@ -15,18 +15,18 @@ import (
 )
 
 // TestTokensAnswerOnlyToTheirApplication checks that another application, of
-// the same organisation or another, can neither renew, revoke nor learn of an
+// the same organization or another, can neither renew, revoke nor learn of an
 // application's tokens, that a public client can't introspect at all, and that
 // the application itself introspects and revokes them over HTTP.
 func TestTokensAnswerOnlyToTheirApplication(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
-	tenant, otherTenant := dbtest.Tenant(t), dbtest.Tenant(t)
-	person := dbtest.User(t, tenant, tenant)
-	client, secret := registerClient(t, svc, tenant)
-	sibling, siblingSecret := registerClient(t, svc, tenant)
-	foreign, foreignSecret := registerClient(t, svc, otherTenant)
-	public, _ := registerClientWith(t, svc, CreateClientInput{TenantID: tenant, Type: "public"})
+	organization, otherOrganization := dbtest.Organization(t), dbtest.Organization(t)
+	person := dbtest.User(t, organization, organization)
+	client, secret := registerClient(t, svc, organization)
+	sibling, siblingSecret := registerClient(t, svc, organization)
+	foreign, foreignSecret := registerClient(t, svc, otherOrganization)
+	public, _ := registerClientWith(t, svc, CreateClientInput{OrganizationID: organization, Type: "public"})
 	issued := redeemCode(t, svc, client, secret, person.ID, "")
 
 	for _, caller := range []struct{ name, id, secret string }{
@@ -49,8 +49,8 @@ func TestTokensAnswerOnlyToTheirApplication(t *testing.T) {
 	if _, err := svc.Introspect(ctx, public.ClientID, "", issued.AccessToken, ""); !errors.Is(err, errs.ErrOIDCClientAuthFailed) {
 		t.Errorf("a public client introspecting: %v, want %v", err, errs.ErrOIDCClientAuthFailed)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'oidc.client_auth_failed'
-		AND metadata->>'reason' = 'public_client'`, tenant); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'oidc.client_auth_failed'
+		AND metadata->>'reason' = 'public_client'`, organization); n != 1 {
 		t.Errorf("the public client's introspection was audited %d times, want once", n)
 	}
 	renewed, err := svc.RefreshToken(ctx, client.ClientID, secret, issued.RefreshToken, "")
@@ -81,17 +81,17 @@ func TestTokensAnswerOnlyToTheirApplication(t *testing.T) {
 	}
 }
 
-// TestSuspendedOrganisationRenewsNothing checks that once an organisation is
+// TestSuspendedOrganizationRenewsNothing checks that once an organization is
 // suspended its applications' grants renew nothing, as its sign-ins and the
 // introspection of its tokens already refuse.
-func TestSuspendedOrganisationRenewsNothing(t *testing.T) {
+func TestSuspendedOrganizationRenewsNothing(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
-	tenant := dbtest.Tenant(t)
-	person := dbtest.User(t, tenant, tenant)
-	client, secret := registerClient(t, svc, tenant)
+	organization := dbtest.Organization(t)
+	person := dbtest.User(t, organization, organization)
+	client, secret := registerClient(t, svc, organization)
 	issued := redeemCode(t, svc, client, secret, person.ID, "")
-	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE tenant.tenants SET status = 'suspended' WHERE id = $1`, tenant); err != nil {
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE organization.organizations SET status = 'suspended' WHERE id = $1`, organization); err != nil {
 		t.Fatal(err)
 	}
 
@@ -109,10 +109,10 @@ func TestSuspendedOrganisationRenewsNothing(t *testing.T) {
 func TestTokenExchangeRefusesIDTokens(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
-	tenant := dbtest.Tenant(t)
-	person := dbtest.User(t, tenant, tenant)
-	app, appSecret := registerClient(t, svc, tenant)
-	delegate, delegateSecret := registerClientWith(t, svc, CreateClientInput{TenantID: tenant, GrantTypes: []string{"authorization_code", "token_exchange"}})
+	organization := dbtest.Organization(t)
+	person := dbtest.User(t, organization, organization)
+	app, appSecret := registerClient(t, svc, organization)
+	delegate, delegateSecret := registerClientWith(t, svc, CreateClientInput{OrganizationID: organization, GrantTypes: []string{"authorization_code", "token_exchange"}})
 	if err := svc.GrantConsent(ctx, person.ID, delegate.ClientID, []string{"openid"}); err != nil {
 		t.Fatalf("consent: %v", err)
 	}

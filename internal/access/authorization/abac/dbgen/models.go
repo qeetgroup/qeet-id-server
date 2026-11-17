@@ -12,18 +12,18 @@ import (
 )
 
 type AuthAbacPolicy struct {
-	ID           uuid.UUID
-	TenantID     uuid.UUID
-	Name         string
-	Description  string
-	Effect       string
-	ResourceType string
-	Action       string
-	Condition    []byte
-	Priority     int32
-	Enabled      bool
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	Version      int32
-	UpdatedBy    pgtype.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	Name           string
+	Description    string
+	Effect         string
+	ResourceType   string
+	Action         string
+	Condition      []byte
+	Priority       int32
+	Enabled        bool
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	Version        int32
+	UpdatedBy      pgtype.UUID
 }

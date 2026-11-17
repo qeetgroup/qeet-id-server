@@ -66,6 +66,14 @@ same shape: `queries.sql` + `sqlc.yaml` + generated `dbgen/`, plus Go files name
 `http.go`. Check [docs/llm/subsystems.md](docs/llm/subsystems.md) for the real filenames before
 looking for one.
 
+**Names.** Three words say who holds what: an **account** is a person's sign-in, an **organization**
+is a customer company, and an **application** is an app an organization connects. Use them in code,
+SQL, comments and docs, with the one spelling "organization". Never add a `tenant` name. The public
+contract still says tenant, and changes in one change of its own: the `/v1/tenants/{tenantID}/…`
+paths, the `tenant_id` JSON field and token claim, and the `tenant.*` permission, event and error
+names. Leave those strings alone until then. A Microsoft Entra directory is also called a tenant;
+that is the provider's word and it stays (`allowed_idp_tenant_ids`).
+
 ### 3. Preserve package boundaries
 
 Two rules, enforced by `depguard` in `golangci-lint` (`.golangci.yml`):
@@ -96,10 +104,10 @@ list paged by cursor or capped with `truncated`). These tests run locally in `ma
 too, but no other tests.
 Update the spec in the same change as the route. How the sources are laid out: `api/openapi/README.md`.
 
-**URLs.** The organisation always comes from the caller's token (`httpx.RequireTenant`). A new
-organisation-administration route also names it in the path, `/v1/tenants/{tenantID}/…`
-(`EnforceTenantScope` checks the two agree); a person's own routes live under `/v1/me/…`. The routes
-that predate this rule and take the organisation from the token alone are frozen in
+**URLs.** The organization always comes from the caller's token (`httpx.RequireOrganization`). A new
+organization-administration route also names it in the path, `/v1/tenants/{tenantID}/…`
+(`EnforceOrganizationScope` checks the two agree); a person's own routes live under `/v1/me/…`. The routes
+that predate this rule and take the organization from the token alone are frozen in
 `tokenScopedRoutes` (`internal/bootstrap/permissions_test.go`); don't add to that list.
 
 **Compatibility from 1.0.** Changes are additive: a new route, a new optional request field, a new
@@ -109,22 +117,22 @@ something, mark it `deprecated: true` in the spec and answer with `Deprecation` 
 `Sunset` (RFC 8594) headers for at least six months, then remove it only in a new major version
 (`/v2`). Clients must ignore response fields they don't know.
 
-### 6. Preserve tenant isolation — the highest-severity rule here
+### 6. Preserve organization isolation — the highest-severity rule here
 
-**Tenant scope comes from the authenticated principal. Never from a path, body, query or header.**
+**Organization scope comes from the authenticated principal. Never from a path, body, query or header.**
 
-- Use `httpx.RequireTenant(r)`. It is the only trustworthy source.
-- `httpx.EnforceTenantScope` compares any `{tenantID}` path parameter to the caller's own tenant.
-- Every tenant-scoped query carries `WHERE tenant_id = $1`.
-- **Row-level security is the second layer** (migration 0160). Organisation-administration
+- Use `httpx.RequireOrganization(r)`. It is the only trustworthy source.
+- `httpx.EnforceOrganizationScope` compares any `{tenantID}` path parameter to the caller's own organization.
+- Every organization-scoped query carries `WHERE organization_id = $1`.
+- **Row-level security is the second layer** (migration 0011). Organization-administration
   requests — routes whose policy needs a permission or a machine scope — run scoped to the caller's
-  organisation (`scopeOrganisationRoutes` in `bootstrap/router.go`), and the organisation-owned
+  organization (`scopeOrganizationRoutes` in `bootstrap/router.go`), and the organization-owned
   tables show and accept only its rows. A person's own routes, background jobs, sign-in and the
   account-level tables (`accountLevelTables` in `migrations/schema_db_test.go`) run unscoped, so a
-  missing predicate there is still a cross-tenant data exposure. Code that acts across
-  organisations by design calls `postgres.AcrossTenants`. The DB tests' `dbtest.Serve` scopes every
-  request, so handler tests catch a cross-organisation read. A new table with `tenant_id` needs a
-  `tenant_isolation` policy in its migration; the schema test fails otherwise.
+  missing predicate there is still a cross-organization data exposure. Code that acts across
+  organizations by design calls `postgres.AcrossOrganizations`. The DB tests' `dbtest.Serve` scopes every
+  request, so handler tests catch a cross-organization read. A new table with `organization_id` needs an
+  `organization_isolation` policy in its migration; the schema test fails otherwise.
 
 **Restructuring the chi route tree is a security change.** The guard depends on chi's nested-route
 matching; `internal/bootstrap/router.go` warns that flattening the routes makes it *silently fail
@@ -133,7 +141,7 @@ open*.
 ### 7. Never weaken a security control
 
 Do not weaken authentication, authorization, CSRF or origin checks, token validation, session
-handling, secret handling, cryptography, or tenant isolation — **including to make a test pass**.
+handling, secret handling, cryptography, or organization isolation — **including to make a test pass**.
 
 If the implementation does not meet an L0 or L1 requirement, that is a **finding to report**, not a
 standard to redefine. Record the product-level divergence in `qeet-id-context` and its
@@ -159,14 +167,14 @@ Migrations are embedded with `//go:embed` and applied on startup. Additive first
 expand, migrate, contract across releases. An index on a table that already exists is built with
 `CREATE INDEX CONCURRENTLY`, alone in its file (a plain one blocks writes while it builds;
 `TestNewIndexesDontLockTheirTable` enforces it). A migration waits at most 10s for a busy table,
-then fails and runs again at the next start. A table with a `tenant_id` gets an index leading on it
-and a foreign key to `tenant.tenants`, or a note beside it saying why it has none (an append-only
-log, a record that outlives its organisation).
+then fails and runs again at the next start. A table with an `organization_id` gets an index leading on it
+and a foreign key to `organization.organizations`, or a note beside it saying why it has none (an append-only
+log, a record that outlives its organization).
 
 ### 9. Behaviour changes require tests
 
 A new behaviour ships with a test. A bug fix ships with a test that fails before it. Anything
-touching tenant scoping needs a test proving cross-tenant access is denied. The test database is the
+touching organization scoping needs a test proving cross-organization access is denied. The test database is the
 schema alone: a test that depends on the built-in permissions or plans seeds them with the service's
 own `SeedBuiltins`, which is what the server runs at start.
 
@@ -232,7 +240,7 @@ is lost from the next release. Test copies (`2027.1.0-rc.1`, `-rc.2` …) are nu
 The unit and database tests, the generated-SQL check and `gosec` are not in CI: they run locally
 before every push (`make ci`). On release day, once the deploy is live: delete the release (or hotfix) branch and merge `main` into `develop`.
 The tests include the OpenAPI route-coverage and document-validity gates and the static
-guards: tenant filter (`internal/platform/database/tenantguard`), pool use inside a transaction
+guards: organization filter (`internal/platform/database/organizationguard`), pool use inside a transaction
 (`…/txguard`), error-code statuses and `.env.example` completeness. An accepted `gosec` finding
 needs `// #nosec <rule> -- <reason>` (`.gosec.json`).
 
@@ -244,7 +252,7 @@ needs `// #nosec <rule> -- <reason>` (`.gosec.json`).
 go build ./...
 go test -race ./...        # includes the route-coverage gate and the static guards
 make lint
-make test-db               # if you touched SQL, tenant scoping or sign-in
+make test-db               # if you touched SQL, organization scoping or sign-in
 git diff                   # no secrets, no unrelated changes, no generated junk
 ```
 
@@ -257,7 +265,7 @@ runs only Verify, which runs the API contract checks but no other tests, so the 
 
 Report rather than proceed if a task would:
 
-- weaken any security control, or bypass `EnforceTenantScope`
+- weaken any security control, or bypass `EnforceOrganizationScope`
 - edit an already-applied migration
 - change JWT claims, signing, or `kid` handling — this reaches **every Qeet product** and external
   relying parties

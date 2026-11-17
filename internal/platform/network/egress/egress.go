@@ -1,4 +1,4 @@
-// Package egress provides the shared outbound network boundary for tenant-
+// Package egress provides the shared outbound network boundary for organization-
 // configured integrations. It rejects destinations that can reach the local
 // host, private networks, link-local services, or other non-public addresses.
 package egress

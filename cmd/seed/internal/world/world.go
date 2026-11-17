@@ -1,5 +1,5 @@
 // Package world holds what every seed step shares: the API's own services,
-// the organisations and people seeded so far, the story clock that places each
+// the organizations and people seeded so far, the story clock that places each
 // step at its date, and the summary printed at the end.
 package world
 

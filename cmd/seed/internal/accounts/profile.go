@@ -8,10 +8,10 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/cmd/seed/internal/world"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/organization"
 )
 
-// monogram is an organisation's logo: its initials on a rounded square in its
+// monogram is an organization's logo: its initials on a rounded square in its
 // brand colours, as an SVG data URI (the hosted pages allow only https and
 // data: images).
 func monogram(name string, b world.Brand) string {
@@ -30,7 +30,7 @@ func monogram(name string, b world.Brand) string {
 	return "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString([]byte(svg))
 }
 
-// sender is the name an organisation's email goes out with, and where replies go.
+// sender is the name an organization's email goes out with, and where replies go.
 type sender struct{ name, replyTo string }
 
 var senders = map[string]sender{
@@ -43,24 +43,24 @@ var senders = map[string]sender{
 	"kestrel":   {"Kestrel Insurance Brokers", "operations@kestrelinsurance.in"},
 }
 
-// loginHosts are the custom hosted-login hostnames enterprise organisations
+// loginHosts are the custom hosted-login hostnames enterprise organizations
 // set up. Neither resolves, so their DNS check stays pending.
 var loginHosts = map[string]string{
 	"northwind": "login.northwindcapital.in",
 	"meridian":  "sso.meridianhealth.us",
 }
 
-// profile gives the organisation its logo when it is created and, where the
+// profile gives the organization its logo when it is created and, where the
 // plan includes custom branding, its colours, background and email sender a
 // couple of days later.
 func (s *seeder) profile(o *world.Org) {
 	w := s.w
 	logo := monogram(o.Spec.Name, o.Spec.Brand)
 	w.At(o.Spec.Since.Add(5*time.Minute), func() {
-		_, err := w.Deps.Tenant.Repo.Update(w.Ctx, o.ID, tenant.UpdateInput{LogoURL: &logo}, nil, nil)
+		_, err := w.Deps.Organization.Repo.Update(w.Ctx, o.ID, organization.UpdateInput{LogoURL: &logo}, nil, nil)
 		w.Check(err, "logo of "+o.Spec.Slug)
 	})
-	o.Tenant.LogoURL = logo
+	o.Organization.LogoURL = logo
 
 	snd, ok := senders[o.Spec.Slug]
 	if !ok || !o.Has("starter") {
@@ -96,14 +96,14 @@ func (s *seeder) profile(o *world.Org) {
 	}
 }
 
-// domainPlan is a domain an organisation claims and how far it got.
+// domainPlan is a domain an organization claims and how far it got.
 type domainPlan struct {
 	name, state string // state: verified, pending or attention
 	sso, jit    bool
-	added       float64 // days after the organisation signed up; negative: days ago
+	added       float64 // days after the organization signed up; negative: days ago
 }
 
-// domainPlans are each organisation's claimed email domains.
+// domainPlans are each organization's claimed email domains.
 var domainPlans = map[string][]domainPlan{
 	"qeet": {{name: "qeet.in", state: "verified", sso: true, jit: true, added: 1}},
 	"northwind": {
@@ -128,7 +128,7 @@ var domainPlans = map[string][]domainPlan{
 	"kestrel": {{name: "kestrelinsurance.in", state: "verified", added: 4}},
 }
 
-// domains claims the organisation's email domains: verified ones (a DNS check
+// domains claims the organization's email domains: verified ones (a DNS check
 // the seed can't make, so the verification is written as it would be),
 // pending ones nobody has checked, and ones whose last check failed. Custom
 // domains are a paid feature.
@@ -155,8 +155,8 @@ func (s *seeder) domains(o *world.Org) {
 		switch d.state {
 		case "verified":
 			checked := at.Add(time.Duration(20+w.Rand.IntN(90)) * time.Minute)
-			w.Exec("verify "+d.name, `UPDATE tenant.domains SET verified_at = $3, last_checked_at = $3, last_error = NULL
-				WHERE id = $1 AND tenant_id = $2`, dom.ID, o.ID, checked)
+			w.Exec("verify "+d.name, `UPDATE organization.domains SET verified_at = $3, last_checked_at = $3, last_error = NULL
+				WHERE id = $1 AND organization_id = $2`, dom.ID, o.ID, checked)
 			e := actor.Actor().Event(o.ID, "domain.verified", "domain", dom.ID, map[string]any{"domain": d.name})
 			w.Audit(checked, e)
 			if d.sso || d.jit {
@@ -168,8 +168,8 @@ func (s *seeder) domains(o *world.Org) {
 		case "attention":
 			// Checked when added and again since; the TXT record never appeared.
 			last := clamp(w, w.Days(0.4+w.Rand.Float64()*2))
-			w.Exec("check "+d.name, `UPDATE tenant.domains SET last_checked_at = $3, last_error = 'DNS TXT record not found'
-				WHERE id = $1 AND tenant_id = $2`, dom.ID, o.ID, last)
+			w.Exec("check "+d.name, `UPDATE organization.domains SET last_checked_at = $3, last_error = 'DNS TXT record not found'
+				WHERE id = $1 AND organization_id = $2`, dom.ID, o.ID, last)
 			s.tell(o, event{at: at.Add(10 * time.Minute), kind: "warning", title: "Domain verification failed",
 				detail: fmt.Sprintf("We couldn't find the TXT record at _qeet-verification.%s. Publish the record, then check again.", d.name),
 				href:   "/settings/organization/domains"})

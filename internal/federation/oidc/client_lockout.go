@@ -80,9 +80,9 @@ func (s *Service) clientAuthFailed(ctx context.Context, c authedClient) {
 	if err != nil { // pgx.ErrNoRows: another attempt started this lockout
 		return
 	}
-	tenantID, id := c.TenantID, c.ID
+	organizationID, id := c.OrganizationID, c.ID
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID: &tenantID, ActorType: "system", Action: "oidc.client_locked_out",
+		OrganizationID: &organizationID, ActorType: "system", Action: "oidc.client_locked_out",
 		ResourceType: "oidc_client", ResourceID: &id, IP: httpx.ClientIPFromContext(ctx),
 		Metadata: map[string]any{
 			"client_id": c.ClientID, "failures": failures, "locked_until": until.Time, "source_network": network,
@@ -93,7 +93,7 @@ func (s *Service) clientAuthFailed(ctx context.Context, c authedClient) {
 	if err := outbox.Enqueue(ctx, tx, outbox.Event{
 		AggregateID: c.ID, Topic: "oidc", EventType: "oidc.client_locked_out",
 		Payload: map[string]any{
-			"tenant_id": c.TenantID, "client_id": c.ClientID, "failures": failures, "locked_until": until.Time,
+			"tenant_id": c.OrganizationID, "client_id": c.ClientID, "failures": failures, "locked_until": until.Time,
 			"source_network": network,
 		},
 	}); err != nil {
@@ -118,10 +118,10 @@ type ClientAuthFailure struct {
 	Reason string    `json:"reason"`
 }
 
-// RecentClientAuthFailures returns when the lockouts in force for a tenant's
+// RecentClientAuthFailures returns when the lockouts in force for an organization's
 // application end (nil: none) and its last 20 failed authentications.
-func (s *Service) RecentClientAuthFailures(ctx context.Context, tenantID, id uuid.UUID) (*ClientAuthFailures, error) {
-	if _, err := s.GetClient(ctx, tenantID, id); err != nil {
+func (s *Service) RecentClientAuthFailures(ctx context.Context, organizationID, id uuid.UUID) (*ClientAuthFailures, error) {
+	if _, err := s.GetClient(ctx, organizationID, id); err != nil {
 		return nil, err
 	}
 	out := &ClientAuthFailures{Items: []ClientAuthFailure{}}
@@ -131,7 +131,7 @@ func (s *Service) RecentClientAuthFailures(ctx context.Context, tenantID, id uui
 		return nil, err
 	}
 	rows, err := s.q.ListClientAuthFailures(ctx, dbgen.ListClientAuthFailuresParams{
-		TenantID: optionalUUID(tenantID), ClientRowID: optionalUUID(id), MaxRows: 20,
+		OrganizationID: optionalUUID(organizationID), ClientRowID: optionalUUID(id), MaxRows: 20,
 	})
 	if err != nil {
 		return nil, err

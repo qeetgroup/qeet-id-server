@@ -12,7 +12,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// captureDomain refuses every address on its domain, as an organisation that
+// captureDomain refuses every address on its domain, as an organization that
 // requires single sign-on there does.
 type captureDomain string
 
@@ -30,10 +30,10 @@ func (d captureDomain) RefuseCaptured(_ context.Context, email string) error {
 func TestCapturedAddressesUseNoPasskey(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := signInService(t)
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	domain := dbtest.Unique("acme") + ".example.test"
-	captured := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, tenant, tenant)
-	free := dbtest.User(t, tenant, tenant)
+	captured := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, organization, organization)
+	free := dbtest.User(t, organization, organization)
 	d, other := register(t, svc, captured.ID, "Laptop"), register(t, svc, free.ID, "Phone")
 	svc.SetDomainCapture(captureDomain(domain))
 

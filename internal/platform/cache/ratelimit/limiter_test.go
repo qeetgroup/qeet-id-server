@@ -221,19 +221,19 @@ func TestPerIP_TrustedProxyReadsRealClient(t *testing.T) {
 	}
 }
 
-func TestPerTenant_EmptyWhenUnauthenticated(t *testing.T) {
+func TestPerOrganization_EmptyWhenUnauthenticated(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	if got := PerTenant(req); got != "" {
+	if got := PerOrganization(req); got != "" {
 		t.Errorf("PerTenant with no principal = %q, want empty", got)
 	}
 }
 
-func TestPerTenant_ReturnsTenantUUID(t *testing.T) {
+func TestPerOrganization_ReturnsOrganizationUUID(t *testing.T) {
 	tid := uuid.New()
-	p := &httpx.Principal{TenantID: &tid}
+	p := &httpx.Principal{OrganizationID: &tid}
 	req := httptest.NewRequest(http.MethodGet, "/", nil).
 		WithContext(httpx.WithPrincipal(httptest.NewRequest(http.MethodGet, "/", nil).Context(), p))
-	if got := PerTenant(req); got != tid.String() {
+	if got := PerOrganization(req); got != tid.String() {
 		t.Errorf("PerTenant = %q, want %s", got, tid)
 	}
 }

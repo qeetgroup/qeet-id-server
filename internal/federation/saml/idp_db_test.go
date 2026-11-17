@@ -2,7 +2,7 @@
 
 package saml
 
-// Database tests for the per-organisation SAML IdP endpoints, driving the real
+// Database tests for the per-organization SAML IdP endpoints, driving the real
 // handlers through MountPublic against a migrated PostgreSQL (see dbtest).
 
 import (
@@ -44,12 +44,12 @@ func (s sessionsByCookie) ResolveLoginSession(_ context.Context, raw string) (uu
 	return uuid.Nil, errors.New("no session")
 }
 
-// idpTenantFixture is one tenant with a member signed in to the hosted login
+// idpOrganizationFixture is one organization with a member signed in to the hosted login
 // and a registered SP.
-type idpTenantFixture struct {
-	tenantID uuid.UUID
-	cookie   string
-	sp       *ServiceProvider
+type idpOrganizationFixture struct {
+	organizationID uuid.UUID
+	cookie         string
+	sp             *ServiceProvider
 }
 
 func newIdPRouter(t *testing.T, sessions sessionsByCookie) (*IdP, chi.Router) {
@@ -67,14 +67,14 @@ func newIdPRouter(t *testing.T, sessions sessionsByCookie) (*IdP, chi.Router) {
 	return idp, r
 }
 
-func registerSP(t *testing.T, ctx context.Context, idp *IdP, tenantID uuid.UUID, entityID, acs string) *ServiceProvider {
+func registerSP(t *testing.T, ctx context.Context, idp *IdP, organizationID uuid.UUID, entityID, acs string) *ServiceProvider {
 	t.Helper()
 	tx, err := dbtest.Pool(t).Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	sp, err := idp.CreateSP(ctx, tx, tenantID, CreateSPInput{Name: "App", EntityID: entityID, ACSURL: acs, Status: "active"})
+	sp, err := idp.CreateSP(ctx, tx, organizationID, CreateSPInput{Name: "App", EntityID: entityID, ACSURL: acs, Status: "active"})
 	if err != nil {
 		t.Fatalf("CreateSP: %v", err)
 	}
@@ -132,36 +132,36 @@ func postedTo(t *testing.T, rec *httptest.ResponseRecorder) (acs, issuer string)
 	return html.UnescapeString(action[1]), iss[1]
 }
 
-// TestIdPSameEntityIDInTwoTenants checks that two tenants registering the same
+// TestIdPSameEntityIDInTwoOrganizations checks that two organizations registering the same
 // SP entity ID each get their own SP configuration and IdP identity.
-func TestIdPSameEntityIDInTwoTenants(t *testing.T) {
+func TestIdPSameEntityIDInTwoOrganizations(t *testing.T) {
 	ctx := dbtest.Context(t)
 	const entityID = "https://sp.example.com/saml/metadata"
 	sessions := sessionsByCookie{}
 	idp, router := newIdPRouter(t, sessions)
 
-	var fixtures []idpTenantFixture
+	var fixtures []idpOrganizationFixture
 	for i := range 2 {
-		tenantID := dbtest.Tenant(t)
-		member := dbtest.User(t, tenantID)
+		organizationID := dbtest.Organization(t)
+		member := dbtest.User(t, organizationID)
 		cookie := "session-" + uuid.NewString()
 		sessions[cookie] = member.ID
 		acs := "https://sp.example.com/acs/" + string(rune('a'+i))
-		fixtures = append(fixtures, idpTenantFixture{tenantID, cookie, registerSP(t, ctx, idp, tenantID, entityID, acs)})
+		fixtures = append(fixtures, idpOrganizationFixture{organizationID, cookie, registerSP(t, ctx, idp, organizationID, entityID, acs)})
 	}
 
 	for _, f := range fixtures {
-		prefix := "/saml/idp/" + f.tenantID.String()
+		prefix := "/saml/idp/" + f.organizationID.String()
 		wantIssuer := testPublicBase + prefix
 
 		acs, issuer := postedTo(t, idpGet(t, router, prefix+"/sso?"+authnRequestQuery(entityID, "_req-1"), f.cookie))
 		if acs != f.sp.ACSURL || issuer != wantIssuer {
-			t.Errorf("SP-initiated SSO for %s posted to %q as %q, want %q as %q", f.tenantID, acs, issuer, f.sp.ACSURL, wantIssuer)
+			t.Errorf("SP-initiated SSO for %s posted to %q as %q, want %q as %q", f.organizationID, acs, issuer, f.sp.ACSURL, wantIssuer)
 		}
 		for _, ref := range []string{url.QueryEscape(entityID), f.sp.ID.String()} {
 			acs, issuer = postedTo(t, idpGet(t, router, prefix+"/sso?sp="+ref, f.cookie))
 			if acs != f.sp.ACSURL || issuer != wantIssuer {
-				t.Errorf("IdP-initiated SSO (sp=%s) for %s posted to %q as %q, want %q as %q", ref, f.tenantID, acs, issuer, f.sp.ACSURL, wantIssuer)
+				t.Errorf("IdP-initiated SSO (sp=%s) for %s posted to %q as %q, want %q as %q", ref, f.organizationID, acs, issuer, f.sp.ACSURL, wantIssuer)
 			}
 		}
 
@@ -169,25 +169,25 @@ func TestIdPSameEntityIDInTwoTenants(t *testing.T) {
 		if meta.Code != http.StatusOK ||
 			!strings.Contains(meta.Body.String(), `entityID="`+wantIssuer+`"`) ||
 			!strings.Contains(meta.Body.String(), `Location="`+wantIssuer+`/sso"`) {
-			t.Errorf("metadata for %s = %d %s, want entity %s", f.tenantID, meta.Code, meta.Body.String(), wantIssuer)
+			t.Errorf("metadata for %s = %d %s, want entity %s", f.organizationID, meta.Code, meta.Body.String(), wantIssuer)
 		}
 	}
 
-	// One tenant's SSO endpoint never resolves another tenant's SP by its ID.
+	// One organization's SSO endpoint never resolves another organization's SP by its ID.
 	a, b := fixtures[0], fixtures[1]
-	if rec := idpGet(t, router, "/saml/idp/"+a.tenantID.String()+"/sso?sp="+b.sp.ID.String(), a.cookie); rec.Code != http.StatusNotFound {
+	if rec := idpGet(t, router, "/saml/idp/"+a.organizationID.String()+"/sso?sp="+b.sp.ID.String(), a.cookie); rec.Code != http.StatusNotFound {
 		t.Errorf("tenant A SSO with tenant B's SP ID = %d %s, want 404", rec.Code, rec.Body.String())
 	}
 }
 
-// TestIdPUnknownOrInactiveTenant checks that an unknown, malformed or
-// suspended tenant gets the same answer as an unknown SP.
-func TestIdPUnknownOrInactiveTenant(t *testing.T) {
+// TestIdPUnknownOrInactiveOrganization checks that an unknown, malformed or
+// suspended organization gets the same answer as an unknown SP.
+func TestIdPUnknownOrInactiveOrganization(t *testing.T) {
 	ctx := dbtest.Context(t)
 	_, router := newIdPRouter(t, sessionsByCookie{})
-	active := dbtest.Tenant(t)
-	suspended := dbtest.Tenant(t)
-	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE tenant.tenants SET status = 'suspended' WHERE id = $1`, suspended); err != nil {
+	active := dbtest.Organization(t)
+	suspended := dbtest.Organization(t)
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE organization.organizations SET status = 'suspended' WHERE id = $1`, suspended); err != nil {
 		t.Fatal(err)
 	}
 
@@ -195,12 +195,12 @@ func TestIdPUnknownOrInactiveTenant(t *testing.T) {
 	if unknownSP.Code != http.StatusNotFound {
 		t.Fatalf("unknown SP = %d %s, want 404", unknownSP.Code, unknownSP.Body.String())
 	}
-	for _, tenant := range []string{suspended.String(), uuid.NewString(), "not-a-uuid"} {
+	for _, organization := range []string{suspended.String(), uuid.NewString(), "not-a-uuid"} {
 		for _, path := range []string{"/metadata", "/sso?sp=" + url.QueryEscape("https://unknown.example")} {
-			rec := idpGet(t, router, "/saml/idp/"+tenant+path, "")
+			rec := idpGet(t, router, "/saml/idp/"+organization+path, "")
 			if rec.Code != unknownSP.Code || rec.Body.String() != unknownSP.Body.String() {
 				t.Errorf("tenant %s %s = %d %s, want the unknown-SP answer %d %s",
-					tenant, path, rec.Code, rec.Body.String(), unknownSP.Code, unknownSP.Body.String())
+					organization, path, rec.Code, rec.Body.String(), unknownSP.Code, unknownSP.Body.String())
 			}
 		}
 	}
@@ -214,17 +214,17 @@ func TestIdPPostBindingResumesAfterSignIn(t *testing.T) {
 	const entityID = "https://sp.example.com/saml/metadata"
 	sessions := sessionsByCookie{}
 	idp, router := newIdPRouter(t, sessions)
-	tenantID := dbtest.Tenant(t)
-	member := dbtest.User(t, tenantID)
+	organizationID := dbtest.Organization(t)
+	member := dbtest.User(t, organizationID)
 	cookie := "session-" + uuid.NewString()
 	sessions[cookie] = member.ID
-	sp := registerSP(t, ctx, idp, tenantID, entityID, "https://sp.example.com/acs")
+	sp := registerSP(t, ctx, idp, organizationID, entityID, "https://sp.example.com/acs")
 
 	request := `<samlp:AuthnRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ` +
 		`xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_post-1" AssertionConsumerServiceURL="` + sp.ACSURL + `">` +
 		`<saml:Issuer>` + entityID + `</saml:Issuer></samlp:AuthnRequest>`
 	form := url.Values{"SAMLRequest": {base64.StdEncoding.EncodeToString([]byte(request))}, "RelayState": {"state-1"}}
-	prefix := "/saml/idp/" + tenantID.String() + "/sso"
+	prefix := "/saml/idp/" + organizationID.String() + "/sso"
 	req := httptest.NewRequest(http.MethodPost, "https://other.example"+prefix, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
@@ -254,16 +254,16 @@ func TestIdPPostBindingResumesAfterSignIn(t *testing.T) {
 	}
 }
 
-// poolGate allows SSO to the tenants it lists, reading on the pool as the plan
+// poolGate allows SSO to the organizations it lists, reading on the pool as the plan
 // service does.
 type poolGate struct {
 	pool    *pgxpool.Pool
 	allowed map[uuid.UUID]bool
 }
 
-func (g poolGate) FeatureAllowed(ctx context.Context, tenantID uuid.UUID, _ string) (bool, error) {
+func (g poolGate) FeatureAllowed(ctx context.Context, organizationID uuid.UUID, _ string) (bool, error) {
 	var one int
-	return g.allowed[tenantID], g.pool.QueryRow(ctx, `SELECT 1`).Scan(&one)
+	return g.allowed[organizationID], g.pool.QueryRow(ctx, `SELECT 1`).Scan(&one)
 }
 
 // TestCreateSPPlanGateWithOneConnection checks, with only one connection free,
@@ -272,7 +272,7 @@ func (g poolGate) FeatureAllowed(ctx context.Context, tenantID uuid.UUID, _ stri
 // invalid before the plan is asked.
 func TestCreateSPPlanGateWithOneConnection(t *testing.T) {
 	pool := dbtest.Pool(t)
-	paid, free := dbtest.Tenant(t), dbtest.Tenant(t)
+	paid, free := dbtest.Organization(t), dbtest.Organization(t)
 	keyPEM, certPEM, err := GenerateIdPKeyPEM("Test Qeet IdP")
 	if err != nil {
 		t.Fatal(err)
@@ -283,9 +283,9 @@ func TestCreateSPPlanGateWithOneConnection(t *testing.T) {
 	}
 	idp.SetPlanGate(poolGate{pool: pool, allowed: map[uuid.UUID]bool{paid: true}})
 	admins := map[uuid.UUID]uuid.UUID{paid: dbtest.User(t, paid, paid).ID, free: dbtest.User(t, free, free).ID}
-	create := func(tenant uuid.UUID, acs string) *httptest.ResponseRecorder {
-		h := dbtest.Serve(dbtest.Principal(admins[tenant], tenant), (&Handler{Service: &Service{}, IdP: idp}).Mount)
-		return dbtest.Do(t, h, http.MethodPost, "/tenants/"+tenant.String()+"/saml-providers",
+	create := func(organization uuid.UUID, acs string) *httptest.ResponseRecorder {
+		h := dbtest.Serve(dbtest.Principal(admins[organization], organization), (&Handler{Service: &Service{}, IdP: idp}).Mount)
+		return dbtest.Do(t, h, http.MethodPost, "/tenants/"+organization.String()+"/saml-providers",
 			map[string]any{"name": "App", "entity_id": "https://sp.example.com", "acs_url": acs})
 	}
 
@@ -301,13 +301,13 @@ func TestCreateSPPlanGateWithOneConnection(t *testing.T) {
 	}
 }
 
-// TestSAMLIdPAppliesTheOrganisationsAddressRulesAndSecondFactor checks that the
+// TestSAMLIdPAppliesTheOrganizationsAddressRulesAndSecondFactor checks that the
 // IdP signs an assertion only as OIDC authorize would: from an address the
-// organisation's rules allow (a refused one is refused and recorded), and for a
-// session that met the second factor the organisation requires. One that
+// organization's rules allow (a refused one is refused and recorded), and for a
+// session that met the second factor the organization requires. One that
 // didn't is sent to sign in again for this request, and refused when that
 // fresh sign-in still hasn't.
-func TestSAMLIdPAppliesTheOrganisationsAddressRulesAndSecondFactor(t *testing.T) {
+func TestSAMLIdPAppliesTheOrganizationsAddressRulesAndSecondFactor(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
 	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
 	authSvc.SetMFA(mfa.NewService(pool, "Qeet", notifier.LogSender{}, ""))
@@ -322,18 +322,18 @@ func TestSAMLIdPAppliesTheOrganisationsAddressRulesAndSecondFactor(t *testing.T)
 	idp.SetSignInRules(ipallow.NewService(pool), authSvc)
 	router := chi.NewRouter()
 	(&Handler{Service: &Service{}, IdP: idp, PublicBaseURL: testPublicBase}).MountPublic(router)
-	tenant := dbtest.Tenant(t)
-	member := dbtest.User(t, tenant, tenant)
-	sp := registerSP(t, ctx, idp, tenant, "https://sp.example.test/metadata", "https://sp.example.test/acs")
-	sso := "/saml/idp/" + tenant.String() + "/sso?" + authnRequestTo(sp.EntityID, "_req-1", "")
+	organization := dbtest.Organization(t)
+	member := dbtest.User(t, organization, organization)
+	sp := registerSP(t, ctx, idp, organization, "https://sp.example.test/metadata", "https://sp.example.test/acs")
+	sso := "/saml/idp/" + organization.String() + "/sso?" + authnRequestTo(sp.EntityID, "_req-1", "")
 	exec := func(sql string, args ...any) {
 		t.Helper()
 		if _, err := pool.Exec(ctx, sql, args...); err != nil {
 			t.Fatal(err)
 		}
 	}
-	exec(`WITH rule AS (INSERT INTO tenant.ip_rules (tenant_id, cidr, label, action) VALUES ($1, '192.0.2.0/24', 'office', 'allow'))
-		INSERT INTO tenant.ip_rules_config (tenant_id, enabled) VALUES ($1, TRUE)`, tenant)
+	exec(`WITH rule AS (INSERT INTO organization.ip_rules (organization_id, cidr, label, action) VALUES ($1, '192.0.2.0/24', 'office', 'allow'))
+		INSERT INTO organization.ip_rules_config (organization_id, enabled) VALUES ($1, TRUE)`, organization)
 	session := func() string {
 		t.Helper()
 		raw, err := authSvc.CreateLoginSession(ctx, member.ID, "192.0.2.10", "test")
@@ -357,14 +357,14 @@ func TestSAMLIdPAppliesTheOrganisationsAddressRulesAndSecondFactor(t *testing.T)
 	if rec := get(sso, cookie, elsewhere); rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeAuthAddressNotAllowed) {
 		t.Errorf("SSO from an address the rules refuse: %d %s, want 403 %s", rec.Code, rec.Body.String(), errs.CodeAuthAddressNotAllowed)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'auth.address_refused' AND metadata->>'path' = 'saml_idp'`, tenant); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'auth.address_refused' AND metadata->>'path' = 'saml_idp'`, organization); n != 1 {
 		t.Errorf("the refused address was recorded %d times, want once", n)
 	}
 	if acs, _ := postedTo(t, get(sso, cookie, office)); acs != sp.ACSURL {
 		t.Fatalf("SSO from the office posted to %q, want %q", acs, sp.ACSURL)
 	}
 
-	exec(`INSERT INTO tenant.security_policies (tenant_id, mfa_enforcement, mfa_grace_days, mfa_enforced_since) VALUES ($1, 'required', 0, NOW())`, tenant)
+	exec(`INSERT INTO organization.security_policies (organization_id, mfa_enforcement, mfa_grace_days, mfa_enforced_since) VALUES ($1, 'required', 0, NOW())`, organization)
 	rec := get(sso, cookie, office)
 	to, err := url.Parse(rec.Header().Get("Location"))
 	if rec.Code != http.StatusFound || err != nil || to.Host != "login.id.qeet.in" || to.Path != "/sign-in" || to.Query().Get("prompt") != "login" {

@@ -35,22 +35,22 @@ func TestPasswordReset(t *testing.T) {
 	mail := &dbtest.Mailbox{}
 	svc := NewService(pool, mail, time.Hour, "https://console.example.test")
 	svc.SetPasswordRules(authpolicy.NewService(pool))
-	tenant := dbtest.Tenant(t)
-	a := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	a := dbtest.User(t, organization, organization)
 	dbtest.SetPassword(t, a.ID, "Kx7mQ2vLp9Wz-old")
-	if _, err := pool.Exec(ctx, `INSERT INTO auth.sessions (user_id, tenant_id) VALUES ($1, $2), ($1, $2)`, a.ID, tenant); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO auth.sessions (user_id, organization_id) VALUES ($1, $2), ($1, $2)`, a.ID, organization); err != nil {
 		t.Fatalf("sessions: %v", err)
 	}
 
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO auth.trusted_devices (user_id, tenant_id, token_hash, expires_at) VALUES ($1, $2, $3, NOW() + INTERVAL '1 day')
-	`, a.ID, tenant, dbtest.Unique("device")); err != nil {
+		INSERT INTO auth.trusted_devices (user_id, organization_id, token_hash, expires_at) VALUES ($1, $2, $3, NOW() + INTERVAL '1 day')
+	`, a.ID, organization, dbtest.Unique("device")); err != nil {
 		t.Fatalf("trusted device: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO auth.oidc_refresh_tokens (token_hash, client_id, user_id, tenant_id, expires_at)
+		INSERT INTO auth.oidc_refresh_tokens (token_hash, client_id, user_id, organization_id, expires_at)
 		VALUES ($1, 'app', $2, $3, NOW() + INTERVAL '1 day')
-	`, dbtest.Unique("grant"), a.ID, tenant); err != nil {
+	`, dbtest.Unique("grant"), a.ID, organization); err != nil {
 		t.Fatalf("application grant: %v", err)
 	}
 
@@ -117,8 +117,8 @@ func TestRecoveryRequestsAnswerAlike(t *testing.T) {
 	h := &Handler{Service: svc}
 	srv := chi.NewRouter()
 	h.Mount(srv)
-	tenant := dbtest.Tenant(t)
-	a := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	a := dbtest.User(t, organization, organization)
 	nobody := dbtest.Unique("nobody") + "@example.test"
 
 	for _, path := range []string{"/auth/forgot-password", "/auth/magic-link/start"} {
@@ -146,7 +146,7 @@ func TestRecoveryRequestsAnswerAlike(t *testing.T) {
 }
 
 // TestRecoveryLinksWithOneConnection checks that a reset link and a magic link
-// work with only one connection free, while the organisation's password rules
+// work with only one connection free, while the organization's password rules
 // and magic-link policy are read from the database.
 func TestRecoveryLinksWithOneConnection(t *testing.T) {
 	ctx := dbtest.Context(t)
@@ -155,8 +155,8 @@ func TestRecoveryLinksWithOneConnection(t *testing.T) {
 	policy := authpolicy.NewService(pool)
 	svc.SetPasswordRules(policy)
 	svc.SetMagicLinkPolicy(policy)
-	tenant := dbtest.Tenant(t)
-	a := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	a := dbtest.User(t, organization, organization)
 	reset, link := dbtest.Unique("reset"), dbtest.Unique("link")
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.magic_links (email, token_hash, expires_at, app) VALUES ($1, $2, NOW() + INTERVAL '1 hour', $3)`,
 		a.Email, codes.Hash(link), MagicLinkConsole); err != nil {
@@ -190,8 +190,8 @@ func TestRecoveryLinksGoToTheStoredAddress(t *testing.T) {
 	policy := authpolicy.NewService(pool)
 	svc.SetPasswordRules(policy)
 	svc.SetMagicLinkPolicy(policy)
-	tenant := dbtest.Tenant(t)
-	a := dbtest.UserAt(t, "Ada."+dbtest.Unique("Lovelace")+"@example.test", tenant, tenant)
+	organization := dbtest.Organization(t)
+	a := dbtest.UserAt(t, "Ada."+dbtest.Unique("Lovelace")+"@example.test", organization, organization)
 	tokenOf := func(msg notifier.Message) string {
 		t.Helper()
 		_, query, _ := strings.Cut(msg.Body, "?")
@@ -211,7 +211,7 @@ func TestRecoveryLinksGoToTheStoredAddress(t *testing.T) {
 	}
 	magic := func() string {
 		t.Helper()
-		if err := svc.RequestMagicLink(ctx, MagicLinkRequest{Email: strings.ToUpper(a.Email), TenantID: tenant}); err != nil {
+		if err := svc.RequestMagicLink(ctx, MagicLinkRequest{Email: strings.ToUpper(a.Email), OrganizationID: organization}); err != nil {
 			t.Fatalf("request magic link: %v", err)
 		}
 		svc.deliveries.Wait()
@@ -257,8 +257,8 @@ var credentialKinds = map[string]string{
 }
 
 // giveCredentials gives a one of each credential kind, as someone who
-// registered the address could have set up, in tenant.
-func giveCredentials(t *testing.T, a dbtest.Account, tenant uuid.UUID) {
+// registered the address could have set up, in organization.
+func giveCredentials(t *testing.T, a dbtest.Account, organization uuid.UUID) {
 	t.Helper()
 	dbtest.SetPassword(t, a.ID, "Kx7mQ2vLp9Wz-squat")
 	for _, q := range []struct {
@@ -271,9 +271,9 @@ func giveCredentials(t *testing.T, a dbtest.Account, tenant uuid.UUID) {
 		{`INSERT INTO auth.mfa_otp_factors (user_id, channel, destination) VALUES ($1, 'sms', '+15550100')`, []any{a.ID}},
 		{`INSERT INTO auth.mfa_push_devices (user_id, platform, push_token_ct, push_token_nonce, push_token_hash, device_token_hash) VALUES ($1, 'ios', '\x00', '\x00', 'push', 'device')`, []any{a.ID}},
 		{`INSERT INTO auth.mfa_push_pairings (user_id, code_hash, expires_at) VALUES ($1, $2, NOW() + INTERVAL '1 hour')`, []any{a.ID, dbtest.Unique("pair")}},
-		{`INSERT INTO account.external_identities (user_id, tenant_id, provider, subject, email) VALUES ($1, $2, 'github', $3, $4)`, []any{a.ID, tenant, dbtest.Unique("gh"), a.Email}},
+		{`INSERT INTO account.external_identities (user_id, organization_id, provider, subject, email) VALUES ($1, $2, 'github', $3, $4)`, []any{a.ID, organization, dbtest.Unique("gh"), a.Email}},
 		{`INSERT INTO auth.platform_social_identities (user_id, provider, subject, email) VALUES ($1, 'google', $2, $3)`, []any{a.ID, dbtest.Unique("g"), a.Email}},
-		{`INSERT INTO auth.api_keys (tenant_id, user_id, name, prefix, key_hash) VALUES ($1, $2, 'laptop', $3, 'hash')`, []any{tenant, a.ID, dbtest.Unique("qk")}},
+		{`INSERT INTO auth.api_keys (organization_id, user_id, name, prefix, key_hash) VALUES ($1, $2, 'laptop', $3, 'hash')`, []any{organization, a.ID, dbtest.Unique("qk")}},
 	} {
 		if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), q.sql, q.args...); err != nil {
 			t.Fatalf("%s: %v", q.sql, err)
@@ -302,9 +302,9 @@ func TestResetThatProvesTheAddressEndsEarlierCredentials(t *testing.T) {
 	pool := dbtest.Pool(t)
 	svc := NewService(pool, &dbtest.Mailbox{}, time.Hour, "https://console.example.test")
 	svc.SetPasswordRules(authpolicy.NewService(pool))
-	tenant := dbtest.Tenant(t)
-	squatted := dbtest.User(t, tenant, tenant)
-	giveCredentials(t, squatted, tenant)
+	organization := dbtest.Organization(t)
+	squatted := dbtest.User(t, organization, organization)
+	giveCredentials(t, squatted, organization)
 
 	raw, err := svc.StartPasswordReset(ctx, squatted.Email, ResetOrigin{})
 	svc.deliveries.Wait()
@@ -318,7 +318,7 @@ func TestResetThatProvesTheAddressEndsEarlierCredentials(t *testing.T) {
 		t.Errorf("after the reset that proved the address the account holds %v; want only the new password", held)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'auth.credentials_removed' AND resource_id = $1
-		AND tenant_id = $2 AND metadata->>'proof' = 'password_reset'`, squatted.ID, tenant); n != 1 {
+		AND organization_id = $2 AND metadata->>'proof' = 'password_reset'`, squatted.ID, organization); n != 1 {
 		t.Errorf("the removal was recorded %d times, want once", n)
 	}
 }
@@ -330,9 +330,9 @@ func TestResetOfAVerifiedAccountKeepsItsPasskeys(t *testing.T) {
 	pool := dbtest.Pool(t)
 	svc := NewService(pool, &dbtest.Mailbox{}, time.Hour, "https://console.example.test")
 	svc.SetPasswordRules(authpolicy.NewService(pool))
-	tenant := dbtest.Tenant(t)
-	owner := dbtest.User(t, tenant, tenant)
-	giveCredentials(t, owner, tenant)
+	organization := dbtest.Organization(t)
+	owner := dbtest.User(t, organization, organization)
+	giveCredentials(t, owner, organization)
 	if _, err := pool.Exec(ctx, `UPDATE account.users SET email_verified_at = NOW() WHERE id = $1`, owner.ID); err != nil {
 		t.Fatal(err)
 	}

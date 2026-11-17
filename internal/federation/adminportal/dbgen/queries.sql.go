@@ -14,19 +14,19 @@ import (
 )
 
 const getAdminPortalLinkByHash = `-- name: GetAdminPortalLinkByHash :one
-SELECT id, tenant_id, capabilities, created_by, expires_at, revoked_at, last_used_at, created_at
-FROM tenant.admin_portal_links WHERE token_hash = $1
+SELECT id, organization_id, capabilities, created_by, expires_at, revoked_at, last_used_at, created_at
+FROM organization.admin_portal_links WHERE token_hash = $1
 `
 
 type GetAdminPortalLinkByHashRow struct {
-	ID           uuid.UUID
-	TenantID     uuid.UUID
-	Capabilities []string
-	CreatedBy    pgtype.UUID
-	ExpiresAt    time.Time
-	RevokedAt    pgtype.Timestamptz
-	LastUsedAt   pgtype.Timestamptz
-	CreatedAt    time.Time
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	Capabilities   []string
+	CreatedBy      pgtype.UUID
+	ExpiresAt      time.Time
+	RevokedAt      pgtype.Timestamptz
+	LastUsedAt     pgtype.Timestamptz
+	CreatedAt      time.Time
 }
 
 func (q *Queries) GetAdminPortalLinkByHash(ctx context.Context, tokenHash string) (GetAdminPortalLinkByHashRow, error) {
@@ -34,7 +34,7 @@ func (q *Queries) GetAdminPortalLinkByHash(ctx context.Context, tokenHash string
 	var i GetAdminPortalLinkByHashRow
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Capabilities,
 		&i.CreatedBy,
 		&i.ExpiresAt,
@@ -45,12 +45,12 @@ func (q *Queries) GetAdminPortalLinkByHash(ctx context.Context, tokenHash string
 	return i, err
 }
 
-const getTenantNameByID = `-- name: GetTenantNameByID :one
-SELECT name FROM tenant.tenants WHERE id = $1
+const getOrganizationNameByID = `-- name: GetOrganizationNameByID :one
+SELECT name FROM organization.organizations WHERE id = $1
 `
 
-func (q *Queries) GetTenantNameByID(ctx context.Context, id uuid.UUID) (string, error) {
-	row := q.db.QueryRow(ctx, getTenantNameByID, id)
+func (q *Queries) GetOrganizationNameByID(ctx context.Context, id uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, getOrganizationNameByID, id)
 	var name string
 	err := row.Scan(&name)
 	return name, err
@@ -58,36 +58,36 @@ func (q *Queries) GetTenantNameByID(ctx context.Context, id uuid.UUID) (string, 
 
 const insertAdminPortalLink = `-- name: InsertAdminPortalLink :one
 
-INSERT INTO tenant.admin_portal_links (tenant_id, token_hash, capabilities, created_by, expires_at)
+INSERT INTO organization.admin_portal_links (organization_id, token_hash, capabilities, created_by, expires_at)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, tenant_id, capabilities, created_by, expires_at, revoked_at, last_used_at, created_at
+RETURNING id, organization_id, capabilities, created_by, expires_at, revoked_at, last_used_at, created_at
 `
 
 type InsertAdminPortalLinkParams struct {
-	TenantID     uuid.UUID
-	TokenHash    string
-	Capabilities []string
-	CreatedBy    pgtype.UUID
-	ExpiresAt    time.Time
+	OrganizationID uuid.UUID
+	TokenHash      string
+	Capabilities   []string
+	CreatedBy      pgtype.UUID
+	ExpiresAt      time.Time
 }
 
 type InsertAdminPortalLinkRow struct {
-	ID           uuid.UUID
-	TenantID     uuid.UUID
-	Capabilities []string
-	CreatedBy    pgtype.UUID
-	ExpiresAt    time.Time
-	RevokedAt    pgtype.Timestamptz
-	LastUsedAt   pgtype.Timestamptz
-	CreatedAt    time.Time
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	Capabilities   []string
+	CreatedBy      pgtype.UUID
+	ExpiresAt      time.Time
+	RevokedAt      pgtype.Timestamptz
+	LastUsedAt     pgtype.Timestamptz
+	CreatedAt      time.Time
 }
 
 // Queries for the adminportal domain.
-// Static queries against tenant.admin_portal_links and tenant.tenants are compiled
+// Static queries against organization.admin_portal_links and organization.organizations are compiled
 // by sqlc into ./dbgen. Dynamic/complex logic stays hand-written in adminportal.go.
 func (q *Queries) InsertAdminPortalLink(ctx context.Context, arg InsertAdminPortalLinkParams) (InsertAdminPortalLinkRow, error) {
 	row := q.db.QueryRow(ctx, insertAdminPortalLink,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.TokenHash,
 		arg.Capabilities,
 		arg.CreatedBy,
@@ -96,7 +96,7 @@ func (q *Queries) InsertAdminPortalLink(ctx context.Context, arg InsertAdminPort
 	var i InsertAdminPortalLinkRow
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Capabilities,
 		&i.CreatedBy,
 		&i.ExpiresAt,
@@ -107,37 +107,37 @@ func (q *Queries) InsertAdminPortalLink(ctx context.Context, arg InsertAdminPort
 	return i, err
 }
 
-const listAdminPortalLinksByTenant = `-- name: ListAdminPortalLinksByTenant :many
-SELECT id, tenant_id, capabilities, created_by, expires_at, revoked_at, last_used_at, created_at
-FROM tenant.admin_portal_links
-WHERE tenant_id = $1 ORDER BY created_at DESC
+const listAdminPortalLinksByOrganization = `-- name: ListAdminPortalLinksByOrganization :many
+SELECT id, organization_id, capabilities, created_by, expires_at, revoked_at, last_used_at, created_at
+FROM organization.admin_portal_links
+WHERE organization_id = $1 ORDER BY created_at DESC
 LIMIT 1001
 `
 
-type ListAdminPortalLinksByTenantRow struct {
-	ID           uuid.UUID
-	TenantID     uuid.UUID
-	Capabilities []string
-	CreatedBy    pgtype.UUID
-	ExpiresAt    time.Time
-	RevokedAt    pgtype.Timestamptz
-	LastUsedAt   pgtype.Timestamptz
-	CreatedAt    time.Time
+type ListAdminPortalLinksByOrganizationRow struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	Capabilities   []string
+	CreatedBy      pgtype.UUID
+	ExpiresAt      time.Time
+	RevokedAt      pgtype.Timestamptz
+	LastUsedAt     pgtype.Timestamptz
+	CreatedAt      time.Time
 }
 
 // At most paging.MaxListItems+1 rows: the API truncates the rest.
-func (q *Queries) ListAdminPortalLinksByTenant(ctx context.Context, tenantID uuid.UUID) ([]ListAdminPortalLinksByTenantRow, error) {
-	rows, err := q.db.Query(ctx, listAdminPortalLinksByTenant, tenantID)
+func (q *Queries) ListAdminPortalLinksByOrganization(ctx context.Context, organizationID uuid.UUID) ([]ListAdminPortalLinksByOrganizationRow, error) {
+	rows, err := q.db.Query(ctx, listAdminPortalLinksByOrganization, organizationID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ListAdminPortalLinksByTenantRow{}
+	items := []ListAdminPortalLinksByOrganizationRow{}
 	for rows.Next() {
-		var i ListAdminPortalLinksByTenantRow
+		var i ListAdminPortalLinksByOrganizationRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.Capabilities,
 			&i.CreatedBy,
 			&i.ExpiresAt,
@@ -156,17 +156,17 @@ func (q *Queries) ListAdminPortalLinksByTenant(ctx context.Context, tenantID uui
 }
 
 const revokeAdminPortalLink = `-- name: RevokeAdminPortalLink :execrows
-UPDATE tenant.admin_portal_links SET revoked_at = NOW()
-WHERE id = $1 AND tenant_id = $2 AND revoked_at IS NULL
+UPDATE organization.admin_portal_links SET revoked_at = NOW()
+WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL
 `
 
 type RevokeAdminPortalLinkParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) RevokeAdminPortalLink(ctx context.Context, arg RevokeAdminPortalLinkParams) (int64, error) {
-	result, err := q.db.Exec(ctx, revokeAdminPortalLink, arg.ID, arg.TenantID)
+	result, err := q.db.Exec(ctx, revokeAdminPortalLink, arg.ID, arg.OrganizationID)
 	if err != nil {
 		return 0, err
 	}
@@ -174,7 +174,7 @@ func (q *Queries) RevokeAdminPortalLink(ctx context.Context, arg RevokeAdminPort
 }
 
 const touchAdminPortalLinkUsed = `-- name: TouchAdminPortalLinkUsed :exec
-UPDATE tenant.admin_portal_links SET last_used_at = NOW() WHERE id = $1
+UPDATE organization.admin_portal_links SET last_used_at = NOW() WHERE id = $1
 `
 
 func (q *Queries) TouchAdminPortalLinkUsed(ctx context.Context, id uuid.UUID) error {

@@ -23,7 +23,7 @@ func (h *history) write() {
 			optID(s.superseded), us(s.expires), s.idle, optString(s.dev.Country), optString(s.factor), us(s.signedIn()),
 		})
 	}
-	h.copy("sessions", pgx.Identifier{"auth", "sessions"}, []string{"id", "user_id", "tenant_id", "ip", "user_agent",
+	h.copy("sessions", pgx.Identifier{"auth", "sessions"}, []string{"id", "user_id", "organization_id", "ip", "user_agent",
 		"created_at", "last_seen_at", "revoked_at", "superseded_by", "expires_at", "idle_timeout", "country", "second_factor",
 		"signed_in_at"}, sessions)
 
@@ -39,25 +39,25 @@ func (h *history) write() {
 			meta = []byte("{}")
 		}
 		at := us(ev.at)
-		events = append(events, []any{uuid.New(), e.TenantID, e.ActorUserID, e.ActorType, e.Action, e.ResourceType, e.ResourceID,
+		events = append(events, []any{uuid.New(), e.OrganizationID, e.ActorUserID, e.ActorType, e.Action, e.ResourceType, e.ResourceID,
 			addr(e.IP), optString(e.UserAgent), optString(e.RequestID), meta, at, at})
 	}
-	h.copy("audit history", pgx.Identifier{"audit", "events"}, []string{"id", "tenant_id", "actor_user_id", "actor_type", "action",
+	h.copy("audit history", pgx.Identifier{"audit", "events"}, []string{"id", "organization_id", "actor_user_id", "actor_type", "action",
 		"resource_type", "resource_id", "ip", "user_agent", "request_id", "metadata", "created_at", "scored_at"}, events)
 
 	contexts := make([][]any, 0, len(h.contexts))
 	for _, c := range h.contexts {
-		contexts = append(contexts, []any{uuid.New(), c.tenant, c.user, c.deviceKey, optString(c.country), us(c.seen)})
+		contexts = append(contexts, []any{uuid.New(), c.organization, c.user, c.deviceKey, optString(c.country), us(c.seen)})
 	}
 	h.copy("sign-in context", pgx.Identifier{"auth", "login_context_history"},
-		[]string{"id", "tenant_id", "user_id", "device_key", "country", "seen_at"}, contexts)
+		[]string{"id", "organization_id", "user_id", "device_key", "country", "seen_at"}, contexts)
 
 	mails := make([][]any, 0, len(h.mails))
 	for _, m := range h.mails {
-		mails = append(mails, []any{m.id, m.tenant, delivery.HashAddress(m.to), delivery.Hint(m.to), m.template, "ses",
+		mails = append(mails, []any{m.id, m.organization, delivery.HashAddress(m.to), delivery.Hint(m.to), m.template, "ses",
 			optString(m.providerID), m.status, m.reason, us(m.sent), us(m.updated)})
 	}
-	h.copy("email deliveries", pgx.Identifier{"platform", "email_messages"}, []string{"id", "tenant_id", "to_hash", "to_hint",
+	h.copy("email deliveries", pgx.Identifier{"platform", "email_messages"}, []string{"id", "organization_id", "to_hash", "to_hint",
 		"template", "provider", "provider_message_id", "status", "status_reason", "sent_at", "updated_at"}, mails)
 }
 
@@ -70,10 +70,10 @@ func (h *history) writeSuppressions(sups []suppression) {
 		if s.clearedBy != nil {
 			by = ptr(s.clearedBy.ID)
 		}
-		rows = append(rows, []any{s.id, s.tenant, delivery.HashAddress(s.address), delivery.Hint(s.address), s.reason, s.detail,
+		rows = append(rows, []any{s.id, s.organization, delivery.HashAddress(s.address), delivery.Hint(s.address), s.reason, s.detail,
 			s.message, us(s.created), optTime(s.cleared), by})
 	}
-	h.copy("email suppressions", pgx.Identifier{"platform", "email_suppressions"}, []string{"id", "tenant_id", "address_hash",
+	h.copy("email suppressions", pgx.Identifier{"platform", "email_suppressions"}, []string{"id", "organization_id", "address_hash",
 		"address_hint", "reason", "detail", "message_id", "created_at", "cleared_at", "cleared_by"}, rows)
 }
 

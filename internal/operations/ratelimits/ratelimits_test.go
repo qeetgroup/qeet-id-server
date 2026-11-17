@@ -36,12 +36,12 @@ func TestOverridesOnlyTighten(t *testing.T) {
 // from GET is accepted on PUT, its bounds ignored.
 func TestLimitsShowTheirBounds(t *testing.T) {
 	h := &Handler{
-		Defaults: Defaults{TenantRate: 100, TenantCapacity: 500, UserRate: 30, UserCapacity: 100, APIKeyRate: 50, APIKeyCapacity: 200},
+		Defaults: Defaults{OrganizationRate: 100, OrganizationCapacity: 500, UserRate: 30, UserCapacity: 100, APIKeyRate: 50, APIKeyCapacity: 200},
 		BuiltIn:  []BuiltInLimit{{Name: "public", Per: "ip", Applies: "sign-in", Bucket: Bucket{Rate: 5, Capacity: 20}}},
 	}
 	rate, capacity := 10.0, 20
-	v := h.view(TenantLimits{Tenant: LimitConfig{Rate: &rate, Capacity: &capacity}})
-	if v.Defaults.Tenant != (Bucket{Rate: 100, Capacity: 500}) || v.Ceiling != v.Defaults || v.MinRate != MinRate || len(v.BuiltIn) != 1 {
+	v := h.view(OrganizationLimits{Organization: LimitConfig{Rate: &rate, Capacity: &capacity}})
+	if v.Defaults.Organization != (Bucket{Rate: 100, Capacity: 500}) || v.Ceiling != v.Defaults || v.MinRate != MinRate || len(v.BuiltIn) != 1 {
 		t.Errorf("view %+v; want the defaults as ceiling, the minimum rate and the built-in limit", v)
 	}
 	raw, err := json.Marshal(v)
@@ -51,7 +51,7 @@ func TestLimitsShowTheirBounds(t *testing.T) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	var in limitsInput
-	if err := dec.Decode(&in); err != nil || in.Tenant.Rate == nil || *in.Tenant.Rate != 10 {
-		t.Errorf("a GET body sent back on PUT: %v, %+v; want it accepted with its override", err, in.TenantLimits)
+	if err := dec.Decode(&in); err != nil || in.Organization.Rate == nil || *in.Organization.Rate != 10 {
+		t.Errorf("a GET body sent back on PUT: %v, %+v; want it accepted with its override", err, in.OrganizationLimits)
 	}
 }

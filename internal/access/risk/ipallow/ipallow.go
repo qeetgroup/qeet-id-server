@@ -1,7 +1,7 @@
-// Package ipallow manages per-tenant IP allow and deny rules (CIDRs). Deny
+// Package ipallow manages per-organization IP allow and deny rules (CIDRs). Deny
 // rules win, and if any allow rule exists an address must match one. Rules are
-// enforced only while the tenant's flag is on; then every sign-in to the
-// organisation and every session renewal in it calls CheckSignIn.
+// enforced only while the organization's flag is on; then every sign-in to the
+// organization and every session renewal in it calls CheckSignIn.
 package ipallow
 
 import (
@@ -24,15 +24,15 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
-// Rule is an organisation address rule: CIDR is allowed or denied according to
+// Rule is an organization address rule: CIDR is allowed or denied according to
 // Action ("allow" or "deny").
 type Rule struct {
-	ID        uuid.UUID `json:"id"`
-	TenantID  uuid.UUID `json:"tenant_id"`
-	CIDR      string    `json:"cidr"`
-	Label     string    `json:"label"`
-	Action    string    `json:"action"`
-	CreatedAt time.Time `json:"created_at"`
+	ID             uuid.UUID `json:"id"`
+	OrganizationID uuid.UUID `json:"tenant_id"`
+	CIDR           string    `json:"cidr"`
+	Label          string    `json:"label"`
+	Action         string    `json:"action"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 // parsePrefix accepts a CIDR ("10.0.0.0/8") or a bare address ("1.2.3.4",
@@ -131,7 +131,7 @@ type CheckResult struct {
 	Rules        RulesDecision  `json:"rules"`
 }
 
-// RulesDecision is what an organisation's rules make of an address.
+// RulesDecision is what an organization's rules make of an address.
 type RulesDecision struct {
 	Allowed      bool           `json:"allowed"`
 	Reason       string         `json:"reason"`
@@ -142,7 +142,7 @@ type RulesDecision struct {
 // CodeEnforcementOff is Check's reason code when the rules are off.
 const CodeEnforcementOff = "ip.enforcement_disabled"
 
-// Service manages each tenant's address rules and checks sign-ins against
+// Service manages each organization's address rules and checks sign-ins against
 // them.
 type Service struct {
 	pool *pgxpool.Pool
@@ -155,21 +155,21 @@ func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool, q: db
 // Pool returns the connection pool, for handlers that run their own transaction.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
-// ruleFromModel converts the generated TenantIpRule to the domain Rule type.
-func ruleFromModel(m dbgen.TenantIpRule) Rule {
+// ruleFromModel converts the generated OrganizationIpRule to the domain Rule type.
+func ruleFromModel(m dbgen.OrganizationIpRule) Rule {
 	return Rule{
-		ID:        m.ID,
-		TenantID:  m.TenantID,
-		CIDR:      m.Cidr,
-		Label:     m.Label,
-		Action:    m.Action,
-		CreatedAt: m.CreatedAt,
+		ID:             m.ID,
+		OrganizationID: m.OrganizationID,
+		CIDR:           m.Cidr,
+		Label:          m.Label,
+		Action:         m.Action,
+		CreatedAt:      m.CreatedAt,
 	}
 }
 
-// ListRules returns the tenant's address rules.
-func (s *Service) ListRules(ctx context.Context, tenantID uuid.UUID) ([]Rule, error) {
-	rows, err := s.q.ListIPRules(ctx, tenantID)
+// ListRules returns the organization's address rules.
+func (s *Service) ListRules(ctx context.Context, organizationID uuid.UUID) ([]Rule, error) {
+	rows, err := s.q.ListIPRules(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -180,26 +180,26 @@ func (s *Service) ListRules(ctx context.Context, tenantID uuid.UUID) ([]Rule, er
 	return out, nil
 }
 
-// Enabled reports whether the tenant's address rules are on.
-func (s *Service) Enabled(ctx context.Context, tenantID uuid.UUID) (bool, error) {
-	enabled, err := s.q.GetIPRulesEnabled(ctx, tenantID)
+// Enabled reports whether the organization's address rules are on.
+func (s *Service) Enabled(ctx context.Context, organizationID uuid.UUID) (bool, error) {
+	enabled, err := s.q.GetIPRulesEnabled(ctx, organizationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
 	return enabled, err
 }
 
-// SetEnabled turns the tenant's address rules on or off.
-func (s *Service) SetEnabled(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, enabled bool) error {
+// SetEnabled turns the organization's address rules on or off.
+func (s *Service) SetEnabled(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, enabled bool) error {
 	return s.q.WithTx(tx).SetIPRulesEnabled(ctx, dbgen.SetIPRulesEnabledParams{
-		TenantID: tenantID,
-		Enabled:  enabled,
+		OrganizationID: organizationID,
+		Enabled:        enabled,
 	})
 }
 
-// AddRule adds an allow or deny rule for a CIDR range to the tenant. No action
+// AddRule adds an allow or deny rule for a CIDR range to the organization. No action
 // means allow; any other action is refused, so a mistyped deny never allows.
-func (s *Service) AddRule(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, cidr, label, action string) (*Rule, error) {
+func (s *Service) AddRule(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, cidr, label, action string) (*Rule, error) {
 	if _, err := parsePrefix(cidr); err != nil {
 		return nil, errs.ErrRiskCIDRInvalid
 	}
@@ -211,10 +211,10 @@ func (s *Service) AddRule(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, ci
 		return nil, errs.ErrRiskRuleActionInvalid
 	}
 	m, err := s.q.WithTx(tx).InsertIPRule(ctx, dbgen.InsertIPRuleParams{
-		TenantID: tenantID,
-		Cidr:     strings.TrimSpace(cidr),
-		Label:    label,
-		Action:   action,
+		OrganizationID: organizationID,
+		Cidr:           strings.TrimSpace(cidr),
+		Label:          label,
+		Action:         action,
 	})
 	if err != nil {
 		return nil, err
@@ -223,11 +223,11 @@ func (s *Service) AddRule(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, ci
 	return &r, nil
 }
 
-// DeleteRule removes one of the tenant's address rules and returns it.
-func (s *Service) DeleteRule(ctx context.Context, tx pgx.Tx, tenantID, ruleID uuid.UUID) (*Rule, error) {
+// DeleteRule removes one of the organization's address rules and returns it.
+func (s *Service) DeleteRule(ctx context.Context, tx pgx.Tx, organizationID, ruleID uuid.UUID) (*Rule, error) {
 	m, err := s.q.WithTx(tx).DeleteIPRule(ctx, dbgen.DeleteIPRuleParams{
-		ID:       ruleID,
-		TenantID: tenantID,
+		ID:             ruleID,
+		OrganizationID: organizationID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
@@ -239,14 +239,14 @@ func (s *Service) DeleteRule(ctx context.Context, tx pgx.Tx, tenantID, ruleID uu
 	return &r, nil
 }
 
-// Check evaluates an address against the tenant's rules, honouring the enabled
+// Check evaluates an address against the organization's rules, honouring the enabled
 // flag (disabled → always allowed).
-func (s *Service) Check(ctx context.Context, tenantID uuid.UUID, ip string) (CheckResult, error) {
-	enabled, err := s.Enabled(ctx, tenantID)
+func (s *Service) Check(ctx context.Context, organizationID uuid.UUID, ip string) (CheckResult, error) {
+	enabled, err := s.Enabled(ctx, organizationID)
 	if err != nil {
 		return CheckResult{}, err
 	}
-	rules, err := s.ListRules(ctx, tenantID)
+	rules, err := s.ListRules(ctx, organizationID)
 	if err != nil {
 		return CheckResult{}, err
 	}
@@ -262,12 +262,12 @@ func (s *Service) Check(ctx context.Context, tenantID uuid.UUID, ip string) (Che
 		ReasonCode: decision.ReasonCode, ReasonParams: decision.ReasonParams, Rules: decision}, nil
 }
 
-// CheckSignIn returns errs.ErrAuthAddressNotAllowed when the tenant's enforced
+// CheckSignIn returns errs.ErrAuthAddressNotAllowed when the organization's enforced
 // rules refuse ip (from httpx.ClientIP), after recording auth.address_refused in
 // its own transaction so the record outlives the sign-in. path names the
-// sign-in. With rules off or no tenant it allows all; read errors are returned.
-func (s *Service) CheckSignIn(ctx context.Context, tenantID, userID uuid.UUID, ip, path string) error {
-	d, err := decideSignIn(ctx, s.q, tenantID, ip)
+// sign-in. With rules off or no organization it allows all; read errors are returned.
+func (s *Service) CheckSignIn(ctx context.Context, organizationID, userID uuid.UUID, ip, path string) error {
+	d, err := decideSignIn(ctx, s.q, organizationID, ip)
 	if err != nil || d.Allowed {
 		return err
 	}
@@ -276,7 +276,7 @@ func (s *Service) CheckSignIn(ctx context.Context, tenantID, userID uuid.UUID, i
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if err := audit.Record(ctx, tx, refusalEvent(tenantID, userID, ip, path, d)); err != nil {
+	if err := audit.Record(ctx, tx, refusalEvent(organizationID, userID, ip, path, d)); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -288,25 +288,25 @@ func (s *Service) CheckSignIn(ctx context.Context, tenantID, userID uuid.UUID, i
 // CheckSignInTx is CheckSignIn inside the caller's transaction: the rules are
 // read, and a refusal recorded, through tx, which the caller commits to keep
 // the record.
-func (s *Service) CheckSignInTx(ctx context.Context, tx pgx.Tx, tenantID, userID uuid.UUID, ip, path string) error {
-	d, err := decideSignIn(ctx, s.q.WithTx(tx), tenantID, ip)
+func (s *Service) CheckSignInTx(ctx context.Context, tx pgx.Tx, organizationID, userID uuid.UUID, ip, path string) error {
+	d, err := decideSignIn(ctx, s.q.WithTx(tx), organizationID, ip)
 	if err != nil || d.Allowed {
 		return err
 	}
-	if err := audit.Record(ctx, tx, refusalEvent(tenantID, userID, ip, path, d)); err != nil {
+	if err := audit.Record(ctx, tx, refusalEvent(organizationID, userID, ip, path, d)); err != nil {
 		return err
 	}
 	return errs.ErrAuthAddressNotAllowed
 }
 
-// decideSignIn judges ip against tenantID's rules, read through q. With no
-// tenant, or rules not enforced, it is allowed.
-func decideSignIn(ctx context.Context, q *dbgen.Queries, tenantID uuid.UUID, ip string) (Decision, error) {
+// decideSignIn judges ip against organizationID's rules, read through q. With no
+// organization, or rules not enforced, it is allowed.
+func decideSignIn(ctx context.Context, q *dbgen.Queries, organizationID uuid.UUID, ip string) (Decision, error) {
 	allowed := Decision{Allowed: true, Reason: reasonAllowed}
-	if tenantID == uuid.Nil {
+	if organizationID == uuid.Nil {
 		return allowed, nil
 	}
-	enabled, err := q.GetIPRulesEnabled(ctx, tenantID)
+	enabled, err := q.GetIPRulesEnabled(ctx, organizationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return allowed, nil
 	}
@@ -316,7 +316,7 @@ func decideSignIn(ctx context.Context, q *dbgen.Queries, tenantID uuid.UUID, ip 
 	if !enabled {
 		return allowed, nil
 	}
-	rows, err := q.ListIPRules(ctx, tenantID)
+	rows, err := q.ListIPRules(ctx, organizationID)
 	if err != nil {
 		return Decision{}, err
 	}
@@ -328,7 +328,7 @@ func decideSignIn(ctx context.Context, q *dbgen.Queries, tenantID uuid.UUID, ip 
 }
 
 // refusalEvent is the auth.address_refused record of a sign-in that d refuses.
-func refusalEvent(tenantID, userID uuid.UUID, ip, path string, d Decision) audit.Event {
+func refusalEvent(organizationID, userID uuid.UUID, ip, path string, d Decision) audit.Event {
 	meta := map[string]any{"reason": d.Reason, "path": path, "address": ip}
 	var ruleID *uuid.UUID
 	if d.Rule != nil {
@@ -348,19 +348,19 @@ func refusalEvent(tenantID, userID uuid.UUID, ip, path string, d Decision) audit
 		recordedIP = ""
 	}
 	return audit.Event{
-		TenantID:     &tenantID,
-		ActorUserID:  actor,
-		ActorType:    "user",
-		Action:       "auth.address_refused",
-		ResourceType: "ip_rule",
-		ResourceID:   ruleID,
-		IP:           recordedIP,
-		Metadata:     meta,
+		OrganizationID: &organizationID,
+		ActorUserID:    actor,
+		ActorType:      "user",
+		Action:         "auth.address_refused",
+		ResourceType:   "ip_rule",
+		ResourceID:     ruleID,
+		IP:             recordedIP,
+		Metadata:       meta,
 	}
 }
 
 // refusesCaller returns ErrRiskRulesLockOutCaller if rules would refuse the
-// caller's own address, so an organisation can't lock its admins out. For the
+// caller's own address, so an organization can't lock its admins out. For the
 // console, that is the console server's address.
 func refusesCaller(rules []Rule, r *http.Request) error {
 	if d := Decide(rules, httpx.ClientIP(r)); !d.Allowed {
@@ -388,7 +388,7 @@ func ruleMetadata(rule *Rule) map[string]any {
 	return map[string]any{"cidr": rule.CIDR, "action": rule.Action, "label": rule.Label}
 }
 
-func (h *Handler) recordAudit(ctx context.Context, tx pgx.Tx, r *http.Request, tenantID uuid.UUID, ruleID *uuid.UUID, action string, meta map[string]any) error {
+func (h *Handler) recordAudit(ctx context.Context, tx pgx.Tx, r *http.Request, organizationID uuid.UUID, ruleID *uuid.UUID, action string, meta map[string]any) error {
 	var actorID *uuid.UUID
 	actorType := "system"
 	if p := httpx.PrincipalFromCtx(ctx); p != nil {
@@ -397,33 +397,33 @@ func (h *Handler) recordAudit(ctx context.Context, tx pgx.Tx, r *http.Request, t
 			actorType = p.ActorType
 		}
 	}
-	tid := tenantID
+	tid := organizationID
 	return audit.Record(ctx, tx, audit.Event{
-		TenantID:     &tid,
-		ActorUserID:  actorID,
-		ActorType:    actorType,
-		Action:       action,
-		ResourceType: "ip_rule",
-		ResourceID:   ruleID,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
-		Metadata:     meta,
+		OrganizationID: &tid,
+		ActorUserID:    actorID,
+		ActorType:      actorType,
+		Action:         action,
+		ResourceType:   "ip_rule",
+		ResourceID:     ruleID,
+		IP:             httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
+		RequestID:      httpx.RequestID(r),
+		Metadata:       meta,
 	})
 }
 
 // guardEnforced refuses a rule change, inside its transaction, when the rules
 // are enforced and the rule set it leaves would refuse the caller.
-func (h *Handler) guardEnforced(ctx context.Context, tx pgx.Tx, r *http.Request, tenantID uuid.UUID) error {
+func (h *Handler) guardEnforced(ctx context.Context, tx pgx.Tx, r *http.Request, organizationID uuid.UUID) error {
 	q := h.Service.q.WithTx(tx)
-	enabled, err := q.GetIPRulesEnabled(ctx, tenantID)
+	enabled, err := q.GetIPRulesEnabled(ctx, organizationID)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !enabled) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	rows, err := q.ListIPRules(ctx, tenantID)
+	rows, err := q.ListIPRules(ctx, organizationID)
 	if err != nil {
 		return err
 	}
@@ -435,17 +435,17 @@ func (h *Handler) guardEnforced(ctx context.Context, tx pgx.Tx, r *http.Request,
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	enabled, err := h.Service.Enabled(r.Context(), tenantID)
+	enabled, err := h.Service.Enabled(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	rules, err := h.Service.ListRules(r.Context(), tenantID)
+	rules, err := h.Service.ListRules(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -454,7 +454,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) setConfig(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -468,7 +468,7 @@ func (h *Handler) setConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	if in.Enabled {
-		rules, err := h.Service.ListRules(ctx, tenantID)
+		rules, err := h.Service.ListRules(ctx, organizationID)
 		if err != nil {
 			httpx.WriteError(w, r, err)
 			return
@@ -484,11 +484,11 @@ func (h *Handler) setConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	if err := h.Service.SetEnabled(ctx, tx, tenantID, in.Enabled); err != nil {
+	if err := h.Service.SetEnabled(ctx, tx, organizationID, in.Enabled); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.recordAudit(ctx, tx, r, tenantID, nil, "ip_rules.enforcement_changed", map[string]any{"enabled": in.Enabled}); err != nil {
+	if err := h.recordAudit(ctx, tx, r, organizationID, nil, "ip_rules.enforcement_changed", map[string]any{"enabled": in.Enabled}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -500,7 +500,7 @@ func (h *Handler) setConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) add(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -521,16 +521,16 @@ func (h *Handler) add(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	rule, err := h.Service.AddRule(ctx, tx, tenantID, in.CIDR, in.Label, in.Action)
+	rule, err := h.Service.AddRule(ctx, tx, organizationID, in.CIDR, in.Label, in.Action)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.guardEnforced(ctx, tx, r, tenantID); err != nil {
+	if err := h.guardEnforced(ctx, tx, r, organizationID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.recordAudit(ctx, tx, r, tenantID, &rule.ID, "ip_rules.rule_added", ruleMetadata(rule)); err != nil {
+	if err := h.recordAudit(ctx, tx, r, organizationID, &rule.ID, "ip_rules.rule_added", ruleMetadata(rule)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -542,7 +542,7 @@ func (h *Handler) add(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -559,16 +559,16 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	rule, err := h.Service.DeleteRule(ctx, tx, tenantID, ruleID)
+	rule, err := h.Service.DeleteRule(ctx, tx, organizationID, ruleID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.guardEnforced(ctx, tx, r, tenantID); err != nil {
+	if err := h.guardEnforced(ctx, tx, r, organizationID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.recordAudit(ctx, tx, r, tenantID, &rule.ID, "ip_rules.rule_removed", ruleMetadata(rule)); err != nil {
+	if err := h.recordAudit(ctx, tx, r, organizationID, &rule.ID, "ip_rules.rule_removed", ruleMetadata(rule)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -580,7 +580,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -592,7 +592,7 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	res, err := h.Service.Check(r.Context(), tenantID, in.IP)
+	res, err := h.Service.Check(r.Context(), organizationID, in.IP)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

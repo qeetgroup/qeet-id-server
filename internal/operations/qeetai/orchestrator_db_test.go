@@ -24,11 +24,11 @@ func (p stubProvider) Stream(ctx context.Context, _ string, _ []ai.Message, _ []
 	return out, errC
 }
 
-// providerResolver hands every organisation the same provider.
+// providerResolver hands every organization the same provider.
 type providerResolver struct{ provider ai.Provider }
 
 func (r providerResolver) Resolve(context.Context, uuid.UUID) (EffectiveConfig, error) {
-	return EffectiveConfig{Source: SourceTenant}, nil
+	return EffectiveConfig{Source: SourceOrganization}, nil
 }
 
 func (r providerResolver) ProviderFor(context.Context, uuid.UUID) (ai.Provider, error) {
@@ -41,9 +41,9 @@ func (r providerResolver) ProviderFor(context.Context, uuid.UUID) (ai.Provider, 
 // stored reply, while an offered tool beside it still goes to the client.
 func TestToolsNotOfferedNeverReachTheClient(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc, tenant, user, conv := conversation(t)
+	svc, organization, user, conv := conversation(t)
 	content, _ := json.Marshal([]map[string]any{{"type": "text", "text": "delete Ann"}})
-	if _, err := svc.AppendMessage(ctx, tenant, conv, "user", content); err != nil {
+	if _, err := svc.AppendMessage(ctx, organization, conv, "user", content); err != nil {
 		t.Fatal(err)
 	}
 	call := func(slot int, id, name string) []ai.Event {
@@ -58,14 +58,14 @@ func TestToolsNotOfferedNeverReachTheClient(t *testing.T) {
 
 	o := NewOrchestrator(providerResolver{stubProvider{events}}, svc, Limits{})
 	rec := httptest.NewRecorder()
-	o.Run(ctx, turnContext{tenantID: tenant, userID: user, conversationID: conv,
+	o.Run(ctx, turnContext{organizationID: organization, userID: user, conversationID: conv,
 		actor: audit.Actor{UserID: &user, Type: "user"}}, newSSEWriter(rec))
 	frames := rec.Body.String()
 
 	if strings.Contains(frames, "delete_user\",\"input") || strings.Count(frames, "event: tool_call") != 1 {
 		t.Errorf("frames %s\nwant one tool_call, for search_users only", frames)
 	}
-	_, msgs, err := svc.GetConversation(ctx, tenant, user, conv)
+	_, msgs, err := svc.GetConversation(ctx, organization, user, conv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,12 +85,12 @@ func TestToolsNotOfferedNeverReachTheClient(t *testing.T) {
 	if !strings.Contains(blocks[0].Text, "delete_user") || !strings.Contains(frames, "delete_user") {
 		t.Errorf("the model and the person were not told delete_user is unavailable: stored %+v", blocks)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1
-		AND action = 'qeetai.tool.refused' AND metadata->>'tool_name' = 'delete_user'`, tenant); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1
+		AND action = 'qeetai.tool.refused' AND metadata->>'tool_name' = 'delete_user'`, organization); n != 1 {
 		t.Errorf("%d refusals recorded, want 1", n)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1
-		AND action = 'qeetai.tool.requested' AND metadata->>'tool_name' = 'delete_user'`, tenant); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1
+		AND action = 'qeetai.tool.requested' AND metadata->>'tool_name' = 'delete_user'`, organization); n != 0 {
 		t.Errorf("delete_user was recorded as requested of the client")
 	}
 }
@@ -100,17 +100,17 @@ func TestToolsNotOfferedNeverReachTheClient(t *testing.T) {
 // no tool_call at all.
 func TestATurnOfOnlyRefusedToolsEndsTheTurn(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc, tenant, user, conv := conversation(t)
+	svc, organization, user, conv := conversation(t)
 	o := NewOrchestrator(providerResolver{stubProvider{[]ai.Event{
 		{Type: ai.EventToolCallStart, ToolIndex: 0, ToolID: "a", ToolName: "reset_user_mfa"},
 		{Type: ai.EventStop, StopReason: "tool_use"},
 	}}}, svc, Limits{})
 	content, _ := json.Marshal([]map[string]any{{"type": "text", "text": "reset Ann"}})
-	if _, err := svc.AppendMessage(ctx, tenant, conv, "user", content); err != nil {
+	if _, err := svc.AppendMessage(ctx, organization, conv, "user", content); err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	o.Run(ctx, turnContext{tenantID: tenant, userID: user, conversationID: conv,
+	o.Run(ctx, turnContext{organizationID: organization, userID: user, conversationID: conv,
 		actor: audit.Actor{UserID: &user, Type: "user"}}, newSSEWriter(rec))
 	frames := rec.Body.String()
 	if strings.Contains(frames, "event: tool_call") || !strings.Contains(frames, `"reason":"end_turn"`) {

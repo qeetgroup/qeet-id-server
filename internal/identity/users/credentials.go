@@ -13,21 +13,21 @@ import (
 )
 
 // A person has one account, with one password and set of second factors, in
-// every organisation they belong to. So an organisation may set the password or
+// every organization they belong to. So an organization may set the password or
 // reset the factors only while the account belongs to it alone; after that only
-// the person can, though each organisation can still suspend or remove it.
+// the person can, though each organization can still suspend or remove it.
 
 // refuseSharedCredentials refuses, with ErrUserCredentialsShared, an
-// organisation's credential change for an account that also belongs to
-// another live organisation.
-func (h *Handler) refuseSharedCredentials(ctx context.Context, userID, tenantID uuid.UUID) error {
+// organization's credential change for an account that also belongs to
+// another live organization.
+func (h *Handler) refuseSharedCredentials(ctx context.Context, userID, organizationID uuid.UUID) error {
 	var shared bool
 	if err := h.Repo.Pool().QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM rbac.user_roles ur
-			JOIN tenant.tenants t ON t.id = ur.tenant_id AND t.deleted_at IS NULL
-			WHERE ur.user_id = $1 AND ur.tenant_id <> $2
-		)`, userID, tenantID).Scan(&shared); err != nil {
+			JOIN organization.organizations t ON t.id = ur.organization_id AND t.deleted_at IS NULL
+			WHERE ur.user_id = $1 AND ur.organization_id <> $2
+		)`, userID, organizationID).Scan(&shared); err != nil {
 		return err
 	}
 	if shared {
@@ -45,16 +45,16 @@ const (
 	credentialPasskeyRemoved
 )
 
-// tellCredentialChange emails the person that an administrator of tenantID
+// tellCredentialChange emails the person that an administrator of organizationID
 // changed their credentials; passkey names the passkey removed, if any. Best
 // effort, after the change has committed: a failure is logged, the change stands.
-func (h *Handler) tellCredentialChange(ctx context.Context, tenantID uuid.UUID, email string, change credentialChange, passkey string) {
+func (h *Handler) tellCredentialChange(ctx context.Context, organizationID uuid.UUID, email string, change credentialChange, passkey string) {
 	if h.Mailer == nil || email == "" {
 		return
 	}
 	org := "your organization"
 	var name string
-	if err := h.Repo.Pool().QueryRow(ctx, `SELECT name FROM tenant.tenants WHERE id = $1`, tenantID).Scan(&name); err == nil && name != "" {
+	if err := h.Repo.Pool().QueryRow(ctx, `SELECT name FROM organization.organizations WHERE id = $1`, organizationID).Scan(&name); err == nil && name != "" {
 		org = name
 	}
 	subject, intro := "An administrator set a new password for your account",
@@ -72,13 +72,13 @@ func (h *Handler) tellCredentialChange(ctx context.Context, tenantID uuid.UUID, 
 	}
 	const note = "If you didn't expect this, contact that organization's administrator."
 	if err := h.Mailer.Send(ctx, notifier.Message{
-		Channel:  "email",
-		To:       email,
-		TenantID: tenantID.String(),
-		Subject:  subject,
-		Body:     intro + " " + note,
-		HTML:     emailtmpl.Notice(subject, intro, note),
+		Channel:        "email",
+		To:             email,
+		OrganizationID: organizationID.String(),
+		Subject:        subject,
+		Body:           intro + " " + note,
+		HTML:           emailtmpl.Notice(subject, intro, note),
 	}); err != nil {
-		slog.Warn("credential change notice not sent", "err", err, "tenant_id", tenantID)
+		slog.Warn("credential change notice not sent", "err", err, "tenant_id", organizationID)
 	}
 }

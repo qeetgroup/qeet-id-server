@@ -1,5 +1,5 @@
 // Package security seeds people's second factors, passkeys and devices, and
-// each organisation's threat posture: IP rules, risk and bot settings, bot
+// each organization's threat posture: IP rules, risk and bot settings, bot
 // verdicts, security events, audit anomalies, compliance evidence and
 // lockouts.
 package security
@@ -14,7 +14,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/cmd/seed/internal/world"
 )
 
-// Seed enrols factors and records every organisation's security history.
+// Seed enrols factors and records every organization's security history.
 func Seed(w *world.World) {
 	enrolFactors(w)
 	rememberDevices(w)
@@ -32,11 +32,11 @@ func Seed(w *world.World) {
 	summarise(w)
 }
 
-// securitySection is the summary section on each organisation's security
+// securitySection is the summary section on each organization's security
 // screens.
 const securitySection = "Security (Threats, IP allowlist, Audit intelligence, Compliance)"
 
-// facts are what each organisation's security screens show, for the summary.
+// facts are what each organization's security screens show, for the summary.
 var facts = map[*world.Org][]string{}
 
 // fact notes something o's security screens show.
@@ -44,14 +44,14 @@ func fact(o *world.Org, format string, args ...any) {
 	facts[o] = append(facts[o], fmt.Sprintf(format, args...))
 }
 
-// summarise prints one line per organisation with security data, then the
+// summarise prints one line per organization with security data, then the
 // demonstrations to try.
 func summarise(w *world.World) {
 	for _, o := range w.Orgs {
 		var open, today int
 		w.Check(w.Admin.QueryRow(w.Ctx, `
 			SELECT count(*) FILTER (WHERE resolved_at IS NULL), count(*) FILTER (WHERE created_at > now() - interval '24 hours')
-			FROM auth.security_events WHERE tenant_id = $1`, o.ID).Scan(&open, &today), "count security events")
+			FROM auth.security_events WHERE organization_id = $1`, o.ID).Scan(&open, &today), "count security events")
 		if open+today > 0 {
 			facts[o] = append([]string{fmt.Sprintf("%d unresolved security events (%d in 24 h)", open, today)}, facts[o]...)
 		}
@@ -67,7 +67,7 @@ func summarise(w *world.World) {
 // demos are the security behaviours a tester can try, for the summary.
 var demos []string
 
-// org returns the seeded organisation with slug, or nil.
+// org returns the seeded organization with slug, or nil.
 func org(w *world.World, slug string) *world.Org {
 	for _, o := range w.Orgs {
 		if o.Spec.Slug == slug {

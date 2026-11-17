@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type TenantTenant struct {
+type OrganizationOrganization struct {
 	ID            uuid.UUID
 	Slug          string
 	Name          string

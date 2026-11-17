@@ -2,7 +2,7 @@
 
 package saml
 
-// Database tests for the organisation's SAML IdP issuing assertions, with the
+// Database tests for the organization's SAML IdP issuing assertions, with the
 // hosted-login session resolved by the real authentication service.
 
 import (
@@ -30,7 +30,7 @@ import (
 // metadataCertRe finds the signing certificate in IdP metadata.
 var metadataCertRe = regexp.MustCompile(`<X509Certificate>([^<]+)</X509Certificate>`)
 
-// idpSide is the organisation-facing IdP, its public routes and a way to open
+// idpSide is the organization-facing IdP, its public routes and a way to open
 // a hosted-login session.
 type idpSide struct {
 	idp    *IdP
@@ -83,7 +83,7 @@ func setSPStatus(t *testing.T, ctx context.Context, idp *IdP, sp *ServiceProvide
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	if _, err := idp.UpdateSP(ctx, tx, sp.ID, sp.TenantID, UpdateSPInput{Status: &status}); err != nil {
+	if _, err := idp.UpdateSP(ctx, tx, sp.ID, sp.OrganizationID, UpdateSPInput{Status: &status}); err != nil {
 		t.Fatalf("set the SP %s: %v", status, err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -96,36 +96,36 @@ func setSPStatus(t *testing.T, ctx context.Context, idp *IdP, sp *ServiceProvide
 func TestIdPSignInNeedsSSOInThePlan(t *testing.T) {
 	ctx := dbtest.Context(t)
 	s := newIdPSide(t)
-	tenant := dbtest.Tenant(t)
-	member := dbtest.User(t, tenant, tenant)
-	sp := registerSP(t, ctx, s.idp, tenant, "https://sp.example.test/metadata", "https://sp.example.test/acs")
-	allowed := map[uuid.UUID]bool{tenant: true}
+	organization := dbtest.Organization(t)
+	member := dbtest.User(t, organization, organization)
+	sp := registerSP(t, ctx, s.idp, organization, "https://sp.example.test/metadata", "https://sp.example.test/acs")
+	allowed := map[uuid.UUID]bool{organization: true}
 	s.idp.SetPlanGate(poolGate{pool: dbtest.Pool(t), allowed: allowed})
-	sso := "/saml/idp/" + tenant.String() + "/sso?" + authnRequestTo(sp.EntityID, "_req-1", sp.ACSURL)
+	sso := "/saml/idp/" + organization.String() + "/sso?" + authnRequestTo(sp.EntityID, "_req-1", sp.ACSURL)
 	cookie := s.signIn(member.ID)
 
 	if acs, _ := postedTo(t, idpGet(t, s.router, sso, cookie)); acs != sp.ACSURL {
 		t.Fatalf("SSO on a plan with SSO posted to %q, want %q", acs, sp.ACSURL)
 	}
-	delete(allowed, tenant) // the plan lapses
+	delete(allowed, organization) // the plan lapses
 	if rec := idpGet(t, s.router, sso, cookie); rec.Code != http.StatusPaymentRequired || !strings.Contains(rec.Body.String(), errs.CodeUpgradeRequired) {
 		t.Errorf("SSO after the plan lapsed: %d %s, want 402 %s", rec.Code, rec.Body.String(), errs.CodeUpgradeRequired)
 	}
 }
 
-// TestIdPIssuesAssertionsAsRegistered checks that the organisation's IdP
+// TestIdPIssuesAssertionsAsRegistered checks that the organization's IdP
 // issues a recorded assertion, which a standard SP verifies with the metadata's
 // certificate, only to an enabled, registered SP at its ACS URL for a signed-in
-// person of the organisation; anyone else is refused or sent to sign in.
+// person of the organization; anyone else is refused or sent to sign in.
 func TestIdPIssuesAssertionsAsRegistered(t *testing.T) {
 	ctx := dbtest.Context(t)
 	s := newIdPSide(t)
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	member := dbtest.User(t, tenant, tenant)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	member := dbtest.User(t, organization, organization)
 	outsider := dbtest.User(t, other, other)
 	cookie := s.signIn(member.ID)
-	sp := registerSP(t, ctx, s.idp, tenant, "https://sp.example.test/metadata", "https://sp.example.test/acs")
-	prefix := "/saml/idp/" + tenant.String()
+	sp := registerSP(t, ctx, s.idp, organization, "https://sp.example.test/metadata", "https://sp.example.test/acs")
+	prefix := "/saml/idp/" + organization.String()
 	issuer := testPublicBase + prefix
 
 	meta := idpGet(t, s.router, prefix+"/metadata", "")
@@ -160,10 +160,10 @@ func TestIdPIssuesAssertionsAsRegistered(t *testing.T) {
 		info.Assertions[0].Subject.SubjectConfirmation.SubjectConfirmationData.InResponseTo != "_req-1" {
 		t.Errorf("assertion for %q, warnings %+v; want the member, answering _req-1, valid now for the SP", info.NameID, info.WarningInfo)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'saml.idp_assertion_issued' AND resource_id = $2 AND actor_user_id = $3`, tenant, sp.ID, member.ID); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'saml.idp_assertion_issued' AND resource_id = $2 AND actor_user_id = $3`, organization, sp.ID, member.ID); n != 1 {
 		t.Errorf("%d issued assertions recorded, want 1", n)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.saml_service_providers WHERE id = $1 AND last_login_at IS NOT NULL`, sp.ID); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM organization.saml_service_providers WHERE id = $1 AND last_login_at IS NOT NULL`, sp.ID); n != 1 {
 		t.Error("the SP's last sign-in was not recorded")
 	}
 
@@ -174,7 +174,7 @@ func TestIdPIssuesAssertionsAsRegistered(t *testing.T) {
 		{"an unregistered SP", authnRequestTo("https://unknown.example.test", "_req-3", ""), cookie, errs.CodeNotFound},
 		{"an unreadable request", "SAMLRequest=" + url.QueryEscape("not base64!"), cookie, errs.CodeSAMLAuthnRequestInvalid},
 		{"neither a request nor an SP", "RelayState=state-1", cookie, errs.CodeSAMLRequestParamMissing},
-		{"another organisation's person", "sp=" + sp.ID.String(), s.signIn(outsider.ID), errs.CodeSAMLUserTenantMismatch},
+		{"another organisation's person", "sp=" + sp.ID.String(), s.signIn(outsider.ID), errs.CodeSAMLUserOrganizationMismatch},
 	} {
 		rec := idpGet(t, s.router, prefix+"/sso?"+c.query, c.cookie)
 		if rec.Code == http.StatusOK || !strings.Contains(rec.Body.String(), c.want) || strings.Contains(rec.Body.String(), "SAMLResponse") {
@@ -212,8 +212,8 @@ func TestIdPIssuesAssertionsAsRegistered(t *testing.T) {
 			t.Errorf("SSO to a draft SP %s: %d %s, want 403 %s", c.name, rec.Code, rec.Body.String(), errs.CodeSAMLServiceProviderDraft)
 		}
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'saml.idp_assertion_refused' AND resource_id = $2
-		AND metadata->>'reason' = 'draft'`, tenant, sp.ID); n != 2 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'saml.idp_assertion_refused' AND resource_id = $2
+		AND metadata->>'reason' = 'draft'`, organization, sp.ID); n != 2 {
 		t.Errorf("%d refused sign-ins to the draft SP recorded, want the 2 by a signed-in person", n)
 	}
 
@@ -227,19 +227,19 @@ func TestIdPIssuesAssertionsAsRegistered(t *testing.T) {
 }
 
 // TestIdPRefusesASuspendedAccount checks that once a person is suspended the
-// organisation's IdP issues no assertion for them, though their hosted-login
+// organization's IdP issues no assertion for them, though their hosted-login
 // session is still open.
 func TestIdPRefusesASuspendedAccount(t *testing.T) {
 	ctx := dbtest.Context(t)
 	s := newIdPSide(t)
-	tenant := dbtest.Tenant(t)
-	member := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	member := dbtest.User(t, organization, organization)
 	cookie := s.signIn(member.ID)
-	sp := registerSP(t, ctx, s.idp, tenant, "https://sp.example.test/metadata", "https://sp.example.test/acs")
+	sp := registerSP(t, ctx, s.idp, organization, "https://sp.example.test/metadata", "https://sp.example.test/acs")
 	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE account.users SET status = 'suspended' WHERE id = $1`, member.ID); err != nil {
 		t.Fatal(err)
 	}
-	rec := idpGet(t, s.router, "/saml/idp/"+tenant.String()+"/sso?sp="+sp.ID.String(), cookie)
+	rec := idpGet(t, s.router, "/saml/idp/"+organization.String()+"/sso?sp="+sp.ID.String(), cookie)
 	if rec.Code == http.StatusOK || strings.Contains(rec.Body.String(), "SAMLResponse") {
 		t.Errorf("SSO for a suspended account: %d, want refused", rec.Code)
 	}

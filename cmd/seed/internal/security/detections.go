@@ -15,10 +15,10 @@ import (
 // stores them, from the attackers in world.Attackers. Older ones were resolved
 // by the security team; most of the last few days' are open.
 
-// detectionRate is how many detections each organisation sees in 60 days.
+// detectionRate is how many detections each organization sees in 60 days.
 var detectionRate = map[string]int{"northwind": 14, "lumen": 10, "meridian": 9, "qeet": 8, "aster": 4, "kestrel": 2}
 
-// detections records each organisation's detections, and the takeover that
+// detections records each organization's detections, and the takeover that
 // preceded each suspension for suspicious activity.
 func detections(w *world.World) {
 	for _, o := range w.Orgs {
@@ -110,7 +110,7 @@ func record(w *world.World, o *world.Org, t time.Time, user *uuid.UUID, typ, sev
 		resolvedAt = &resolved
 	}
 	w.Exec("record a detection", `
-		INSERT INTO auth.security_events (tenant_id, user_id, type, severity, detail, status, ip, user_agent, metadata, created_at, resolved_at)
+		INSERT INTO auth.security_events (organization_id, user_id, type, severity, detail, status, ip, user_agent, metadata, created_at, resolved_at)
 		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, '')::inet, NULLIF($8, ''), $9, $10, $11)`,
 		o.ID, user, typ, severity, detail, status, ip, ua, m, t, resolvedAt)
 }

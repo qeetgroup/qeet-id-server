@@ -16,7 +16,7 @@ import (
 )
 
 // dirEvent is one provisioning operation of a directory connection, as
-// tenant.directory_events records it.
+// organization.directory_events records it.
 type dirEvent struct {
 	id                             uuid.UUID
 	conn, op, trigger, kind, resID string
@@ -31,17 +31,17 @@ type dirEvent struct {
 	resolvedBy, retryOf            *uuid.UUID
 }
 
-// directory is one organisation's directory connections being seeded.
+// directory is one organization's directory connections being seeded.
 type directory struct {
 	f      *fed
 	o      *world.Org
 	times  setup
-	scim   string // "scim:<tenant>", or "" for none
+	scim   string // "scim:<organization>", or "" for none
 	ldap   string // the LDAP connection's ID, or ""
 	events []*dirEvent
 }
 
-// directories seeds the organisation's LDAP directories and SCIM provisioning:
+// directories seeds the organization's LDAP directories and SCIM provisioning:
 // connections, tokens, attribute mappings, the profiles they produced, 90
 // days of sync activity with its errors, and failure alerts.
 func (f *fed) directories(o *world.Org) {
@@ -62,7 +62,7 @@ func (f *fed) directories(o *world.Org) {
 	d.alerts()
 }
 
-// ldapConnection adds the organisation's directory: Meridian's on-premises
+// ldapConnection adds the organization's directory: Meridian's on-premises
 // Active Directory, live since its first clinical sign-in; Qeet's staging
 // directory, a draft that never connected.
 func (d *directory) ldapConnection() {
@@ -111,7 +111,7 @@ func (d *directory) ldapConnection() {
 			continue
 		}
 		d.success(d.ldap, "sign-in", "sign-in", "user", p.ID.String(), p.Joined.Add(-900*time.Millisecond))
-		batch.Queue(`INSERT INTO account.external_identities (id, user_id, tenant_id, provider, connection_id, subject, email, metadata, linked_at)
+		batch.Queue(`INSERT INTO account.external_identities (id, user_id, organization_id, provider, connection_id, subject, email, metadata, linked_at)
 			VALUES ($1, $2, $3, 'ldap', $4, $5, $6, $7, $8)`, uuid.New(), p.ID, o.ID, d.ldap, p.ExternalID, p.Email,
 			map[string]any{"connection": d.ldap}, p.Joined)
 		if p.Status == world.StatusActive {
@@ -153,7 +153,7 @@ func (d *directory) ldapConnection() {
 		last = f.ago(9*time.Minute, 30*time.Minute)
 		d.success(d.ldap, "sign-in", "sign-in", "user", world.Pick(w, clinical).ID.String(), last)
 	}
-	w.Exec("LDAP last sign-in", `UPDATE tenant.ldap_connections SET last_login_at = $3 WHERE id = $1 AND tenant_id = $2`, id, o.ID, last)
+	w.Exec("LDAP last sign-in", `UPDATE organization.ldap_connections SET last_login_at = $3 WHERE id = $1 AND organization_id = $2`, id, o.ID, last)
 
 	// Monthly checks; one outage during a domain-controller patch window,
 	// retried successfully; one failure this morning, still open; one resolved.
@@ -294,7 +294,7 @@ func (d *directory) scimConnection() {
 	if len(people) > 0 {
 		last := f.ago(14*time.Minute, 44*time.Minute)
 		d.success(d.scim, "patch", "push", "user", world.Pick(w, people).ID.String(), last)
-		w.Exec("SCIM token last use", `UPDATE tenant.scim_tokens SET last_used_at = $2 WHERE tenant_id = $1 AND revoked_at IS NULL`, o.ID, last)
+		w.Exec("SCIM token last use", `UPDATE organization.scim_tokens SET last_used_at = $2 WHERE organization_id = $1 AND revoked_at IS NULL`, o.ID, last)
 	}
 	f.scim = append(f.scim, scimNote{org: o.Spec.Name, token: token})
 }
@@ -404,8 +404,8 @@ func (d *directory) flush() {
 	sort.SliceStable(d.events, func(i, j int) bool { return d.events[i].at.Before(d.events[j].at) })
 	batch := &pgx.Batch{}
 	for _, e := range d.events {
-		batch.Queue(`INSERT INTO tenant.directory_events
-			(id, tenant_id, connection_id, operation, trigger_type, resource_type, resource_id, started_at, duration_ms,
+		batch.Queue(`INSERT INTO organization.directory_events
+			(id, organization_id, connection_id, operation, trigger_type, resource_type, resource_id, started_at, duration_ms,
 			 http_status, status, users_synced, groups_synced, error_code, message, category, severity,
 			 resolution, resolved_at, resolved_by, retry_of)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
@@ -462,13 +462,13 @@ func (d *directory) saveMappings(conn string, t time.Time, rules []mapping) {
 	for i, m := range rules {
 		at := t.Add(time.Duration(i*40+w.Rand.IntN(30)) * time.Second)
 		id := uuid.New()
-		w.Exec("mapping "+m.target, `INSERT INTO tenant.directory_mappings
-			(id, tenant_id, connection_id, source_attribute, target_field, value_type, transform, pattern, enabled, required, version, created_at, updated_at)
+		w.Exec("mapping "+m.target, `INSERT INTO organization.directory_mappings
+			(id, organization_id, connection_id, source_attribute, target_field, value_type, transform, pattern, enabled, required, version, created_at, updated_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, false, 1, $10, $10)`,
 			id, o.ID, conn, m.source, m.target, m.kind, m.transform, m.pattern, m.enabled, at)
 		f.record(at, o, by, "directory.mapping_created", "directory_mapping", &id, nil)
 		if m.required && upd.Before(w.Now.Add(-time.Hour)) {
-			w.Exec("mapping update", `UPDATE tenant.directory_mappings SET required = true, version = 2, updated_at = $3 WHERE id = $1 AND tenant_id = $2`, id, o.ID, upd)
+			w.Exec("mapping update", `UPDATE organization.directory_mappings SET required = true, version = 2, updated_at = $3 WHERE id = $1 AND organization_id = $2`, id, o.ID, upd)
 			f.record(upd, o, adminAt(o, upd), "directory.mapping_updated", "directory_mapping", &id, nil)
 		}
 	}
@@ -548,8 +548,8 @@ func (d *directory) alerts() {
 			t := fired.Add(20 * time.Second)
 			notified = &t
 		}
-		w.Exec("directory alert "+a.name, `INSERT INTO tenant.directory_alerts
-			(id, tenant_id, user_id, name, connection_id, threshold, enabled, created_at, last_notified_at)
+		w.Exec("directory alert "+a.name, `INSERT INTO organization.directory_alerts
+			(id, organization_id, user_id, name, connection_id, threshold, enabled, created_at, last_notified_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 			uuid.New(), o.ID, owner.ID, a.name, a.conn, a.threshold, a.enabled, created.Add(time.Duration(i)*time.Minute), notified)
 		if notified != nil {
@@ -558,7 +558,7 @@ func (d *directory) alerts() {
 			if read.Before(w.Days(1)) {
 				readAt = &read
 			}
-			w.Exec("alert notification", `INSERT INTO auth.notifications (id, user_id, tenant_id, kind, title, description, href, created_at, read_at)
+			w.Exec("alert notification", `INSERT INTO auth.notifications (id, user_id, organization_id, kind, title, description, href, created_at, read_at)
 				VALUES ($1, $2, $3, 'warning', $4, $5, '/directory/sync-errors', $6, $7)`,
 				uuid.New(), owner.ID, o.ID, a.name, "Directory failures reached your alert threshold in the last 15 minutes.", *notified, readAt)
 		}

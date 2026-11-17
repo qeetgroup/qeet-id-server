@@ -36,12 +36,12 @@ func erased(t *testing.T, userID uuid.UUID) bool {
 	return strings.HasSuffix(email, "@gdpr.invalid") && status == "deleted" && passwords == 0 && live == 0
 }
 
-// account returns a person at home in tenant, with a password and a session.
-func account(t *testing.T, tenant uuid.UUID) dbtest.Account {
+// account returns a person at home in organization, with a password and a session.
+func account(t *testing.T, organization uuid.UUID) dbtest.Account {
 	t.Helper()
-	a := dbtest.User(t, tenant, tenant)
+	a := dbtest.User(t, organization, organization)
 	dbtest.SetPassword(t, a.ID, "Kx7mQ2vLp9Wz")
-	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `INSERT INTO auth.sessions (user_id, tenant_id) VALUES ($1, $2)`, a.ID, tenant); err != nil {
+	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `INSERT INTO auth.sessions (user_id, organization_id) VALUES ($1, $2)`, a.ID, organization); err != nil {
 		t.Fatal(err)
 	}
 	return a
@@ -64,19 +64,19 @@ func requests(t *testing.T, svc *Service) *Handler {
 	return &Handler{Service: svc, ActOnCheck: rbac.NewRepository(dbtest.Pool(t)).CheckActOn}
 }
 
-// TestErasureWaitsForItsGracePeriod checks that an organisation can order the
+// TestErasureWaitsForItsGracePeriod checks that an organization can order the
 // erasure only of its own members, can cancel it while it waits, that an
-// account awaiting erasure can't move organisation, and that the sweep erases
+// account awaiting erasure can't move organization, and that the sweep erases
 // the account once the grace period ends.
 func TestErasureWaitsForItsGracePeriod(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	due, waiting, outsider := account(t, tenant), account(t, tenant), account(t, other)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	due, waiting, outsider := account(t, organization), account(t, organization), account(t, other)
 	svc := NewService(pool, time.Nanosecond)
-	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), requests(t, svc).Mount)
-	waitingAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), requests(t, NewService(pool, 0)).Mount)
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), requests(t, svc).Mount)
+	waitingAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), requests(t, NewService(pool, 0)).Mount)
 
 	order := func(h http.Handler, userID uuid.UUID) (int, Request) {
 		t.Helper()
@@ -95,7 +95,7 @@ func TestErasureWaitsForItsGracePeriod(t *testing.T) {
 	if code, _ := order(asAdmin, outsider.ID); code != http.StatusNotFound {
 		t.Errorf("erase another organisation's member: %d, want 404", code)
 	}
-	_, cancelled := order(waitingAdmin, account(t, tenant).ID)
+	_, cancelled := order(waitingAdmin, account(t, organization).ID)
 	if rec := dbtest.Do(t, asAdmin, http.MethodDelete, "/gdpr/purge/"+cancelled.ID.String(), nil); rec.Code != http.StatusNoContent {
 		t.Errorf("cancel: %d", rec.Code)
 	}
@@ -107,7 +107,7 @@ func TestErasureWaitsForItsGracePeriod(t *testing.T) {
 		t.Errorf("another organisation cancelling: %d, want 404", rec.Code)
 	}
 
-	_, err := pool.Exec(ctx, `UPDATE account.users SET tenant_id = $2 WHERE id = $1`, waiting.ID, other)
+	_, err := pool.Exec(ctx, `UPDATE account.users SET organization_id = $2 WHERE id = $1`, waiting.ID, other)
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || pgErr.Code != "23503" {
 		t.Errorf("an account awaiting erasure moved organisation: %v, want a foreign key violation", err)
@@ -124,22 +124,22 @@ func TestErasureWaitsForItsGracePeriod(t *testing.T) {
 	var list struct {
 		Items []Request `json:"items"`
 	}
-	dbtest.Decode(t, dbtest.Do(t, asAdmin, http.MethodGet, "/tenants/"+tenant.String()+"/gdpr/purge", nil), &list)
+	dbtest.Decode(t, dbtest.Do(t, asAdmin, http.MethodGet, "/tenants/"+organization.String()+"/gdpr/purge", nil), &list)
 	if len(list.Items) != 3 {
 		t.Errorf("%d erasure requests listed, want 3", len(list.Items))
 	}
 }
 
-// TestExportIsBuiltInTheBackground checks that an organisation's export of a
+// TestExportIsBuiltInTheBackground checks that an organization's export of a
 // member is queued, built by the sweep without credentials, and readable only
-// by that organisation.
+// by that organization.
 func TestExportIsBuiltInTheBackground(t *testing.T) {
 	ctx := dbtest.Context(t)
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	member := account(t, tenant)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	member := account(t, organization)
 	svc := NewService(dbtest.Pool(t), 0)
-	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), requests(t, svc).Mount)
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), requests(t, svc).Mount)
 
 	rec := dbtest.Do(t, asAdmin, http.MethodPost, "/gdpr/export", map[string]any{"user_id": member.ID})
 	var req ExportRequest
@@ -153,7 +153,7 @@ func TestExportIsBuiltInTheBackground(t *testing.T) {
 	if err := svc.exportSweepTick(ctx); err != nil {
 		t.Fatal(err)
 	}
-	path := "/tenants/" + tenant.String() + "/gdpr/export/" + req.ID.String()
+	path := "/tenants/" + organization.String() + "/gdpr/export/" + req.ID.String()
 	rec = dbtest.Do(t, asAdmin, http.MethodGet, path, nil)
 	var ready ExportRequest
 	dbtest.Decode(t, rec, &ready)
@@ -168,7 +168,7 @@ func TestExportIsBuiltInTheBackground(t *testing.T) {
 	var list struct {
 		Items []ExportRequest `json:"items"`
 	}
-	dbtest.Decode(t, dbtest.Do(t, asAdmin, http.MethodGet, "/tenants/"+tenant.String()+"/gdpr/export", nil), &list)
+	dbtest.Decode(t, dbtest.Do(t, asAdmin, http.MethodGet, "/tenants/"+organization.String()+"/gdpr/export", nil), &list)
 	if len(list.Items) != 1 || list.Items[0].Payload != nil {
 		t.Errorf("exports listed %+v; want the one, without its payload", list.Items)
 	}
@@ -189,9 +189,9 @@ func (c passwordCheck) ReauthPassword(_ context.Context, _ uuid.UUID, plain stri
 // TestDeleteOwnAccount checks that a person deletes their own account at once,
 // only with their password when they have one.
 func TestDeleteOwnAccount(t *testing.T) {
-	tenant := dbtest.Tenant(t)
-	a := account(t, tenant)
-	h := dbtest.Serve(dbtest.Principal(a.ID, tenant), (&Handler{Service: NewService(dbtest.Pool(t), 0), Reauth: passwordCheck{"Kx7mQ2vLp9Wz"}}).Mount)
+	organization := dbtest.Organization(t)
+	a := account(t, organization)
+	h := dbtest.Serve(dbtest.Principal(a.ID, organization), (&Handler{Service: NewService(dbtest.Pool(t), 0), Reauth: passwordCheck{"Kx7mQ2vLp9Wz"}}).Mount)
 	if rec := dbtest.Do(t, h, http.MethodPost, "/account/delete", map[string]string{"password": "wrong"}); rec.Code != http.StatusBadRequest || erased(t, a.ID) {
 		t.Errorf("delete with the wrong password: %d", rec.Code)
 	}
@@ -201,15 +201,15 @@ func TestDeleteOwnAccount(t *testing.T) {
 }
 
 // TestComplianceEvidence checks that evidence is generated from the
-// organisation's live state for each framework, stored with its controls, and
-// readable only by that organisation.
+// organization's live state for each framework, stored with its controls, and
+// readable only by that organization.
 func TestComplianceEvidence(t *testing.T) {
 	pool := dbtest.Pool(t)
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
 	h := &Handler{Service: NewService(pool, 0), Evidence: NewEvidenceService(pool, audit.NewVerifier(pool, nil), true)}
-	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), h.Mount)
-	base := "/tenants/" + tenant.String() + "/compliance/"
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)
+	base := "/tenants/" + organization.String() + "/compliance/"
 
 	var soc2 EvidenceRun
 	for _, framework := range []string{"soc2", "iso27001"} {
@@ -250,18 +250,18 @@ func TestComplianceEvidence(t *testing.T) {
 	}
 }
 
-// recorded checks that one action event was recorded in tenant for request id,
+// recorded checks that one action event was recorded in organization for request id,
 // by actor (nil: the system) and naming userID.
-func recorded(t *testing.T, tenant, id uuid.UUID, action string, actor *uuid.UUID, userID uuid.UUID) {
+func recorded(t *testing.T, organization, id uuid.UUID, action string, actor *uuid.UUID, userID uuid.UUID) {
 	t.Helper()
 	var n int
 	if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `
 		SELECT count(*) FROM audit.events
-		WHERE tenant_id = $1 AND resource_id = $2 AND action = $3
+		WHERE organization_id = $1 AND resource_id = $2 AND action = $3
 		  AND actor_user_id IS NOT DISTINCT FROM $4
 		  AND actor_type = CASE WHEN $4::uuid IS NULL THEN 'system' ELSE 'user' END
 		  AND metadata->>'user_id' = $5
-	`, tenant, id, action, actor, userID.String()).Scan(&n); err != nil {
+	`, organization, id, action, actor, userID.String()).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 1 {
@@ -275,11 +275,11 @@ func recorded(t *testing.T, tenant, id uuid.UUID, action string, actor *uuid.UUI
 func TestDataRequestsAreAudited(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	due, cancelled, exported := account(t, tenant), account(t, tenant), account(t, tenant)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	due, cancelled, exported := account(t, organization), account(t, organization), account(t, organization)
 	svc := NewService(pool, time.Nanosecond)
-	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), requests(t, svc).Mount)
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), requests(t, svc).Mount)
 
 	file := func(path string, userID uuid.UUID) uuid.UUID {
 		t.Helper()
@@ -294,30 +294,30 @@ func TestDataRequestsAreAudited(t *testing.T) {
 		return out.ID
 	}
 	dueReq := file("/gdpr/purge", due.ID)
-	recorded(t, tenant, dueReq, "gdpr.erasure_requested", &admin.ID, due.ID)
+	recorded(t, organization, dueReq, "gdpr.erasure_requested", &admin.ID, due.ID)
 	cancelledReq := file("/gdpr/purge", cancelled.ID)
 	if rec := dbtest.Do(t, asAdmin, http.MethodDelete, "/gdpr/purge/"+cancelledReq.String(), nil); rec.Code != http.StatusNoContent {
 		t.Fatalf("cancel: %d", rec.Code)
 	}
-	recorded(t, tenant, cancelledReq, "gdpr.erasure_canceled", &admin.ID, cancelled.ID)
+	recorded(t, organization, cancelledReq, "gdpr.erasure_canceled", &admin.ID, cancelled.ID)
 	if rec := dbtest.Do(t, asAdmin, http.MethodDelete, "/gdpr/purge/"+cancelledReq.String(), nil); rec.Code != http.StatusNotFound {
 		t.Errorf("cancel twice: %d, want 404", rec.Code)
 	}
-	recorded(t, tenant, cancelledReq, "gdpr.erasure_canceled", &admin.ID, cancelled.ID)
+	recorded(t, organization, cancelledReq, "gdpr.erasure_canceled", &admin.ID, cancelled.ID)
 	if err := svc.tick(ctx); err != nil {
 		t.Fatal(err)
 	}
-	recorded(t, tenant, dueReq, "gdpr.erasure_completed", nil, due.ID)
+	recorded(t, organization, dueReq, "gdpr.erasure_completed", nil, due.ID)
 
 	built := file("/gdpr/export", exported.ID)
-	recorded(t, tenant, built, "gdpr.export_requested", &admin.ID, exported.ID)
+	recorded(t, organization, built, "gdpr.export_requested", &admin.ID, exported.ID)
 	if err := svc.exportSweepTick(ctx); err != nil {
 		t.Fatal(err)
 	}
-	recorded(t, tenant, built, "gdpr.export_completed", nil, exported.ID)
+	recorded(t, organization, built, "gdpr.export_completed", nil, exported.ID)
 
 	failed := file("/gdpr/export", exported.ID)
-	if err := svc.failExport(ctx, failed, tenant, exported.ID, "not leased"); err != nil {
+	if err := svc.failExport(ctx, failed, organization, exported.ID, "not leased"); err != nil {
 		t.Fatal(err)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM account.export_requests WHERE id = $1 AND status = 'pending'`, failed); n != 1 {
@@ -326,13 +326,13 @@ func TestDataRequestsAreAudited(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE account.export_requests SET lease_owner = $2, lease_until = NOW() + INTERVAL '1 minute' WHERE id = $1`, failed, svc.workerID); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.failExport(ctx, failed, tenant, exported.ID, "the build failed"); err != nil {
+	if err := svc.failExport(ctx, failed, organization, exported.ID, "the build failed"); err != nil {
 		t.Fatal(err)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM account.export_requests WHERE id = $1 AND status = 'failed' AND lease_owner IS NULL`, failed); n != 1 {
 		t.Error("a leased export request wasn't marked failed")
 	}
-	recorded(t, tenant, failed, "gdpr.export_failed", nil, exported.ID)
+	recorded(t, organization, failed, "gdpr.export_failed", nil, exported.ID)
 }
 
 // TestDataRequestsRefusedForSomeoneWhoOutranksTheCaller checks that erasing or
@@ -342,20 +342,20 @@ func TestDataRequestsAreAudited(t *testing.T) {
 func TestDataRequestsRefusedForSomeoneWhoOutranksTheCaller(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	var ownerRole uuid.UUID
-	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, tenant).Scan(&ownerRole); err != nil {
+	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (organization_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, organization).Scan(&ownerRole); err != nil {
 		t.Fatal(err)
 	}
-	owner, coOwner := dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant)
+	owner, coOwner := dbtest.User(t, organization, organization), dbtest.User(t, organization, organization)
 	for _, a := range []dbtest.Account{owner, coOwner} {
-		dbtest.Assign(t, a.ID, tenant, ownerRole)
+		dbtest.Assign(t, a.ID, organization, ownerRole)
 	}
-	admin := dbtest.User(t, tenant, tenant)
-	dbtest.Assign(t, admin.ID, tenant, dbtest.Role(t, tenant, "gdpr.write", "gdpr.read", "user.write", "user.delete"))
+	admin := dbtest.User(t, organization, organization)
+	dbtest.Assign(t, admin.ID, organization, dbtest.Role(t, organization, "gdpr.write", "gdpr.read", "user.write", "user.delete"))
 	h := requests(t, NewService(pool, time.Hour))
 	as := func(a dbtest.Account, method, path string, body any) (int, string) {
-		rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(a.ID, tenant), h.Mount), method, path, body)
+		rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(a.ID, organization), h.Mount), method, path, body)
 		return rec.Code, rec.Body.String()
 	}
 
@@ -363,7 +363,7 @@ func TestDataRequestsRefusedForSomeoneWhoOutranksTheCaller(t *testing.T) {
 		if status, body := as(admin, http.MethodPost, path, map[string]any{"user_id": coOwner.ID}); status != http.StatusForbidden || !strings.Contains(body, errs.CodeRBACTargetIsOwner) {
 			t.Errorf("an administrator asks %s of a co-owner: %d %s, want 403 %s", path, status, body, errs.CodeRBACTargetIsOwner)
 		}
-		if n := dbtest.Count(t, `SELECT count(*) FROM account.`+table+` WHERE tenant_id = $1 AND user_id = $2`, tenant, coOwner.ID); n != 0 {
+		if n := dbtest.Count(t, `SELECT count(*) FROM account.`+table+` WHERE organization_id = $1 AND user_id = $2`, organization, coOwner.ID); n != 0 {
 			t.Errorf("%d %s rows for the co-owner, want none", n, table)
 		}
 	}
@@ -375,10 +375,10 @@ func TestDataRequestsRefusedForSomeoneWhoOutranksTheCaller(t *testing.T) {
 		t.Fatalf("an owner exports a co-owner: %d %s, want 202", status, body)
 	}
 	var export struct{ ID uuid.UUID }
-	if err := pool.QueryRow(ctx, `SELECT id FROM account.export_requests WHERE tenant_id = $1 AND user_id = $2`, tenant, coOwner.ID).Scan(&export.ID); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id FROM account.export_requests WHERE organization_id = $1 AND user_id = $2`, organization, coOwner.ID).Scan(&export.ID); err != nil {
 		t.Fatal(err)
 	}
-	if status, body := as(admin, http.MethodGet, "/tenants/"+tenant.String()+"/gdpr/export/"+export.ID.String(), nil); status != http.StatusForbidden || !strings.Contains(body, errs.CodeRBACTargetIsOwner) {
+	if status, body := as(admin, http.MethodGet, "/tenants/"+organization.String()+"/gdpr/export/"+export.ID.String(), nil); status != http.StatusForbidden || !strings.Contains(body, errs.CodeRBACTargetIsOwner) {
 		t.Errorf("an administrator reads an export of a co-owner: %d %s, want 403 %s", status, body, errs.CodeRBACTargetIsOwner)
 	}
 }

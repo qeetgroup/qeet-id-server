@@ -1,4 +1,4 @@
-DROP TABLE IF EXISTS platform.tenant_purges CASCADE;
+DROP TABLE IF EXISTS platform.organization_purges CASCADE;
 DROP TABLE IF EXISTS platform.scheduled_job_runs CASCADE;
 DROP TABLE IF EXISTS platform.sales_leads CASCADE;
 DROP TABLE IF EXISTS platform.rate_limit_overrides CASCADE;

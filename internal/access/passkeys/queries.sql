@@ -25,7 +25,7 @@ WHERE id = $2 AND user_id = $3
 RETURNING id, user_id, name, transports, last_used_at, created_at;
 
 -- name: GetUserForWebAuthn :one
-SELECT email, display_name, tenant_id FROM account.users
+SELECT email, display_name, organization_id FROM account.users
 WHERE id = $1 AND deleted_at IS NULL;
 
 -- name: GetUserIDByEmail :one
@@ -49,8 +49,8 @@ RETURNING kind, user_id, data, expires_at;
 -- InsertSignupWebAuthnSession stores a pending passkey sign-up; invite_id names
 -- the invitation it accepts (NULL for an ordinary sign-up).
 -- name: InsertSignupWebAuthnSession :one
-INSERT INTO auth.webauthn_sessions (kind, data, expires_at, subject_id, pending_email, pending_display_name, pending_tenant_id, pending_invite_id)
-VALUES ('signup', @data, @expires_at, @subject_id, @pending_email, @pending_display_name, @pending_tenant_id, sqlc.narg('invite_id')) RETURNING id;
+INSERT INTO auth.webauthn_sessions (kind, data, expires_at, subject_id, pending_email, pending_display_name, pending_organization_id, pending_invite_id)
+VALUES ('signup', @data, @expires_at, @subject_id, @pending_email, @pending_display_name, @pending_organization_id, sqlc.narg('invite_id')) RETURNING id;
 
 -- DeleteInviteWebAuthnSessions drops the earlier passkey ceremonies accepting
 -- an invitation, so starting again replaces an abandoned one.
@@ -61,12 +61,12 @@ DELETE FROM auth.webauthn_sessions WHERE pending_invite_id = @invite_id;
 
 -- name: TakeSignupWebAuthnSession :one
 DELETE FROM auth.webauthn_sessions WHERE id = $1
-RETURNING kind, data, expires_at, subject_id, pending_email, pending_display_name, pending_tenant_id, pending_invite_id;
+RETURNING kind, data, expires_at, subject_id, pending_email, pending_display_name, pending_organization_id, pending_invite_id;
 
 -- name: InsertUserFromSignup :one
 -- The id is the WebAuthn user ID the signup passkey was registered under: the
 -- authenticator returns it as the user handle on every sign-in.
-INSERT INTO account.users (id, tenant_id, email, display_name)
+INSERT INTO account.users (id, organization_id, email, display_name)
 VALUES ($1, $2, $3, $4)
 RETURNING id;
 

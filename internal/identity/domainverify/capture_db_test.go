@@ -37,26 +37,26 @@ func exec(t *testing.T, sql string, args ...any) {
 	}
 }
 
-// samlConnection adds a SAML connection with status to tenant.
-func samlConnection(t *testing.T, tenant uuid.UUID, status string) uuid.UUID {
+// samlConnection adds a SAML connection with status to organization.
+func samlConnection(t *testing.T, organization uuid.UUID, status string) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID
 	if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `
-		INSERT INTO tenant.saml_connections (tenant_id, name, idp_entity_id, idp_sso_url, idp_certificate, status)
+		INSERT INTO organization.saml_connections (organization_id, name, idp_entity_id, idp_sso_url, idp_certificate, status)
 		VALUES ($1, 'Okta', 'https://idp.example.test', 'https://idp.example.test/sso', 'cert', $2) RETURNING id
-	`, tenant, status).Scan(&id); err != nil {
+	`, organization, status).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
 	return id
 }
 
-// ownerRole creates tenant's owner role.
-func ownerRole(t *testing.T, tenant uuid.UUID) uuid.UUID {
+// ownerRole creates organization's owner role.
+func ownerRole(t *testing.T, organization uuid.UUID) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID
 	if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `
-		INSERT INTO rbac.roles (tenant_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id
-	`, tenant).Scan(&id); err != nil {
+		INSERT INTO rbac.roles (organization_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id
+	`, organization).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
 	return id
@@ -77,33 +77,33 @@ func captured(t *testing.T, svc *Service, email string) (bool, []map[string]any)
 	return true, conns
 }
 
-// TestRefuseCaptured checks which addresses an organisation's domain capture
+// TestRefuseCaptured checks which addresses an organization's domain capture
 // refuses: those it manages once SSO is on and it has an active SAML or LDAP
 // connection, the same with or without an account; and not its break-glass
 // members, nor the administrators single sign-on can't sign in, nor another
-// organisation's members or domains.
+// organization's members or domains.
 func TestRefuseCaptured(t *testing.T) {
 	svc := captureService(t)
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	domain := dbtest.Domain(t, tenant)
-	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, tenant, tenant)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	domain := dbtest.Domain(t, organization)
+	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, organization, organization)
 	nobody := dbtest.Unique("nobody") + "@" + strings.ToUpper(domain)
 	team := "team." + domain
-	exec(t, `INSERT INTO tenant.domains (tenant_id, domain, verification_token, verified_at, sso_enabled) VALUES ($1, $2, 'test', NOW(), TRUE)`, other, team)
+	exec(t, `INSERT INTO organization.domains (organization_id, domain, verification_token, verified_at, sso_enabled) VALUES ($1, $2, 'test', NOW(), TRUE)`, other, team)
 	samlConnection(t, other, "active")
-	exec(t, `INSERT INTO tenant.ldap_connections (tenant_id, name, server_url, bind_dn, bind_password_ct, bind_password_nonce, base_dn, status)
+	exec(t, `INSERT INTO organization.ldap_connections (organization_id, name, server_url, bind_dn, bind_password_ct, bind_password_nonce, base_dn, status)
 		VALUES ($1, 'Directory', 'ldaps://ldap.example.test', 'cn=service', '\x00', '\x00', 'dc=example', 'active')`, other)
 
 	if got, _ := captured(t, svc, member.Email); got {
 		t.Error("an address on a domain with SSO off is captured")
 	}
-	exec(t, `UPDATE tenant.domains SET sso_enabled = TRUE WHERE tenant_id = $1`, tenant)
-	samlConnection(t, tenant, "draft")
-	samlConnection(t, tenant, "disabled")
+	exec(t, `UPDATE organization.domains SET sso_enabled = TRUE WHERE organization_id = $1`, organization)
+	samlConnection(t, organization, "draft")
+	samlConnection(t, organization, "disabled")
 	if got, _ := captured(t, svc, member.Email); got {
 		t.Error("an address is captured while the organisation has only a draft and a disabled connection")
 	}
-	active := samlConnection(t, tenant, "active")
+	active := samlConnection(t, organization, "active")
 
 	for _, email := range []string{member.Email, nobody, dbtest.Unique("x") + "@eu." + domain} {
 		got, conns := captured(t, svc, email)
@@ -111,7 +111,7 @@ func TestRefuseCaptured(t *testing.T) {
 			t.Errorf("%s: captured %v naming %v; want refused, naming the active connection only", email, got, conns)
 		}
 	}
-	// A closer domain another organisation verified decides for itself, and an
+	// A closer domain another organization verified decides for itself, and an
 	// address on no managed domain is nobody's.
 	if got, conns := captured(t, svc, dbtest.Unique("x")+"@eu."+team); !got || len(conns) != 2 {
 		t.Errorf("below the other organisation's closer domain: captured %v naming %v; want its two connections", got, conns)
@@ -121,42 +121,42 @@ func TestRefuseCaptured(t *testing.T) {
 	}
 
 	// Break-glass members keep their methods while they are members; another
-	// organisation's mark doesn't count.
-	exec(t, `INSERT INTO tenant.break_glass_members (tenant_id, user_id) VALUES ($1, $2)`, other, member.ID)
+	// organization's mark doesn't count.
+	exec(t, `INSERT INTO organization.break_glass_members (organization_id, user_id) VALUES ($1, $2)`, other, member.ID)
 	if got, _ := captured(t, svc, member.Email); !got {
 		t.Error("another organisation's break-glass mark exempted the member")
 	}
-	exec(t, `INSERT INTO tenant.break_glass_members (tenant_id, user_id) VALUES ($1, $2)`, tenant, member.ID)
+	exec(t, `INSERT INTO organization.break_glass_members (organization_id, user_id) VALUES ($1, $2)`, organization, member.ID)
 	if got, _ := captured(t, svc, strings.ToUpper(member.Email)); got {
 		t.Error("a break-glass member is captured")
 	}
-	guest := dbtest.UserAt(t, dbtest.Unique("guest")+"@"+domain, other, tenant)
-	exec(t, `INSERT INTO tenant.break_glass_members (tenant_id, user_id) VALUES ($1, $2)`, tenant, guest.ID)
+	guest := dbtest.UserAt(t, dbtest.Unique("guest")+"@"+domain, other, organization)
+	exec(t, `INSERT INTO organization.break_glass_members (organization_id, user_id) VALUES ($1, $2)`, organization, guest.ID)
 	if got, _ := captured(t, svc, guest.Email); got {
 		t.Error("a break-glass guest member is captured")
 	}
-	exec(t, `DELETE FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2`, guest.ID, tenant)
+	exec(t, `DELETE FROM rbac.user_roles WHERE user_id = $1 AND organization_id = $2`, guest.ID, organization)
 	if got, _ := captured(t, svc, guest.Email); !got {
 		t.Error("a break-glass mark still exempts someone who has left the organisation")
 	}
 
 	// An administrator single sign-on can't sign in keeps their methods until
 	// an identity of theirs is linked to an active connection.
-	admin := dbtest.UserAt(t, dbtest.Unique("admin")+"@"+domain, tenant)
-	dbtest.Assign(t, admin.ID, tenant, dbtest.Role(t, tenant, "connection.write"))
-	owner := dbtest.UserAt(t, dbtest.Unique("owner")+"@"+domain, tenant)
-	dbtest.Assign(t, owner.ID, tenant, ownerRole(t, tenant))
+	admin := dbtest.UserAt(t, dbtest.Unique("admin")+"@"+domain, organization)
+	dbtest.Assign(t, admin.ID, organization, dbtest.Role(t, organization, "connection.write"))
+	owner := dbtest.UserAt(t, dbtest.Unique("owner")+"@"+domain, organization)
+	dbtest.Assign(t, owner.ID, organization, ownerRole(t, organization))
 	for _, a := range []dbtest.Account{admin, owner} {
 		if got, _ := captured(t, svc, a.Email); got {
 			t.Errorf("%s, an administrator single sign-on can't sign in, is captured", a.Email)
 		}
 	}
-	exec(t, `INSERT INTO account.external_identities (user_id, tenant_id, provider, connection_id, subject, email) VALUES ($1, $2, 'saml', $3, 'okta|admin', $4)`,
-		admin.ID, tenant, active, admin.Email)
+	exec(t, `INSERT INTO account.external_identities (user_id, organization_id, provider, connection_id, subject, email) VALUES ($1, $2, 'saml', $3, 'okta|admin', $4)`,
+		admin.ID, organization, active, admin.Email)
 	if got, _ := captured(t, svc, admin.Email); !got {
 		t.Error("an administrator linked to an active connection is not captured")
 	}
-	exec(t, `UPDATE tenant.saml_connections SET status = 'disabled' WHERE id = $1`, active)
+	exec(t, `UPDATE organization.saml_connections SET status = 'disabled' WHERE id = $1`, active)
 	if got, _ := captured(t, svc, nobody); got {
 		t.Error("an address is captured once the organisation's last active connection is off")
 	}
@@ -164,31 +164,31 @@ func TestRefuseCaptured(t *testing.T) {
 
 // TestBreakGlassMembers checks that only an owner, in person, names and
 // removes break-glass members, each change audited once; that only a member
-// can be one; and that another organisation can neither see nor change them.
+// can be one; and that another organization can neither see nor change them.
 func TestBreakGlassMembers(t *testing.T) {
 	svc := captureService(t)
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	owner := dbtest.User(t, tenant)
-	dbtest.Assign(t, owner.ID, tenant, ownerRole(t, tenant))
-	admin := dbtest.User(t, tenant)
-	dbtest.Assign(t, admin.ID, tenant, dbtest.Role(t, tenant, "connection.write"))
-	member := dbtest.User(t, tenant, tenant)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	owner := dbtest.User(t, organization)
+	dbtest.Assign(t, owner.ID, organization, ownerRole(t, organization))
+	admin := dbtest.User(t, organization)
+	dbtest.Assign(t, admin.ID, organization, dbtest.Role(t, organization, "connection.write"))
+	member := dbtest.User(t, organization, organization)
 	outsider := dbtest.User(t, other, other)
 	otherOwner := dbtest.User(t, other)
 	dbtest.Assign(t, otherOwner.ID, other, ownerRole(t, other))
 	mount := (&Handler{Service: svc}).Mount
-	asOwner := dbtest.Serve(dbtest.Principal(owner.ID, tenant), mount)
-	base := "/tenants/" + tenant.String() + "/break-glass-members"
+	asOwner := dbtest.Serve(dbtest.Principal(owner.ID, organization), mount)
+	base := "/tenants/" + organization.String() + "/break-glass-members"
 	audited := func(action string) int {
-		return dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = $2 AND resource_id = $3`, tenant, action, member.ID)
+		return dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = $2 AND resource_id = $3`, organization, action, member.ID)
 	}
 
-	key := dbtest.Principal(owner.ID, tenant)
+	key := dbtest.Principal(owner.ID, organization)
 	key.ActorType = "api_key"
 	for name, h := range map[string]http.Handler{
-		"an admin who isn't an owner":      dbtest.Serve(dbtest.Principal(admin.ID, tenant), mount),
+		"an admin who isn't an owner":      dbtest.Serve(dbtest.Principal(admin.ID, organization), mount),
 		"an owner's API key":               dbtest.Serve(key, mount),
-		"a member who is no administrator": dbtest.Serve(dbtest.Principal(member.ID, tenant), mount),
+		"a member who is no administrator": dbtest.Serve(dbtest.Principal(member.ID, organization), mount),
 	} {
 		for _, method := range []string{http.MethodPut, http.MethodDelete} {
 			if rec := dbtest.Do(t, h, method, base+"/"+member.ID.String(), nil); rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeRBACOwnerOnly) {
@@ -220,7 +220,7 @@ func TestBreakGlassMembers(t *testing.T) {
 		t.Errorf("a malformed user id: %d, want 400", rec.Code)
 	}
 
-	// Another organisation's owner: not in this organisation's routes, and a
+	// Another organization's owner: not in this organization's routes, and a
 	// member of this one isn't theirs to name.
 	asOther := dbtest.Serve(dbtest.Principal(otherOwner.ID, other), mount)
 	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
@@ -240,7 +240,7 @@ func TestBreakGlassMembers(t *testing.T) {
 		t.Error("another organisation's list shows this organisation's break-glass member")
 	}
 	if rec := dbtest.Do(t, asOther, http.MethodDelete, otherBase+"/"+member.ID.String(), nil); rec.Code != http.StatusNoContent ||
-		dbtest.Count(t, `SELECT count(*) FROM tenant.break_glass_members WHERE tenant_id = $1 AND user_id = $2`, tenant, member.ID) != 1 {
+		dbtest.Count(t, `SELECT count(*) FROM organization.break_glass_members WHERE organization_id = $1 AND user_id = $2`, organization, member.ID) != 1 {
 		t.Errorf("another organisation's owner removing in their own organisation: %d; want 204 and this organisation's mark kept", rec.Code)
 	}
 
@@ -252,7 +252,7 @@ func TestBreakGlassMembers(t *testing.T) {
 	if n := audited("domain.break_glass_removed"); n != 1 {
 		t.Errorf("%d domain.break_glass_removed events after removing twice, want 1", n)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.break_glass_members WHERE tenant_id = $1`, tenant); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM organization.break_glass_members WHERE organization_id = $1`, organization); n != 0 {
 		t.Errorf("%d break-glass members left, want none", n)
 	}
 }
@@ -271,42 +271,42 @@ func breakGlassIDs(t *testing.T, rec *httptest.ResponseRecorder) []uuid.UUID {
 	return ids
 }
 
-// oidcConnection adds an OpenID Connect connection with status to tenant.
-func oidcConnection(t *testing.T, tenant uuid.UUID, status string) uuid.UUID {
+// oidcConnection adds an OpenID Connect connection with status to organization.
+func oidcConnection(t *testing.T, organization uuid.UUID, status string) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID
 	if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `
-		INSERT INTO tenant.oidc_connections (tenant_id, name, issuer, client_id, client_secret_ct, client_secret_nonce, status)
+		INSERT INTO organization.oidc_connections (organization_id, name, issuer, client_id, client_secret_ct, client_secret_nonce, status)
 		VALUES ($1, 'Entra ID', 'https://login.example.test', 'client', '\x00', '\x00', $2) RETURNING id
-	`, tenant, status).Scan(&id); err != nil {
+	`, organization, status).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
 	return id
 }
 
 // TestOIDCConnectionsCapture checks that an active OpenID Connect connection
-// captures its organisation's domain as SAML and LDAP do, named as protocol
+// captures its organization's domain as SAML and LDAP do, named as protocol
 // oidc, and that an administrator linked to it is captured.
 func TestOIDCConnectionsCapture(t *testing.T) {
 	svc := captureService(t)
-	tenant := dbtest.Tenant(t)
-	domain := dbtest.Domain(t, tenant)
-	exec(t, `UPDATE tenant.domains SET sso_enabled = TRUE WHERE tenant_id = $1`, tenant)
-	oidcConnection(t, tenant, "draft")
+	organization := dbtest.Organization(t)
+	domain := dbtest.Domain(t, organization)
+	exec(t, `UPDATE organization.domains SET sso_enabled = TRUE WHERE organization_id = $1`, organization)
+	oidcConnection(t, organization, "draft")
 	if got, _ := captured(t, svc, dbtest.Unique("x")+"@"+domain); got {
 		t.Error("an address is captured while the organisation's only OpenID Connect connection is a draft")
 	}
-	active := oidcConnection(t, tenant, "active")
+	active := oidcConnection(t, organization, "active")
 	if got, conns := captured(t, svc, dbtest.Unique("x")+"@"+domain); !got || len(conns) != 1 || conns[0]["id"] != active || conns[0]["protocol"] != "oidc" {
 		t.Errorf("with an active OpenID Connect connection: captured %v naming %v; want it, as oidc", got, conns)
 	}
-	admin := dbtest.UserAt(t, dbtest.Unique("admin")+"@"+domain, tenant)
-	dbtest.Assign(t, admin.ID, tenant, dbtest.Role(t, tenant, "connection.write"))
+	admin := dbtest.UserAt(t, dbtest.Unique("admin")+"@"+domain, organization)
+	dbtest.Assign(t, admin.ID, organization, dbtest.Role(t, organization, "connection.write"))
 	if got, _ := captured(t, svc, admin.Email); got {
 		t.Error("an unlinked administrator is captured")
 	}
-	exec(t, `INSERT INTO account.external_identities (user_id, tenant_id, provider, connection_id, subject, email) VALUES ($1, $2, 'oidc', $3, 'entra|admin', $4)`,
-		admin.ID, tenant, active, admin.Email)
+	exec(t, `INSERT INTO account.external_identities (user_id, organization_id, provider, connection_id, subject, email) VALUES ($1, $2, 'oidc', $3, 'entra|admin', $4)`,
+		admin.ID, organization, active, admin.Email)
 	if got, _ := captured(t, svc, admin.Email); !got {
 		t.Error("an administrator linked to an active OpenID Connect connection is not captured")
 	}
@@ -318,11 +318,11 @@ func TestOIDCConnectionsCapture(t *testing.T) {
 // and routes nothing for a domain with SSO off or one nobody manages.
 func TestDiscoverRoutesByDomainAlone(t *testing.T) {
 	svc := captureService(t)
-	tenant := dbtest.Tenant(t)
-	domain := dbtest.Domain(t, tenant)
-	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, tenant, tenant)
-	saml := samlConnection(t, tenant, "active")
-	samlConnection(t, tenant, "draft")
+	organization := dbtest.Organization(t)
+	domain := dbtest.Domain(t, organization)
+	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, organization, organization)
+	saml := samlConnection(t, organization, "active")
+	samlConnection(t, organization, "draft")
 	h := httptest.NewServer(func() http.Handler {
 		r := chi.NewRouter()
 		(&Handler{Service: svc}).MountPublic(r)
@@ -333,11 +333,11 @@ func TestDiscoverRoutesByDomainAlone(t *testing.T) {
 	if d, err := svc.Discover(dbtest.Context(t), member.Email); err != nil || d.SSO || len(d.Connections) != 0 {
 		t.Errorf("a domain with SSO off: %+v, %v; want not routed", d, err)
 	}
-	exec(t, `UPDATE tenant.domains SET sso_enabled = TRUE WHERE tenant_id = $1`, tenant)
-	exec(t, `INSERT INTO tenant.break_glass_members (tenant_id, user_id) VALUES ($1, $2)`, tenant, member.ID)
+	exec(t, `UPDATE organization.domains SET sso_enabled = TRUE WHERE organization_id = $1`, organization)
+	exec(t, `INSERT INTO organization.break_glass_members (organization_id, user_id) VALUES ($1, $2)`, organization, member.ID)
 	var ldap uuid.UUID
-	if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `INSERT INTO tenant.ldap_connections (tenant_id, name, server_url, bind_dn, bind_password_ct, bind_password_nonce, base_dn, status)
-		VALUES ($1, 'Directory', 'ldaps://ldap.example.test', 'cn=service', '\x00', '\x00', 'dc=example', 'active') RETURNING id`, tenant).Scan(&ldap); err != nil {
+	if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `INSERT INTO organization.ldap_connections (organization_id, name, server_url, bind_dn, bind_password_ct, bind_password_nonce, base_dn, status)
+		VALUES ($1, 'Directory', 'ldaps://ldap.example.test', 'cn=service', '\x00', '\x00', 'dc=example', 'active') RETURNING id`, organization).Scan(&ldap); err != nil {
 		t.Fatal(err)
 	}
 	want := []DiscoveredConnection{
@@ -345,7 +345,7 @@ func TestDiscoverRoutesByDomainAlone(t *testing.T) {
 		{ID: ldap, Protocol: "ldap", Name: "Directory", Method: "credentials", LoginPath: "/ldap/" + ldap.String() + "/authenticate", SessionPath: "/ldap/" + ldap.String() + "/session"},
 	}
 	var orgName string
-	if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `SELECT name FROM tenant.tenants WHERE id = $1`, tenant).Scan(&orgName); err != nil {
+	if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `SELECT name FROM organization.organizations WHERE id = $1`, organization).Scan(&orgName); err != nil {
 		t.Fatal(err)
 	}
 	for _, email := range []string{member.Email, dbtest.Unique("nobody") + "@" + strings.ToUpper(domain)} {
@@ -376,19 +376,19 @@ func TestDiscoverRoutesByDomainAlone(t *testing.T) {
 // holding only allowlisted reads is captured.
 func TestCaptureLeavesEveryAdministratorTheirMethods(t *testing.T) {
 	svc := captureService(t)
-	tenant := dbtest.Tenant(t)
-	domain := dbtest.Domain(t, tenant)
-	exec(t, `UPDATE tenant.domains SET sso_enabled = TRUE WHERE tenant_id = $1`, tenant)
-	samlConnection(t, tenant, "active")
+	organization := dbtest.Organization(t)
+	domain := dbtest.Domain(t, organization)
+	exec(t, `UPDATE organization.domains SET sso_enabled = TRUE WHERE organization_id = $1`, organization)
+	samlConnection(t, organization, "active")
 	for _, key := range []string{"gdpr.write", "secret.read", "billing.write", "branding.write"} {
-		officer := dbtest.UserAt(t, dbtest.Unique("officer")+"@"+domain, tenant)
-		dbtest.Assign(t, officer.ID, tenant, dbtest.Role(t, tenant, key))
+		officer := dbtest.UserAt(t, dbtest.Unique("officer")+"@"+domain, organization)
+		dbtest.Assign(t, officer.ID, organization, dbtest.Role(t, organization, key))
 		if got, _ := captured(t, svc, officer.Email); got {
 			t.Errorf("a member holding %s, an administrator, is captured", key)
 		}
 	}
-	reader := dbtest.UserAt(t, dbtest.Unique("reader")+"@"+domain, tenant)
-	dbtest.Assign(t, reader.ID, tenant, dbtest.Role(t, tenant, "audit.read", "user.read"))
+	reader := dbtest.UserAt(t, dbtest.Unique("reader")+"@"+domain, organization)
+	dbtest.Assign(t, reader.ID, organization, dbtest.Role(t, organization, "audit.read", "user.read"))
 	if got, _ := captured(t, svc, reader.Email); !got {
 		t.Error("a member holding only reads is not captured")
 	}

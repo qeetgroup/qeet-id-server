@@ -60,7 +60,7 @@ func within(countries ...string) string {
 	return `{"all":[{"attr":"context.country","op":"exists"},{"attr":"context.country","op":"in","value":` + string(b) + `}]}`
 }
 
-// abacSpecs are each Pro or Enterprise organisation's ABAC policies.
+// abacSpecs are each Pro or Enterprise organization's ABAC policies.
 var abacSpecs = map[string][]abacSpec{
 	"qeet": {
 		{name: "Block sanctioned countries", description: "Refuse every action from comprehensively sanctioned jurisdictions (OFAC/UN lists).",
@@ -157,7 +157,7 @@ var abacSpecs = map[string][]abacSpec{
 var consoleResources = []string{"tenant", "user", "role", "audit", "group", "connection", "apikey", "secret",
 	"webhook", "billing", "branding", "policy", "gdpr", "analytics"}
 
-// abac writes the organisation's ABAC policies through the ABAC service, then
+// abac writes the organization's ABAC policies through the ABAC service, then
 // edits some so their history has versions.
 func (d *dev) abac(o *world.Org) {
 	w := d.w
@@ -199,7 +199,7 @@ func (d *dev) abac(o *world.Org) {
 
 // consoleSafe stops the seed if an enabled deny policy would refuse the
 // console's own requests, which carry no subject or context attributes: a
-// tester would be locked out of the organisation.
+// tester would be locked out of the organization.
 func (d *dev) consoleSafe(o *world.Org, effect, resource string, cond json.RawMessage, enabled bool) {
 	if effect != "deny" || !enabled {
 		return
@@ -276,7 +276,7 @@ func (d *dev) write(s *relSession) map[[3]string]uuid.UUID {
 	return ids
 }
 
-// rebac writes each organisation's relationship graph: team groups (nested
+// rebac writes each organization's relationship graph: team groups (nested
 // into departments), the folders, projects and documents they reach, and
 // document:readme — the object the console's relationship screen opens on.
 func (d *dev) rebac(o *world.Org) {
@@ -441,7 +441,7 @@ type limitChange struct {
 	limits []limit
 }
 
-// limitChanges are the organisations that tightened their API limits.
+// limitChanges are the organizations that tightened their API limits.
 var limitChanges = map[string][]limitChange{
 	"northwind": {{150, []who{both(dept("Information Security"), guardians)}, []limit{{"tenant", 60, 300}, {"api_key", 20, 100}}}},
 	"lumen": {
@@ -450,7 +450,7 @@ var limitChanges = map[string][]limitChange{
 	},
 }
 
-// rateLimits saves the organisation's rate-limit overrides as the console's
+// rateLimits saves the organization's rate-limit overrides as the console's
 // rate-limit form does.
 func (d *dev) rateLimits(o *world.Org) {
 	w := d.w
@@ -462,9 +462,9 @@ func (d *dev) rateLimits(o *world.Org) {
 			w.Tx("rate limits of "+o.Spec.Slug, func(tx pgx.Tx) error {
 				for _, l := range c.limits {
 					if _, err := tx.Exec(w.Ctx, `
-						INSERT INTO platform.rate_limit_overrides (tenant_id, limit_key, rate, capacity, updated_at)
+						INSERT INTO platform.rate_limit_overrides (organization_id, limit_key, rate, capacity, updated_at)
 						VALUES ($1, $2, $3, $4, NOW())
-						ON CONFLICT (tenant_id, limit_key) DO UPDATE SET
+						ON CONFLICT (organization_id, limit_key) DO UPDATE SET
 						    rate = EXCLUDED.rate, capacity = EXCLUDED.capacity, updated_at = NOW()`,
 						o.ID, l.key, l.rate, l.capacity); err != nil {
 						return err

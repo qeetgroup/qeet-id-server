@@ -13,19 +13,19 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// TestEverySignInRunsTheLoginHook checks that the organisation's login hook
-// decides every way of signing in, once each, for the organisation signed in
+// TestEverySignInRunsTheLoginHook checks that the organization's login hook
+// decides every way of signing in, once each, for the organization signed in
 // to, and that its refusal opens no session.
 func TestEverySignInRunsTheLoginHook(t *testing.T) {
 	ctx := dbtest.Context(t)
-	a, tenant := member(t)
+	a, organization := member(t)
 	sessions := func() int {
 		return dbtest.Count(t, `SELECT count(*) FROM auth.sessions WHERE user_id = $1`, a.ID) +
 			dbtest.Count(t, `SELECT count(*) FROM auth.login_sessions WHERE user_id = $1`, a.ID)
 	}
 	ways := map[string]func(svc *Service) error{
 		"token pair (SAML, passkey)": func(svc *Service) error {
-			_, err := svc.IssuePair(ctx, a.ID, tenant, "192.0.2.1", "test", "saml")
+			_, err := svc.IssuePair(ctx, a.ID, organization, "192.0.2.1", "test", "saml")
 			return err
 		},
 		"hosted session": func(svc *Service) error {
@@ -37,19 +37,19 @@ func TestEverySignInRunsTheLoginHook(t *testing.T) {
 			return err
 		},
 		"social": func(svc *Service) error {
-			_, err := svc.BeginSocialSignIn(ctx, a.ID, tenant, "192.0.2.1", "test")
+			_, err := svc.BeginSocialSignIn(ctx, a.ID, organization, "192.0.2.1", "test")
 			return err
 		},
 		"hosted social": func(svc *Service) error {
-			_, err := svc.BeginSocialLoginSession(ctx, a.ID, tenant, "192.0.2.1", "test", "", "")
+			_, err := svc.BeginSocialLoginSession(ctx, a.ID, organization, "192.0.2.1", "test", "", "")
 			return err
 		},
 		"magic link": func(svc *Service) error {
-			_, err := svc.BeginMagicLinkSignIn(ctx, a.ID, tenant, "192.0.2.1", "test")
+			_, err := svc.BeginMagicLinkSignIn(ctx, a.ID, organization, "192.0.2.1", "test")
 			return err
 		},
 		"hosted magic link": func(svc *Service) error {
-			_, err := svc.BeginMagicLinkSession(ctx, a.ID, tenant, "192.0.2.1", "test", "", "")
+			_, err := svc.BeginMagicLinkSession(ctx, a.ID, organization, "192.0.2.1", "test", "", "")
 			return err
 		},
 	}
@@ -58,17 +58,17 @@ func TestEverySignInRunsTheLoginHook(t *testing.T) {
 			svc := newService(t)
 			var calls int
 			var asked uuid.UUID
-			svc.SetLoginHook(hookFunc(func(_ context.Context, tenantID, _ uuid.UUID, _ string) (map[string]any, error) {
+			svc.SetLoginHook(hookFunc(func(_ context.Context, organizationID, _ uuid.UUID, _ string) (map[string]any, error) {
 				calls++
-				asked = tenantID
+				asked = organizationID
 				return nil, errs.ErrAuthHookDenied
 			}))
 			before := sessions()
 			if err := signIn(svc); !errors.Is(err, errs.ErrAuthHookDenied) {
 				t.Fatalf("refused by the hook: %v, want %v", err, errs.ErrAuthHookDenied)
 			}
-			if calls != 1 || asked != tenant {
-				t.Errorf("hook called %d times for %s, want once for %s", calls, asked, tenant)
+			if calls != 1 || asked != organization {
+				t.Errorf("hook called %d times for %s, want once for %s", calls, asked, organization)
 			}
 			if n := sessions(); n != before {
 				t.Errorf("a refused sign-in opened %d sessions", n-before)

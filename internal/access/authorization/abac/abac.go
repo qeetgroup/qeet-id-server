@@ -1,4 +1,4 @@
-// Package abac stores per-tenant attribute-based access control policies and
+// Package abac stores per-organization attribute-based access control policies and
 // evaluates them deny-wins: among enabled policies for the resource type and
 // action (exact or "*"), a matching deny refuses, else a matching allow
 // permits, else the answer is deny. Conditions are JSON trees (EvaluateCondition).
@@ -44,18 +44,18 @@ type AttributeBag map[string]map[string]any
 
 // Policy is the read-projection of one abac_policies row.
 type Policy struct {
-	ID           uuid.UUID       `json:"id"`
-	TenantID     uuid.UUID       `json:"tenant_id"`
-	Name         string          `json:"name"`
-	Description  string          `json:"description"`
-	Effect       string          `json:"effect"`
-	ResourceType string          `json:"resource_type"`
-	Action       string          `json:"action"`
-	Condition    json.RawMessage `json:"condition"`
-	Priority     int             `json:"priority"`
-	Enabled      bool            `json:"enabled"`
-	CreatedAt    time.Time       `json:"created_at"`
-	UpdatedAt    time.Time       `json:"updated_at"`
+	ID             uuid.UUID       `json:"id"`
+	OrganizationID uuid.UUID       `json:"tenant_id"`
+	Name           string          `json:"name"`
+	Description    string          `json:"description"`
+	Effect         string          `json:"effect"`
+	ResourceType   string          `json:"resource_type"`
+	Action         string          `json:"action"`
+	Condition      json.RawMessage `json:"condition"`
+	Priority       int             `json:"priority"`
+	Enabled        bool            `json:"enabled"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
 	// Version counts the policy's saves from 1, and UpdatedBy is who made the
 	// last, nil for a machine or before it was kept.
 	Version   int        `json:"version"`
@@ -774,7 +774,7 @@ func relationLeaves(raw json.RawMessage, found func(relation, object, ref string
 
 // Service — CRUD + evaluate.
 
-// Service stores each tenant's ABAC policies and evaluates requests against
+// Service stores each organization's ABAC policies and evaluates requests against
 // them.
 type Service struct {
 	pool      *pgxpool.Pool
@@ -787,8 +787,8 @@ type Service struct {
 }
 
 // RelationCheck answers whether userID has relation on object (type:id) in
-// tenantID. Satisfied by rebac.Service.Check.
-type RelationCheck func(ctx context.Context, tenantID uuid.UUID, object, relation, userID string) (bool, error)
+// organizationID. Satisfied by rebac.Service.Check.
+type RelationCheck func(ctx context.Context, organizationID uuid.UUID, object, relation, userID string) (bool, error)
 
 // SetRelationCheck sets how relation conditions are answered; without one
 // they are unknown, so a deny holding one applies and an allow grants nothing.
@@ -796,7 +796,7 @@ func (s *Service) SetRelationCheck(c RelationCheck) { s.relations = c }
 
 // resolveRelations answers, into bag, each relationship the conditions ask
 // about for the bag's subject, so evaluation needs no lookups of its own.
-func (s *Service) resolveRelations(ctx context.Context, tenantID uuid.UUID, conditions [][]byte, bag AttributeBag) error {
+func (s *Service) resolveRelations(ctx context.Context, organizationID uuid.UUID, conditions [][]byte, bag AttributeBag) error {
 	subject, _ := bag["subject"]["id"].(string)
 	if s.relations == nil || subject == "" {
 		return nil
@@ -810,7 +810,7 @@ func (s *Service) resolveRelations(ctx context.Context, tenantID uuid.UUID, cond
 			if _, done := answers[key]; done || object == "" || failed != nil {
 				return
 			}
-			held, err := s.relations(ctx, tenantID, object, relation, subject)
+			held, err := s.relations(ctx, organizationID, object, relation, subject)
 			switch {
 			case errors.Is(err, errs.ErrReBACObjectInvalid):
 				// An object that isn't type:id holds no relationship: left unknown.
@@ -830,8 +830,8 @@ func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool), presence: map[uuid.UUID]presenceEntry{}}
 }
 
-// presenceTTL bounds how long another instance may go on skipping ABAC for a
-// tenant after a policy is added there; this instance forgets at once.
+// presenceTTL bounds how long another instance may go on skipping ABAC for an
+// organization after a policy is added there; this instance forgets at once.
 const presenceTTL = 5 * time.Second
 
 type presenceEntry struct {
@@ -839,60 +839,60 @@ type presenceEntry struct {
 	at          time.Time
 }
 
-// Presence reports whether the tenant has any enabled deny and any enabled
+// Presence reports whether the organization has any enabled deny and any enabled
 // allow policy, so a decision runs ABAC only where it can change the outcome
-// (decide.Decider). Cached per tenant for presenceTTL, and forgotten on every
+// (decide.Decider). Cached per organization for presenceTTL, and forgotten on every
 // change made through this service.
-func (s *Service) Presence(ctx context.Context, tenantID uuid.UUID) (hasDeny, hasAllow bool, err error) {
+func (s *Service) Presence(ctx context.Context, organizationID uuid.UUID) (hasDeny, hasAllow bool, err error) {
 	s.presenceMu.Lock()
-	e, ok := s.presence[tenantID]
+	e, ok := s.presence[organizationID]
 	s.presenceMu.Unlock()
 	if ok && time.Since(e.at) < presenceTTL {
 		return e.deny, e.allow, nil
 	}
-	row, err := s.q.CountEnabledPolicies(ctx, tenantID)
+	row, err := s.q.CountEnabledPolicies(ctx, organizationID)
 	if err != nil {
 		return false, false, err
 	}
 	e = presenceEntry{deny: row.Deny > 0, allow: row.Allow > 0, at: time.Now()}
 	s.presenceMu.Lock()
-	s.presence[tenantID] = e
+	s.presence[organizationID] = e
 	s.presenceMu.Unlock()
 	return e.deny, e.allow, nil
 }
 
-func (s *Service) forgetPresence(tenantID uuid.UUID) {
+func (s *Service) forgetPresence(organizationID uuid.UUID) {
 	s.presenceMu.Lock()
-	delete(s.presence, tenantID)
+	delete(s.presence, organizationID)
 	s.presenceMu.Unlock()
 }
 
 // SubjectAttributes is the subject namespace the platform supplies when it
 // decides for a user itself (decide.Decider): who they are, never anything the
 // caller chose, so a deny written against subject.id binds wherever it applies.
-func SubjectAttributes(userID string, tenantID uuid.UUID) map[string]any {
-	return map[string]any{"id": userID, "type": "user", "tenant_id": tenantID.String()}
+func SubjectAttributes(userID string, organizationID uuid.UUID) map[string]any {
+	return map[string]any{"id": userID, "type": "user", "tenant_id": organizationID.String()}
 }
 
 // Request is what the platform itself knows of a decision it makes for a user:
 // who they are and, when it is the user's own call, its session and address.
 // Nothing in it comes from what the caller sends.
 type Request struct {
-	Subject   string    // the user's id as the engines name it
-	UserID    uuid.UUID // the same, parsed; uuid.Nil when it names no platform user
-	TenantID  uuid.UUID // the organisation decided in
-	SessionID uuid.UUID // the user's own session (uuid.Nil: none)
-	MFA       bool      // the call itself proved a second factor (a hosted-login sign-in that did)
-	IP        string    // the client address ("": not the user's own call)
+	Subject        string    // the user's id as the engines name it
+	UserID         uuid.UUID // the same, parsed; uuid.Nil when it names no platform user
+	OrganizationID uuid.UUID // the organization decided in
+	SessionID      uuid.UUID // the user's own session (uuid.Nil: none)
+	MFA            bool      // the call itself proved a second factor (a hosted-login sign-in that did)
+	IP             string    // the client address ("": not the user's own call)
 }
 
 // OwnRequest is the Request for userID's own call in ctx: with the call's
 // session, second factor and client address when ctx carries userID's
-// principal in tenantID, and without them otherwise.
-func OwnRequest(ctx context.Context, userID, tenantID uuid.UUID) Request {
-	r := Request{Subject: userID.String(), UserID: userID, TenantID: tenantID}
+// principal in organizationID, and without them otherwise.
+func OwnRequest(ctx context.Context, userID, organizationID uuid.UUID) Request {
+	r := Request{Subject: userID.String(), UserID: userID, OrganizationID: organizationID}
 	p := httpx.PrincipalFromCtx(ctx)
-	if p == nil || p.UserID == nil || *p.UserID != userID || p.TenantID == nil || *p.TenantID != tenantID {
+	if p == nil || p.UserID == nil || *p.UserID != userID || p.OrganizationID == nil || *p.OrganizationID != organizationID {
 		return r
 	}
 	r.IP = httpx.ClientIPFromContext(ctx)
@@ -906,12 +906,12 @@ func OwnRequest(ctx context.Context, userID, tenantID uuid.UUID) Request {
 
 // PlatformAttributes is the subject and context namespaces the platform
 // supplies for r: subject id, type, tenant_id, and the groups and roles (by
-// name) the user holds in the organisation; context mfa and ip when the call
+// name) the user holds in the organization; context mfa and ip when the call
 // is the user's own. An attribute it can't know is left out, so it is unknown.
 func (s *Service) PlatformAttributes(ctx context.Context, r Request) (subject, ctxAttrs map[string]any, err error) {
-	subject, ctxAttrs = SubjectAttributes(r.Subject, r.TenantID), map[string]any{}
+	subject, ctxAttrs = SubjectAttributes(r.Subject, r.OrganizationID), map[string]any{}
 	if r.UserID != uuid.Nil {
-		rows, err := s.q.ListSubjectMemberships(ctx, dbgen.ListSubjectMembershipsParams{TenantID: r.TenantID, UserID: r.UserID})
+		rows, err := s.q.ListSubjectMemberships(ctx, dbgen.ListSubjectMembershipsParams{OrganizationID: r.OrganizationID, UserID: r.UserID})
 		if err != nil {
 			return nil, nil, err
 		}
@@ -932,7 +932,7 @@ func (s *Service) PlatformAttributes(ctx context.Context, r Request) (subject, c
 	case r.MFA:
 		ctxAttrs["mfa"] = true
 	case r.SessionID != uuid.Nil && r.UserID != uuid.Nil:
-		met, err := s.q.SessionSecondFactorMet(ctx, dbgen.SessionSecondFactorMetParams{SessionID: r.SessionID, UserID: r.UserID, TenantID: r.TenantID})
+		met, err := s.q.SessionSecondFactorMet(ctx, dbgen.SessionSecondFactorMetParams{SessionID: r.SessionID, UserID: r.UserID, OrganizationID: r.OrganizationID})
 		switch {
 		case err == nil:
 			ctxAttrs["mfa"] = met
@@ -953,22 +953,22 @@ const (
 // locksOutAuthor reports whether an enabled deny policy would refuse its own
 // author the right to change policies (policy.write) at the route guard, on
 // the attributes it would see for the author's call now; that would leave the
-// tenant with nobody able to undo it. See refusesPolicyWrite.
-func (s *Service) locksOutAuthor(ctx context.Context, tenantID uuid.UUID, effect, resourceType, action string, enabled bool, cond json.RawMessage, actor audit.Actor) (bool, error) {
+// organization with nobody able to undo it. See refusesPolicyWrite.
+func (s *Service) locksOutAuthor(ctx context.Context, organizationID uuid.UUID, effect, resourceType, action string, enabled bool, cond json.RawMessage, actor audit.Actor) (bool, error) {
 	if effect != "deny" || !enabled || actor.UserID == nil {
 		return false, nil
 	}
 	if (resourceType != policyResourceType && resourceType != "*") || (action != policyWriteAction && action != "*") {
 		return false, nil
 	}
-	subject, ctxAttrs, err := s.PlatformAttributes(ctx, OwnRequest(ctx, *actor.UserID, tenantID))
+	subject, ctxAttrs, err := s.PlatformAttributes(ctx, OwnRequest(ctx, *actor.UserID, organizationID))
 	if err != nil {
 		return false, err
 	}
 	bag := attributeBag(EvaluationInput{
 		Subject: subject, Resource: EvaluationResource{Type: policyResourceType}, Action: policyWriteAction, Context: ctxAttrs,
 	})
-	if err := s.resolveRelations(ctx, tenantID, [][]byte{cond}, bag); err != nil {
+	if err := s.resolveRelations(ctx, organizationID, [][]byte{cond}, bag); err != nil {
 		return false, err
 	}
 	return refusesPolicyWrite(cond, bag), nil
@@ -982,10 +982,10 @@ func refusesPolicyWrite(cond json.RawMessage, bag AttributeBag) bool {
 	return matched || err != nil
 }
 
-// PlanGate reports whether a plan-gated feature is in the tenant's plan. It is
+// PlanGate reports whether a plan-gated feature is in the organization's plan. It is
 // satisfied by operations/entitlements.Service.
 type PlanGate interface {
-	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
+	FeatureAllowed(ctx context.Context, organizationID uuid.UUID, feature string) (bool, error)
 }
 
 // SetPlanGate wires the plan-feature gate (nil allows all features).
@@ -994,18 +994,18 @@ func (s *Service) SetPlanGate(g PlanGate) { s.gate = g }
 // toPolicy maps a generated AuthAbacPolicy row to the domain Policy type.
 func toPolicy(row dbgen.AuthAbacPolicy) *Policy {
 	p := &Policy{
-		ID:           row.ID,
-		TenantID:     row.TenantID,
-		Name:         row.Name,
-		Description:  row.Description,
-		Effect:       row.Effect,
-		ResourceType: row.ResourceType,
-		Action:       row.Action,
-		Priority:     int(row.Priority),
-		Enabled:      row.Enabled,
-		CreatedAt:    row.CreatedAt,
-		UpdatedAt:    row.UpdatedAt,
-		Version:      int(row.Version),
+		ID:             row.ID,
+		OrganizationID: row.OrganizationID,
+		Name:           row.Name,
+		Description:    row.Description,
+		Effect:         row.Effect,
+		ResourceType:   row.ResourceType,
+		Action:         row.Action,
+		Priority:       int(row.Priority),
+		Enabled:        row.Enabled,
+		CreatedAt:      row.CreatedAt,
+		UpdatedAt:      row.UpdatedAt,
+		Version:        int(row.Version),
 	}
 	if row.UpdatedBy.Valid {
 		by := uuid.UUID(row.UpdatedBy.Bytes)
@@ -1046,10 +1046,10 @@ func checkPolicy(name, effect, resourceType, action string, cond json.RawMessage
 
 // Create inserts a new ABAC policy. The audit row and outbox event are
 // committed atomically in the same transaction.
-func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, in CreateInput, actor audit.Actor) (*Policy, error) {
+func (s *Service) Create(ctx context.Context, organizationID uuid.UUID, in CreateInput, actor audit.Actor) (*Policy, error) {
 	// Plan gate: ABAC (attribute-based access control) is a Pro+ feature.
 	if s.gate != nil {
-		ok, err := s.gate.FeatureAllowed(ctx, tenantID, "abac")
+		ok, err := s.gate.FeatureAllowed(ctx, organizationID, "abac")
 		if err != nil {
 			return nil, err
 		}
@@ -1061,7 +1061,7 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, in CreateInput
 	if err != nil {
 		return nil, err
 	}
-	if locked, err := s.locksOutAuthor(ctx, tenantID, in.Effect, in.ResourceType, in.Action, in.Enabled, cond, actor); err != nil {
+	if locked, err := s.locksOutAuthor(ctx, organizationID, in.Effect, in.ResourceType, in.Action, in.Enabled, cond, actor); err != nil {
 		return nil, err
 	} else if locked {
 		return nil, errs.ErrABACPolicyLocksOut
@@ -1072,19 +1072,19 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, in CreateInput
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	defer s.forgetPresence(tenantID)
+	defer s.forgetPresence(organizationID)
 
 	row, err := s.q.WithTx(tx).CreateAbacPolicy(ctx, dbgen.CreateAbacPolicyParams{
-		TenantID:     tenantID,
-		Name:         in.Name,
-		Description:  in.Description,
-		Effect:       in.Effect,
-		ResourceType: in.ResourceType,
-		Action:       in.Action,
-		Condition:    []byte(cond),
-		Priority:     int32(in.Priority), // #nosec G115 -- only orders the trace; deny wins regardless
-		Enabled:      in.Enabled,
-		UpdatedBy:    savedBy(actor),
+		OrganizationID: organizationID,
+		Name:           in.Name,
+		Description:    in.Description,
+		Effect:         in.Effect,
+		ResourceType:   in.ResourceType,
+		Action:         in.Action,
+		Condition:      []byte(cond),
+		Priority:       int32(in.Priority), // #nosec G115 -- only orders the trace; deny wins regardless
+		Enabled:        in.Enabled,
+		UpdatedBy:      savedBy(actor),
 	})
 	if err != nil {
 		if pgxerr.IsUnique(err) {
@@ -1093,11 +1093,11 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, in CreateInput
 		return nil, err
 	}
 	p := toPolicy(row)
-	if err := s.q.WithTx(tx).SaveAbacPolicyVersion(ctx, dbgen.SaveAbacPolicyVersionParams{ID: p.ID, TenantID: tenantID}); err != nil {
+	if err := s.q.WithTx(tx).SaveAbacPolicyVersion(ctx, dbgen.SaveAbacPolicyVersionParams{ID: p.ID, OrganizationID: organizationID}); err != nil {
 		return nil, err
 	}
 
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "abac_policy.created", "abac_policy", p.ID,
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "abac_policy.created", "abac_policy", p.ID,
 		map[string]any{"name": p.Name, "effect": p.Effect, "resource_type": p.ResourceType, "action": p.Action, "version": p.Version})); err != nil {
 		return nil, err
 	}
@@ -1115,9 +1115,9 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, in CreateInput
 	return p, nil
 }
 
-// Get returns one policy by id, scoped to tenant.
-func (s *Service) Get(ctx context.Context, id, tenantID uuid.UUID) (*Policy, error) {
-	row, err := s.q.GetAbacPolicy(ctx, dbgen.GetAbacPolicyParams{ID: id, TenantID: tenantID})
+// Get returns one policy by id, scoped to organization.
+func (s *Service) Get(ctx context.Context, id, organizationID uuid.UUID) (*Policy, error) {
+	row, err := s.q.GetAbacPolicy(ctx, dbgen.GetAbacPolicyParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
 	}
@@ -1127,9 +1127,9 @@ func (s *Service) Get(ctx context.Context, id, tenantID uuid.UUID) (*Policy, err
 	return toPolicy(row), nil
 }
 
-// List returns all policies for a tenant, ordered by priority desc then name.
-func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Policy, error) {
-	rows, err := s.q.ListAbacPolicies(ctx, tenantID)
+// List returns all policies for an organization, ordered by priority desc then name.
+func (s *Service) List(ctx context.Context, organizationID uuid.UUID) ([]Policy, error) {
+	rows, err := s.q.ListAbacPolicies(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -1150,18 +1150,18 @@ func savedBy(actor audit.Actor) pgtype.UUID {
 
 // Update replaces all mutable fields of a policy. The audit row and outbox
 // event are committed atomically in the same transaction.
-func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateInput, actor audit.Actor) (*Policy, error) {
-	return s.update(ctx, id, tenantID, in, actor, 0)
+func (s *Service) Update(ctx context.Context, id, organizationID uuid.UUID, in UpdateInput, actor audit.Actor) (*Policy, error) {
+	return s.update(ctx, id, organizationID, in, actor, 0)
 }
 
 // update saves in as the policy's next version, recorded as restoring version
 // restoredFrom when it isn't 0.
-func (s *Service) update(ctx context.Context, id, tenantID uuid.UUID, in UpdateInput, actor audit.Actor, restoredFrom int) (*Policy, error) {
+func (s *Service) update(ctx context.Context, id, organizationID uuid.UUID, in UpdateInput, actor audit.Actor, restoredFrom int) (*Policy, error) {
 	cond, err := checkPolicy(in.Name, in.Effect, in.ResourceType, in.Action, in.Condition)
 	if err != nil {
 		return nil, err
 	}
-	if locked, err := s.locksOutAuthor(ctx, tenantID, in.Effect, in.ResourceType, in.Action, in.Enabled, cond, actor); err != nil {
+	if locked, err := s.locksOutAuthor(ctx, organizationID, in.Effect, in.ResourceType, in.Action, in.Enabled, cond, actor); err != nil {
 		return nil, err
 	} else if locked {
 		return nil, errs.ErrABACPolicyLocksOut
@@ -1172,20 +1172,20 @@ func (s *Service) update(ctx context.Context, id, tenantID uuid.UUID, in UpdateI
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	defer s.forgetPresence(tenantID)
+	defer s.forgetPresence(organizationID)
 
 	row, err := s.q.WithTx(tx).UpdateAbacPolicy(ctx, dbgen.UpdateAbacPolicyParams{
-		Name:         in.Name,
-		Description:  in.Description,
-		Effect:       in.Effect,
-		ResourceType: in.ResourceType,
-		Action:       in.Action,
-		Condition:    []byte(cond),
-		Priority:     int32(in.Priority), // #nosec G115 -- only orders the trace; deny wins regardless
-		Enabled:      in.Enabled,
-		UpdatedBy:    savedBy(actor),
-		ID:           id,
-		TenantID:     tenantID,
+		Name:           in.Name,
+		Description:    in.Description,
+		Effect:         in.Effect,
+		ResourceType:   in.ResourceType,
+		Action:         in.Action,
+		Condition:      []byte(cond),
+		Priority:       int32(in.Priority), // #nosec G115 -- only orders the trace; deny wins regardless
+		Enabled:        in.Enabled,
+		UpdatedBy:      savedBy(actor),
+		ID:             id,
+		OrganizationID: organizationID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
@@ -1197,7 +1197,7 @@ func (s *Service) update(ctx context.Context, id, tenantID uuid.UUID, in UpdateI
 		return nil, err
 	}
 	p := toPolicy(row)
-	if err := s.q.WithTx(tx).SaveAbacPolicyVersion(ctx, dbgen.SaveAbacPolicyVersionParams{ID: p.ID, TenantID: tenantID}); err != nil {
+	if err := s.q.WithTx(tx).SaveAbacPolicyVersion(ctx, dbgen.SaveAbacPolicyVersionParams{ID: p.ID, OrganizationID: organizationID}); err != nil {
 		return nil, err
 	}
 
@@ -1207,7 +1207,7 @@ func (s *Service) update(ctx context.Context, id, tenantID uuid.UUID, in UpdateI
 	if restoredFrom > 0 {
 		action, meta["restored_from"] = "abac_policy.restored", restoredFrom
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, action, "abac_policy", p.ID, meta)); err != nil {
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, action, "abac_policy", p.ID, meta)); err != nil {
 		return nil, err
 	}
 	if err := outbox.Enqueue(ctx, tx, outbox.Event{
@@ -1236,13 +1236,13 @@ type PolicyVersion struct {
 	SavedAt      time.Time       `json:"saved_at"`
 }
 
-// Versions returns the last 200 saves of one of the tenant's policies, newest
+// Versions returns the last 200 saves of one of the organization's policies, newest
 // first.
-func (s *Service) Versions(ctx context.Context, id, tenantID uuid.UUID) ([]PolicyVersion, error) {
-	if _, err := s.Get(ctx, id, tenantID); err != nil {
+func (s *Service) Versions(ctx context.Context, id, organizationID uuid.UUID) ([]PolicyVersion, error) {
+	if _, err := s.Get(ctx, id, organizationID); err != nil {
 		return nil, err
 	}
-	rows, err := s.q.ListAbacPolicyVersions(ctx, dbgen.ListAbacPolicyVersionsParams{PolicyID: id, TenantID: tenantID})
+	rows, err := s.q.ListAbacPolicyVersions(ctx, dbgen.ListAbacPolicyVersionsParams{PolicyID: id, OrganizationID: organizationID})
 	if err != nil {
 		return nil, err
 	}
@@ -1268,9 +1268,9 @@ func toVersion(r dbgen.GetAbacPolicyVersionRow) PolicyVersion {
 
 // Restore saves one of a policy's earlier versions as its next, checked as any
 // change is, and recorded as abac_policy.restored.
-func (s *Service) Restore(ctx context.Context, id, tenantID uuid.UUID, version int, actor audit.Actor) (*Policy, error) {
+func (s *Service) Restore(ctx context.Context, id, organizationID uuid.UUID, version int, actor audit.Actor) (*Policy, error) {
 	row, err := s.q.GetAbacPolicyVersion(ctx, dbgen.GetAbacPolicyVersionParams{
-		PolicyID: id, TenantID: tenantID, Version: int32(version), // #nosec G115 -- a version number from the path, compared only
+		PolicyID: id, OrganizationID: organizationID, Version: int32(version), // #nosec G115 -- a version number from the path, compared only
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
@@ -1279,22 +1279,22 @@ func (s *Service) Restore(ctx context.Context, id, tenantID uuid.UUID, version i
 		return nil, err
 	}
 	v := toVersion(row)
-	return s.update(ctx, id, tenantID, UpdateInput{
+	return s.update(ctx, id, organizationID, UpdateInput{
 		Name: v.Name, Description: v.Description, Effect: v.Effect, ResourceType: v.ResourceType,
 		Action: v.Action, Condition: v.Condition, Priority: v.Priority, Enabled: v.Enabled,
 	}, actor, version)
 }
 
-// Delete removes one policy by id, scoped to tenant.
-func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
+// Delete removes one policy by id, scoped to organization.
+func (s *Service) Delete(ctx context.Context, id, organizationID uuid.UUID, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	defer s.forgetPresence(tenantID)
+	defer s.forgetPresence(organizationID)
 
-	name, err := s.q.WithTx(tx).DeleteAbacPolicy(ctx, dbgen.DeleteAbacPolicyParams{ID: id, TenantID: tenantID})
+	name, err := s.q.WithTx(tx).DeleteAbacPolicy(ctx, dbgen.DeleteAbacPolicyParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return errs.ErrNotFound
 	}
@@ -1302,7 +1302,7 @@ func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID, actor audi
 		return err
 	}
 
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "abac_policy.deleted", "abac_policy", id,
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "abac_policy.deleted", "abac_policy", id,
 		map[string]any{"name": name})); err != nil {
 		return err
 	}
@@ -1310,7 +1310,7 @@ func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID, actor audi
 		AggregateID: id,
 		Topic:       "abac.events",
 		EventType:   "abac_policy.deleted",
-		Payload:     map[string]any{"id": id, "tenant_id": tenantID, "name": name},
+		Payload:     map[string]any{"id": id, "tenant_id": organizationID, "name": name},
 	}); err != nil {
 		return err
 	}
@@ -1327,16 +1327,16 @@ type candidate struct {
 	priority  int
 }
 
-// Evaluate applies tenantID's enabled policies for in's resource type and
+// Evaluate applies organizationID's enabled policies for in's resource type and
 // action, highest priority first, deny-wins: a matching deny or a condition
 // that fails to evaluate refuses, else a matching allow permits, else deny. A
 // condition comparing an absent attribute matches a deny and never an allow.
-func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, in EvaluationInput) (*Decision, error) {
-	policies, err := s.candidates(ctx, tenantID, in)
+func (s *Service) Evaluate(ctx context.Context, organizationID uuid.UUID, in EvaluationInput) (*Decision, error) {
+	policies, err := s.candidates(ctx, organizationID, in)
 	if err != nil {
 		return nil, err
 	}
-	bag, err := s.bagFor(ctx, tenantID, in, policies)
+	bag, err := s.bagFor(ctx, organizationID, in, policies)
 	if err != nil {
 		return nil, err
 	}
@@ -1345,25 +1345,25 @@ func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, in Evaluatio
 
 // bagFor is in's attribute bag with the relationships policies ask about
 // answered.
-func (s *Service) bagFor(ctx context.Context, tenantID uuid.UUID, in EvaluationInput, policies []candidate) (AttributeBag, error) {
+func (s *Service) bagFor(ctx context.Context, organizationID uuid.UUID, in EvaluationInput, policies []candidate) (AttributeBag, error) {
 	bag := attributeBag(in)
 	conditions := make([][]byte, 0, len(policies))
 	for _, p := range policies {
 		conditions = append(conditions, p.condition)
 	}
-	return bag, s.resolveRelations(ctx, tenantID, conditions, bag)
+	return bag, s.resolveRelations(ctx, organizationID, conditions, bag)
 }
 
-// candidates returns tenantID's enabled policies for in's resource type and
+// candidates returns organizationID's enabled policies for in's resource type and
 // action, highest priority first.
-func (s *Service) candidates(ctx context.Context, tenantID uuid.UUID, in EvaluationInput) ([]candidate, error) {
+func (s *Service) candidates(ctx context.Context, organizationID uuid.UUID, in EvaluationInput) ([]candidate, error) {
 	if strings.TrimSpace(in.Action) == "" {
 		return nil, errs.ErrABACActionRequired
 	}
 	rows, err := s.q.ListEvaluationCandidates(ctx, dbgen.ListEvaluationCandidatesParams{
-		TenantID:     tenantID,
-		ResourceType: in.Resource.Type,
-		Action:       in.Action,
+		OrganizationID: organizationID,
+		ResourceType:   in.Resource.Type,
+		Action:         in.Action,
 	})
 	if err != nil {
 		return nil, err
@@ -1390,10 +1390,10 @@ type Draft struct {
 	Replaces *uuid.UUID `json:"replaces"`
 }
 
-// EvaluateDraft is Evaluate with draft among tenantID's policies, writing
+// EvaluateDraft is Evaluate with draft among organizationID's policies, writing
 // nothing. The decision's MatchedDraft is set when the draft decided it; a new
 // draft has no MatchedPolicyID.
-func (s *Service) EvaluateDraft(ctx context.Context, tenantID uuid.UUID, in EvaluationInput, draft Draft) (*Decision, error) {
+func (s *Service) EvaluateDraft(ctx context.Context, organizationID uuid.UUID, in EvaluationInput, draft Draft) (*Decision, error) {
 	if strings.TrimSpace(draft.Name) == "" {
 		draft.Name = "draft"
 	}
@@ -1403,12 +1403,12 @@ func (s *Service) EvaluateDraft(ctx context.Context, tenantID uuid.UUID, in Eval
 	}
 	draftID := uuid.Nil
 	if draft.Replaces != nil {
-		if _, err := s.Get(ctx, *draft.Replaces, tenantID); err != nil {
+		if _, err := s.Get(ctx, *draft.Replaces, organizationID); err != nil {
 			return nil, err
 		}
 		draftID = *draft.Replaces
 	}
-	stored, err := s.candidates(ctx, tenantID, in)
+	stored, err := s.candidates(ctx, organizationID, in)
 	if err != nil {
 		return nil, err
 	}
@@ -1432,7 +1432,7 @@ func (s *Service) EvaluateDraft(ctx context.Context, tenantID uuid.UUID, in Eval
 		}
 		policies = slices.Insert(policies, at, d)
 	}
-	bag, err := s.bagFor(ctx, tenantID, in, policies)
+	bag, err := s.bagFor(ctx, organizationID, in, policies)
 	if err != nil {
 		return nil, err
 	}
@@ -1603,12 +1603,12 @@ func (h *Handler) Mount(r chi.Router) {
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out, err := h.Service.List(r.Context(), tenantID)
+	out, err := h.Service.List(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1617,7 +1617,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1627,7 +1627,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	p, err := h.Service.Create(r.Context(), tenantID, in, audit.ActorOf(r))
+	p, err := h.Service.Create(r.Context(), organizationID, in, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1636,7 +1636,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) getPolicy(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1646,7 +1646,7 @@ func (h *Handler) getPolicy(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	p, err := h.Service.Get(r.Context(), id, tenantID)
+	p, err := h.Service.Get(r.Context(), id, organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1655,7 +1655,7 @@ func (h *Handler) getPolicy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1670,7 +1670,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	p, err := h.Service.Update(r.Context(), id, tenantID, in, audit.ActorOf(r))
+	p, err := h.Service.Update(r.Context(), id, organizationID, in, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1679,7 +1679,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) versions(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1689,7 +1689,7 @@ func (h *Handler) versions(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	out, err := h.Service.Versions(r.Context(), id, tenantID)
+	out, err := h.Service.Versions(r.Context(), id, organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1698,7 +1698,7 @@ func (h *Handler) versions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) restore(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1713,7 +1713,7 @@ func (h *Handler) restore(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid version"))
 		return
 	}
-	p, err := h.Service.Restore(r.Context(), id, tenantID, version, audit.ActorOf(r))
+	p, err := h.Service.Restore(r.Context(), id, organizationID, version, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1722,7 +1722,7 @@ func (h *Handler) restore(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1732,7 +1732,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	if err := h.Service.Delete(r.Context(), id, tenantID, audit.ActorOf(r)); err != nil {
+	if err := h.Service.Delete(r.Context(), id, organizationID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -1740,7 +1740,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) evalHandler(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1755,9 +1755,9 @@ func (h *Handler) evalHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	var decision *Decision
 	if in.Draft != nil {
-		decision, err = h.Service.EvaluateDraft(r.Context(), tenantID, in.EvaluationInput, *in.Draft)
+		decision, err = h.Service.EvaluateDraft(r.Context(), organizationID, in.EvaluationInput, *in.Draft)
 	} else {
-		decision, err = h.Service.Evaluate(r.Context(), tenantID, in.EvaluationInput)
+		decision, err = h.Service.Evaluate(r.Context(), organizationID, in.EvaluationInput)
 	}
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -1773,7 +1773,7 @@ func (h *Handler) evalHandler(w http.ResponseWriter, r *http.Request) {
 		resource += ":" + in.Resource.ID
 	}
 	rule, _ := decision.ReasonParams["policy_name"].(string)
-	h.Decisions.Record(r.Context(), decisionlog.Entry{TenantID: tenantID, Source: source, Subject: subject,
+	h.Decisions.Record(r.Context(), decisionlog.Entry{OrganizationID: organizationID, Source: source, Subject: subject,
 		Resource: resource, Action: in.Action, Allowed: decision.Allow, Model: "abac", Rule: rule, ReasonCode: decision.ReasonCode})
 	// Omit the trace unless ?explain=true, mirroring the rebac/authzen convention.
 	if r.URL.Query().Get("explain") != "true" {

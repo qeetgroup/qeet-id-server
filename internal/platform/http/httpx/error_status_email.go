@@ -11,8 +11,8 @@ func init() {
 	registerStatuses(map[string]int{
 		errs.CodeEmailTemplateNotFound:        http.StatusNotFound,
 		errs.CodeEmailTemplateContentRequired: http.StatusUnprocessableEntity,
-		errs.CodeEmailTenantInvalid:           http.StatusBadRequest,
-		errs.CodeEmailTenantMismatch:          http.StatusForbidden,
+		errs.CodeEmailOrganizationInvalid:     http.StatusBadRequest,
+		errs.CodeEmailOrganizationMismatch:    http.StatusForbidden,
 		errs.CodeEmailSuppressed:              http.StatusUnprocessableEntity,
 		errs.CodeEmailProviderUnavailable:     http.StatusServiceUnavailable,
 		errs.CodeEmailWebhookSignature:        http.StatusUnauthorized,

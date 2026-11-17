@@ -1,6 +1,6 @@
 package errs
 
-// Admin Portal error codes: the time-limited link a tenant admin gives an IT
+// Admin Portal error codes: the time-limited link an organization admin gives an IT
 // admin to configure SAML or SCIM.
 const (
 	// Capabilities.
@@ -21,10 +21,10 @@ const (
 	CodeAdminPortalSessionInvalid = "adminportal.session_invalid"
 
 	// Request shape & path parameters.
-	CodeAdminPortalTenantIDInvalid = "adminportal.tenant_id_invalid"
-	CodeAdminPortalTenantMismatch  = "adminportal.tenant_mismatch"
-	CodeAdminPortalActorRequired   = "adminportal.actor_required"
-	CodeAdminPortalIDInvalid       = "adminportal.id_invalid"
+	CodeAdminPortalOrganizationIDInvalid = "adminportal.tenant_id_invalid"
+	CodeAdminPortalOrganizationMismatch  = "adminportal.tenant_mismatch"
+	CodeAdminPortalActorRequired         = "adminportal.actor_required"
+	CodeAdminPortalIDInvalid             = "adminportal.id_invalid"
 
 	// SAML connection input.
 	CodeAdminPortalSAMLFieldsRequired = "adminportal.saml_fields_required"
@@ -53,10 +53,10 @@ var (
 	ErrAdminPortalSessionInvalid = New(CodeAdminPortalSessionInvalid, "This admin portal session is invalid or expired. Ask for a new link.")
 
 	// Request shape & path parameters.
-	ErrAdminPortalTenantIDInvalid = New(CodeAdminPortalTenantIDInvalid, "That tenant ID is invalid.")
-	ErrAdminPortalTenantMismatch  = New(CodeAdminPortalTenantMismatch, "You can only access your own tenant.")
-	ErrAdminPortalActorRequired   = New(CodeAdminPortalActorRequired, "This action must be attributed to a signed-in user.")
-	ErrAdminPortalIDInvalid       = New(CodeAdminPortalIDInvalid, "That ID is invalid.")
+	ErrAdminPortalOrganizationIDInvalid = New(CodeAdminPortalOrganizationIDInvalid, "That tenant ID is invalid.")
+	ErrAdminPortalOrganizationMismatch  = New(CodeAdminPortalOrganizationMismatch, "You can only access your own tenant.")
+	ErrAdminPortalActorRequired         = New(CodeAdminPortalActorRequired, "This action must be attributed to a signed-in user.")
+	ErrAdminPortalIDInvalid             = New(CodeAdminPortalIDInvalid, "That ID is invalid.")
 
 	// SAML connection input.
 	ErrAdminPortalSAMLFieldsRequired = New(CodeAdminPortalSAMLFieldsRequired, "Name the connection, and give the IdP entity ID, SSO URL and certificate together (none of them makes a draft).")

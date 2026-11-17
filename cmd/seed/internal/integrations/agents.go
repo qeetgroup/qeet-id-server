@@ -22,12 +22,12 @@ type agentSpec struct {
 	by      []who
 	created float64
 	// end is "suspended" or "decommissioned", ended days ago by whoever
-	// manages the organisation's agents.
+	// manages the organization's agents.
 	end   string
 	ended float64
 }
 
-// agentSpecs are each organisation's AI agents.
+// agentSpecs are each organization's AI agents.
 var agentSpecs = map[string][]agentSpec{
 	"qeet": {
 		{name: "Onboarding Buddy (pilot)", scopes: []string{"user.read", "vault:slack"}, ttl: 600,
@@ -71,7 +71,7 @@ var agentSpecs = map[string][]agentSpec{
 	},
 }
 
-// agents registers the organisation's AI agents with their sponsors, then
+// agents registers the organization's AI agents with their sponsors, then
 // suspends or decommissions the ones whose story ends that way.
 func (d *dev) agents(o *world.Org) {
 	w := d.w
@@ -113,7 +113,7 @@ type credentialSpec struct {
 	revoke bool
 }
 
-// credentialSpecs are each organisation's verifiable credentials.
+// credentialSpecs are each organization's verifiable credentials.
 var credentialSpecs = map[string][]credentialSpec{
 	"qeet": {
 		{typ: "EmployeeCredential", to: func(*world.Person) bool { return true }, max: 9, issued: 150, ttl: 365, claims: employee("Qeet Group"), revoke: true},
@@ -148,7 +148,7 @@ func employee(employer string) func(p *world.Person) map[string]any {
 	}
 }
 
-// credentials issues the organisation's verifiable credentials; some have
+// credentials issues the organization's verifiable credentials; some have
 // expired since. Where a holder left, theirs is revoked the day they went;
 // otherwise one is revoked after its holder lost their laptop, and re-issued.
 func (d *dev) credentials(o *world.Org) {
@@ -222,7 +222,7 @@ func (d *dev) issue(o *world.Org, p *world.Person, s credentialSpec, issuer *wor
 	res, err := w.Deps.VC.Service.Issue(w.Ctx, o.ID, in, d.as(issuer))
 	w.Check(err, "credential "+s.typ)
 	if left {
-		_, err := w.Admin.Exec(w.Ctx, `UPDATE auth.credentials SET user_id = $3 WHERE id = $1 AND tenant_id = $2`, res.CredentialID, o.ID, p.ID)
+		_, err := w.Admin.Exec(w.Ctx, `UPDATE auth.credentials SET user_id = $3 WHERE id = $1 AND organization_id = $2`, res.CredentialID, o.ID, p.ID)
 		w.Check(err, "link credential "+s.typ)
 	}
 	return res.CredentialID
@@ -236,11 +236,11 @@ func (d *dev) expire(o *world.Org, id uuid.UUID, ttl float64) {
 		return
 	}
 	w := d.w
-	w.Exec("credential expiry", `UPDATE auth.credentials SET expires_at = issued_at + $3 WHERE id = $1 AND tenant_id = $2`,
+	w.Exec("credential expiry", `UPDATE auth.credentials SET expires_at = issued_at + $3 WHERE id = $1 AND organization_id = $2`,
 		id, o.ID, time.Duration(ttl*float64(24*time.Hour)))
 	w.Exec("credential expiry in audit", `
 		UPDATE audit.events e SET metadata = jsonb_set(e.metadata, '{expires_at}', to_jsonb(c.expires_at))
 		FROM auth.credentials c
-		WHERE c.id = $1 AND c.tenant_id = $2 AND e.tenant_id = $2 AND e.resource_id = $1 AND e.action = 'credential.issued'`,
+		WHERE c.id = $1 AND c.organization_id = $2 AND e.organization_id = $2 AND e.resource_id = $1 AND e.action = 'credential.issued'`,
 		id, o.ID)
 }

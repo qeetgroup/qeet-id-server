@@ -20,7 +20,7 @@ type builtinPlan struct {
 }
 
 // Feature lines name only what the product does today: no uptime figure or
-// SLA, customer-held keys, data residency, dedicated tenant, certification,
+// SLA, customer-held keys, data residency, dedicated organization, certification,
 // custom sign-in domain or usage metering until those exist. The yearly plans
 // share their monthly plan's lines.
 var (

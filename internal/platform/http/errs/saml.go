@@ -2,8 +2,8 @@ package errs
 
 // SAML error codes, for both the service provider and identity provider sides.
 const (
-	CodeSAMLTenantIDInvalid          = "saml.tenant_id_invalid"
-	CodeSAMLTenantMismatch           = "saml.tenant_mismatch"
+	CodeSAMLOrganizationIDInvalid    = "saml.tenant_id_invalid"
+	CodeSAMLOrganizationMismatch     = "saml.tenant_mismatch"
 	CodeSAMLIDInvalid                = "saml.id_invalid"
 	CodeSAMLLoginCodeRequired        = "saml.login_code_required"
 	CodeSAMLLoginCodeInvalid         = "saml.login_code_invalid"
@@ -33,7 +33,7 @@ const (
 	CodeSAMLACSMismatch              = "saml.acs_url_mismatch"
 	CodeSAMLACSURLInvalid            = "saml.acs_url_invalid"
 	CodeSAMLSPFieldsRequired         = "saml.sp_fields_required"
-	CodeSAMLUserTenantMismatch       = "saml.user_tenant_mismatch"
+	CodeSAMLUserOrganizationMismatch = "saml.user_tenant_mismatch"
 	CodeSAMLAccountUnverified        = "saml.account_unverified"
 	CodeSAMLSPEntityIDTaken          = "saml.sp_entity_id_taken"
 	CodeSAMLEmailDomainUnverified    = "saml.email_domain_unverified"
@@ -57,8 +57,8 @@ const (
 // SAML errors. Message is the end-user-facing text; edit wording here. Handlers
 // just `return errs.ErrSAML<Reason>` (optionally `.Wrap(err)` for logs).
 var (
-	ErrSAMLTenantIDInvalid          = New(CodeSAMLTenantIDInvalid, "The tenant in the URL isn't valid.")
-	ErrSAMLTenantMismatch           = New(CodeSAMLTenantMismatch, "You can only manage SAML settings for your own tenant.")
+	ErrSAMLOrganizationIDInvalid    = New(CodeSAMLOrganizationIDInvalid, "The tenant in the URL isn't valid.")
+	ErrSAMLOrganizationMismatch     = New(CodeSAMLOrganizationMismatch, "You can only manage SAML settings for your own tenant.")
 	ErrSAMLIDInvalid                = New(CodeSAMLIDInvalid, "That SAML resource ID isn't valid.")
 	ErrSAMLLoginCodeRequired        = New(CodeSAMLLoginCodeRequired, "A sign-in code is required.")
 	ErrSAMLLoginCodeInvalid         = New(CodeSAMLLoginCodeInvalid, "That sign-in code is invalid. Please sign in again.")
@@ -88,7 +88,7 @@ var (
 	ErrSAMLACSMismatch              = New(CodeSAMLACSMismatch, "The assertion consumer service URL doesn't match the registered value.")
 	ErrSAMLACSURLInvalid            = New(CodeSAMLACSURLInvalid, "The ACS URL must be an absolute https:// URL without a user name or password (http only on localhost).")
 	ErrSAMLSPFieldsRequired         = New(CodeSAMLSPFieldsRequired, "Name, entity ID and ACS URL are all required.")
-	ErrSAMLUserTenantMismatch       = New(CodeSAMLUserTenantMismatch, "You aren't a member of this service provider's tenant.")
+	ErrSAMLUserOrganizationMismatch = New(CodeSAMLUserOrganizationMismatch, "You aren't a member of this service provider's tenant.")
 	ErrSAMLAccountUnverified        = New(CodeSAMLAccountUnverified,
 		"An account already uses this email address, but the address hasn't been verified. Verify it, or reset the password from the link we email you, then sign in with single sign-on.")
 	ErrSAMLSPEntityIDTaken       = New(CodeSAMLSPEntityIDTaken, "A service provider with this entity ID is already registered.")

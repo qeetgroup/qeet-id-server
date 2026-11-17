@@ -162,9 +162,9 @@ func TestValidIdPSSOURL(t *testing.T) {
 // connection refuses an SSO URL that isn't an absolute https URL.
 func TestConnectionWritesRejectInvalidSSOURL(t *testing.T) {
 	pemStr, _ := selfSignedCert(t)
-	tenant := uuid.MustParse("22222222-2222-4222-8222-222222222222")
+	organization := uuid.MustParse("22222222-2222-4222-8222-222222222222")
 	user := uuid.New()
-	principal := &httpx.Principal{UserID: &user, TenantID: &tenant, ActorType: "user", Subject: user.String()}
+	principal := &httpx.Principal{UserID: &user, OrganizationID: &organization, ActorType: "user", Subject: user.String()}
 	router := chi.NewRouter()
 	(&Handler{Service: &Service{}}).Mount(router)
 
@@ -180,7 +180,7 @@ func TestConnectionWritesRejectInvalidSSOURL(t *testing.T) {
 		router.ServeHTTP(rec, req)
 		return rec
 	}
-	base := "/tenants/" + tenant.String() + "/saml"
+	base := "/tenants/" + organization.String() + "/saml"
 	for _, sso := range []string{"http://idp.example.com/sso", "https://user@idp.example.com/sso", "idp.example.com/sso"} {
 		create := send(http.MethodPost, base, map[string]any{
 			"name": "IdP", "idp_entity_id": "https://idp.example.com", "idp_sso_url": sso, "idp_certificate": pemStr,
@@ -200,7 +200,7 @@ func TestConnectionWritesRejectInvalidSSOURL(t *testing.T) {
 // this package's handlers, such as the admin portal.
 func TestServiceRefusesInvalidConnections(t *testing.T) {
 	pemStr, _ := selfSignedCert(t)
-	svc, tenant := &Service{}, uuid.New()
+	svc, organization := &Service{}, uuid.New()
 	ctx := context.Background()
 	for _, c := range []struct {
 		name string
@@ -211,15 +211,15 @@ func TestServiceRefusesInvalidConnections(t *testing.T) {
 		{"plain http", CreateInput{IdpSSOURL: "http://idp.example.com/sso", IdpCertificate: pemStr}, errs.ErrSAMLSSOURLInvalid},
 		{"bad certificate", CreateInput{IdpSSOURL: "https://idp.example.com/sso", IdpCertificate: "not a cert"}, errs.ErrSAMLCertificateInvalid},
 	} {
-		if _, err := svc.Create(ctx, nil, tenant, c.in); !errors.Is(err, c.want) {
+		if _, err := svc.Create(ctx, nil, organization, c.in); !errors.Is(err, c.want) {
 			t.Errorf("create with %s: %v, want %v", c.name, err, c.want)
 		}
 	}
 	bad, cert := "http://idp.example.com/sso", "not a cert"
-	if _, err := svc.Update(ctx, nil, uuid.New(), tenant, UpdateInput{IdpSSOURL: &bad}); !errors.Is(err, errs.ErrSAMLSSOURLInvalid) {
+	if _, err := svc.Update(ctx, nil, uuid.New(), organization, UpdateInput{IdpSSOURL: &bad}); !errors.Is(err, errs.ErrSAMLSSOURLInvalid) {
 		t.Errorf("update with plain http: %v", err)
 	}
-	if _, err := svc.Update(ctx, nil, uuid.New(), tenant, UpdateInput{IdpCertificate: &cert}); !errors.Is(err, errs.ErrSAMLCertificateInvalid) {
+	if _, err := svc.Update(ctx, nil, uuid.New(), organization, UpdateInput{IdpCertificate: &cert}); !errors.Is(err, errs.ErrSAMLCertificateInvalid) {
 		t.Errorf("update with a bad certificate: %v", err)
 	}
 }

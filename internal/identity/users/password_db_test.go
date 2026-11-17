@@ -23,17 +23,17 @@ import (
 func TestAdminPasswordSetEndsEverySignIn(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	target := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	target := dbtest.User(t, organization, organization)
 	for _, seed := range []struct{ what, sql string }{
-		{"session", `INSERT INTO auth.sessions (user_id, tenant_id) VALUES ($1, $2)`},
-		{"application grant", `INSERT INTO auth.oidc_refresh_tokens (token_hash, client_id, user_id, tenant_id, expires_at)
+		{"session", `INSERT INTO auth.sessions (user_id, organization_id) VALUES ($1, $2)`},
+		{"application grant", `INSERT INTO auth.oidc_refresh_tokens (token_hash, client_id, user_id, organization_id, expires_at)
 			VALUES (gen_random_uuid()::text, 'test-app', $1, $2, NOW() + INTERVAL '1 day')`},
-		{"trusted device", `INSERT INTO auth.trusted_devices (user_id, tenant_id, token_hash, expires_at)
+		{"trusted device", `INSERT INTO auth.trusted_devices (user_id, organization_id, token_hash, expires_at)
 			VALUES ($1, $2, gen_random_uuid()::text, NOW() + INTERVAL '1 day')`},
 	} {
-		if _, err := pool.Exec(ctx, seed.sql, target.ID, tenant); err != nil {
+		if _, err := pool.Exec(ctx, seed.sql, target.ID, organization); err != nil {
 			t.Fatalf("create %s: %v", seed.what, err)
 		}
 	}
@@ -46,7 +46,7 @@ func TestAdminPasswordSetEndsEverySignIn(t *testing.T) {
 		SignIns:        auth.NewService(pool, users, dbtest.Issuer(t)),
 		ActOnCheck:     rbac.NewRepository(pool).CheckActOn,
 	}
-	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), h.Mount)
+	as := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)
 	rec := dbtest.Do(t, as, http.MethodPost, "/users/"+target.ID.String()+"/password", map[string]any{"password": "Kx7mQ2vLp9Wz-set"})
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("set password: status %d (%s)", rec.Code, rec.Body.String())
@@ -69,8 +69,8 @@ func TestAdminPasswordSetEndsEverySignIn(t *testing.T) {
 func TestSuspensionEndsEverySignIn(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
 	users := user.NewRepository(pool)
 	h := &user.Handler{
 		Repo:       users,
@@ -78,17 +78,17 @@ func TestSuspensionEndsEverySignIn(t *testing.T) {
 		SignIns:    auth.NewService(pool, users, dbtest.Issuer(t)),
 		ActOnCheck: rbac.NewRepository(pool).CheckActOn,
 	}
-	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), h.Mount)
+	as := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)
 	signedIn := func(userID uuid.UUID) {
 		t.Helper()
 		for _, q := range []string{
 			`INSERT INTO auth.login_sessions (token_hash, user_id, expires_at) VALUES (gen_random_uuid()::text, $1, NOW() + INTERVAL '1 day')`,
-			`INSERT INTO auth.oidc_refresh_tokens (token_hash, client_id, user_id, tenant_id, expires_at)
+			`INSERT INTO auth.oidc_refresh_tokens (token_hash, client_id, user_id, organization_id, expires_at)
 			 VALUES (gen_random_uuid()::text, 'test-app', $1, $2, NOW() + INTERVAL '1 day')`,
 		} {
 			args := []any{userID}
 			if strings.Contains(q, "$2") {
-				args = append(args, tenant)
+				args = append(args, organization)
 			}
 			if _, err := pool.Exec(ctx, q, args...); err != nil {
 				t.Fatal(err)
@@ -100,7 +100,7 @@ func TestSuspensionEndsEverySignIn(t *testing.T) {
 			dbtest.Count(t, `SELECT count(*) FROM auth.oidc_refresh_tokens WHERE user_id = $1 AND revoked_at IS NULL`, userID)
 	}
 
-	target := dbtest.User(t, tenant, tenant)
+	target := dbtest.User(t, organization, organization)
 	signedIn(target.ID)
 	path := "/users/" + target.ID.String()
 	if rec := dbtest.Do(t, as, http.MethodPatch, path, map[string]any{"status": "suspended"}); rec.Code != http.StatusOK {
@@ -117,7 +117,7 @@ func TestSuspensionEndsEverySignIn(t *testing.T) {
 		t.Errorf("%d browser sessions or application grants from before the suspension work after reactivation", n)
 	}
 
-	deleted := dbtest.User(t, tenant, tenant)
+	deleted := dbtest.User(t, organization, organization)
 	signedIn(deleted.ID)
 	if rec := dbtest.Do(t, as, http.MethodDelete, "/users/"+deleted.ID.String(), nil); rec.Code != http.StatusOK {
 		t.Fatalf("delete: %d %s", rec.Code, rec.Body.String())

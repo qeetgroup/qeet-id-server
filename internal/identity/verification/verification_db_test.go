@@ -29,9 +29,9 @@ func TestEmailVerification(t *testing.T) {
 	ctx := dbtest.Context(t)
 	mail := &dbtest.Mailbox{}
 	svc := NewService(dbtest.Pool(t), mail, 10*time.Minute)
-	tenant := dbtest.Tenant(t)
-	a := dbtest.User(t, tenant, tenant)
-	who := Requester{Actor: audit.Actor{UserID: &a.ID, Type: "user"}, TenantID: &tenant}
+	organization := dbtest.Organization(t)
+	a := dbtest.User(t, organization, organization)
+	who := Requester{Actor: audit.Actor{UserID: &a.ID, Type: "user"}, OrganizationID: &organization}
 	verified := func() int {
 		return dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND email_verified_at IS NOT NULL`, a.ID)
 	}
@@ -67,21 +67,21 @@ func TestEmailVerification(t *testing.T) {
 }
 
 // TestPhoneVerificationIsAudited checks that sending a code to a number, a
-// wrong code and the right one are each recorded in the organisation the
+// wrong code and the right one are each recorded in the organization the
 // request came from, with the number masked.
 func TestPhoneVerificationIsAudited(t *testing.T) {
 	ctx := dbtest.Context(t)
 	mail := &dbtest.Mailbox{}
 	svc := NewService(dbtest.Pool(t), mail, 10*time.Minute)
-	tenant := dbtest.Tenant(t)
-	a := dbtest.User(t, tenant, tenant)
-	who := Requester{Actor: audit.Actor{UserID: &a.ID, Type: "user"}, TenantID: &tenant}
+	organization := dbtest.Organization(t)
+	a := dbtest.User(t, organization, organization)
+	who := Requester{Actor: audit.Actor{UserID: &a.ID, Type: "user"}, OrganizationID: &organization}
 	const phone = "+14155550142"
 	recorded := func(action string) []map[string]any {
 		t.Helper()
 		rows, err := dbtest.Pool(t).Query(ctx, `
 			SELECT metadata FROM audit.events
-			WHERE tenant_id = $1 AND action = $2 AND resource_id = $3 AND actor_user_id = $3`, tenant, action, a.ID)
+			WHERE organization_id = $1 AND action = $2 AND resource_id = $3 AND actor_user_id = $3`, organization, action, a.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -199,10 +199,10 @@ func TestGuessBudgetSpansResends(t *testing.T) {
 	ctx := dbtest.Context(t)
 	mail := &dbtest.Mailbox{}
 	svc := NewService(dbtest.Pool(t), mail, 10*time.Minute)
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	for name, flow := range codeFlows(ctx, svc) {
-		a := dbtest.User(t, tenant, tenant)
-		who := Requester{Actor: audit.Actor{UserID: &a.ID, Type: "user"}, TenantID: &tenant}
+		a := dbtest.User(t, organization, organization)
+		who := Requester{Actor: audit.Actor{UserID: &a.ID, Type: "user"}, OrganizationID: &organization}
 		var code string
 		for _, guesses := range []int{4, 4, 2} {
 			age(t, flow.table, a.ID, time.Minute)
@@ -238,15 +238,15 @@ func TestCodesToOneAddressAreCappedPerHour(t *testing.T) {
 	ctx := dbtest.Context(t)
 	mail := &dbtest.Mailbox{}
 	svc := NewService(dbtest.Pool(t), mail, 10*time.Minute)
-	tenant := dbtest.Tenant(t)
-	target := dbtest.UserAt(t, dbtest.Unique("target")+"@example.test", tenant, tenant)
+	organization := dbtest.Organization(t)
+	target := dbtest.UserAt(t, dbtest.Unique("target")+"@example.test", organization, organization)
 	free := dbtest.Unique("free") + "@example.test"
 	for name, address := range map[string]string{"an address another account holds": target.Email, "a free address": free} {
 		sent := mail.Len()
 		var last dbtest.Account
 		for i := range 6 {
-			last = dbtest.User(t, tenant, tenant)
-			who := Requester{Actor: audit.Actor{UserID: &last.ID, Type: "user"}, TenantID: &tenant}
+			last = dbtest.User(t, organization, organization)
+			who := Requester{Actor: audit.Actor{UserID: &last.ID, Type: "user"}, OrganizationID: &organization}
 			err := svc.StartEmailChange(ctx, last.ID, address, who)
 			if i < 5 && err != nil {
 				t.Fatalf("%s: send %d: %v", name, i+1, err)
@@ -266,13 +266,13 @@ func TestCodesToOneAddressAreCappedPerHour(t *testing.T) {
 			WHERE lower(email) = lower($1)`, address); err != nil {
 			t.Fatal(err)
 		}
-		who := Requester{Actor: audit.Actor{UserID: &last.ID, Type: "user"}, TenantID: &tenant}
+		who := Requester{Actor: audit.Actor{UserID: &last.ID, Type: "user"}, OrganizationID: &organization}
 		if err := svc.StartEmailChange(ctx, last.ID, address, who); err != nil {
 			t.Errorf("%s: a code an hour later: %v", name, err)
 		}
 	}
 	// The address's own account verifying it counts against the same limit.
-	who := Requester{Actor: audit.Actor{UserID: &target.ID, Type: "user"}, TenantID: &tenant}
+	who := Requester{Actor: audit.Actor{UserID: &target.ID, Type: "user"}, OrganizationID: &organization}
 	for range 4 {
 		if err := svc.StartEmail(ctx, target.ID, "", who); err != nil {
 			t.Fatalf("verify the address on file: %v", err)
@@ -311,10 +311,10 @@ func TestUndeliveredCodeIsWithdrawn(t *testing.T) {
 	pool := dbtest.Pool(t)
 	mail, failing := &dbtest.Mailbox{}, &failingSender{}
 	delivering, refusing := codeFlows(ctx, NewService(pool, mail, 10*time.Minute)), codeFlows(ctx, NewService(pool, failing, 10*time.Minute))
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	for name, flow := range refusing {
-		a := dbtest.User(t, tenant, tenant)
-		who := Requester{Actor: audit.Actor{UserID: &a.ID, Type: "user"}, TenantID: &tenant}
+		a := dbtest.User(t, organization, organization)
+		who := Requester{Actor: audit.Actor{UserID: &a.ID, Type: "user"}, OrganizationID: &organization}
 		if err := delivering[name].start(a, who); err != nil {
 			t.Fatalf("%s: start: %v", name, err)
 		}
@@ -340,10 +340,10 @@ func TestPhoneVerificationSendsAreCapped(t *testing.T) {
 	ctx := dbtest.Context(t)
 	mail := &dbtest.Mailbox{}
 	svc := NewService(dbtest.Pool(t), mail, 10*time.Minute)
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	person := func() (dbtest.Account, Requester) {
-		a := dbtest.User(t, tenant, tenant)
-		return a, Requester{Actor: audit.Actor{UserID: &a.ID, Type: "user"}, TenantID: &tenant}
+		a := dbtest.User(t, organization, organization)
+		return a, Requester{Actor: audit.Actor{UserID: &a.ID, Type: "user"}, OrganizationID: &organization}
 	}
 	limited := func(what string, err error, upTo int) {
 		t.Helper()
@@ -382,28 +382,28 @@ func TestPhoneVerificationSendsAreCapped(t *testing.T) {
 	}
 }
 
-// planGate allows a feature to the organisations in allowed only.
+// planGate allows a feature to the organizations in allowed only.
 type planGate struct{ allowed map[uuid.UUID]bool }
 
-func (p planGate) FeatureAllowed(_ context.Context, tenantID uuid.UUID, feature string) (bool, error) {
-	return feature == "sms_mfa" && p.allowed[tenantID], nil
+func (p planGate) FeatureAllowed(_ context.Context, organizationID uuid.UUID, feature string) (bool, error) {
+	return feature == "sms_mfa" && p.allowed[organizationID], nil
 }
 
 // TestPhoneVerificationNeedsSMSInThePlan checks that a phone code goes only to
-// an E.164 number, from a session in an organisation whose plan includes SMS,
+// an E.164 number, from a session in an organization whose plan includes SMS,
 // when a provider can deliver SMS; anything else is refused before a code is
 // stored or sent.
 func TestPhoneVerificationNeedsSMSInThePlan(t *testing.T) {
 	ctx := dbtest.Context(t)
 	mail := &dbtest.Mailbox{}
 	svc := NewService(dbtest.Pool(t), mail, 10*time.Minute)
-	paid, free := dbtest.Tenant(t), dbtest.Tenant(t)
+	paid, free := dbtest.Organization(t), dbtest.Organization(t)
 	svc.SetPlan(planGate{allowed: map[uuid.UUID]bool{paid: true}})
 	deliverable := true
 	svc.SetDeliveryCheck(func(channel string) bool { return channel == "sms" && deliverable })
 	a := dbtest.User(t, paid, paid, free)
-	in := func(tenant *uuid.UUID) Requester {
-		return Requester{Actor: audit.Actor{UserID: &a.ID, Type: "user"}, TenantID: tenant}
+	in := func(organization *uuid.UUID) Requester {
+		return Requester{Actor: audit.Actor{UserID: &a.ID, Type: "user"}, OrganizationID: organization}
 	}
 	refused := func(what string, err error, want *errs.Error) {
 		t.Helper()

@@ -30,10 +30,10 @@ import (
 // Notifier sends an in-app notification to a user. Satisfied by
 // *notification.Service; an interface so threat doesn't import that package.
 type Notifier interface {
-	Notify(ctx context.Context, tenantID, userID uuid.UUID, kind, title, description, href string) error
+	Notify(ctx context.Context, organizationID, userID uuid.UUID, kind, title, description, href string) error
 }
 
-// Service records security anomalies and notifies the tenant of them.
+// Service records security anomalies and notifies the organization of them.
 type Service struct {
 	pool     *pgxpool.Pool
 	q        *dbgen.Queries
@@ -49,17 +49,17 @@ func NewService(pool *pgxpool.Pool) *Service {
 // no notifications).
 func (s *Service) SetNotifier(n Notifier) { s.notifier = n }
 
-// Event is a detection's input. TenantID is required; UserID/IP/UserAgent are
+// Event is a detection's input. OrganizationID is required; UserID/IP/UserAgent are
 // optional context. Status defaults to "open" and Severity to "low" when empty.
 type Event struct {
-	TenantID  uuid.UUID
-	UserID    *uuid.UUID
-	Type      string
-	Severity  string
-	Detail    string
-	Status    string
-	IP        string
-	UserAgent string
+	OrganizationID uuid.UUID
+	UserID         *uuid.UUID
+	Type           string
+	Severity       string
+	Detail         string
+	Status         string
+	IP             string
+	UserAgent      string
 	// Metadata is the detection's structured context (e.g. for a lockout the
 	// reason, the source network and which counter tripped). Optional.
 	Metadata map[string]any
@@ -118,40 +118,40 @@ func (s *Service) Record(ctx context.Context, e Event) error {
 		return err
 	}
 	_, err = s.pool.Exec(ctx, `
-		INSERT INTO auth.security_events (tenant_id, user_id, type, severity, detail, status, ip, user_agent, metadata)
+		INSERT INTO auth.security_events (organization_id, user_id, type, severity, detail, status, ip, user_agent, metadata)
 		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7,'')::inet, NULLIF($8,''), $9)
-	`, e.TenantID, e.UserID, e.Type, e.Severity, e.Detail, e.Status, e.IP, e.UserAgent, meta)
+	`, e.OrganizationID, e.UserID, e.Type, e.Severity, e.Detail, e.Status, e.IP, e.UserAgent, meta)
 	return err
 }
 
 // OnAccountLocked implements auth.AnomalyRecorder for each sign-in lock: it
-// records a credential_stuffing anomaly for the account's user and tenant and
-// notifies the user. An account with no organisation is skipped; errors are
+// records a credential_stuffing anomaly for the account's user and organization and
+// notifies the user. An account with no organization is skipped; errors are
 // logged, not returned.
 func (s *Service) OnAccountLocked(ctx context.Context, lock auth.AccountLock) {
 	row, err := s.q.GetUserForAnomaly(ctx, lock.Email)
 	if err != nil {
-		// No matching tenant user (unknown email or tenant-less) — nothing to
-		// scope a tenant incident to.
+		// No matching organization user (unknown email or organization-less) — nothing to
+		// scope an organization incident to.
 		return
 	}
-	if !row.TenantID.Valid {
+	if !row.OrganizationID.Valid {
 		return
 	}
 	userID := row.ID
-	tenantID := uuid.UUID(row.TenantID.Bytes)
+	organizationID := uuid.UUID(row.OrganizationID.Bytes)
 	where := "from one network"
 	if lock.Counter == auth.CounterAccount {
 		where = "from any network"
 	}
 	if rerr := s.Record(ctx, Event{
-		TenantID: tenantID,
-		UserID:   &userID,
-		Type:     "credential_stuffing",
-		Severity: "high",
-		Status:   "rate-limited",
-		Detail:   "Account temporarily locked after repeated failed sign-in attempts " + where + ".",
-		IP:       lock.Network,
+		OrganizationID: organizationID,
+		UserID:         &userID,
+		Type:           "credential_stuffing",
+		Severity:       "high",
+		Status:         "rate-limited",
+		Detail:         "Account temporarily locked after repeated failed sign-in attempts " + where + ".",
+		IP:             lock.Network,
 		Metadata: map[string]any{
 			"reason":         lock.Reason,
 			"account":        lock.Email,
@@ -167,7 +167,7 @@ func (s *Service) OnAccountLocked(ctx context.Context, lock auth.AccountLock) {
 	}
 	// Also alert the affected user in-app — a "was this you?" security nudge.
 	if s.notifier != nil {
-		if nerr := s.notifier.Notify(ctx, tenantID, userID, "alert",
+		if nerr := s.notifier.Notify(ctx, organizationID, userID, "alert",
 			"Unusual sign-in activity",
 			"Your account was temporarily locked after several failed sign-in attempts. If this wasn't you, reset your password.",
 			"/account/security"); nerr != nil {
@@ -178,28 +178,28 @@ func (s *Service) OnAccountLocked(ctx context.Context, lock auth.AccountLock) {
 
 // OnSourceThrottled implements auth.AnomalyRecorder for a source network
 // throttled for failing against many accounts: it records a password_spraying
-// anomaly in each organisation whose accounts were targeted. Best effort, like
+// anomaly in each organization whose accounts were targeted. Best effort, like
 // OnAccountLocked.
 func (s *Service) OnSourceThrottled(ctx context.Context, t auth.SourceThrottle) {
-	tenants, err := s.q.ListTenantsForEmails(ctx, t.Accounts)
+	organizations, err := s.q.ListOrganizationsForEmails(ctx, t.Accounts)
 	if err != nil {
 		slog.Warn("resolve password_spraying targets", "err", err)
 		return
 	}
-	for _, tenantID := range tenants {
-		// Only this organisation's own accounts are named on its event.
-		targeted, terr := s.q.ListTenantUsersForEmails(ctx, dbgen.ListTenantUsersForEmailsParams{TenantID: tenantID, Emails: t.Accounts})
+	for _, organizationID := range organizations {
+		// Only this organization's own accounts are named on its event.
+		targeted, terr := s.q.ListOrganizationUsersForEmails(ctx, dbgen.ListOrganizationUsersForEmailsParams{OrganizationID: organizationID, Emails: t.Accounts})
 		if terr != nil {
 			slog.Warn("resolve password_spraying accounts", "err", terr)
 			continue
 		}
 		if rerr := s.Record(ctx, Event{
-			TenantID: tenantID,
-			Type:     "password_spraying",
-			Severity: "high",
-			Status:   "rate-limited",
-			Detail:   "A network was blocked from password sign-in after failing against many accounts, including accounts in this organisation.",
-			IP:       t.Network,
+			OrganizationID: organizationID,
+			Type:           "password_spraying",
+			Severity:       "high",
+			Status:         "rate-limited",
+			Detail:         "A network was blocked from password sign-in after failing against many accounts, including accounts in this organisation.",
+			IP:             t.Network,
 			Metadata: map[string]any{
 				"reason":            t.Reason,
 				"network":           t.Network,
@@ -216,16 +216,16 @@ func (s *Service) OnSourceThrottled(ctx context.Context, t auth.SourceThrottle) 
 	}
 }
 
-// List returns a page of up to limit of the tenant's anomalies (50 when not
+// List returns a page of up to limit of the organization's anomalies (50 when not
 // in 1..200), newest first, after cursor, of status when given, and how many
 // match.
-func (s *Service) List(ctx context.Context, tenantID uuid.UUID, limit int, cursor, status string) (*Page, error) {
+func (s *Service) List(ctx context.Context, organizationID uuid.UUID, limit int, cursor, status string) (*Page, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
 	page := &Page{Items: []Anomaly{}}
-	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM auth.security_events WHERE tenant_id = $1 AND ($2 = '' OR status = $2)`,
-		tenantID, status).Scan(&page.Total); err != nil {
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM auth.security_events WHERE organization_id = $1 AND ($2 = '' OR status = $2)`,
+		organizationID, status).Scan(&page.Total); err != nil {
 		return nil, err
 	}
 	afterTs, afterID := time.Now().Add(time.Hour), uuid.Max
@@ -241,10 +241,10 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, limit int, curso
 		FROM auth.security_events e
 		LEFT JOIN account.users u ON u.id = e.user_id
 		LEFT JOIN account.users rb ON rb.id = e.resolved_by
-		WHERE e.tenant_id = $1 AND ($2 = '' OR e.status = $2) AND (e.created_at, e.id) < ($3, $4)
+		WHERE e.organization_id = $1 AND ($2 = '' OR e.status = $2) AND (e.created_at, e.id) < ($3, $4)
 		ORDER BY e.created_at DESC, e.id DESC
 		LIMIT $5
-	`, tenantID, status, afterTs, afterID, limit+1)
+	`, organizationID, status, afterTs, afterID, limit+1)
 	if err != nil {
 		return nil, err
 	}
@@ -268,9 +268,9 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, limit int, curso
 	return page, nil
 }
 
-// Summary computes the KPI counts for a tenant in a single pass.
-func (s *Service) Summary(ctx context.Context, tenantID uuid.UUID) (*Summary, error) {
-	row, err := s.q.GetSecurityEventSummary(ctx, tenantID)
+// Summary computes the KPI counts for an organization in a single pass.
+func (s *Service) Summary(ctx context.Context, organizationID uuid.UUID) (*Summary, error) {
+	row, err := s.q.GetSecurityEventSummary(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -282,9 +282,9 @@ func (s *Service) Summary(ctx context.Context, tenantID uuid.UUID) (*Summary, er
 	}, nil
 }
 
-// Resolve marks an open anomaly resolved, recorded as actor's. Tenant-scoped so
-// an admin can never resolve another tenant's incident.
-func (s *Service) Resolve(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
+// Resolve marks an open anomaly resolved, recorded as actor's. Organization-scoped so
+// an admin can never resolve another organization's incident.
+func (s *Service) Resolve(ctx context.Context, id, organizationID uuid.UUID, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -295,9 +295,9 @@ func (s *Service) Resolve(ctx context.Context, id, tenantID uuid.UUID, actor aud
 		resolvedBy = pgtype.UUID{Bytes: *actor.UserID, Valid: true}
 	}
 	row, err := s.q.WithTx(tx).ResolveSecurityEvent(ctx, dbgen.ResolveSecurityEventParams{
-		ID:         id,
-		TenantID:   tenantID,
-		ResolvedBy: resolvedBy,
+		ID:             id,
+		OrganizationID: organizationID,
+		ResolvedBy:     resolvedBy,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return errs.ErrNotFound
@@ -309,7 +309,7 @@ func (s *Service) Resolve(ctx context.Context, id, tenantID uuid.UUID, actor aud
 	if row.UserID.Valid {
 		metadata["user_id"] = uuid.UUID(row.UserID.Bytes)
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "anomaly.resolved", "security_event", id, metadata)); err != nil {
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "anomaly.resolved", "security_event", id, metadata)); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -328,7 +328,7 @@ func (h *Handler) Mount(r chi.Router) {
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -340,7 +340,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid status"))
 		return
 	}
-	page, err := h.Service.List(r.Context(), tenantID, limit, query.Get("cursor"), status)
+	page, err := h.Service.List(r.Context(), organizationID, limit, query.Get("cursor"), status)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -349,12 +349,12 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	sm, err := h.Service.Summary(r.Context(), tenantID)
+	sm, err := h.Service.Summary(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -363,7 +363,7 @@ func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) resolve(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -373,7 +373,7 @@ func (h *Handler) resolve(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	if err := h.Service.Resolve(r.Context(), id, tenantID, audit.ActorOf(r)); err != nil {
+	if err := h.Service.Resolve(r.Context(), id, organizationID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

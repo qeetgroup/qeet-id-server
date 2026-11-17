@@ -1,4 +1,4 @@
-// Package siem streams a tenant's audit events to an external collector: Splunk
+// Package siem streams an organization's audit events to an external collector: Splunk
 // HEC, Datadog logs or a generic HTTP endpoint. A sink streams from when it was
 // created, with no backfill, and delivery is at-least-once: its cursor advances
 // only after a 2xx.
@@ -56,7 +56,7 @@ var (
 	})
 )
 
-// Sink is a tenant's configured log destination. Its token is stored encrypted
+// Sink is an organization's configured log destination. Its token is stored encrypted
 // and never returned.
 type Sink struct {
 	ID              uuid.UUID  `json:"id"`
@@ -70,21 +70,21 @@ type Sink struct {
 
 // AuditEvent is the forwarded form of an audit row.
 type AuditEvent struct {
-	ID           string          `json:"id"`
-	TenantID     string          `json:"tenant_id"`
-	Action       string          `json:"action"`
-	ActorType    string          `json:"actor_type"`
-	ActorUserID  *string         `json:"actor_user_id,omitempty"`
-	ResourceType string          `json:"resource_type,omitempty"`
-	ResourceID   *string         `json:"resource_id,omitempty"`
-	IP           *string         `json:"ip,omitempty"`
-	UserAgent    string          `json:"user_agent,omitempty"`
-	RequestID    string          `json:"request_id,omitempty"`
-	Metadata     json.RawMessage `json:"metadata,omitempty"`
-	CreatedAt    time.Time       `json:"created_at"`
+	ID             string          `json:"id"`
+	OrganizationID string          `json:"tenant_id"`
+	Action         string          `json:"action"`
+	ActorType      string          `json:"actor_type"`
+	ActorUserID    *string         `json:"actor_user_id,omitempty"`
+	ResourceType   string          `json:"resource_type,omitempty"`
+	ResourceID     *string         `json:"resource_id,omitempty"`
+	IP             *string         `json:"ip,omitempty"`
+	UserAgent      string          `json:"user_agent,omitempty"`
+	RequestID      string          `json:"request_id,omitempty"`
+	Metadata       json.RawMessage `json:"metadata,omitempty"`
+	CreatedAt      time.Time       `json:"created_at"`
 }
 
-// Service manages tenants' log sinks and forwards audit events to them. Sink
+// Service manages organizations' log sinks and forwards audit events to them. Sink
 // tokens are sealed with the cipher from SetCipher; without one, no sink can be
 // created.
 type Service struct {
@@ -117,7 +117,7 @@ func validType(t string) bool {
 // Create registers a sink with its token encrypted, recording it in
 // the audit log and the outbox. The sink streams from now, so it never receives
 // the existing audit history.
-func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, typ, endpoint, token string, actor audit.Actor) (*Sink, error) {
+func (s *Service) Create(ctx context.Context, organizationID uuid.UUID, typ, endpoint, token string, actor audit.Actor) (*Sink, error) {
 	if !validType(typ) {
 		return nil, errs.ErrSIEMSinkTypeInvalid
 	}
@@ -128,7 +128,7 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, typ, endpoint,
 		return nil, errs.ErrInternalServer.WithDetail("SIEM token encryption is unavailable")
 	}
 	id := uuid.New()
-	ciphertext, nonce, err := s.box.Seal(tenantID, "siem-token", id.String(), []byte(token))
+	ciphertext, nonce, err := s.box.Seal(organizationID, "siem-token", id.String(), []byte(token))
 	if err != nil {
 		return nil, err
 	}
@@ -147,11 +147,11 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, typ, endpoint,
 	}
 	defer tx.Rollback(ctx)
 	err = tx.QueryRow(ctx, `
-		INSERT INTO tenant.log_sinks
-		    (id, tenant_id, type, endpoint, token_ct, token_nonce, cursor_created_at, cursor_id)
+		INSERT INTO organization.log_sinks
+		    (id, organization_id, type, endpoint, token_ct, token_nonce, cursor_created_at, cursor_id)
 		VALUES ($1, $2, $3, $4, $5, $6, NOW(), '00000000-0000-0000-0000-000000000000')
 		RETURNING id, type, endpoint, enabled, last_forwarded_at, last_error, created_at
-	`, id, tenantID, typ, endpoint, ciphertext, nonce).Scan(
+	`, id, organizationID, typ, endpoint, ciphertext, nonce).Scan(
 		&row.ID, &row.Type, &row.Endpoint, &row.Enabled, &row.LastForwardedAt, &row.LastError, &row.CreatedAt,
 	)
 	if err != nil {
@@ -166,12 +166,12 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, typ, endpoint,
 		sk.LastForwardedAt = &t
 	}
 	metadata := map[string]any{"type": sk.Type, "endpoint": sk.Endpoint}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "siem.sink_created", "log_sink", sk.ID, metadata)); err != nil {
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "siem.sink_created", "log_sink", sk.ID, metadata)); err != nil {
 		return nil, err
 	}
 	if err := outbox.Enqueue(ctx, tx, outbox.Event{
 		AggregateID: sk.ID, Topic: "siem.events", EventType: "siem.sink_created",
-		Payload: map[string]any{"sink_id": sk.ID, "tenant_id": tenantID, "type": sk.Type, "endpoint": sk.Endpoint},
+		Payload: map[string]any{"sink_id": sk.ID, "tenant_id": organizationID, "type": sk.Type, "endpoint": sk.Endpoint},
 	}); err != nil {
 		return nil, err
 	}
@@ -181,9 +181,9 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, typ, endpoint,
 	return sk, nil
 }
 
-// List returns the tenant's sinks.
-func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Sink, error) {
-	rows, err := s.q.ListLogSinks(ctx, tenantID)
+// List returns the organization's sinks.
+func (s *Service) List(ctx context.Context, organizationID uuid.UUID) ([]Sink, error) {
+	rows, err := s.q.ListLogSinks(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -202,16 +202,16 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Sink, error) 
 	return out, nil
 }
 
-// SetEnabled enables or disables one of the tenant's sinks. It returns
+// SetEnabled enables or disables one of the organization's sinks. It returns
 // errs.ErrNotFound if there is no such sink.
-func (s *Service) SetEnabled(ctx context.Context, id, tenantID uuid.UUID, enabled bool, actor audit.Actor) error {
+func (s *Service) SetEnabled(ctx context.Context, id, organizationID uuid.UUID, enabled bool, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 	n, err := s.q.WithTx(tx).SetLogSinkEnabled(ctx, dbgen.SetLogSinkEnabledParams{
-		Enabled: enabled, ID: id, TenantID: tenantID,
+		Enabled: enabled, ID: id, OrganizationID: organizationID,
 	})
 	if err != nil {
 		return err
@@ -220,25 +220,25 @@ func (s *Service) SetEnabled(ctx context.Context, id, tenantID uuid.UUID, enable
 		return errs.ErrNotFound
 	}
 	metadata := map[string]any{"enabled": enabled}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "siem.sink_updated", "log_sink", id, metadata)); err != nil {
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "siem.sink_updated", "log_sink", id, metadata)); err != nil {
 		return err
 	}
-	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "siem.events", EventType: "siem.sink_updated", Payload: map[string]any{"sink_id": id, "tenant_id": tenantID, "enabled": enabled}}); err != nil {
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "siem.events", EventType: "siem.sink_updated", Payload: map[string]any{"sink_id": id, "tenant_id": organizationID, "enabled": enabled}}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
 
-// Delete deletes one of the tenant's sinks. It returns
+// Delete deletes one of the organization's sinks. It returns
 // errs.ErrNotFound if there is no such sink.
-func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
+func (s *Service) Delete(ctx context.Context, id, organizationID uuid.UUID, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 	n, err := s.q.WithTx(tx).DeleteLogSink(ctx, dbgen.DeleteLogSinkParams{
-		ID: id, TenantID: tenantID,
+		ID: id, OrganizationID: organizationID,
 	})
 	if err != nil {
 		return err
@@ -246,10 +246,10 @@ func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID, actor audi
 	if n == 0 {
 		return errs.ErrNotFound
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "siem.sink_deleted", "log_sink", id, nil)); err != nil {
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "siem.sink_deleted", "log_sink", id, nil)); err != nil {
 		return err
 	}
-	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "siem.events", EventType: "siem.sink_deleted", Payload: map[string]any{"sink_id": id, "tenant_id": tenantID}}); err != nil {
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "siem.events", EventType: "siem.sink_deleted", Payload: map[string]any{"sink_id": id, "tenant_id": organizationID}}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -276,13 +276,13 @@ func (s *Service) Run(ctx context.Context) {
 }
 
 type sinkRow struct {
-	id, tenantID  uuid.UUID
-	typ, endpoint string
-	token         string
+	id, organizationID uuid.UUID
+	typ, endpoint      string
+	token              string
 }
 
 type storedSink struct {
-	id, tenantID        uuid.UUID
+	id, organizationID  uuid.UUID
 	typ, endpoint       string
 	tokenCT, tokenNonce []byte
 }
@@ -290,8 +290,8 @@ type storedSink struct {
 // forwardDue forwards new events to every enabled sink.
 func (s *Service) forwardDue(ctx context.Context) error {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, tenant_id, type, endpoint, token_ct, token_nonce
-		FROM tenant.log_sinks
+		SELECT id, organization_id, type, endpoint, token_ct, token_nonce
+		FROM organization.log_sinks
 		WHERE enabled
 	`)
 	if err != nil {
@@ -300,7 +300,7 @@ func (s *Service) forwardDue(ctx context.Context) error {
 	var stored []storedSink
 	for rows.Next() {
 		var r storedSink
-		if err := rows.Scan(&r.id, &r.tenantID, &r.typ, &r.endpoint, &r.tokenCT, &r.tokenNonce); err != nil {
+		if err := rows.Scan(&r.id, &r.organizationID, &r.typ, &r.endpoint, &r.tokenCT, &r.tokenNonce); err != nil {
 			rows.Close()
 			return err
 		}
@@ -317,11 +317,11 @@ func (s *Service) forwardDue(ctx context.Context) error {
 		if s.box == nil {
 			return errors.New("SIEM token encryption is unavailable")
 		}
-		plain, openErr := s.box.Open(r.tenantID, "siem-token", r.id.String(), r.tokenCT, r.tokenNonce)
+		plain, openErr := s.box.Open(r.organizationID, "siem-token", r.id.String(), r.tokenCT, r.tokenNonce)
 		if openErr != nil {
 			return openErr
 		}
-		sinks = append(sinks, sinkRow{id: r.id, tenantID: r.tenantID, typ: r.typ, endpoint: r.endpoint, token: string(plain)})
+		sinks = append(sinks, sinkRow{id: r.id, organizationID: r.organizationID, typ: r.typ, endpoint: r.endpoint, token: string(plain)})
 	}
 	var lag time.Duration
 	for _, sk := range sinks {
@@ -356,7 +356,7 @@ func (s *Service) forwardSink(ctx context.Context, sk sinkRow) time.Duration {
 	}
 	deadline := time.Now().Add(forwardBudget)
 	for {
-		events, lastAt, lastID, err := s.fetchEvents(ctx, sk.tenantID, cursorAt, cursorID)
+		events, lastAt, lastID, err := s.fetchEvents(ctx, sk.organizationID, cursorAt, cursorID)
 		if err != nil {
 			slog.Warn("siem fetch events", "sink", sk.id, "err", err)
 			return 0
@@ -392,13 +392,13 @@ func (s *Service) forwardSink(ctx context.Context, sk sinkRow) time.Duration {
 	}
 }
 
-func (s *Service) fetchEvents(ctx context.Context, tenantID uuid.UUID, afterAt time.Time, afterID uuid.UUID) ([]AuditEvent, time.Time, uuid.UUID, error) {
-	// audit.events.tenant_id is nullable, so it takes a pgtype.UUID.
+func (s *Service) fetchEvents(ctx context.Context, organizationID uuid.UUID, afterAt time.Time, afterID uuid.UUID) ([]AuditEvent, time.Time, uuid.UUID, error) {
+	// audit.events.organization_id is nullable, so it takes a pgtype.UUID.
 	genRows, err := s.q.FetchAuditEventsAfterCursor(ctx, dbgen.FetchAuditEventsAfterCursorParams{
-		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
-		AfterAt:  afterAt,
-		AfterID:  afterID,
-		RowLimit: forwardBatch,
+		OrganizationID: pgtype.UUID{Bytes: organizationID, Valid: true},
+		AfterAt:        afterAt,
+		AfterID:        afterID,
+		RowLimit:       forwardBatch,
 	})
 	if err != nil {
 		return nil, afterAt, afterID, err
@@ -411,8 +411,8 @@ func (s *Service) fetchEvents(ctx context.Context, tenantID uuid.UUID, afterAt t
 	for _, r := range genRows {
 		var e AuditEvent
 		e.ID = r.ID.String()
-		if r.TenantID.Valid {
-			e.TenantID = uuid.UUID(r.TenantID.Bytes).String()
+		if r.OrganizationID.Valid {
+			e.OrganizationID = uuid.UUID(r.OrganizationID.Bytes).String()
 		}
 		if r.ActorUserID.Valid {
 			as := uuid.UUID(r.ActorUserID.Bytes).String()
@@ -484,24 +484,24 @@ type TestResult struct {
 
 // Test sends one test event to a destination that isn't saved, after the
 // checks Create makes, and reports how it answered.
-func (s *Service) Test(ctx context.Context, tenantID uuid.UUID, typ, endpoint, token string, actor audit.Actor) (*TestResult, error) {
+func (s *Service) Test(ctx context.Context, organizationID uuid.UUID, typ, endpoint, token string, actor audit.Actor) (*TestResult, error) {
 	if !validType(typ) {
 		return nil, errs.ErrSIEMSinkTypeInvalid
 	}
 	if _, err := s.egress.ValidateHTTPURL(endpoint); err != nil {
 		return nil, errs.ErrSIEMEndpointInvalid
 	}
-	return s.test(ctx, tenantID, nil, typ, endpoint, token, actor)
+	return s.test(ctx, organizationID, nil, typ, endpoint, token, actor)
 }
 
-// TestSaved sends one test event to one of the tenant's destinations and
+// TestSaved sends one test event to one of the organization's destinations and
 // reports how it answered. It changes nothing on the destination.
-func (s *Service) TestSaved(ctx context.Context, tenantID, id uuid.UUID, actor audit.Actor) (*TestResult, error) {
+func (s *Service) TestSaved(ctx context.Context, organizationID, id uuid.UUID, actor audit.Actor) (*TestResult, error) {
 	var r storedSink
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, tenant_id, type, endpoint, token_ct, token_nonce
-		FROM tenant.log_sinks WHERE id = $1 AND tenant_id = $2
-	`, id, tenantID).Scan(&r.id, &r.tenantID, &r.typ, &r.endpoint, &r.tokenCT, &r.tokenNonce)
+		SELECT id, organization_id, type, endpoint, token_ct, token_nonce
+		FROM organization.log_sinks WHERE id = $1 AND organization_id = $2
+	`, id, organizationID).Scan(&r.id, &r.organizationID, &r.typ, &r.endpoint, &r.tokenCT, &r.tokenNonce)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
 	}
@@ -511,17 +511,17 @@ func (s *Service) TestSaved(ctx context.Context, tenantID, id uuid.UUID, actor a
 	if s.box == nil {
 		return nil, errs.ErrInternalServer.WithDetail("SIEM token encryption is unavailable")
 	}
-	plain, err := s.box.Open(r.tenantID, "siem-token", r.id.String(), r.tokenCT, r.tokenNonce)
+	plain, err := s.box.Open(r.organizationID, "siem-token", r.id.String(), r.tokenCT, r.tokenNonce)
 	if err != nil {
 		return nil, err
 	}
-	return s.test(ctx, tenantID, &id, r.typ, r.endpoint, string(plain), actor)
+	return s.test(ctx, organizationID, &id, r.typ, r.endpoint, string(plain), actor)
 }
 
 // test sends the test event and audits that it was sent, and how it went.
-func (s *Service) test(ctx context.Context, tenantID uuid.UUID, sinkID *uuid.UUID, typ, endpoint, token string, actor audit.Actor) (*TestResult, error) {
+func (s *Service) test(ctx context.Context, organizationID uuid.UUID, sinkID *uuid.UUID, typ, endpoint, token string, actor audit.Actor) (*TestResult, error) {
 	event := AuditEvent{
-		ID: uuid.NewString(), TenantID: tenantID.String(), ActorType: "system", Action: "siem.test",
+		ID: uuid.NewString(), OrganizationID: organizationID.String(), ActorType: "system", Action: "siem.test",
 		ResourceType: "log_sink", CreatedAt: time.Now().UTC(),
 		Metadata: json.RawMessage(`{"test":true,"message":"A test event from Qeet ID; nothing happened."}`),
 	}
@@ -540,7 +540,7 @@ func (s *Service) test(ctx context.Context, tenantID uuid.UUID, sinkID *uuid.UUI
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	ev := actor.Event(tenantID, "siem.sink_tested", "log_sink", uuid.Nil, map[string]any{
+	ev := actor.Event(organizationID, "siem.sink_tested", "log_sink", uuid.Nil, map[string]any{
 		"type": typ, "delivered": res.Delivered, "status": status, "saved": sinkID != nil,
 	})
 	ev.ResourceID = sinkID
@@ -593,7 +593,7 @@ func buildRequest(sinkType, token string, events []AuditEvent) ([]byte, map[stri
 			arr = append(arr, map[string]any{
 				"ddsource": "qeet-id",
 				"service":  "qeet-id",
-				"ddtags":   "tenant:" + e.TenantID,
+				"ddtags":   "tenant:" + e.OrganizationID,
 				"message":  string(msg),
 			})
 		}
@@ -637,17 +637,17 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/tenants/{tenantID}/log-sinks/{id}/test", h.testSaved)
 }
 
-func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	return httpx.PathTenantOr(r, errs.ErrSIEMTenantInvalid, errs.ErrSIEMTenantMismatch)
+func requirePathOrganization(r *http.Request) (uuid.UUID, error) {
+	return httpx.PathOrganizationOr(r, errs.ErrSIEMOrganizationInvalid, errs.ErrSIEMOrganizationMismatch)
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out, err := h.Service.List(r.Context(), tenantID)
+	out, err := h.Service.List(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -656,7 +656,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -670,7 +670,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	sk, err := h.Service.Create(r.Context(), tenantID, in.Type, in.Endpoint, in.Token, audit.ActorOf(r))
+	sk, err := h.Service.Create(r.Context(), organizationID, in.Type, in.Endpoint, in.Token, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -681,7 +681,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 // testUnsaved serves POST /tenants/{tenantID}/log-sinks/test: one test event
 // to the destination in the body, which isn't saved.
 func (h *Handler) testUnsaved(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -695,7 +695,7 @@ func (h *Handler) testUnsaved(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	res, err := h.Service.Test(r.Context(), tenantID, in.Type, in.Endpoint, in.Token, audit.ActorOf(r))
+	res, err := h.Service.Test(r.Context(), organizationID, in.Type, in.Endpoint, in.Token, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -706,7 +706,7 @@ func (h *Handler) testUnsaved(w http.ResponseWriter, r *http.Request) {
 // testSaved serves POST /tenants/{tenantID}/log-sinks/{id}/test: one test
 // event to a saved destination.
 func (h *Handler) testSaved(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -716,7 +716,7 @@ func (h *Handler) testSaved(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrSIEMIDInvalid)
 		return
 	}
-	res, err := h.Service.TestSaved(r.Context(), tenantID, id, audit.ActorOf(r))
+	res, err := h.Service.TestSaved(r.Context(), organizationID, id, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -725,7 +725,7 @@ func (h *Handler) testSaved(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) patch(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -742,7 +742,7 @@ func (h *Handler) patch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.SetEnabled(r.Context(), id, tenantID, in.Enabled, audit.ActorOf(r)); err != nil {
+	if err := h.Service.SetEnabled(r.Context(), id, organizationID, in.Enabled, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -750,7 +750,7 @@ func (h *Handler) patch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -760,7 +760,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrSIEMIDInvalid)
 		return
 	}
-	if err := h.Service.Delete(r.Context(), id, tenantID, audit.ActorOf(r)); err != nil {
+	if err := h.Service.Delete(r.Context(), id, organizationID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

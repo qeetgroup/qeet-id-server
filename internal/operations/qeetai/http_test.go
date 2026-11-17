@@ -68,8 +68,8 @@ func (s *stubStore) BeginTurn(_ context.Context, _, _ uuid.UUID) (func(), error)
 
 // newHandlerRequest builds a POST .../messages request with the chi URL param
 // and the JWT principal injected into the request context, so the handler's
-// requireTenantUser and parseConversationID helpers work without a real router.
-func newHandlerRequest(tenantID, userID, convID uuid.UUID, body string) *http.Request {
+// requireOrganizationUser and parseConversationID helpers work without a real router.
+func newHandlerRequest(organizationID, userID, convID uuid.UUID, body string) *http.Request {
 	req := httptest.NewRequest(http.MethodPost,
 		"/v1/qeetai/conversations/"+convID.String()+"/messages",
 		strings.NewReader(body))
@@ -80,8 +80,8 @@ func newHandlerRequest(tenantID, userID, convID uuid.UUID, body string) *http.Re
 	rctx.URLParams.Add("conversationID", convID.String())
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
-	// Inject JWT principal (requireTenantUser calls httpx.RequireTenant/RequireUser).
-	p := &httpx.Principal{TenantID: &tenantID, UserID: &userID}
+	// Inject JWT principal (requireOrganizationUser calls httpx.RequireOrganization/RequireUser).
+	p := &httpx.Principal{OrganizationID: &organizationID, UserID: &userID}
 	req = req.WithContext(httpx.WithPrincipal(req.Context(), p))
 
 	return req
@@ -90,7 +90,7 @@ func newHandlerRequest(tenantID, userID, convID uuid.UUID, body string) *http.Re
 // TestStreamMessages_IDOROwnershipCheck checks that posting to another user's
 // conversation returns 404 and writes no message.
 func TestStreamMessages_IDOROwnershipCheck(t *testing.T) {
-	tenantID := uuid.New()
+	organizationID := uuid.New()
 	userA := uuid.New()
 	convOwnedByUserB := uuid.New()
 
@@ -99,10 +99,10 @@ func TestStreamMessages_IDOROwnershipCheck(t *testing.T) {
 
 	h := &Handler{
 		Service:  svc,
-		Resolver: stubResolver{source: SourceTenant},
+		Resolver: stubResolver{source: SourceOrganization},
 	}
 
-	req := newHandlerRequest(tenantID, userA, convOwnedByUserB, `{"message":"injected prompt"}`)
+	req := newHandlerRequest(organizationID, userA, convOwnedByUserB, `{"message":"injected prompt"}`)
 	rr := httptest.NewRecorder()
 
 	h.streamMessages(rr, req)
@@ -120,7 +120,7 @@ func TestStreamMessages_IDOROwnershipCheck(t *testing.T) {
 // succeeds, and the handler proceeds past the gate (it will then fail when
 // trying to stream from a nil Orchestrator, but the 404 is NOT returned).
 func TestStreamMessages_AuthorizedUserCanStream(t *testing.T) {
-	tenantID := uuid.New()
+	organizationID := uuid.New()
 	userID := uuid.New()
 	convID := uuid.New()
 
@@ -130,10 +130,10 @@ func TestStreamMessages_AuthorizedUserCanStream(t *testing.T) {
 	h := &Handler{
 		Service:      svc,
 		Orchestrator: nil, // nil — run will panic, but that proves we got past the gate
-		Resolver:     stubResolver{source: SourceTenant},
+		Resolver:     stubResolver{source: SourceOrganization},
 	}
 
-	req := newHandlerRequest(tenantID, userID, convID, `{"message":"hello"}`)
+	req := newHandlerRequest(organizationID, userID, convID, `{"message":"hello"}`)
 	rr := httptest.NewRecorder()
 
 	// The handler will proceed past the ownership gate. With a nil Orchestrator
@@ -154,11 +154,11 @@ func TestStreamMessages_AuthorizedUserCanStream(t *testing.T) {
 // whose previous turn is still running is refused 409 before anything is
 // stored, and that a turn that runs releases the conversation when it ends.
 func TestStreamMessages_OneTurnAtATime(t *testing.T) {
-	tenantID, userID, convID := uuid.New(), uuid.New(), uuid.New()
+	organizationID, userID, convID := uuid.New(), uuid.New(), uuid.New()
 	busy := &stubStore{turnErr: errs.ErrQeetAITurnInProgress}
-	h := &Handler{Service: busy, Resolver: stubResolver{source: SourceTenant}}
+	h := &Handler{Service: busy, Resolver: stubResolver{source: SourceOrganization}}
 	rr := httptest.NewRecorder()
-	h.streamMessages(rr, newHandlerRequest(tenantID, userID, convID, `{"message":"again"}`))
+	h.streamMessages(rr, newHandlerRequest(organizationID, userID, convID, `{"message":"again"}`))
 	if rr.Code != http.StatusConflict || !strings.Contains(rr.Body.String(), errs.CodeQeetAITurnInProgress) {
 		t.Errorf("a second turn: %d %s, want 409 %s", rr.Code, rr.Body.String(), errs.CodeQeetAITurnInProgress)
 	}
@@ -167,10 +167,10 @@ func TestStreamMessages_OneTurnAtATime(t *testing.T) {
 	}
 
 	free := &stubStore{}
-	h = &Handler{Service: free, Resolver: stubResolver{source: SourceTenant}}
+	h = &Handler{Service: free, Resolver: stubResolver{source: SourceOrganization}}
 	func() {
 		defer func() { _ = recover() }() // the nil Orchestrator panics once the turn has begun
-		h.streamMessages(httptest.NewRecorder(), newHandlerRequest(tenantID, userID, convID, `{"message":"hello"}`))
+		h.streamMessages(httptest.NewRecorder(), newHandlerRequest(organizationID, userID, convID, `{"message":"hello"}`))
 	}()
 	if free.turns != 0 {
 		t.Errorf("%d turns still held after the request ended, want 0", free.turns)

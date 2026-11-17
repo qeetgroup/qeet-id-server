@@ -17,20 +17,20 @@ const accountHomeElsewhere = `-- name: AccountHomeElsewhere :one
 SELECT EXISTS (
     SELECT 1 FROM account.users u
     WHERE LOWER(u.email) = LOWER($1) AND u.deleted_at IS NULL
-      AND u.tenant_id IS DISTINCT FROM $2::uuid
+      AND u.organization_id IS DISTINCT FROM $2::uuid
 )::bool
 `
 
 type AccountHomeElsewhereParams struct {
-	Email    string
-	TenantID uuid.UUID
+	Email          string
+	OrganizationID uuid.UUID
 }
 
 // AccountHomeElsewhere reports whether an account holds @email and has a home
-// other than @tenant_id, so an invitation with no role would join it to
+// other than @organization_id, so an invitation with no role would join it to
 // nothing.
 func (q *Queries) AccountHomeElsewhere(ctx context.Context, arg AccountHomeElsewhereParams) (bool, error) {
-	row := q.db.QueryRow(ctx, accountHomeElsewhere, arg.Email, arg.TenantID)
+	row := q.db.QueryRow(ctx, accountHomeElsewhere, arg.Email, arg.OrganizationID)
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -50,12 +50,12 @@ func (q *Queries) ActivateInvitedAccount(ctx context.Context, userID uuid.UUID) 
 }
 
 const countPendingInvites = `-- name: CountPendingInvites :one
-SELECT COUNT(*)::bigint AS pending FROM tenant.invites
-WHERE tenant_id = $1::uuid AND status = 'pending' AND expires_at > NOW()
+SELECT COUNT(*)::bigint AS pending FROM organization.invites
+WHERE organization_id = $1::uuid AND status = 'pending' AND expires_at > NOW()
 `
 
-func (q *Queries) CountPendingInvites(ctx context.Context, tenantID uuid.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, countPendingInvites, tenantID)
+func (q *Queries) CountPendingInvites(ctx context.Context, organizationID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countPendingInvites, organizationID)
 	var pending int64
 	err := row.Scan(&pending)
 	return pending, err
@@ -63,18 +63,18 @@ func (q *Queries) CountPendingInvites(ctx context.Context, tenantID uuid.UUID) (
 
 const countSeatHolders = `-- name: CountSeatHolders :one
 SELECT COUNT(*)::bigint AS holders FROM (
-    SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.tenant_id = $1::uuid
+    SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.organization_id = $1::uuid
     UNION
-    SELECT gm.user_id FROM tenant.group_members gm
-    JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
-    WHERE gm.tenant_id = $1::uuid
+    SELECT gm.user_id FROM organization.group_members gm
+    JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.organization_id = gm.organization_id
+    WHERE gm.organization_id = $1::uuid
 ) holders
 `
 
-// CountSeatHolders counts the people holding a role in the tenant, directly or
+// CountSeatHolders counts the people holding a role in the organization, directly or
 // through a group that carries one: one seat each, however many roles.
-func (q *Queries) CountSeatHolders(ctx context.Context, tenantID uuid.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, countSeatHolders, tenantID)
+func (q *Queries) CountSeatHolders(ctx context.Context, organizationID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countSeatHolders, organizationID)
 	var holders int64
 	err := row.Scan(&holders)
 	return holders, err
@@ -83,32 +83,32 @@ func (q *Queries) CountSeatHolders(ctx context.Context, tenantID uuid.UUID) (int
 const countSeats = `-- name: CountSeats :one
 SELECT (
     (SELECT COUNT(*) FROM (
-        SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.tenant_id = $1::uuid
+        SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.organization_id = $1::uuid
         UNION
-        SELECT gm.user_id FROM tenant.group_members gm
-        JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
-        WHERE gm.tenant_id = $1::uuid
+        SELECT gm.user_id FROM organization.group_members gm
+        JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.organization_id = gm.organization_id
+        WHERE gm.organization_id = $1::uuid
     ) holders)
-    + (SELECT COUNT(*) FROM tenant.invites
-        WHERE tenant_id = $1::uuid AND status = 'pending' AND expires_at > NOW())
+    + (SELECT COUNT(*) FROM organization.invites
+        WHERE organization_id = $1::uuid AND status = 'pending' AND expires_at > NOW())
 )::bigint AS seats
 `
 
-// CountSeats returns the tenant's seats in use = distinct members (users holding
-// any role in the tenant, directly or through a group that carries one) plus
+// CountSeats returns the organization's seats in use = distinct members (users holding
+// any role in the organization, directly or through a group that carries one) plus
 // still-actionable pending invites. Backs the plan seat limit and the usage
 // display; CountSeatHolders and CountPendingInvites are its two halves.
-func (q *Queries) CountSeats(ctx context.Context, tenantID uuid.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, countSeats, tenantID)
+func (q *Queries) CountSeats(ctx context.Context, organizationID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countSeats, organizationID)
 	var seats int64
 	err := row.Scan(&seats)
 	return seats, err
 }
 
 const declineInviteForEmail = `-- name: DeclineInviteForEmail :one
-UPDATE tenant.invites SET status = 'declined'
+UPDATE organization.invites SET status = 'declined'
 WHERE id = $1 AND LOWER(email) = LOWER($2) AND status = 'pending'
-RETURNING tenant_id, role_id
+RETURNING organization_id, role_id
 `
 
 type DeclineInviteForEmailParams struct {
@@ -117,8 +117,8 @@ type DeclineInviteForEmailParams struct {
 }
 
 type DeclineInviteForEmailRow struct {
-	TenantID uuid.UUID
-	RoleID   pgtype.UUID
+	OrganizationID uuid.UUID
+	RoleID         pgtype.UUID
 }
 
 // ListInvitesForEmail returns the pending, unexpired invites addressed to a
@@ -129,7 +129,7 @@ type DeclineInviteForEmailRow struct {
 func (q *Queries) DeclineInviteForEmail(ctx context.Context, arg DeclineInviteForEmailParams) (DeclineInviteForEmailRow, error) {
 	row := q.db.QueryRow(ctx, declineInviteForEmail, arg.ID, arg.Email)
 	var i DeclineInviteForEmailRow
-	err := row.Scan(&i.TenantID, &i.RoleID)
+	err := row.Scan(&i.OrganizationID, &i.RoleID)
 	return i, err
 }
 
@@ -168,19 +168,19 @@ func (q *Queries) GetInboxEmail(ctx context.Context, userID uuid.UUID) (GetInbox
 }
 
 const getInviteByIDForAccept = `-- name: GetInviteByIDForAccept :one
-SELECT id, tenant_id, email, role_id, status, expires_at
-FROM tenant.invites
+SELECT id, organization_id, email, role_id, status, expires_at
+FROM organization.invites
 WHERE id = $1
 FOR UPDATE
 `
 
 type GetInviteByIDForAcceptRow struct {
-	ID        uuid.UUID
-	TenantID  uuid.UUID
-	Email     string
-	RoleID    pgtype.UUID
-	Status    string
-	ExpiresAt time.Time
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	Email          string
+	RoleID         pgtype.UUID
+	Status         string
+	ExpiresAt      time.Time
 }
 
 // GetInviteByIDForAccept is the by-id counterpart used by the in-app "accept
@@ -190,7 +190,7 @@ func (q *Queries) GetInviteByIDForAccept(ctx context.Context, id uuid.UUID) (Get
 	var i GetInviteByIDForAcceptRow
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Email,
 		&i.RoleID,
 		&i.Status,
@@ -200,19 +200,19 @@ func (q *Queries) GetInviteByIDForAccept(ctx context.Context, id uuid.UUID) (Get
 }
 
 const getInviteForAccept = `-- name: GetInviteForAccept :one
-SELECT id, tenant_id, email, role_id, status, expires_at
-FROM tenant.invites
+SELECT id, organization_id, email, role_id, status, expires_at
+FROM organization.invites
 WHERE token_hash = $1
 FOR UPDATE
 `
 
 type GetInviteForAcceptRow struct {
-	ID        uuid.UUID
-	TenantID  uuid.UUID
-	Email     string
-	RoleID    pgtype.UUID
-	Status    string
-	ExpiresAt time.Time
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	Email          string
+	RoleID         pgtype.UUID
+	Status         string
+	ExpiresAt      time.Time
 }
 
 // GetInviteForAccept locks the row for update so concurrent Accept calls
@@ -222,7 +222,7 @@ func (q *Queries) GetInviteForAccept(ctx context.Context, tokenHash string) (Get
 	var i GetInviteForAcceptRow
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Email,
 		&i.RoleID,
 		&i.Status,
@@ -232,16 +232,16 @@ func (q *Queries) GetInviteForAccept(ctx context.Context, tokenHash string) (Get
 }
 
 const getInviteRole = `-- name: GetInviteRole :one
-SELECT role_id FROM tenant.invites WHERE id = $1 AND tenant_id = $2
+SELECT role_id FROM organization.invites WHERE id = $1 AND organization_id = $2
 `
 
 type GetInviteRoleParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) GetInviteRole(ctx context.Context, arg GetInviteRoleParams) (pgtype.UUID, error) {
-	row := q.db.QueryRow(ctx, getInviteRole, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, getInviteRole, arg.ID, arg.OrganizationID)
 	var role_id pgtype.UUID
 	err := row.Scan(&role_id)
 	return role_id, err
@@ -261,65 +261,65 @@ func (q *Queries) GetUserEmailByID(ctx context.Context, userID uuid.UUID) (strin
 }
 
 const grantUserRole = `-- name: GrantUserRole :exec
-INSERT INTO rbac.user_roles (user_id, tenant_id, role_id)
+INSERT INTO rbac.user_roles (user_id, organization_id, role_id)
 SELECT $1, $2, $3
-WHERE EXISTS (SELECT 1 FROM rbac.roles ro WHERE ro.id = $3 AND ro.tenant_id = $2)
-ON CONFLICT (user_id, tenant_id, role_id) DO NOTHING
+WHERE EXISTS (SELECT 1 FROM rbac.roles ro WHERE ro.id = $3 AND ro.organization_id = $2)
+ON CONFLICT (user_id, organization_id, role_id) DO NOTHING
 `
 
 type GrantUserRoleParams struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
-	RoleID   uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
+	RoleID         uuid.UUID
 }
 
-// GrantUserRole attaches a tenant membership idempotently: re-accepting or a
+// GrantUserRole attaches an organization membership idempotently: re-accepting or a
 // duplicate role grant is a no-op rather than a PK violation. It writes only a
-// role of @tenant_id.
+// role of @organization_id.
 func (q *Queries) GrantUserRole(ctx context.Context, arg GrantUserRoleParams) error {
-	_, err := q.db.Exec(ctx, grantUserRole, arg.UserID, arg.TenantID, arg.RoleID)
+	_, err := q.db.Exec(ctx, grantUserRole, arg.UserID, arg.OrganizationID, arg.RoleID)
 	return err
 }
 
 const insertInvite = `-- name: InsertInvite :one
 
-INSERT INTO tenant.invites (tenant_id, email, role_id, invited_by, token_hash, expires_at)
+INSERT INTO organization.invites (organization_id, email, role_id, invited_by, token_hash, expires_at)
 SELECT $1, $2, $3, $4, $5, $6
 WHERE $3::uuid IS NULL
-   OR EXISTS (SELECT 1 FROM rbac.roles ro WHERE ro.id = $3 AND ro.tenant_id = $1)
-RETURNING id, tenant_id, email, role_id, status, expires_at, accepted_at, created_at
+   OR EXISTS (SELECT 1 FROM rbac.roles ro WHERE ro.id = $3 AND ro.organization_id = $1)
+RETURNING id, organization_id, email, role_id, status, expires_at, accepted_at, created_at
 `
 
 type InsertInviteParams struct {
-	TenantID  uuid.UUID
-	Email     string
-	RoleID    pgtype.UUID
-	InvitedBy pgtype.UUID
-	TokenHash string
-	ExpiresAt time.Time
+	OrganizationID uuid.UUID
+	Email          string
+	RoleID         pgtype.UUID
+	InvitedBy      pgtype.UUID
+	TokenHash      string
+	ExpiresAt      time.Time
 }
 
 type InsertInviteRow struct {
-	ID         uuid.UUID
-	TenantID   uuid.UUID
-	Email      string
-	RoleID     pgtype.UUID
-	Status     string
-	ExpiresAt  time.Time
-	AcceptedAt pgtype.Timestamptz
-	CreatedAt  time.Time
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	Email          string
+	RoleID         pgtype.UUID
+	Status         string
+	ExpiresAt      time.Time
+	AcceptedAt     pgtype.Timestamptz
+	CreatedAt      time.Time
 }
 
 // Queries for the invitations domain.
-// Static queries against tenant.invites live here and are compiled by sqlc into ./dbgen.
+// Static queries against organization.invites live here and are compiled by sqlc into ./dbgen.
 // The cross-context writes inside Accept (account.users, auth.password_credentials,
 // rbac.user_roles) also go through sqlc — run on the same pgx.Tx via q.WithTx(tx).
 // InsertInvite creates an invitation. One that carries a role is created only
-// when the role is the tenant's: pgx.ErrNoRows otherwise, for a missing and a
+// when the role is the organization's: pgx.ErrNoRows otherwise, for a missing and a
 // foreign role alike.
 func (q *Queries) InsertInvite(ctx context.Context, arg InsertInviteParams) (InsertInviteRow, error) {
 	row := q.db.QueryRow(ctx, insertInvite,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Email,
 		arg.RoleID,
 		arg.InvitedBy,
@@ -329,7 +329,7 @@ func (q *Queries) InsertInvite(ctx context.Context, arg InsertInviteParams) (Ins
 	var i InsertInviteRow
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Email,
 		&i.RoleID,
 		&i.Status,
@@ -355,36 +355,36 @@ func (q *Queries) InsertInviteCredential(ctx context.Context, arg InsertInviteCr
 }
 
 const insertInvitedUser = `-- name: InsertInvitedUser :one
-INSERT INTO account.users (tenant_id, email, display_name, status)
+INSERT INTO account.users (organization_id, email, display_name, status)
 VALUES ($1, $2, NULLIF($3, ''), 'active')
 RETURNING id
 `
 
 type InsertInvitedUserParams struct {
-	TenantID    pgtype.UUID
-	Email       string
-	DisplayName interface{}
+	OrganizationID pgtype.UUID
+	Email          string
+	DisplayName    interface{}
 }
 
 // InsertInvitedUser creates a brand-new invited account (no prior user). Its
 // address is left unverified; a code or link sent to it later verifies it.
 func (q *Queries) InsertInvitedUser(ctx context.Context, arg InsertInvitedUserParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, insertInvitedUser, arg.TenantID, arg.Email, arg.DisplayName)
+	row := q.db.QueryRow(ctx, insertInvitedUser, arg.OrganizationID, arg.Email, arg.DisplayName)
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
 }
 
 const inviteSenderByID = `-- name: InviteSenderByID :one
-SELECT tenant_id, role_id, invited_by, status, expires_at FROM tenant.invites WHERE id = $1
+SELECT organization_id, role_id, invited_by, status, expires_at FROM organization.invites WHERE id = $1
 `
 
 type InviteSenderByIDRow struct {
-	TenantID  uuid.UUID
-	RoleID    pgtype.UUID
-	InvitedBy pgtype.UUID
-	Status    string
-	ExpiresAt time.Time
+	OrganizationID uuid.UUID
+	RoleID         pgtype.UUID
+	InvitedBy      pgtype.UUID
+	Status         string
+	ExpiresAt      time.Time
 }
 
 // InviteSenderByID is InviteSenderByToken for an invitation picked by id.
@@ -392,7 +392,7 @@ func (q *Queries) InviteSenderByID(ctx context.Context, id uuid.UUID) (InviteSen
 	row := q.db.QueryRow(ctx, inviteSenderByID, id)
 	var i InviteSenderByIDRow
 	err := row.Scan(
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.RoleID,
 		&i.InvitedBy,
 		&i.Status,
@@ -402,15 +402,15 @@ func (q *Queries) InviteSenderByID(ctx context.Context, id uuid.UUID) (InviteSen
 }
 
 const inviteSenderByToken = `-- name: InviteSenderByToken :one
-SELECT tenant_id, role_id, invited_by, status, expires_at FROM tenant.invites WHERE token_hash = $1
+SELECT organization_id, role_id, invited_by, status, expires_at FROM organization.invites WHERE token_hash = $1
 `
 
 type InviteSenderByTokenRow struct {
-	TenantID  uuid.UUID
-	RoleID    pgtype.UUID
-	InvitedBy pgtype.UUID
-	Status    string
-	ExpiresAt time.Time
+	OrganizationID uuid.UUID
+	RoleID         pgtype.UUID
+	InvitedBy      pgtype.UUID
+	Status         string
+	ExpiresAt      time.Time
 }
 
 // InviteSenderByToken is who sent the invitation a token names, and what it
@@ -419,7 +419,7 @@ func (q *Queries) InviteSenderByToken(ctx context.Context, tokenHash string) (In
 	row := q.db.QueryRow(ctx, inviteSenderByToken, tokenHash)
 	var i InviteSenderByTokenRow
 	err := row.Scan(
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.RoleID,
 		&i.InvitedBy,
 		&i.Status,
@@ -432,47 +432,47 @@ const inviterActive = `-- name: InviterActive :one
 SELECT EXISTS (
     SELECT 1 FROM account.users u
     WHERE u.id = $1 AND u.status = 'active' AND u.deleted_at IS NULL
-      AND (u.tenant_id = $2::uuid OR EXISTS (
-          SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = $2::uuid))
+      AND (u.organization_id = $2::uuid OR EXISTS (
+          SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.organization_id = $2::uuid))
 )
 `
 
 type InviterActiveParams struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 // InviterActive reports whether the account that sent an invitation is active
-// and still belongs to its organisation: at home there or holding a role.
+// and still belongs to its organization: at home there or holding a role.
 func (q *Queries) InviterActive(ctx context.Context, arg InviterActiveParams) (bool, error) {
-	row := q.db.QueryRow(ctx, inviterActive, arg.UserID, arg.TenantID)
+	row := q.db.QueryRow(ctx, inviterActive, arg.UserID, arg.OrganizationID)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
 }
 
 const listInvites = `-- name: ListInvites :many
-SELECT id, tenant_id, email, role_id, status, expires_at, accepted_at, created_at
-FROM tenant.invites
-WHERE tenant_id = $1
+SELECT id, organization_id, email, role_id, status, expires_at, accepted_at, created_at
+FROM organization.invites
+WHERE organization_id = $1
 ORDER BY created_at DESC
 LIMIT 1001
 `
 
 type ListInvitesRow struct {
-	ID         uuid.UUID
-	TenantID   uuid.UUID
-	Email      string
-	RoleID     pgtype.UUID
-	Status     string
-	ExpiresAt  time.Time
-	AcceptedAt pgtype.Timestamptz
-	CreatedAt  time.Time
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	Email          string
+	RoleID         pgtype.UUID
+	Status         string
+	ExpiresAt      time.Time
+	AcceptedAt     pgtype.Timestamptz
+	CreatedAt      time.Time
 }
 
 // At most paging.MaxListItems+1 rows: the API truncates the rest.
-func (q *Queries) ListInvites(ctx context.Context, tenantID uuid.UUID) ([]ListInvitesRow, error) {
-	rows, err := q.db.Query(ctx, listInvites, tenantID)
+func (q *Queries) ListInvites(ctx context.Context, organizationID uuid.UUID) ([]ListInvitesRow, error) {
+	rows, err := q.db.Query(ctx, listInvites, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -482,7 +482,7 @@ func (q *Queries) ListInvites(ctx context.Context, tenantID uuid.UUID) ([]ListIn
 		var i ListInvitesRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.Email,
 			&i.RoleID,
 			&i.Status,
@@ -501,24 +501,24 @@ func (q *Queries) ListInvites(ctx context.Context, tenantID uuid.UUID) ([]ListIn
 }
 
 const listInvitesForEmail = `-- name: ListInvitesForEmail :many
-SELECT i.id, i.tenant_id, i.email, i.role_id, i.expires_at, i.created_at,
-       t.name AS tenant_name, t.slug AS tenant_slug
-FROM tenant.invites i
-JOIN tenant.tenants t ON t.id = i.tenant_id
+SELECT i.id, i.organization_id, i.email, i.role_id, i.expires_at, i.created_at,
+       t.name AS organization_name, t.slug AS organization_slug
+FROM organization.invites i
+JOIN organization.organizations t ON t.id = i.organization_id
 WHERE LOWER(i.email) = LOWER($1) AND i.status = 'pending' AND i.expires_at > NOW()
 ORDER BY i.created_at DESC
 LIMIT 1001
 `
 
 type ListInvitesForEmailRow struct {
-	ID         uuid.UUID
-	TenantID   uuid.UUID
-	Email      string
-	RoleID     pgtype.UUID
-	ExpiresAt  time.Time
-	CreatedAt  time.Time
-	TenantName string
-	TenantSlug string
+	ID               uuid.UUID
+	OrganizationID   uuid.UUID
+	Email            string
+	RoleID           pgtype.UUID
+	ExpiresAt        time.Time
+	CreatedAt        time.Time
+	OrganizationName string
+	OrganizationSlug string
 }
 
 // At most paging.MaxListItems+1 rows: the API truncates the rest.
@@ -533,13 +533,13 @@ func (q *Queries) ListInvitesForEmail(ctx context.Context, email string) ([]List
 		var i ListInvitesForEmailRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.Email,
 			&i.RoleID,
 			&i.ExpiresAt,
 			&i.CreatedAt,
-			&i.TenantName,
-			&i.TenantSlug,
+			&i.OrganizationName,
+			&i.OrganizationSlug,
 		); err != nil {
 			return nil, err
 		}
@@ -555,54 +555,54 @@ const lockSeats = `-- name: LockSeats :exec
 SELECT pg_advisory_xact_lock(hashtext('seats'), hashtext($1::uuid::text))
 `
 
-// LockSeats holds the tenant's seats until the transaction ends, so two
+// LockSeats holds the organization's seats until the transaction ends, so two
 // changes can't each take the last one.
-func (q *Queries) LockSeats(ctx context.Context, tenantID uuid.UUID) error {
-	_, err := q.db.Exec(ctx, lockSeats, tenantID)
+func (q *Queries) LockSeats(ctx context.Context, organizationID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, lockSeats, organizationID)
 	return err
 }
 
 const lookupInvite = `-- name: LookupInvite :one
-SELECT i.id, i.tenant_id, i.email, i.status, i.expires_at,
-       t.name AS tenant_name, t.slug AS tenant_slug,
+SELECT i.id, i.organization_id, i.email, i.status, i.expires_at,
+       t.name AS organization_name, t.slug AS organization_slug,
        EXISTS (SELECT 1 FROM account.users u WHERE LOWER(u.email) = LOWER(i.email)) AS account_exists
-FROM tenant.invites i
-JOIN tenant.tenants t ON t.id = i.tenant_id
+FROM organization.invites i
+JOIN organization.organizations t ON t.id = i.organization_id
 WHERE i.token_hash = $1
 `
 
 type LookupInviteRow struct {
-	ID            uuid.UUID
-	TenantID      uuid.UUID
-	Email         string
-	Status        string
-	ExpiresAt     time.Time
-	TenantName    string
-	TenantSlug    string
-	AccountExists bool
+	ID               uuid.UUID
+	OrganizationID   uuid.UUID
+	Email            string
+	Status           string
+	ExpiresAt        time.Time
+	OrganizationName string
+	OrganizationSlug string
+	AccountExists    bool
 }
 
 // LookupInvite reads the invitation a link names for the acceptance screen:
-// the organisation it is from, the address it is for, its state, and whether
+// the organization it is from, the address it is for, its state, and whether
 // an account already holds that address. Read-only.
 func (q *Queries) LookupInvite(ctx context.Context, tokenHash string) (LookupInviteRow, error) {
 	row := q.db.QueryRow(ctx, lookupInvite, tokenHash)
 	var i LookupInviteRow
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Email,
 		&i.Status,
 		&i.ExpiresAt,
-		&i.TenantName,
-		&i.TenantSlug,
+		&i.OrganizationName,
+		&i.OrganizationSlug,
 		&i.AccountExists,
 	)
 	return i, err
 }
 
 const markInviteAccepted = `-- name: MarkInviteAccepted :exec
-UPDATE tenant.invites SET status = 'accepted', accepted_at = NOW() WHERE id = $1
+UPDATE organization.invites SET status = 'accepted', accepted_at = NOW() WHERE id = $1
 `
 
 func (q *Queries) MarkInviteAccepted(ctx context.Context, id uuid.UUID) error {
@@ -611,7 +611,7 @@ func (q *Queries) MarkInviteAccepted(ctx context.Context, id uuid.UUID) error {
 }
 
 const markInviteExpired = `-- name: MarkInviteExpired :exec
-UPDATE tenant.invites SET status = 'expired' WHERE id = $1
+UPDATE organization.invites SET status = 'expired' WHERE id = $1
 `
 
 func (q *Queries) MarkInviteExpired(ctx context.Context, id uuid.UUID) error {
@@ -620,28 +620,28 @@ func (q *Queries) MarkInviteExpired(ctx context.Context, id uuid.UUID) error {
 }
 
 const regenerateInvite = `-- name: RegenerateInvite :one
-UPDATE tenant.invites
+UPDATE organization.invites
 SET token_hash = $3, expires_at = $4, status = 'pending'
-WHERE id = $1 AND tenant_id = $2 AND status IN ('pending', 'expired')
-RETURNING id, tenant_id, email, role_id, status, expires_at, accepted_at, created_at
+WHERE id = $1 AND organization_id = $2 AND status IN ('pending', 'expired')
+RETURNING id, organization_id, email, role_id, status, expires_at, accepted_at, created_at
 `
 
 type RegenerateInviteParams struct {
-	ID        uuid.UUID
-	TenantID  uuid.UUID
-	TokenHash string
-	ExpiresAt time.Time
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	TokenHash      string
+	ExpiresAt      time.Time
 }
 
 type RegenerateInviteRow struct {
-	ID         uuid.UUID
-	TenantID   uuid.UUID
-	Email      string
-	RoleID     pgtype.UUID
-	Status     string
-	ExpiresAt  time.Time
-	AcceptedAt pgtype.Timestamptz
-	CreatedAt  time.Time
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	Email          string
+	RoleID         pgtype.UUID
+	Status         string
+	ExpiresAt      time.Time
+	AcceptedAt     pgtype.Timestamptz
+	CreatedAt      time.Time
 }
 
 // RegenerateInvite rotates the token + extends the expiry for a resend (a fresh
@@ -650,14 +650,14 @@ type RegenerateInviteRow struct {
 func (q *Queries) RegenerateInvite(ctx context.Context, arg RegenerateInviteParams) (RegenerateInviteRow, error) {
 	row := q.db.QueryRow(ctx, regenerateInvite,
 		arg.ID,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.TokenHash,
 		arg.ExpiresAt,
 	)
 	var i RegenerateInviteRow
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Email,
 		&i.RoleID,
 		&i.Status,
@@ -669,14 +669,14 @@ func (q *Queries) RegenerateInvite(ctx context.Context, arg RegenerateInvitePara
 }
 
 const revokeInvite = `-- name: RevokeInvite :one
-UPDATE tenant.invites SET status = 'revoked'
-WHERE id = $1 AND tenant_id = $2 AND status = 'pending'
+UPDATE organization.invites SET status = 'revoked'
+WHERE id = $1 AND organization_id = $2 AND status = 'pending'
 RETURNING email, role_id
 `
 
 type RevokeInviteParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type RevokeInviteRow struct {
@@ -685,7 +685,7 @@ type RevokeInviteRow struct {
 }
 
 func (q *Queries) RevokeInvite(ctx context.Context, arg RevokeInviteParams) (RevokeInviteRow, error) {
-	row := q.db.QueryRow(ctx, revokeInvite, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, revokeInvite, arg.ID, arg.OrganizationID)
 	var i RevokeInviteRow
 	err := row.Scan(&i.Email, &i.RoleID)
 	return i, err

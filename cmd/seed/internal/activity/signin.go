@@ -70,7 +70,7 @@ func offDayRate(o *world.Org, p *world.Person, t time.Time) float64 {
 	return 0.12
 }
 
-// signIns generates p's sign-ins to their own organisation over the history
+// signIns generates p's sign-ins to their own organization over the history
 // window, ending when they left.
 func (h *history) signIns(o *world.Org, p *world.Person) {
 	w := h.w
@@ -237,7 +237,7 @@ func (h *history) newSession(o *world.Org, p *world.Person, t time.Time, kind st
 	return s
 }
 
-// firstFactor picks how p signs in to o at t: the organisation's single
+// firstFactor picks how p signs in to o at t: the organization's single
 // sign-on for the staff it provisions, otherwise a mix of what it allows and
 // what p has set up. Test accounts mostly use their password, as testers do.
 func (h *history) firstFactor(o *world.Org, p *world.Person, t time.Time, kind string) string {
@@ -384,8 +384,8 @@ func (h *history) device(o *world.Org, p *world.Person, t time.Time, kind string
 	return d
 }
 
-// guestSwitches opens sessions in the organisations p belongs to as a
-// guest: on some working days p switches from their own organisation's
+// guestSwitches opens sessions in the organizations p belongs to as a
+// guest: on some working days p switches from their own organization's
 // session to the other, which replaces it.
 func (h *history) guestSwitches(p *world.Person, o *world.Org, since time.Time, rate float64) {
 	w := h.w

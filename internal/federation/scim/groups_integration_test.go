@@ -26,23 +26,23 @@ import (
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
 
-// scimFixture sets up a tenant, a SCIM bearer token, two users, and a mounted
+// scimFixture sets up an organization, a SCIM bearer token, two users, and a mounted
 // SCIM router driving the real handlers.
 type scimFixture struct {
-	tenantID uuid.UUID
-	token    string
-	router   chi.Router
-	svc      *Service
+	organizationID uuid.UUID
+	token          string
+	router         chi.Router
+	svc            *Service
 }
 
 func newSCIMFixture(t *testing.T, ctx context.Context) *scimFixture {
 	t.Helper()
-	tid := dbtest.Tenant(t)
+	tid := dbtest.Organization(t)
 
-	// Seed a SCIM bearer token for this tenant (hash scheme matches Rotate).
+	// Seed a SCIM bearer token for this organization (hash scheme matches Rotate).
 	token := tokenPrefix + uuid.NewString()
 	if _, err := dbtest.Pool(t).Exec(ctx, `
-		INSERT INTO tenant.scim_tokens (tenant_id, token_hash, token_prefix)
+		INSERT INTO organization.scim_tokens (organization_id, token_hash, token_prefix)
 		VALUES ($1, $2, $3)
 	`, tid, codes.Hash(token), tokenPrefix+"seed"); err != nil {
 		t.Fatalf("seed token: %v", err)
@@ -52,14 +52,14 @@ func newSCIMFixture(t *testing.T, ctx context.Context) *scimFixture {
 	h := &Handler{Service: svc}
 	r := chi.NewRouter()
 	h.MountPublic(r)
-	return &scimFixture{tenantID: tid, token: token, router: r, svc: svc}
+	return &scimFixture{organizationID: tid, token: token, router: r, svc: svc}
 }
 
-// seedUser creates a tenant user and returns its id.
+// seedUser creates an organization user and returns its id.
 func (f *scimFixture) seedUser(t *testing.T, ctx context.Context, email string) uuid.UUID {
 	t.Helper()
 	repo := user.NewRepository(dbtest.Pool(t))
-	u, err := repo.CreateWithCredential(ctx, user.CreateInput{TenantID: f.tenantID, Email: email}, "")
+	u, err := repo.CreateWithCredential(ctx, user.CreateInput{OrganizationID: f.organizationID, Email: email}, "")
 	if err != nil {
 		t.Fatalf("seed user %s: %v", email, err)
 	}
@@ -268,7 +268,7 @@ func TestSCIMUserFilterAndUnfilteredPagination(t *testing.T) {
 func TestSCIMGroupNameUniqueness(t *testing.T) {
 	ctx := dbtest.Context(t)
 	f := newSCIMFixture(t, ctx)
-	if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, 'Support')`, f.tenantID); err != nil {
+	if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO organization.groups (organization_id, name) VALUES ($1, 'Support')`, f.organizationID); err != nil {
 		t.Fatalf("seed console group: %v", err)
 	}
 	create := func(name, externalID string) *httptest.ResponseRecorder {
@@ -316,9 +316,9 @@ func TestSCIMGroupNameUniqueness(t *testing.T) {
 	}
 }
 
-// TestSCIMGroupTenantIsolation proves one tenant can never read or mutate
-// another tenant's group via the SCIM surface.
-func TestSCIMGroupTenantIsolation(t *testing.T) {
+// TestSCIMGroupOrganizationIsolation proves one organization can never read or mutate
+// another organization's group via the SCIM surface.
+func TestSCIMGroupOrganizationIsolation(t *testing.T) {
 	ctx := dbtest.Context(t)
 	a := newSCIMFixture(t, ctx)
 	b := newSCIMFixture(t, ctx)
@@ -332,7 +332,7 @@ func TestSCIMGroupTenantIsolation(t *testing.T) {
 	}
 	gid, _ := decodeBody(t, rec)["id"].(string)
 
-	// Tenant B must not see it via get, patch, or delete.
+	// Organization B must not see it via get, patch, or delete.
 	if rec := b.do(t, http.MethodGet, "/scim/v2/Groups/"+gid, nil); rec.Code != http.StatusNotFound {
 		t.Fatalf("B get A's group: status %d, want 404", rec.Code)
 	}
@@ -395,9 +395,9 @@ func TestSCIMUserMutationsEmitAtomicEvidence(t *testing.T) {
 
 	auditActions := collectColumn(t, ctx, `
 		SELECT action FROM audit.events
-		WHERE tenant_id = $1 AND resource_type = 'user' AND resource_id = $2
+		WHERE organization_id = $1 AND resource_type = 'user' AND resource_id = $2
 		ORDER BY created_at, action
-	`, f.tenantID, userID)
+	`, f.organizationID, userID)
 	if !equalStrings(auditActions, wantActions) {
 		t.Errorf("audit actions = %v, want %v", auditActions, wantActions)
 	}
@@ -407,8 +407,8 @@ func TestSCIMUserMutationsEmitAtomicEvidence(t *testing.T) {
 	// trail misleading rather than merely thin.
 	actorTypes := collectColumn(t, ctx, `
 		SELECT DISTINCT actor_type FROM audit.events
-		WHERE tenant_id = $1 AND resource_id = $2
-	`, f.tenantID, userID)
+		WHERE organization_id = $1 AND resource_id = $2
+	`, f.organizationID, userID)
 	if len(actorTypes) != 1 || actorTypes[0] != "scim" {
 		t.Errorf("actor types = %v, want [scim]", actorTypes)
 	}
@@ -488,10 +488,10 @@ func equalStrings(a, b []string) bool {
 	return true
 }
 
-// TestSCIMUserWriteTenantIsolation checks that one tenant's SCIM token can't
-// suspend or rename another tenant's user: PUT and PATCH both return 404 and
+// TestSCIMUserWriteOrganizationIsolation checks that one organization's SCIM token can't
+// suspend or rename another organization's user: PUT and PATCH both return 404 and
 // leave the victim's row unchanged.
-func TestSCIMUserWriteTenantIsolation(t *testing.T) {
+func TestSCIMUserWriteOrganizationIsolation(t *testing.T) {
 	ctx := dbtest.Context(t)
 	a := newSCIMFixture(t, ctx)
 	b := newSCIMFixture(t, ctx)
@@ -508,7 +508,7 @@ func TestSCIMUserWriteTenantIsolation(t *testing.T) {
 	}
 	before := statusOf()
 
-	// PATCH active:false — the deprovisioning shape a hostile tenant would use.
+	// PATCH active:false — the deprovisioning shape a hostile organization would use.
 	rec := b.do(t, http.MethodPatch, "/scim/v2/Users/"+victim.String(), map[string]any{
 		"schemas": []string{schemaPatchOp},
 		"Operations": []map[string]any{
@@ -556,13 +556,13 @@ func TestSCIMUserWriteTenantIsolation(t *testing.T) {
 	}
 }
 
-// TestSCIMCreatesNoAccountOnAnotherOrganisationsDomain checks that a
-// directory provisions no account on a domain another organisation has
+// TestSCIMCreatesNoAccountOnAnotherOrganizationsDomain checks that a
+// directory provisions no account on a domain another organization has
 // verified, and still provisions its own.
-func TestSCIMCreatesNoAccountOnAnotherOrganisationsDomain(t *testing.T) {
+func TestSCIMCreatesNoAccountOnAnotherOrganizationsDomain(t *testing.T) {
 	ctx := dbtest.Context(t)
 	f := newSCIMFixture(t, ctx)
-	theirs := dbtest.Domain(t, dbtest.Tenant(t))
+	theirs := dbtest.Domain(t, dbtest.Organization(t))
 	claimed := dbtest.Unique("scim") + "@" + theirs
 	if rec := f.do(t, http.MethodPost, "/scim/v2/Users", map[string]any{"userName": claimed, "active": true}); rec.Code != http.StatusConflict {
 		t.Errorf("provision on another organisation's domain: %d %s, want 409", rec.Code, rec.Body.String())
@@ -570,7 +570,7 @@ func TestSCIMCreatesNoAccountOnAnotherOrganisationsDomain(t *testing.T) {
 	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, claimed); n != 0 {
 		t.Errorf("the account was created")
 	}
-	own := dbtest.Unique("scim") + "@" + dbtest.Domain(t, f.tenantID)
+	own := dbtest.Unique("scim") + "@" + dbtest.Domain(t, f.organizationID)
 	if rec := f.do(t, http.MethodPost, "/scim/v2/Users", map[string]any{"userName": own, "active": true}); rec.Code != http.StatusCreated {
 		t.Errorf("provision on the organisation's domain: %d %s, want 201", rec.Code, rec.Body.String())
 	}
@@ -587,11 +587,11 @@ func TestSCIMDeprovisioningEndsEverySignIn(t *testing.T) {
 		t.Helper()
 		id := f.seedUser(t, ctx, dbtest.Unique("scim")+"@example.test")
 		if _, err := pool.Exec(ctx, `
-			WITH s AS (INSERT INTO auth.sessions (user_id, tenant_id) VALUES ($1, $2)),
-			     d AS (INSERT INTO auth.trusted_devices (user_id, tenant_id, token_hash, expires_at) VALUES ($1, $2, $3, NOW() + INTERVAL '1 day'))
-			INSERT INTO auth.oidc_refresh_tokens (token_hash, client_id, user_id, tenant_id, expires_at)
+			WITH s AS (INSERT INTO auth.sessions (user_id, organization_id) VALUES ($1, $2)),
+			     d AS (INSERT INTO auth.trusted_devices (user_id, organization_id, token_hash, expires_at) VALUES ($1, $2, $3, NOW() + INTERVAL '1 day'))
+			INSERT INTO auth.oidc_refresh_tokens (token_hash, client_id, user_id, organization_id, expires_at)
 			VALUES ($4, 'app', $1, $2, NOW() + INTERVAL '1 day')
-		`, id, f.tenantID, dbtest.Unique("device"), dbtest.Unique("grant")); err != nil {
+		`, id, f.organizationID, dbtest.Unique("device"), dbtest.Unique("grant")); err != nil {
 			t.Fatal(err)
 		}
 		return id
@@ -622,7 +622,7 @@ func TestSCIMDeprovisioningEndsEverySignIn(t *testing.T) {
 }
 
 // TestSCIMLeavesOwnersAndOthersSuspensionsAlone checks that a directory can
-// neither change nor delete an account that owns the organisation, and that
+// neither change nor delete an account that owns the organization, and that
 // reactivating someone lifts only a suspension it set itself.
 func TestSCIMLeavesOwnersAndOthersSuspensionsAlone(t *testing.T) {
 	ctx := dbtest.Context(t)
@@ -646,10 +646,10 @@ func TestSCIMLeavesOwnersAndOthersSuspensionsAlone(t *testing.T) {
 
 	owner := f.seedUser(t, ctx, dbtest.Unique("owner")+"@example.test")
 	var ownerRole uuid.UUID
-	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, f.tenantID).Scan(&ownerRole); err != nil {
+	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (organization_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, f.organizationID).Scan(&ownerRole); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.Assign(t, owner, f.tenantID, ownerRole)
+	dbtest.Assign(t, owner, f.organizationID, ownerRole)
 	if rec := active(owner, false); rec.Code != http.StatusForbidden || status(owner) != "active" {
 		t.Errorf("deactivate an owner: %d %s, status %s; want 403 and still active", rec.Code, rec.Body.String(), status(owner))
 	}
@@ -687,7 +687,7 @@ func TestSCIMManagesOnlyItsOwnGroups(t *testing.T) {
 	f := newSCIMFixture(t, ctx)
 	member := f.seedUser(t, ctx, dbtest.Unique("member")+"@example.test")
 	var admins uuid.UUID
-	if err := pool.QueryRow(ctx, `INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, 'Admins') RETURNING id`, f.tenantID).Scan(&admins); err != nil {
+	if err := pool.QueryRow(ctx, `INSERT INTO organization.groups (organization_id, name) VALUES ($1, 'Admins') RETURNING id`, f.organizationID).Scan(&admins); err != nil {
 		t.Fatal(err)
 	}
 	addMember := map[string]any{
@@ -708,7 +708,7 @@ func TestSCIMManagesOnlyItsOwnGroups(t *testing.T) {
 	if rec := f.do(t, http.MethodGet, "/scim/v2/Groups?filter="+url.QueryEscape(`displayName eq "Admins"`), nil); decodeBody(t, rec)["totalResults"] != float64(0) {
 		t.Errorf("listing found the administrator's group: %s", rec.Body.String())
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.group_members WHERE group_id = $1`, admins); n != 0 || dbtest.Count(t, `SELECT count(*) FROM tenant.groups WHERE id = $1`, admins) != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM organization.group_members WHERE group_id = $1`, admins); n != 0 || dbtest.Count(t, `SELECT count(*) FROM organization.groups WHERE id = $1`, admins) != 1 {
 		t.Error("the directory changed an administrator's group")
 	}
 
@@ -737,7 +737,7 @@ func TestSCIMManagesOnlyItsOwnGroups(t *testing.T) {
 func TestSCIMMatchesAndAdoptsMembers(t *testing.T) {
 	ctx := dbtest.Context(t)
 	f := newSCIMFixture(t, ctx)
-	domain := dbtest.Domain(t, f.tenantID)
+	domain := dbtest.Domain(t, f.organizationID)
 	member := f.seedUser(t, ctx, dbtest.Unique("invited")+"@"+domain)
 	var email string
 	if err := dbtest.Pool(t).QueryRow(ctx, `SELECT email FROM account.users WHERE id = $1`, member).Scan(&email); err != nil {
@@ -759,7 +759,7 @@ func TestSCIMMatchesAndAdoptsMembers(t *testing.T) {
 		t.Error("the adopted account was not tagged and updated")
 	}
 
-	guest := dbtest.UserAt(t, dbtest.Unique("guest")+"@"+domain, dbtest.Tenant(t))
+	guest := dbtest.UserAt(t, dbtest.Unique("guest")+"@"+domain, dbtest.Organization(t))
 	if rec := f.do(t, http.MethodPost, "/scim/v2/Users", map[string]any{"userName": guest.Email, "active": true}); rec.Code != http.StatusConflict {
 		t.Errorf("create someone at home elsewhere: %d %s, want 409", rec.Code, rec.Body.String())
 	}
@@ -767,13 +767,13 @@ func TestSCIMMatchesAndAdoptsMembers(t *testing.T) {
 
 // TestSCIMPatchAppliesIdentityAttributes checks that a PATCH applies active
 // sent as a string, name parts, externalId and a new userName on the
-// organisation's domain, refuses one elsewhere, and that a PUT changes the
+// organization's domain, refuses one elsewhere, and that a PUT changes the
 // address too.
 func TestSCIMPatchAppliesIdentityAttributes(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	f := newSCIMFixture(t, ctx)
-	domain := dbtest.Domain(t, f.tenantID)
+	domain := dbtest.Domain(t, f.organizationID)
 	rec := f.do(t, http.MethodPost, "/scim/v2/Users", map[string]any{"userName": dbtest.Unique("grace") + "@" + domain, "active": true})
 	id, _ := decodeBody(t, rec)["id"].(string)
 	if rec.Code != http.StatusCreated || id == "" {

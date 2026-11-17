@@ -15,7 +15,7 @@ What this repository owns, what it must not touch, and which changes leave it.
 |---|---|
 | Every Qeet ID HTTP endpoint | `internal/bootstrap/router.go` + context handlers |
 | All business logic | `internal/{access,identity,federation,developer,operations}/` |
-| **All enforcement** — authn, authz, tenant scope, rate limits | `internal/platform/http/httpx/`, `internal/access/authorization/` |
+| **All enforcement** — authn, authz, organization scope, rate limits | `internal/platform/http/httpx/`, `internal/access/authorization/` |
 | Token issuance, JWKS, key rotation | `internal/platform/crypto/tokens/` |
 | The database schema and every migration | `internal/platform/database/migrations/` |
 | Federation protocol implementations | `internal/federation/` |
@@ -51,8 +51,8 @@ artifact.
 | Input | Source | Required |
 |---|---|---|
 | HTTP requests | Console, hosted login, SDKs, mobile app, external relying parties | — |
-| SAML assertions, SCIM calls, LDAP binds | Customer identity providers | per tenant |
-| Social OAuth callbacks | Google, GitHub, Microsoft, Apple, custom | per tenant |
+| SAML assertions, SCIM calls, LDAP binds | Customer identity providers | per organization |
+| Social OAuth callbacks | Google, GitHub, Microsoft, Apple, custom | per organization |
 | Payment webhooks | Stripe, Razorpay | optional |
 | Configuration | 138 environment variables | `DB_URL` plus the environment-specific requirements enforced by `Config.Validate()` |
 | Persistent state | PostgreSQL | **required** |
@@ -111,7 +111,7 @@ Qeet's own consoles.
 | Boundary | Enforcement |
 |---|---|
 | Unauthenticated → authenticated | `httpx.RequireAuth` |
-| **Tenant A → tenant B** | `httpx.EnforceTenantScope` + `WHERE tenant_id = $1`, backed by row-level security on organisation-owned tables in organisation-administration requests (`scopeOrganisationRoutes`) |
+| **Organization A → organization B** | `httpx.EnforceOrganizationScope` + `WHERE organization_id = $1`, backed by row-level security on organization-owned tables in organization-administration requests (`scopeOrganizationRoutes`) |
 | Caller → permission | `rbac.Enforce` with `internal/bootstrap/permissions.go` |
 | Browser → API | CORS allowlist, then CSRF double-submit |
 | Process → secrets | Managed store; `Config.Validate()` boot gate |
@@ -172,7 +172,7 @@ unbootstrappable cycle.
 
 ## Hard limits — never do these here
 
-1. **Never take tenant scope from request input.** Use `httpx.RequireTenant`.
+1. **Never take organization scope from request input.** Use `httpx.RequireOrganization`.
 2. **Never edit an applied migration.** Add a pair.
 3. **Never hand-edit `dbgen/`.** Change `queries.sql` and regenerate.
 4. **Never wire dependencies outside `internal/bootstrap`.**
@@ -181,5 +181,5 @@ unbootstrappable cycle.
    `api/openapi/src/` and run `make openapi`; the five documents themselves are generated.
 7. **Never weaken a security control to make a test pass.**
 8. **Never commit a real secret** — `.env.example` holds placeholders only.
-9. **Never flatten the chi route tree** — the tenant guard fails open silently.
+9. **Never flatten the chi route tree** — the organization guard fails open silently.
 10. **Never change another repository** from a task scoped to this one.

@@ -56,9 +56,9 @@ func TestNewIndexesDontLockTheirTable(t *testing.T) {
 // migration writes.
 func TestIndexRuleReadsMigrations(t *testing.T) {
 	for sql, table := range map[string]string{
-		"CREATE INDEX idx_a ON auth.sessions (user_id)":                               "auth.sessions",
-		"create unique index concurrently if not exists uq_b on tenant.groups (name)": "tenant.groups",
-		"CREATE INDEX idx_c ON ONLY account.users (email)":                            `account.users`,
+		"CREATE INDEX idx_a ON auth.sessions (user_id)":                                     "auth.sessions",
+		"create unique index concurrently if not exists uq_b on organization.groups (name)": "organization.groups",
+		"CREATE INDEX idx_c ON ONLY account.users (email)":                                  `account.users`,
 	} {
 		m := createIndex.FindStringSubmatch(sql)
 		if m == nil || !strings.EqualFold(m[5], table) {

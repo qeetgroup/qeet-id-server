@@ -17,38 +17,38 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 )
 
-// TenantPurgeAfter is how long a deleted organisation's data is kept, so the
-// deletion can still be undone, before PurgeDeletedTenants removes it.
-const TenantPurgeAfter = 30 * 24 * time.Hour
+// OrganizationPurgeAfter is how long a deleted organization's data is kept, so the
+// deletion can still be undone, before PurgeDeletedOrganizations removes it.
+const OrganizationPurgeAfter = 30 * 24 * time.Hour
 
-// tenantPurgesPerRun bounds how many organisations one run purges.
-const tenantPurgesPerRun = 10
+// organizationPurgesPerRun bounds how many organizations one run purges.
+const organizationPurgesPerRun = 10
 
-// tenantPurgeFailures counts organisations a purge run couldn't finish.
-var tenantPurgeFailures = promauto.NewCounter(prometheus.CounterOpts{
+// organizationPurgeFailures counts organizations a purge run couldn't finish.
+var organizationPurgeFailures = promauto.NewCounter(prometheus.CounterOpts{
 	Name: "gdpr_tenant_purge_failures_total",
 	Help: "Deleted organisations a purge run failed to remove; each is tried again at the next run.",
 })
 
-// TenantPurge is what purging one organisation removed.
-type TenantPurge struct {
-	TenantID         uuid.UUID        `json:"tenant_id"`
+// OrganizationPurge is what purging one organization removed.
+type OrganizationPurge struct {
+	OrganizationID   uuid.UUID        `json:"tenant_id"`
 	Rows             map[string]int64 `json:"rows_purged"`
 	AccountsRemoved  int              `json:"accounts_removed"`
 	AccountsDetached int              `json:"accounts_detached"`
 }
 
-// PurgeDeletedTenants removes the data of up to tenantPurgesPerRun
-// organisations deleted longer ago than after, and returns how many it
-// purged. An organisation whose deletion was called off was never deleted, so
+// PurgeDeletedOrganizations removes the data of up to organizationPurgesPerRun
+// organizations deleted longer ago than after, and returns how many it
+// purged. An organization whose deletion was called off was never deleted, so
 // it is never purged. One that fails is logged, counted and tried again next
 // run; the others are still purged.
-func (s *Service) PurgeDeletedTenants(ctx context.Context, after time.Duration) (int, error) {
-	ctx = postgres.AcrossTenants(ctx)
+func (s *Service) PurgeDeletedOrganizations(ctx context.Context, after time.Duration) (int, error) {
+	ctx = postgres.AcrossOrganizations(ctx)
 	rows, err := s.pool.Query(ctx, `
-		SELECT id FROM tenant.tenants
+		SELECT id FROM organization.organizations
 		WHERE status = 'deleted' AND deleted_at IS NOT NULL AND deleted_at < $1
-		ORDER BY deleted_at LIMIT $2`, time.Now().UTC().Add(-after), tenantPurgesPerRun)
+		ORDER BY deleted_at LIMIT $2`, time.Now().UTC().Add(-after), organizationPurgesPerRun)
 	if err != nil {
 		return 0, err
 	}
@@ -58,8 +58,8 @@ func (s *Service) PurgeDeletedTenants(ctx context.Context, after time.Duration) 
 	}
 	purged := 0
 	for _, id := range ids {
-		if _, err := s.PurgeTenant(ctx, id, after); err != nil {
-			tenantPurgeFailures.Inc()
+		if _, err := s.PurgeOrganization(ctx, id, after); err != nil {
+			organizationPurgeFailures.Inc()
 			slog.Warn("gdpr: purge a deleted organisation", "tenant_id", id, "err", err)
 			continue
 		}
@@ -68,28 +68,28 @@ func (s *Service) PurgeDeletedTenants(ctx context.Context, after time.Duration) 
 	return purged, nil
 }
 
-// PurgeTenant removes the data of tenantID, deleted longer ago than after:
+// PurgeOrganization removes the data of organizationID, deleted longer ago than after:
 // the people whose home it was (erased and removed, or, still members of
-// another organisation, kept with no home organisation), then every table's
-// rows of it in batches, its audit chain included, then the organisation.
-// It records the purge in platform.tenant_purges and the platform audit
+// another organization, kept with no home organization), then every table's
+// rows of it in batches, its audit chain included, then the organization.
+// It records the purge in platform.organization_purges and the platform audit
 // chain, which outlive the data. Interrupted, it carries on at the next run.
-func (s *Service) PurgeTenant(ctx context.Context, tenantID uuid.UUID, after time.Duration) (*TenantPurge, error) {
-	ctx = postgres.AcrossTenants(ctx)
+func (s *Service) PurgeOrganization(ctx context.Context, organizationID uuid.UUID, after time.Duration) (*OrganizationPurge, error) {
+	ctx = postgres.AcrossOrganizations(ctx)
 	var slug string
 	var deletedAt time.Time
 	err := s.pool.QueryRow(ctx, `
-		SELECT slug, deleted_at FROM tenant.tenants
+		SELECT slug, deleted_at FROM organization.organizations
 		WHERE id = $1 AND status = 'deleted' AND deleted_at IS NOT NULL AND deleted_at < $2`,
-		tenantID, time.Now().UTC().Add(-after)).Scan(&slug, &deletedAt)
+		organizationID, time.Now().UTC().Add(-after)).Scan(&slug, &deletedAt)
 	if err != nil {
 		return nil, err
 	}
-	out := &TenantPurge{TenantID: tenantID, Rows: map[string]int64{}}
-	if out.AccountsRemoved, out.AccountsDetached, err = s.purgeHomeAccounts(ctx, tenantID); err != nil {
+	out := &OrganizationPurge{OrganizationID: organizationID, Rows: map[string]int64{}}
+	if out.AccountsRemoved, out.AccountsDetached, err = s.purgeHomeAccounts(ctx, organizationID); err != nil {
 		return nil, err
 	}
-	if err := s.purgeTenantRows(ctx, tenantID, out.Rows); err != nil {
+	if err := s.purgeOrganizationRows(ctx, organizationID, out.Rows); err != nil {
 		return nil, err
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -98,18 +98,18 @@ func (s *Service) PurgeTenant(ctx context.Context, tenantID uuid.UUID, after tim
 	}
 	defer tx.Rollback(ctx)
 	// What is left of it holds a foreign key that cascades.
-	if _, err := tx.Exec(ctx, `DELETE FROM tenant.tenants WHERE id = $1 AND status = 'deleted'`, tenantID); err != nil {
+	if _, err := tx.Exec(ctx, `DELETE FROM organization.organizations WHERE id = $1 AND status = 'deleted'`, organizationID); err != nil {
 		return nil, err
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO platform.tenant_purges (tenant_id, slug, deleted_at, rows_purged, accounts_removed, accounts_detached)
+		INSERT INTO platform.organization_purges (organization_id, slug, deleted_at, rows_purged, accounts_removed, accounts_detached)
 		VALUES ($1, $2, $3, $4, $5, $6)
-		ON CONFLICT (tenant_id) DO UPDATE SET purged_at = NOW(), rows_purged = EXCLUDED.rows_purged,
+		ON CONFLICT (organization_id) DO UPDATE SET purged_at = NOW(), rows_purged = EXCLUDED.rows_purged,
 		    accounts_removed = EXCLUDED.accounts_removed, accounts_detached = EXCLUDED.accounts_detached`,
-		tenantID, slug, deletedAt, out.Rows, out.AccountsRemoved, out.AccountsDetached); err != nil {
+		organizationID, slug, deletedAt, out.Rows, out.AccountsRemoved, out.AccountsDetached); err != nil {
 		return nil, err
 	}
-	rid := tenantID
+	rid := organizationID
 	if err := audit.Record(ctx, tx, audit.Event{
 		ActorType: "system", Action: "tenant.purged", ResourceType: "tenant", ResourceID: &rid,
 		Metadata: map[string]any{"deleted_at": deletedAt, "rows_purged": out.Rows,
@@ -120,14 +120,14 @@ func (s *Service) PurgeTenant(ctx context.Context, tenantID uuid.UUID, after tim
 	return out, tx.Commit(ctx)
 }
 
-// purgeHomeAccounts erases and removes each account whose home is tenantID,
-// and keeps, with no home organisation, one still holding a role in another
-// organisation, as their account is that organisation's member too. It
+// purgeHomeAccounts erases and removes each account whose home is organizationID,
+// and keeps, with no home organization, one still holding a role in another
+// organization, as their account is that organization's member too. It
 // returns how many it removed and kept.
-func (s *Service) purgeHomeAccounts(ctx context.Context, tenantID uuid.UUID) (removed, detached int, err error) {
+func (s *Service) purgeHomeAccounts(ctx context.Context, organizationID uuid.UUID) (removed, detached int, err error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT u.id, EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id <> $1)
-		FROM account.users u WHERE u.tenant_id = $1`, tenantID)
+		SELECT u.id, EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.organization_id <> $1)
+		FROM account.users u WHERE u.organization_id = $1`, organizationID)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -148,9 +148,9 @@ func (s *Service) purgeHomeAccounts(ctx context.Context, tenantID uuid.UUID) (re
 			return removed, detached, err
 		}
 		if a.elsewhere {
-			_, err = tx.Exec(ctx, `UPDATE account.users SET tenant_id = NULL WHERE id = $1 AND tenant_id = $2`, a.id, tenantID)
+			_, err = tx.Exec(ctx, `UPDATE account.users SET organization_id = NULL WHERE id = $1 AND organization_id = $2`, a.id, organizationID)
 		} else if err = s.eraseAccount(ctx, tx, a.id); err == nil {
-			_, err = tx.Exec(ctx, `DELETE FROM account.users WHERE id = $1 AND tenant_id = $2`, a.id, tenantID)
+			_, err = tx.Exec(ctx, `DELETE FROM account.users WHERE id = $1 AND organization_id = $2`, a.id, organizationID)
 		}
 		if err == nil {
 			err = tx.Commit(ctx)
@@ -168,20 +168,20 @@ func (s *Service) purgeHomeAccounts(ctx context.Context, tenantID uuid.UUID) (re
 	return removed, detached, nil
 }
 
-// purgeTenantRows deletes, in batches, tenantID's rows of every table with a
-// tenant_id whose foreign key to the organisation doesn't cascade, or that
+// purgeOrganizationRows deletes, in batches, organizationID's rows of every table with an
+// organization_id whose foreign key to the organization doesn't cascade, or that
 // has none (the audit log among them), counting each table's in rows. A
 // table another one's rows still point at is tried again after the rest.
-func (s *Service) purgeTenantRows(ctx context.Context, tenantID uuid.UUID, rows map[string]int64) error {
+func (s *Service) purgeOrganizationRows(ctx context.Context, organizationID uuid.UUID, rows map[string]int64) error {
 	list, err := s.pool.Query(ctx, `
 		SELECT c.oid::regclass::text
 		FROM pg_class c
-		JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'tenant_id' AND NOT a.attisdropped
+		JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'organization_id' AND NOT a.attisdropped
 		WHERE c.relkind = 'r' AND c.relnamespace::regnamespace::text NOT IN ('pg_catalog', 'information_schema')
-		  AND c.oid NOT IN ('tenant.tenants'::regclass, 'platform.tenant_purges'::regclass)
+		  AND c.oid NOT IN ('organization.organizations'::regclass, 'platform.organization_purges'::regclass)
 		  AND NOT EXISTS (
 		      SELECT 1 FROM pg_constraint k
-		      WHERE k.conrelid = c.oid AND k.contype = 'f' AND k.confrelid = 'tenant.tenants'::regclass
+		      WHERE k.conrelid = c.oid AND k.contype = 'f' AND k.confrelid = 'organization.organizations'::regclass
 		        AND k.confdeltype = 'c' AND k.conkey = ARRAY[a.attnum])
 		ORDER BY 1`)
 	if err != nil {
@@ -191,8 +191,8 @@ func (s *Service) purgeTenantRows(ctx context.Context, tenantID uuid.UUID, rows 
 	if err != nil {
 		return err
 	}
-	// A sign-up waiting on the organisation names it in another column.
-	if _, err := s.pool.Exec(ctx, `DELETE FROM auth.webauthn_sessions WHERE pending_tenant_id = $1`, tenantID); err != nil {
+	// A sign-up waiting on the organization names it in another column.
+	if _, err := s.pool.Exec(ctx, `DELETE FROM auth.webauthn_sessions WHERE pending_organization_id = $1`, organizationID); err != nil {
 		return err
 	}
 	for pass := 0; len(tables) > 0; pass++ {
@@ -201,7 +201,7 @@ func (s *Service) purgeTenantRows(ctx context.Context, tenantID uuid.UUID, rows 
 		for _, table := range tables {
 			// #nosec G201 -- table is a relation name from the catalogue, not input.
 			n, err := postgres.PurgeInBatches(ctx, s.pool, fmt.Sprintf(
-				`DELETE FROM %s WHERE ctid = ANY(ARRAY(SELECT ctid FROM %s WHERE tenant_id = $1 LIMIT $2))`, table, table), tenantID)
+				`DELETE FROM %s WHERE ctid = ANY(ARRAY(SELECT ctid FROM %s WHERE organization_id = $1 LIMIT $2))`, table, table), organizationID)
 			if n > 0 {
 				rows[table] += n
 			}
@@ -214,10 +214,10 @@ func (s *Service) purgeTenantRows(ctx context.Context, tenantID uuid.UUID, rows 
 				return fmt.Errorf("%s: %w", table, err)
 			}
 			// A backlog past one call's batches is finished next run, before
-			// the organisation itself goes.
+			// the organization itself goes.
 			var left bool
 			// #nosec G201 -- table is a relation name from the catalogue, not input.
-			if err := s.pool.QueryRow(ctx, fmt.Sprintf(`SELECT EXISTS (SELECT 1 FROM %s WHERE tenant_id = $1)`, table), tenantID).Scan(&left); err != nil {
+			if err := s.pool.QueryRow(ctx, fmt.Sprintf(`SELECT EXISTS (SELECT 1 FROM %s WHERE organization_id = $1)`, table), organizationID).Scan(&left); err != nil {
 				return fmt.Errorf("%s: %w", table, err)
 			}
 			if left {

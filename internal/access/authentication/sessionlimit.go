@@ -16,7 +16,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// An organisation may cap the live sessions one person holds in it
+// An organization may cap the live sessions one person holds in it
 // (max_sessions). At the cap a new sign-in either ends the least recently used
 // session (evict_oldest, the default) or is refused. The check runs under the
 // account's lock, so concurrent sign-ins can't both pass.
@@ -26,12 +26,12 @@ const (
 	sessionLimitRefuse = "refuse"
 )
 
-func (s *Service) enforceSessionLimit(ctx context.Context, tx pgx.Tx, userID, tenantID uuid.UUID, ip, ua string) error {
+func (s *Service) enforceSessionLimit(ctx context.Context, tx pgx.Tx, userID, organizationID uuid.UUID, ip, ua string) error {
 	var max *int32
 	var action string
 	err := tx.QueryRow(ctx, `
-		SELECT max_sessions, session_limit_action FROM tenant.security_policies WHERE tenant_id = $1`,
-		tenantID).Scan(&max, &action)
+		SELECT max_sessions, session_limit_action FROM organization.security_policies WHERE organization_id = $1`,
+		organizationID).Scan(&max, &action)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && max == nil) {
 		return nil
 	}
@@ -46,9 +46,9 @@ func (s *Service) enforceSessionLimit(ctx context.Context, tx pgx.Tx, userID, te
 	}
 	rows, err := tx.Query(ctx, `
 		SELECT id FROM auth.sessions
-		WHERE user_id = $1 AND tenant_id = $2 AND revoked_at IS NULL
+		WHERE user_id = $1 AND organization_id = $2 AND revoked_at IS NULL
 		  AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
-		ORDER BY last_seen_at, created_at`, userID, tenantID)
+		ORDER BY last_seen_at, created_at`, userID, organizationID)
 	if err != nil {
 		return err
 	}
@@ -60,11 +60,11 @@ func (s *Service) enforceSessionLimit(ctx context.Context, tx pgx.Tx, userID, te
 	if over <= 0 {
 		return nil
 	}
-	tid := tenantID
+	tid := organizationID
 	if action == sessionLimitRefuse {
 		// Recorded by signInFailed once the sign-in it describes is rolled back.
 		return &sessionLimitRefusal{event: audit.Event{
-			TenantID: &tid, ActorUserID: &userID, ActorType: "user",
+			OrganizationID: &tid, ActorUserID: &userID, ActorType: "user",
 			Action: "auth.sign_in_refused_session_limit", ResourceType: "user", ResourceID: &userID,
 			IP: ip, UserAgent: ua,
 			Metadata: map[string]any{"max_sessions": *max, "live_sessions": len(live)},
@@ -76,10 +76,10 @@ func (s *Service) enforceSessionLimit(ctx context.Context, tx pgx.Tx, userID, te
 	}
 	ended := make([]sessionsignal.Session, len(evicted))
 	for i, id := range evicted {
-		ended[i] = sessionsignal.Session{ID: id, UserID: userID, TenantID: tenantID}
+		ended[i] = sessionsignal.Session{ID: id, UserID: userID, OrganizationID: organizationID}
 		sid := id
 		if err := audit.Record(ctx, tx, audit.Event{
-			TenantID: &tid, ActorUserID: &userID, ActorType: "system",
+			OrganizationID: &tid, ActorUserID: &userID, ActorType: "system",
 			Action: "auth.session_evicted", ResourceType: "session", ResourceID: &sid,
 			IP: ip, UserAgent: ua,
 			Metadata: map[string]any{"reason": "session_limit", "max_sessions": *max},

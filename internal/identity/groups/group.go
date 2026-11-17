@@ -1,4 +1,4 @@
-// Package group manages a tenant's group hierarchy, its members, group
+// Package group manages an organization's group hierarchy, its members, group
 // templates and bulk import. Roles granted to groups belong to the rbac
 // package. Each mutation commits its audit row in the same transaction.
 package group
@@ -27,14 +27,14 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
-// Group is a tenant group.
+// Group is an organization group.
 type Group struct {
-	ID          uuid.UUID  `json:"id"`
-	TenantID    uuid.UUID  `json:"tenant_id"`
-	ParentID    *uuid.UUID `json:"parent_id"`
-	Name        string     `json:"name"`
-	Description string     `json:"description"`
-	CreatedAt   time.Time  `json:"created_at"`
+	ID             uuid.UUID  `json:"id"`
+	OrganizationID uuid.UUID  `json:"tenant_id"`
+	ParentID       *uuid.UUID `json:"parent_id"`
+	Name           string     `json:"name"`
+	Description    string     `json:"description"`
+	CreatedAt      time.Time  `json:"created_at"`
 	// MemberCount is set by List only; Create and Update leave it zero.
 	MemberCount int `json:"member_count"`
 	// Roles are the roles granted to the group itself, set by List only for a
@@ -61,15 +61,15 @@ func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool)}
 }
 
-// SeatGuard keeps the people holding a role in a tenant within its plan's
+// SeatGuard keeps the people holding a role in an organization within its plan's
 // seats. Satisfied by *invite.Service.
 type SeatGuard interface {
-	// SeatLimit returns the tenant's seat cap, negative for none; it reads on
+	// SeatLimit returns the organization's seat cap, negative for none; it reads on
 	// the pool, so it is asked before the transaction.
-	SeatLimit(ctx context.Context, tenantID uuid.UUID) (int, error)
+	SeatLimit(ctx context.Context, organizationID uuid.UUID) (int, error)
 	// WithinSeats runs change in tx and refuses it when it gives someone a
 	// first role beyond limit.
-	WithinSeats(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, limit int, change func() error) error
+	WithinSeats(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, limit int, change func() error) error
 }
 
 // SetSeatGuard wires the seat limit (nil disables it).
@@ -77,10 +77,10 @@ func (s *Service) SetSeatGuard(g SeatGuard) { s.seats = g }
 
 // CreateInput is what Create takes.
 type CreateInput struct {
-	TenantID    uuid.UUID  `json:"tenant_id"`
-	ParentID    *uuid.UUID `json:"parent_id"`
-	Name        string     `json:"name"`
-	Description string     `json:"description"`
+	OrganizationID uuid.UUID  `json:"tenant_id"`
+	ParentID       *uuid.UUID `json:"parent_id"`
+	Name           string     `json:"name"`
+	Description    string     `json:"description"`
 }
 
 // UpdateInput is a partial update: a field left out of the request keeps its
@@ -132,23 +132,23 @@ func pgtypeToUUIDPtr(p pgtype.UUID) *uuid.UUID {
 
 func groupFromInsertRow(row dbgen.InsertGroupRow) Group {
 	return Group{
-		ID:          row.ID,
-		TenantID:    row.TenantID,
-		ParentID:    pgtypeToUUIDPtr(row.ParentID),
-		Name:        row.Name,
-		Description: row.Description,
-		CreatedAt:   row.CreatedAt,
+		ID:             row.ID,
+		OrganizationID: row.OrganizationID,
+		ParentID:       pgtypeToUUIDPtr(row.ParentID),
+		Name:           row.Name,
+		Description:    row.Description,
+		CreatedAt:      row.CreatedAt,
 	}
 }
 
 func groupFromUpdateRow(row dbgen.UpdateGroupRow) Group {
 	return Group{
-		ID:          row.ID,
-		TenantID:    row.TenantID,
-		ParentID:    pgtypeToUUIDPtr(row.ParentID),
-		Name:        row.Name,
-		Description: row.Description,
-		CreatedAt:   row.CreatedAt,
+		ID:             row.ID,
+		OrganizationID: row.OrganizationID,
+		ParentID:       pgtypeToUUIDPtr(row.ParentID),
+		Name:           row.Name,
+		Description:    row.Description,
+		CreatedAt:      row.CreatedAt,
 	}
 }
 
@@ -157,8 +157,8 @@ var errGroupUnnamed = errs.ErrValidationFailed.WithFields([]errs.FieldError{{
 	Field: "name", Code: "required", Message: "Give the group a name.",
 }})
 
-// Create adds a group to the tenant. Its name is trimmed and must be unique in
-// the tenant, ignoring case; a taken one returns errs.ErrGroupNameExists.
+// Create adds a group to the organization. Its name is trimmed and must be unique in
+// the organization, ignoring case; a taken one returns errs.ErrGroupNameExists.
 func (s *Service) Create(ctx context.Context, in CreateInput, actor audit.Actor) (*Group, error) {
 	in.Name = strings.TrimSpace(in.Name)
 	if in.Name == "" {
@@ -170,9 +170,9 @@ func (s *Service) Create(ctx context.Context, in CreateInput, actor audit.Actor)
 	}
 	defer tx.Rollback(ctx)
 
-	// The parent is caller-supplied and must be one of this tenant's groups.
+	// The parent is caller-supplied and must be one of this organization's groups.
 	if in.ParentID != nil {
-		ok, err := s.q.WithTx(tx).GroupExists(ctx, dbgen.GroupExistsParams{ID: *in.ParentID, TenantID: in.TenantID})
+		ok, err := s.q.WithTx(tx).GroupExists(ctx, dbgen.GroupExistsParams{ID: *in.ParentID, OrganizationID: in.OrganizationID})
 		if err != nil {
 			return nil, err
 		}
@@ -181,10 +181,10 @@ func (s *Service) Create(ctx context.Context, in CreateInput, actor audit.Actor)
 		}
 	}
 	row, err := s.q.WithTx(tx).InsertGroup(ctx, dbgen.InsertGroupParams{
-		TenantID:    in.TenantID,
-		ParentID:    uuidPtrToPgtype(in.ParentID),
-		Name:        in.Name,
-		Description: in.Description,
+		OrganizationID: in.OrganizationID,
+		ParentID:       uuidPtrToPgtype(in.ParentID),
+		Name:           in.Name,
+		Description:    in.Description,
 	})
 	if pgxerr.IsUnique(err) {
 		return nil, errs.ErrGroupNameExists
@@ -193,7 +193,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput, actor audit.Actor)
 		return nil, err
 	}
 	g := groupFromInsertRow(row)
-	if err := audit.Record(ctx, tx, actor.Event(g.TenantID, "group.created", "group", g.ID,
+	if err := audit.Record(ctx, tx, actor.Event(g.OrganizationID, "group.created", "group", g.ID,
 		map[string]any{"name": g.Name, "parent_id": g.ParentID})); err != nil {
 		return nil, err
 	}
@@ -206,20 +206,20 @@ func (s *Service) Create(ctx context.Context, in CreateInput, actor audit.Actor)
 	return &g, nil
 }
 
-// List returns the tenant's groups with their member counts, counted in one
+// List returns the organization's groups with their member counts, counted in one
 // LEFT JOIN rather than a query per group: at most paging.MaxListItems+1, as
 // the handler truncates the rest.
-func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Group, error) {
+func (s *Service) List(ctx context.Context, organizationID uuid.UUID) ([]Group, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT g.id, g.tenant_id, g.parent_id, g.name, g.description, g.created_at,
+		SELECT g.id, g.organization_id, g.parent_id, g.name, g.description, g.created_at,
 		       COUNT(gm.user_id) AS member_count
-		FROM tenant.groups g
-		LEFT JOIN tenant.group_members gm ON gm.group_id = g.id
-		WHERE g.tenant_id = $1
+		FROM organization.groups g
+		LEFT JOIN organization.group_members gm ON gm.group_id = g.id
+		WHERE g.organization_id = $1
 		GROUP BY g.id
 		ORDER BY g.name
 		LIMIT 1001
-	`, tenantID)
+	`, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -229,7 +229,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Group, error)
 	for rows.Next() {
 		var g Group
 		var parent pgtype.UUID
-		if err := rows.Scan(&g.ID, &g.TenantID, &parent, &g.Name, &g.Description,
+		if err := rows.Scan(&g.ID, &g.OrganizationID, &parent, &g.Name, &g.Description,
 			&g.CreatedAt, &g.MemberCount); err != nil {
 			return nil, err
 		}
@@ -239,16 +239,16 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Group, error)
 	return out, rows.Err()
 }
 
-// WithRoles sets on each of the tenant's groups the roles granted to it, all
+// WithRoles sets on each of the organization's groups the roles granted to it, all
 // read in one query.
-func (s *Service) WithRoles(ctx context.Context, tenantID uuid.UUID, groups []Group) error {
+func (s *Service) WithRoles(ctx context.Context, organizationID uuid.UUID, groups []Group) error {
 	rows, err := s.pool.Query(ctx, `
 		SELECT gr.group_id, gr.role_id, ro.name
 		FROM rbac.group_roles gr
-		JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.tenant_id = gr.tenant_id
-		WHERE gr.tenant_id = $1
+		JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.organization_id = gr.organization_id
+		WHERE gr.organization_id = $1
 		ORDER BY ro.name, gr.role_id
-	`, tenantID)
+	`, organizationID)
 	if err != nil {
 		return err
 	}
@@ -292,35 +292,35 @@ func filterByRoles(groups []Group, role *uuid.UUID, grants string) []Group {
 	return out
 }
 
-// Delete removes one of the tenant's groups and its subgroups, recorded as
+// Delete removes one of the organization's groups and its subgroups, recorded as
 // actor's.
-func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
+func (s *Service) Delete(ctx context.Context, id, organizationID uuid.UUID, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 
-	name, err := s.q.WithTx(tx).DeleteGroup(ctx, dbgen.DeleteGroupParams{ID: id, TenantID: tenantID})
+	name, err := s.q.WithTx(tx).DeleteGroup(ctx, dbgen.DeleteGroupParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return errs.ErrGroupNotFound
 	}
 	if err != nil {
 		return err
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "group.deleted", "group", id,
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "group.deleted", "group", id,
 		map[string]any{"name": name})); err != nil {
 		return err
 	}
-	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "group.events", EventType: "group.deleted", Payload: map[string]any{"id": id, "tenant_id": tenantID, "name": name}}); err != nil {
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "group.events", EventType: "group.deleted", Payload: map[string]any{"id": id, "tenant_id": organizationID, "name": name}}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
 
 // Update changes the fields in sets. A new name is trimmed and must be unique in
-// the tenant, ignoring case; a taken one returns errs.ErrGroupNameExists.
-func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateInput, actor audit.Actor) (*Group, error) {
+// the organization, ignoring case; a taken one returns errs.ErrGroupNameExists.
+func (s *Service) Update(ctx context.Context, id, organizationID uuid.UUID, in UpdateInput, actor audit.Actor) (*Group, error) {
 	if in.Name != nil {
 		name := strings.TrimSpace(*in.Name)
 		if name == "" {
@@ -335,11 +335,11 @@ func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateI
 	defer tx.Rollback(ctx)
 
 	q := s.q.WithTx(tx)
-	// A new parent must be one of this tenant's groups, and not the group
+	// A new parent must be one of this organization's groups, and not the group
 	// itself or one of its subgroups, which would make the hierarchy loop.
 	if in.ParentID.Set && in.ParentID.ID != nil {
 		parent := *in.ParentID.ID
-		ok, err := q.GroupExists(ctx, dbgen.GroupExistsParams{ID: parent, TenantID: tenantID})
+		ok, err := q.GroupExists(ctx, dbgen.GroupExistsParams{ID: parent, OrganizationID: organizationID})
 		if err != nil {
 			return nil, err
 		}
@@ -347,7 +347,7 @@ func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateI
 			return nil, errs.ErrGroupParentNotFound
 		}
 		loops, err := q.IsGroupOrDescendant(ctx, dbgen.IsGroupOrDescendantParams{
-			GroupID: id, TenantID: tenantID, CandidateID: parent,
+			GroupID: id, OrganizationID: organizationID, CandidateID: parent,
 		})
 		if err != nil {
 			return nil, err
@@ -357,12 +357,12 @@ func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateI
 		}
 	}
 	row, err := q.UpdateGroup(ctx, dbgen.UpdateGroupParams{
-		Name:        in.Name,
-		Description: in.Description,
-		SetParent:   in.ParentID.Set,
-		ParentID:    uuidPtrToPgtype(in.ParentID.ID),
-		ID:          id,
-		TenantID:    tenantID,
+		Name:           in.Name,
+		Description:    in.Description,
+		SetParent:      in.ParentID.Set,
+		ParentID:       uuidPtrToPgtype(in.ParentID.ID),
+		ID:             id,
+		OrganizationID: organizationID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrGroupNotFound
@@ -374,7 +374,7 @@ func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateI
 		return nil, err
 	}
 	g := groupFromUpdateRow(row)
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "group.updated", "group", id,
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "group.updated", "group", id,
 		map[string]any{"name": g.Name, "parent_id": g.ParentID})); err != nil {
 		return nil, err
 	}
@@ -384,14 +384,14 @@ func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateI
 	return &g, tx.Commit(ctx)
 }
 
-// AddMember adds a user to one of the tenant's groups, recorded as actor's.
+// AddMember adds a user to one of the organization's groups, recorded as actor's.
 // Joining a group that carries a role gives a user holding none a seat,
 // refused with errs.ErrPlanLimit once the plan's seats are all taken.
-func (s *Service) AddMember(ctx context.Context, groupID, userID, tenantID uuid.UUID, actor audit.Actor) error {
+func (s *Service) AddMember(ctx context.Context, groupID, userID, organizationID uuid.UUID, actor audit.Actor) error {
 	limit := -1
 	if s.seats != nil {
 		var err error
-		if limit, err = s.seats.SeatLimit(ctx, tenantID); err != nil {
+		if limit, err = s.seats.SeatLimit(ctx, organizationID); err != nil {
 			return err
 		}
 	}
@@ -401,18 +401,18 @@ func (s *Service) AddMember(ctx context.Context, groupID, userID, tenantID uuid.
 	}
 	defer tx.Rollback(ctx)
 
-	// Only add to a group that belongs to this tenant.
-	exists, err := s.q.WithTx(tx).GroupExists(ctx, dbgen.GroupExistsParams{ID: groupID, TenantID: tenantID})
+	// Only add to a group that belongs to this organization.
+	exists, err := s.q.WithTx(tx).GroupExists(ctx, dbgen.GroupExistsParams{ID: groupID, OrganizationID: organizationID})
 	if err != nil {
 		return err
 	}
 	if !exists {
 		return errs.ErrGroupNotFound
 	}
-	// Only add someone who is a live member of this tenant; the insert checks it.
+	// Only add someone who is a live member of this organization; the insert checks it.
 	insert := func() error {
 		valid, err := s.q.WithTx(tx).InsertGroupMember(ctx, dbgen.InsertGroupMemberParams{
-			GroupID: groupID, UserID: userID, TenantID: tenantID,
+			GroupID: groupID, UserID: userID, OrganizationID: organizationID,
 		})
 		if err == nil && !valid {
 			err = errs.ErrGroupUserNotFound
@@ -420,26 +420,26 @@ func (s *Service) AddMember(ctx context.Context, groupID, userID, tenantID uuid.
 		return err
 	}
 	if s.seats != nil {
-		err = s.seats.WithinSeats(ctx, tx, tenantID, limit, insert)
+		err = s.seats.WithinSeats(ctx, tx, organizationID, limit, insert)
 	} else {
 		err = insert()
 	}
 	if err != nil {
 		return err
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "group.member_added", "group", groupID,
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "group.member_added", "group", groupID,
 		map[string]any{"user_id": userID})); err != nil {
 		return err
 	}
-	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: groupID, Topic: "group.events", EventType: "group.member_added", Payload: map[string]any{"group_id": groupID, "user_id": userID, "tenant_id": tenantID}}); err != nil {
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: groupID, Topic: "group.events", EventType: "group.member_added", Payload: map[string]any{"group_id": groupID, "user_id": userID, "tenant_id": organizationID}}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
 
-// RemoveMember removes a user from one of the tenant's groups, recorded as
+// RemoveMember removes a user from one of the organization's groups, recorded as
 // actor's.
-func (s *Service) RemoveMember(ctx context.Context, groupID, userID, tenantID uuid.UUID, actor audit.Actor) error {
+func (s *Service) RemoveMember(ctx context.Context, groupID, userID, organizationID uuid.UUID, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -447,7 +447,7 @@ func (s *Service) RemoveMember(ctx context.Context, groupID, userID, tenantID uu
 	defer tx.Rollback(ctx)
 
 	n, err := s.q.WithTx(tx).DeleteGroupMember(ctx, dbgen.DeleteGroupMemberParams{
-		GroupID: groupID, UserID: userID, TenantID: tenantID,
+		GroupID: groupID, UserID: userID, OrganizationID: organizationID,
 	})
 	if err != nil {
 		return err
@@ -456,11 +456,11 @@ func (s *Service) RemoveMember(ctx context.Context, groupID, userID, tenantID uu
 	if n == 0 {
 		return nil
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "group.member_removed", "group", groupID,
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "group.member_removed", "group", groupID,
 		map[string]any{"user_id": userID})); err != nil {
 		return err
 	}
-	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: groupID, Topic: "group.events", EventType: "group.member_removed", Payload: map[string]any{"group_id": groupID, "user_id": userID, "tenant_id": tenantID}}); err != nil {
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: groupID, Topic: "group.events", EventType: "group.member_removed", Payload: map[string]any{"group_id": groupID, "user_id": userID, "tenant_id": organizationID}}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -473,9 +473,9 @@ type Member struct {
 	DisplayName *string   `json:"display_name"`
 }
 
-// ListMembers returns the members of one of the tenant's groups.
-func (s *Service) ListMembers(ctx context.Context, groupID, tenantID uuid.UUID) ([]Member, error) {
-	rows, err := s.q.ListGroupMembers(ctx, dbgen.ListGroupMembersParams{GroupID: groupID, TenantID: tenantID})
+// ListMembers returns the members of one of the organization's groups.
+func (s *Service) ListMembers(ctx context.Context, groupID, organizationID uuid.UUID) ([]Member, error) {
+	rows, err := s.q.ListGroupMembers(ctx, dbgen.ListGroupMembersParams{GroupID: groupID, OrganizationID: organizationID})
 	if err != nil {
 		return nil, err
 	}
@@ -496,11 +496,11 @@ type Handler struct {
 	// GrantCheck refuses adding someone to a group, taking them out or deleting
 	// it, when its roles carry authority the caller doesn't hold
 	// (rbac.Repository.CheckGrantGroup). Without it all three are refused.
-	GrantCheck func(ctx context.Context, caller *httpx.Principal, tenantID, groupID uuid.UUID) error
+	GrantCheck func(ctx context.Context, caller *httpx.Principal, organizationID, groupID uuid.UUID) error
 	// ActOnCheck refuses taking someone out of a group when they outrank the
 	// caller (rbac.Repository.CheckActOn). Without it removing a member is
 	// refused.
-	ActOnCheck func(ctx context.Context, caller *httpx.Principal, tenantID, userID uuid.UUID) error
+	ActOnCheck func(ctx context.Context, caller *httpx.Principal, organizationID, userID uuid.UUID) error
 	// ReadsRoles reports whether the caller may read roles (role.read), and so
 	// sees each listed group's roles. Without it no one does.
 	ReadsRoles func(r *http.Request) bool
@@ -518,7 +518,7 @@ func (h *Handler) Mount(r chi.Router) {
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.RequireTenant(r)
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -528,7 +528,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	in.TenantID = tenantID // scope from principal, never the body
+	in.OrganizationID = organizationID // scope from principal, never the body
 	g, err := h.Service.Create(r.Context(), in, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -543,12 +543,12 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
 		return
 	}
-	tenantID, err := httpx.RequireTenant(r)
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if tid != tenantID {
+	if tid != organizationID {
 		httpx.WriteError(w, r, errs.ErrForbidden.WithDetail("tenant mismatch"))
 		return
 	}
@@ -572,13 +572,13 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrRBACPermissionDenied.WithDetail("filtering by role needs role.read"))
 		return
 	}
-	out, err := h.Service.List(r.Context(), tenantID)
+	out, err := h.Service.List(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	if readsRoles {
-		if err := h.Service.WithRoles(r.Context(), tenantID, out); err != nil {
+		if err := h.Service.WithRoles(r.Context(), organizationID, out); err != nil {
 			httpx.WriteError(w, r, err)
 			return
 		}
@@ -593,18 +593,18 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	tenantID, err := httpx.RequireTenant(r)
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	// Deleting a group takes its roles from everyone in it, so it is held to
 	// the rule for giving them.
-	if err := h.grant(r, tenantID, id); err != nil {
+	if err := h.grant(r, organizationID, id); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.Delete(r.Context(), id, tenantID, audit.ActorOf(r)); err != nil {
+	if err := h.Service.Delete(r.Context(), id, organizationID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -617,7 +617,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	tenantID, err := httpx.RequireTenant(r)
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -627,7 +627,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	g, err := h.Service.Update(r.Context(), id, tenantID, in, audit.ActorOf(r))
+	g, err := h.Service.Update(r.Context(), id, organizationID, in, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -646,16 +646,16 @@ func (h *Handler) addMember(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid userID"))
 		return
 	}
-	tenantID, err := httpx.RequireTenant(r)
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.grant(r, tenantID, id); err != nil {
+	if err := h.grant(r, organizationID, id); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.AddMember(r.Context(), id, uid, tenantID, audit.ActorOf(r)); err != nil {
+	if err := h.Service.AddMember(r.Context(), id, uid, organizationID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -673,14 +673,14 @@ func (h *Handler) removeMember(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid userID"))
 		return
 	}
-	tenantID, err := httpx.RequireTenant(r)
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	// Taking someone out of a group takes its roles from them: held to the rule
 	// for giving them, and to their standing, as removing a role is.
-	if err := h.grant(r, tenantID, id); err != nil {
+	if err := h.grant(r, organizationID, id); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -688,25 +688,25 @@ func (h *Handler) removeMember(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrNotImplemented)
 		return
 	}
-	if err := h.ActOnCheck(r.Context(), httpx.PrincipalFromCtx(r.Context()), tenantID, uid); err != nil {
+	if err := h.ActOnCheck(r.Context(), httpx.PrincipalFromCtx(r.Context()), organizationID, uid); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.RemoveMember(r.Context(), id, uid, tenantID, audit.ActorOf(r)); err != nil {
+	if err := h.Service.RemoveMember(r.Context(), id, uid, organizationID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// grant refuses the caller giving or taking away group id's roles in tenantID
+// grant refuses the caller giving or taking away group id's roles in organizationID
 // when they lack what the roles carry (GrantCheck); without the check it
 // refuses every caller.
-func (h *Handler) grant(r *http.Request, tenantID, id uuid.UUID) error {
+func (h *Handler) grant(r *http.Request, organizationID, id uuid.UUID) error {
 	if h.GrantCheck == nil {
 		return errs.ErrNotImplemented
 	}
-	return h.GrantCheck(r.Context(), httpx.PrincipalFromCtx(r.Context()), tenantID, id)
+	return h.GrantCheck(r.Context(), httpx.PrincipalFromCtx(r.Context()), organizationID, id)
 }
 
 func (h *Handler) listMembers(w http.ResponseWriter, r *http.Request) {
@@ -715,12 +715,12 @@ func (h *Handler) listMembers(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	tenantID, err := httpx.RequireTenant(r)
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out, err := h.Service.ListMembers(r.Context(), id, tenantID)
+	out, err := h.Service.ListMembers(r.Context(), id, organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

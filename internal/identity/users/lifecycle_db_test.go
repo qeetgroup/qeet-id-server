@@ -40,18 +40,18 @@ func listed(page SuspendedPage, id uuid.UUID) (SuspendedUser, bool) {
 // TestSuspensionEndsSessionsAndIsReviewed checks that suspending a person ends
 // their sessions and records it once, that the suspension is listed and
 // reviewed, that the person can't reactivate themselves, and that another
-// organisation sees a suspension it doesn't manage without its details.
+// organization sees a suspension it doesn't manage without its details.
 func TestSuspensionEndsSessionsAndIsReviewed(t *testing.T) {
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	target := dbtest.User(t, tenant, tenant)
-	session(t, target.ID, tenant, "")
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	target := dbtest.User(t, organization, organization)
+	session(t, target.ID, organization, "")
 	session(t, target.ID, nil, "")
-	guest := dbtest.User(t, other, other, tenant)
+	guest := dbtest.User(t, other, other, organization)
 	exec(t, `UPDATE account.users SET status = 'suspended' WHERE id = $1`, guest.ID)
 	exec(t, `UPDATE account.users SET suspension_reason = 'account_compromise', suspension_risk = 'high' WHERE id = $1`, guest.ID)
 	h := testHandler(t, nil)
-	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), h.Mount)
+	as := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)
 	path := "/users/" + target.ID.String()
 
 	for range 2 {
@@ -63,7 +63,7 @@ func TestSuspensionEndsSessionsAndIsReviewed(t *testing.T) {
 	if n := liveSessions(t, target.ID); n != 0 {
 		t.Errorf("%d sessions are still live after the suspension", n)
 	}
-	if n := audited(t, tenant, "user.suspended", target.ID); n != 1 {
+	if n := audited(t, organization, "user.suspended", target.ID); n != 1 {
 		t.Errorf("suspending twice recorded %d user.suspended audit events, want 1", n)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM platform.outbox WHERE aggregate_id = $1 AND event_type = 'user.suspended'`, target.ID); n != 1 {
@@ -102,7 +102,7 @@ func TestSuspensionEndsSessionsAndIsReviewed(t *testing.T) {
 		t.Errorf("review with an unknown reason: %d, want 400", rec.Code)
 	}
 
-	asTarget := dbtest.Serve(dbtest.Principal(target.ID, tenant), h.Mount)
+	asTarget := dbtest.Serve(dbtest.Principal(target.ID, organization), h.Mount)
 	if rec := dbtest.Do(t, asTarget, http.MethodPatch, path, map[string]any{"status": "active"}); rec.Code != http.StatusForbidden {
 		t.Errorf("the person lifting their own suspension: %d, want 403", rec.Code)
 	}
@@ -114,7 +114,7 @@ func TestSuspensionEndsSessionsAndIsReviewed(t *testing.T) {
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"status":"active"`) {
 		t.Fatalf("reactivate: %d %s", rec.Code, rec.Body.String())
 	}
-	if n := audited(t, tenant, "user.reactivated", target.ID); n != 1 {
+	if n := audited(t, organization, "user.reactivated", target.ID); n != 1 {
 		t.Errorf("%d user.reactivated audit events, want 1", n)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND suspended_at IS NULL AND suspension_reason IS NULL`, target.ID); n != 1 {
@@ -130,17 +130,17 @@ func TestSuspensionEndsSessionsAndIsReviewed(t *testing.T) {
 
 // TestDeleteRestoreAndPurge checks the recycle bin: a deletion records who did
 // it and ends the person's sessions, restoring brings back the account but no
-// session, a purge removes only a deleted account, and another organisation
+// session, a purge removes only a deleted account, and another organization
 // can do none of it.
 func TestDeleteRestoreAndPurge(t *testing.T) {
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
 	otherAdmin := dbtest.User(t, other, other)
-	target := dbtest.User(t, tenant, tenant)
+	target := dbtest.User(t, organization, organization)
 	dbtest.SetPassword(t, target.ID, "Kx7mQ2vLp9Wz")
-	session(t, target.ID, tenant, "")
+	session(t, target.ID, organization, "")
 	h := testHandler(t, nil)
-	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), h.Mount)
+	as := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)
 	asOther := dbtest.Serve(dbtest.Principal(otherAdmin.ID, other), h.Mount)
 	path := "/users/" + target.ID.String()
 
@@ -153,7 +153,7 @@ func TestDeleteRestoreAndPurge(t *testing.T) {
 	if n := liveSessions(t, target.ID); n != 0 {
 		t.Errorf("%d sessions are still live after the deletion", n)
 	}
-	if n := audited(t, tenant, "user.deleted", target.ID); n != 1 {
+	if n := audited(t, organization, "user.deleted", target.ID); n != 1 {
 		t.Errorf("%d user.deleted audit events, want 1", n)
 	}
 	if rec := dbtest.Do(t, as, http.MethodGet, path, nil); rec.Code != http.StatusNotFound {
@@ -184,7 +184,7 @@ func TestDeleteRestoreAndPurge(t *testing.T) {
 	if n := liveSessions(t, target.ID); n != 0 {
 		t.Errorf("restoring the account brought back %d sessions", n)
 	}
-	if n := audited(t, tenant, "user.restored", target.ID); n != 1 {
+	if n := audited(t, organization, "user.restored", target.ID); n != 1 {
 		t.Errorf("%d user.restored audit events, want 1", n)
 	}
 	if rec := dbtest.Do(t, as, http.MethodPost, path+"/restore", nil); rec.Code != http.StatusNotFound {
@@ -203,7 +203,7 @@ func TestDeleteRestoreAndPurge(t *testing.T) {
 	if n := dbtest.Count(t, `SELECT (SELECT count(*) FROM account.users WHERE id = $1) + (SELECT count(*) FROM auth.password_credentials WHERE user_id = $1)`, target.ID); n != 0 {
 		t.Error("the purge left the account or its password behind")
 	}
-	if n := audited(t, tenant, "user.purged", target.ID); n != 1 {
+	if n := audited(t, organization, "user.purged", target.ID); n != 1 {
 		t.Errorf("%d user.purged audit events, want 1", n)
 	}
 	if rec := dbtest.Do(t, as, http.MethodPost, path+"/restore", nil); rec.Code != http.StatusNotFound {
@@ -214,10 +214,10 @@ func TestDeleteRestoreAndPurge(t *testing.T) {
 // TestRestoreWithATakenEmail checks that restoring an account whose email a
 // newer account has taken meanwhile is refused as a conflict.
 func TestRestoreWithATakenEmail(t *testing.T) {
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	target := dbtest.User(t, tenant, tenant)
-	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), testHandler(t, nil).Mount)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	target := dbtest.User(t, organization, organization)
+	as := dbtest.Serve(dbtest.Principal(admin.ID, organization), testHandler(t, nil).Mount)
 	if rec := dbtest.Do(t, as, http.MethodDelete, "/users/"+target.ID.String(), nil); rec.Code != http.StatusOK {
 		t.Fatalf("delete: %d %s", rec.Code, rec.Body.String())
 	}
@@ -228,7 +228,7 @@ func TestRestoreWithATakenEmail(t *testing.T) {
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), errs.CodeAuthEmailExists) {
 		t.Errorf("restore an account whose email is taken: %d %s, want 409 %s", rec.Code, rec.Body.String(), errs.CodeAuthEmailExists)
 	}
-	if n := audited(t, tenant, "user.restored", target.ID); n != 0 {
+	if n := audited(t, organization, "user.restored", target.ID); n != 0 {
 		t.Errorf("a refused restore was recorded %d times", n)
 	}
 }
@@ -236,16 +236,16 @@ func TestRestoreWithATakenEmail(t *testing.T) {
 // TestRecycleBinActionsAreTheAdministrators checks that a restore and a purge
 // are recorded as the administrator's, with where they came from.
 func TestRecycleBinActionsAreTheAdministrators(t *testing.T) {
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	target := dbtest.User(t, tenant, tenant)
-	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), testHandler(t, nil).Mount)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	target := dbtest.User(t, organization, organization)
+	as := dbtest.Serve(dbtest.Principal(admin.ID, organization), testHandler(t, nil).Mount)
 	path := "/users/" + target.ID.String()
 	byAdmin := func(action string) int {
 		return dbtest.Count(t, `
 			SELECT count(*) FROM audit.events
-			WHERE tenant_id = $1 AND action = $2 AND resource_id = $3 AND actor_user_id = $4 AND actor_type = 'user'
-			  AND user_agent IS NOT NULL`, tenant, action, target.ID, admin.ID)
+			WHERE organization_id = $1 AND action = $2 AND resource_id = $3 AND actor_user_id = $4 AND actor_type = 'user'
+			  AND user_agent IS NOT NULL`, organization, action, target.ID, admin.ID)
 	}
 	for _, step := range []struct{ method, path, action string }{
 		{http.MethodDelete, path, "user.deleted"},
@@ -262,27 +262,27 @@ func TestRecycleBinActionsAreTheAdministrators(t *testing.T) {
 	}
 }
 
-// TestRemovingAMemberLeavesTheirHomeAlone checks that an organisation removing
+// TestRemovingAMemberLeavesTheirHomeAlone checks that an organization removing
 // a member from elsewhere takes away their roles, groups, sessions, grants and
-// API keys there and nothing in their home organisation, which can't remove
+// API keys there and nothing in their home organization, which can't remove
 // them this way.
 func TestRemovingAMemberLeavesTheirHomeAlone(t *testing.T) {
-	home, tenant := dbtest.Tenant(t), dbtest.Tenant(t)
+	home, organization := dbtest.Organization(t), dbtest.Organization(t)
 	homeAdmin := dbtest.User(t, home, home)
-	admin := dbtest.User(t, tenant, tenant)
-	member := dbtest.User(t, home, home, tenant)
-	for _, in := range []uuid.UUID{home, tenant} {
+	admin := dbtest.User(t, organization, organization)
+	member := dbtest.User(t, home, home, organization)
+	for _, in := range []uuid.UUID{home, organization} {
 		session(t, member.ID, in, "")
 		exec(t, `
-			WITH g AS (INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, $2) RETURNING id)
-			INSERT INTO tenant.group_members (group_id, user_id, tenant_id) SELECT id, $3, $1 FROM g
+			WITH g AS (INSERT INTO organization.groups (organization_id, name) VALUES ($1, $2) RETURNING id)
+			INSERT INTO organization.group_members (group_id, user_id, organization_id) SELECT id, $3, $1 FROM g
 		`, in, dbtest.Unique("group"), member.ID)
-		exec(t, `INSERT INTO auth.oidc_refresh_tokens (token_hash, client_id, user_id, tenant_id, expires_at)
+		exec(t, `INSERT INTO auth.oidc_refresh_tokens (token_hash, client_id, user_id, organization_id, expires_at)
 			VALUES (gen_random_uuid()::text, 'test-app', $1, $2, NOW() + INTERVAL '1 day')`, member.ID, in)
-		exec(t, `INSERT INTO auth.api_keys (tenant_id, user_id, name, prefix, key_hash) VALUES ($1, $2, 'key', 'prefix00', 'hash')`, in, member.ID)
+		exec(t, `INSERT INTO auth.api_keys (organization_id, user_id, name, prefix, key_hash) VALUES ($1, $2, 'key', 'prefix00', 'hash')`, in, member.ID)
 	}
 	h := testHandler(t, nil)
-	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), h.Mount)
+	as := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)
 	path := "/users/" + member.ID.String() + "/membership"
 
 	rec := dbtest.Do(t, as, http.MethodDelete, path, nil)
@@ -292,20 +292,20 @@ func TestRemovingAMemberLeavesTheirHomeAlone(t *testing.T) {
 		t.Fatalf("remove the member: %d %+v, want 1 role and 1 session", rec.Code, removal)
 	}
 	for _, left := range []struct{ what, sql string }{
-		{"roles", `SELECT count(*) FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2`},
-		{"groups", `SELECT count(*) FROM tenant.group_members WHERE user_id = $1 AND tenant_id = $2`},
-		{"sessions", `SELECT count(*) FROM auth.sessions WHERE user_id = $1 AND tenant_id = $2 AND revoked_at IS NULL`},
-		{"application grants", `SELECT count(*) FROM auth.oidc_refresh_tokens WHERE user_id = $1 AND tenant_id = $2 AND revoked_at IS NULL`},
-		{"API keys", `SELECT count(*) FROM auth.api_keys WHERE user_id = $1 AND tenant_id = $2 AND revoked_at IS NULL`},
+		{"roles", `SELECT count(*) FROM rbac.user_roles WHERE user_id = $1 AND organization_id = $2`},
+		{"groups", `SELECT count(*) FROM organization.group_members WHERE user_id = $1 AND organization_id = $2`},
+		{"sessions", `SELECT count(*) FROM auth.sessions WHERE user_id = $1 AND organization_id = $2 AND revoked_at IS NULL`},
+		{"application grants", `SELECT count(*) FROM auth.oidc_refresh_tokens WHERE user_id = $1 AND organization_id = $2 AND revoked_at IS NULL`},
+		{"API keys", `SELECT count(*) FROM auth.api_keys WHERE user_id = $1 AND organization_id = $2 AND revoked_at IS NULL`},
 	} {
-		if n := dbtest.Count(t, left.sql, member.ID, tenant); n != 0 {
+		if n := dbtest.Count(t, left.sql, member.ID, organization); n != 0 {
 			t.Errorf("%d %s are left in the organisation the member was removed from", n, left.what)
 		}
 		if n := dbtest.Count(t, left.sql, member.ID, home); n != 1 {
 			t.Errorf("removing the member elsewhere left %d %s in their home organisation, want 1", n, left.what)
 		}
 	}
-	if n := audited(t, tenant, "user.removed_from_organization", member.ID); n != 1 {
+	if n := audited(t, organization, "user.removed_from_organization", member.ID); n != 1 {
 		t.Errorf("%d user.removed_from_organization audit events, want 1", n)
 	}
 	if rec := dbtest.Do(t, as, http.MethodGet, "/users/"+member.ID.String(), nil); rec.Code != http.StatusNotFound {
@@ -321,16 +321,16 @@ func TestRemovingAMemberLeavesTheirHomeAlone(t *testing.T) {
 	}
 }
 
-// TestMemberFromElsewhereIsReadOnly checks that an organisation can read a
-// member whose account another organisation manages, but can't change, suspend,
+// TestMemberFromElsewhereIsReadOnly checks that an organization can read a
+// member whose account another organization manages, but can't change, suspend,
 // delete or sign them out, set their password or touch their second factors.
 func TestMemberFromElsewhereIsReadOnly(t *testing.T) {
-	home, tenant := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	member := dbtest.User(t, home, home, tenant)
+	home, organization := dbtest.Organization(t), dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	member := dbtest.User(t, home, home, organization)
 	session(t, member.ID, home, "")
 	h := testHandler(t, nil)
-	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), h.Mount)
+	as := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)
 	path := "/users/" + member.ID.String()
 
 	for _, read := range []string{path, path + "/security", path + "/sessions", path + "/access"} {
@@ -372,11 +372,11 @@ func TestMemberFromElsewhereIsReadOnly(t *testing.T) {
 
 // TestSuspendedPagesFollowTheirOrder checks that paging the suspended list by
 // its cursor reads every account once and in order: the newest suspension
-// first, ties by id, then the accounts another organisation manages, which
+// first, ties by id, then the accounts another organization manages, which
 // carry no suspension time, by id.
 func TestSuspendedPagesFollowTheirOrder(t *testing.T) {
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
 	at := time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
 	type dated struct {
 		id uuid.UUID
@@ -384,7 +384,7 @@ func TestSuspendedPagesFollowTheirOrder(t *testing.T) {
 	}
 	var own []dated
 	for _, when := range []time.Time{at, at.Add(time.Hour), at.Add(time.Hour)} {
-		u := dbtest.User(t, tenant, tenant)
+		u := dbtest.User(t, organization, organization)
 		// The suspension trigger stamps the time of any status change, so the
 		// chosen time is written after it.
 		exec(t, `UPDATE account.users SET status = 'suspended' WHERE id = $1`, u.ID)
@@ -393,7 +393,7 @@ func TestSuspendedPagesFollowTheirOrder(t *testing.T) {
 	}
 	var guests []uuid.UUID
 	for range 2 {
-		g := dbtest.User(t, other, other, tenant)
+		g := dbtest.User(t, other, other, organization)
 		exec(t, `UPDATE account.users SET status = 'suspended' WHERE id = $1`, g.ID)
 		guests = append(guests, g.ID)
 	}
@@ -410,7 +410,7 @@ func TestSuspendedPagesFollowTheirOrder(t *testing.T) {
 	}
 	want = append(want, guests...)
 
-	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), testHandler(t, nil).Mount)
+	as := dbtest.Serve(dbtest.Principal(admin.ID, organization), testHandler(t, nil).Mount)
 	var got []uuid.UUID
 	query := "?limit=2"
 	for range len(want) + 1 {
@@ -431,15 +431,15 @@ func TestSuspendedPagesFollowTheirOrder(t *testing.T) {
 // TestSuspendedSearchTakesWildcardsLiterally checks that _ and % in the
 // suspended-accounts search match only themselves.
 func TestSuspendedSearchTakesWildcardsLiterally(t *testing.T) {
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
 	names := map[string]uuid.UUID{}
 	for _, name := range []string{"qa_b", "qaXb", "100%", "plain"} {
-		u := dbtest.User(t, tenant, tenant)
+		u := dbtest.User(t, organization, organization)
 		exec(t, `UPDATE account.users SET status = 'suspended', display_name = $2 WHERE id = $1`, u.ID, name)
 		names[name] = u.ID
 	}
-	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), testHandler(t, nil).Mount)
+	as := dbtest.Serve(dbtest.Principal(admin.ID, organization), testHandler(t, nil).Mount)
 	for query, want := range map[string]string{"qa_b": "qa_b", "%": "100%"} {
 		page := suspendedPage(t, as, "?q="+url.QueryEscape(query))
 		if len(page.Items) != 1 || page.Items[0].ID != names[want] || page.Total != 1 {

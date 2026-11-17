@@ -16,16 +16,16 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// TestRulesAreManagedOverHTTP checks that an organisation's address rules are
+// TestRulesAreManagedOverHTTP checks that an organization's address rules are
 // added, listed, checked, removed and switched on and off over HTTP; that a
 // change locking the caller out is refused and not kept; that changes are
-// audited; and that another organisation can't see or remove them.
+// audited; and that another organization can't see or remove them.
 func TestRulesAreManagedOverHTTP(t *testing.T) {
 	svc := NewService(dbtest.Pool(t))
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: svc}).Mount)
-	base := "/tenants/" + tenant.String() + "/ip-rules"
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: svc}).Mount)
+	base := "/tenants/" + organization.String() + "/ip-rules"
 	// Every request comes from httptest's 192.0.2.1, the caller the lock-out guard protects.
 	add := func(cidr, action string) Rule {
 		t.Helper()
@@ -69,7 +69,7 @@ func TestRulesAreManagedOverHTTP(t *testing.T) {
 			t.Errorf("add %q: %d %s, want 422 %s", cidr, rec.Code, rec.Body.String(), errs.CodeRiskCIDRInvalid)
 		}
 	}
-	if r := add(" 198.51.100.0/24 ", ""); r.Action != "allow" || r.CIDR != "198.51.100.0/24" || r.TenantID != tenant {
+	if r := add(" 198.51.100.0/24 ", ""); r.Action != "allow" || r.CIDR != "198.51.100.0/24" || r.OrganizationID != organization {
 		t.Errorf("a rule added without an action: %+v; want an allow rule for the trimmed range", r)
 	}
 	if res := check(h, base, "203.0.113.9"); res.Enabled || !res.Allowed || res.ReasonCode != CodeEnforcementOff {
@@ -159,37 +159,37 @@ func TestRulesAreManagedOverHTTP(t *testing.T) {
 		t.Errorf("rules at the end: enabled %v, %s; want off, with the three allow rules", enabled, cidrs)
 	}
 	for action, want := range map[string]int{"ip_rules.rule_added": 4, "ip_rules.rule_removed": 1, "ip_rules.enforcement_changed": 2} {
-		if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = $2 AND actor_user_id = $3`,
-			tenant, action, admin.ID); n != want {
+		if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = $2 AND actor_user_id = $3`,
+			organization, action, admin.ID); n != want {
 			t.Errorf("%d %s records, want %d", n, action, want)
 		}
 	}
 	// Each rule change names the rule, and what it was.
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'ip_rules.rule_removed'
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'ip_rules.rule_removed'
 		AND resource_type = 'ip_rule' AND resource_id = $2 AND metadata->>'cidr' = '192.0.2.200' AND metadata->>'action' = 'deny'`,
-		tenant, host.ID); n != 1 {
+		organization, host.ID); n != 1 {
 		t.Errorf("%d removal records naming the deny rule, want 1", n)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'ip_rules.rule_added'
-		AND resource_id IS NOT NULL AND metadata ? 'cidr'`, tenant); n != 4 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'ip_rules.rule_added'
+		AND resource_id IS NOT NULL AND metadata ? 'cidr'`, organization); n != 4 {
 		t.Errorf("%d additions naming their rule, want 4", n)
 	}
 }
 
 // TestSignInIsJudgedByEnforcedRules checks that a sign-in is refused only by
-// an organisation's enforced rules, and that each refusal is recorded as
+// an organization's enforced rules, and that each refusal is recorded as
 // auth.address_refused with the rule responsible, whether it is checked in its
 // own transaction or the caller's.
 func TestSignInIsJudgedByEnforcedRules(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	svc := NewService(pool)
-	tenant := dbtest.Tenant(t)
-	user := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	user := dbtest.User(t, organization, organization)
 	refusals := func(path, cond string, args ...any) int {
 		t.Helper()
-		return dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'auth.address_refused'
-			AND metadata->>'path' = $2 AND `+cond, append([]any{tenant, path}, args...)...)
+		return dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'auth.address_refused'
+			AND metadata->>'path' = $2 AND `+cond, append([]any{organization, path}, args...)...)
 	}
 	inTx := func(fn func(tx pgx.Tx) error) {
 		t.Helper()
@@ -201,27 +201,27 @@ func TestSignInIsJudgedByEnforcedRules(t *testing.T) {
 	if err := svc.CheckSignIn(ctx, uuid.Nil, user.ID, "203.0.113.9", "password"); err != nil {
 		t.Errorf("sign-in to no organisation: %v, want allowed", err)
 	}
-	if err := svc.CheckSignIn(ctx, tenant, user.ID, "203.0.113.9", "password"); err != nil {
+	if err := svc.CheckSignIn(ctx, organization, user.ID, "203.0.113.9", "password"); err != nil {
 		t.Errorf("sign-in to an organisation that never set rules: %v, want allowed", err)
 	}
 	var deny *Rule
 	inTx(func(tx pgx.Tx) (err error) {
-		if _, err = svc.AddRule(ctx, tx, tenant, "198.51.100.0/24", "office", "allow"); err != nil {
+		if _, err = svc.AddRule(ctx, tx, organization, "198.51.100.0/24", "office", "allow"); err != nil {
 			return err
 		}
-		deny, err = svc.AddRule(ctx, tx, tenant, "198.51.100.66", "kiosk", "deny")
+		deny, err = svc.AddRule(ctx, tx, organization, "198.51.100.66", "kiosk", "deny")
 		return err
 	})
-	inTx(func(tx pgx.Tx) error { return svc.SetEnabled(ctx, tx, tenant, false) })
-	if err := svc.CheckSignIn(ctx, tenant, user.ID, "203.0.113.9", "password"); err != nil {
+	inTx(func(tx pgx.Tx) error { return svc.SetEnabled(ctx, tx, organization, false) })
+	if err := svc.CheckSignIn(ctx, organization, user.ID, "203.0.113.9", "password"); err != nil {
 		t.Errorf("sign-in with the rules off: %v, want allowed", err)
 	}
 
-	inTx(func(tx pgx.Tx) error { return svc.SetEnabled(ctx, tx, tenant, true) })
-	if err := svc.CheckSignIn(ctx, tenant, user.ID, "198.51.100.7", "password"); err != nil {
+	inTx(func(tx pgx.Tx) error { return svc.SetEnabled(ctx, tx, organization, true) })
+	if err := svc.CheckSignIn(ctx, organization, user.ID, "198.51.100.7", "password"); err != nil {
 		t.Errorf("sign-in from an allowed address: %v", err)
 	}
-	if err := svc.CheckSignIn(ctx, tenant, user.ID, "198.51.100.66", "password"); !errors.Is(err, errs.ErrAuthAddressNotAllowed) {
+	if err := svc.CheckSignIn(ctx, organization, user.ID, "198.51.100.66", "password"); !errors.Is(err, errs.ErrAuthAddressNotAllowed) {
 		t.Errorf("sign-in from a denied address: %v, want %v", err, errs.ErrAuthAddressNotAllowed)
 	}
 	if n := refusals("password", `resource_id = $3 AND actor_user_id = $4 AND ip = '198.51.100.66'
@@ -231,7 +231,7 @@ func TestSignInIsJudgedByEnforcedRules(t *testing.T) {
 	if n := refusals("password", "true"); n != 1 {
 		t.Errorf("%d password sign-ins recorded as refused, want only the denied one", n)
 	}
-	if err := svc.CheckSignIn(ctx, tenant, uuid.Nil, "not an address", "magic_link"); !errors.Is(err, errs.ErrAuthAddressNotAllowed) {
+	if err := svc.CheckSignIn(ctx, organization, uuid.Nil, "not an address", "magic_link"); !errors.Is(err, errs.ErrAuthAddressNotAllowed) {
 		t.Errorf("sign-in from an unreadable address: %v, want %v", err, errs.ErrAuthAddressNotAllowed)
 	}
 	if n := refusals("magic_link", `ip IS NULL AND actor_user_id IS NULL AND resource_id IS NULL
@@ -246,7 +246,7 @@ func TestSignInIsJudgedByEnforcedRules(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer tx.Rollback(ctx)
-		checkErr := svc.CheckSignInTx(ctx, tx, tenant, user.ID, ip, "switch")
+		checkErr := svc.CheckSignInTx(ctx, tx, organization, user.ID, ip, "switch")
 		if commit {
 			if err := tx.Commit(ctx); err != nil {
 				t.Fatal(err)
@@ -274,16 +274,16 @@ func TestSignInIsJudgedByEnforcedRules(t *testing.T) {
 // TestUnknownActionIsRefused checks that a rule whose action is neither allow
 // nor deny is refused, not stored as an allow rule.
 func TestUnknownActionIsRefused(t *testing.T) {
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: NewService(dbtest.Pool(t))}).Mount)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: NewService(dbtest.Pool(t))}).Mount)
 	for _, action := range []string{"Deny", "block"} {
-		rec := dbtest.Do(t, h, http.MethodPost, "/tenants/"+tenant.String()+"/ip-rules", map[string]string{"cidr": "203.0.113.0/24", "action": action})
+		rec := dbtest.Do(t, h, http.MethodPost, "/tenants/"+organization.String()+"/ip-rules", map[string]string{"cidr": "203.0.113.0/24", "action": action})
 		if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), errs.CodeRiskRuleActionInvalid) {
 			t.Errorf("add a rule with action %q: %d %s, want 422 %s", action, rec.Code, rec.Body.String(), errs.CodeRiskRuleActionInvalid)
 		}
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.ip_rules WHERE tenant_id = $1`, tenant); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM organization.ip_rules WHERE organization_id = $1`, organization); n != 0 {
 		t.Errorf("%d rules stored after the refusals, want none", n)
 	}
 }

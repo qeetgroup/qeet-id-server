@@ -44,9 +44,9 @@ WHERE s.id = @session_id AND s.user_id = @user_id AND s.revoked_at IS NULL
   AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
 ON CONFLICT (session_id) DO UPDATE SET method = EXCLUDED.method, verified_at = NOW();
 
--- StepUpState is a session's step-up as its organisation judges it: fresh
--- while inside the organisation's window, and counted only when met by a
--- factor type the organisation accepts (step_up_methods NULL: any). A session
+-- StepUpState is a session's step-up as its organization judges it: fresh
+-- while inside the organization's window, and counted only when met by a
+-- factor type the organization accepts (step_up_methods NULL: any). A session
 -- that has ended reads as never stepped up.
 -- name: StepUpState :one
 SELECT v.verified_at, v.method,
@@ -58,38 +58,38 @@ FROM (SELECT @session_id::uuid AS id, @user_id::uuid AS user_id) q
 LEFT JOIN auth.sessions s ON s.id = q.id AND s.user_id = q.user_id AND s.revoked_at IS NULL
   AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
 LEFT JOIN auth.mfa_verifications v ON v.session_id = s.id
-LEFT JOIN tenant.security_policies sp ON sp.tenant_id = s.tenant_id;
+LEFT JOIN organization.security_policies sp ON sp.organization_id = s.organization_id;
 
 -- StepUpFactorsHeld says which kinds of factor the user could step up with —
 -- a confirmed authenticator app (or its recovery codes), a confirmed email or
--- SMS factor, a passkey while the organisation allows passkeys — and which
--- factor types the organisation counts (NULL: every one).
+-- SMS factor, a passkey while the organization allows passkeys — and which
+-- factor types the organization counts (NULL: every one).
 -- name: StepUpFactorsHeld :one
 SELECT
     EXISTS (SELECT 1 FROM auth.mfa_totp t WHERE t.user_id = @user_id AND t.confirmed_at IS NOT NULL)::bool AS totp,
     EXISTS (SELECT 1 FROM auth.mfa_otp_factors f WHERE f.user_id = @user_id AND f.verified_at IS NOT NULL)::bool AS otp,
     (EXISTS (SELECT 1 FROM auth.passkey_credentials c WHERE c.user_id = @user_id)
-     AND COALESCE((SELECT ap.passkey_enabled FROM tenant.auth_policy ap WHERE ap.tenant_id = @tenant_id::uuid), TRUE))::bool AS passkeys,
+     AND COALESCE((SELECT ap.passkey_enabled FROM organization.auth_policy ap WHERE ap.organization_id = @organization_id::uuid), TRUE))::bool AS passkeys,
     EXISTS (SELECT 1 FROM auth.mfa_push_devices d WHERE d.user_id = @user_id)::bool AS push,
-    (SELECT sp.step_up_methods FROM tenant.security_policies sp WHERE sp.tenant_id = @tenant_id::uuid)::text[] AS step_up_methods;
+    (SELECT sp.step_up_methods FROM organization.security_policies sp WHERE sp.organization_id = @organization_id::uuid)::text[] AS step_up_methods;
 
--- OrgStepUpPolicy is how long a step-up lasts in an organisation and whether
--- it counts every factor type (no organisation, or none set: 5 minutes, yes).
+-- OrgStepUpPolicy is how long a step-up lasts in an organization and whether
+-- it counts every factor type (no organization, or none set: 5 minutes, yes).
 -- SessionSignedInRecently says whether the user's live session continues a
--- sign-in made within its organisation's step-up window, and that window.
+-- sign-in made within its organization's step-up window, and that window.
 -- name: SessionSignedInRecently :one
 SELECT COALESCE(s.signed_in_at > NOW() - COALESCE(sp.step_up_window, INTERVAL '5 minutes'), FALSE)::bool AS recent,
        EXTRACT(EPOCH FROM COALESCE(sp.step_up_window, INTERVAL '5 minutes'))::bigint AS window_seconds
 FROM (SELECT @session_id::uuid AS id, @user_id::uuid AS user_id) q
 LEFT JOIN auth.sessions s ON s.id = q.id AND s.user_id = q.user_id AND s.revoked_at IS NULL
   AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
-LEFT JOIN tenant.security_policies sp ON sp.tenant_id = s.tenant_id;
+LEFT JOIN organization.security_policies sp ON sp.organization_id = s.organization_id;
 
 -- name: OrgStepUpPolicy :one
 SELECT EXTRACT(EPOCH FROM COALESCE(sp.step_up_window, INTERVAL '5 minutes'))::bigint AS window_seconds,
        (sp.step_up_methods IS NULL)::bool AS every_factor
-FROM (SELECT @tenant_id::uuid AS id) q
-LEFT JOIN tenant.security_policies sp ON sp.tenant_id = q.id;
+FROM (SELECT @organization_id::uuid AS id) q
+LEFT JOIN organization.security_policies sp ON sp.organization_id = q.id;
 
 
 -- name: DeleteMFAOTPFactors :exec
@@ -149,11 +149,11 @@ FROM auth.mfa_push_devices WHERE user_id = $1 ORDER BY created_at;
 -- name: DeletePushDeviceByCredential :execrows
 DELETE FROM auth.mfa_push_devices WHERE id = @id AND user_id = @user_id AND device_token_hash = @device_token_hash;
 
--- IsTenantMember says whether the user belongs to the organisation: holds a
--- role in it, or has it as their home organisation.
--- name: IsTenantMember :one
-SELECT (EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = @user_id AND ur.tenant_id = @tenant_id)
-     OR EXISTS (SELECT 1 FROM account.users u WHERE u.id = @user_id AND u.tenant_id = @tenant_id AND u.deleted_at IS NULL))::bool;
+-- IsOrganizationMember says whether the user belongs to the organization: holds a
+-- role in it, or has it as their home organization.
+-- name: IsOrganizationMember :one
+SELECT (EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = @user_id AND ur.organization_id = @organization_id)
+     OR EXISTS (SELECT 1 FROM account.users u WHERE u.id = @user_id AND u.organization_id = @organization_id AND u.deleted_at IS NULL))::bool;
 
 -- name: DeletePushDevice :execrows
 DELETE FROM auth.mfa_push_devices WHERE id = $1 AND user_id = $2;
@@ -204,13 +204,13 @@ FOR UPDATE;
 
 -- LoginFactorCounts says which second factors the user can meet a sign-in
 -- challenge with: a confirmed authenticator app, unused recovery codes,
--- passkeys (while the user's organisation allows passkeys) and push devices.
+-- passkeys (while the user's organization allows passkeys) and push devices.
 -- name: LoginFactorCounts :one
 SELECT
     EXISTS (SELECT 1 FROM auth.mfa_totp t WHERE t.user_id = @user_id AND t.confirmed_at IS NOT NULL) AS totp,
     (SELECT count(*) FROM auth.mfa_recovery_codes r WHERE r.user_id = @user_id AND r.used_at IS NULL)::int AS recovery_codes,
     CASE WHEN COALESCE((SELECT ap.passkey_enabled FROM account.users u
-                        JOIN tenant.auth_policy ap ON ap.tenant_id = u.tenant_id
+                        JOIN organization.auth_policy ap ON ap.organization_id = u.organization_id
                         WHERE u.id = @user_id), TRUE)
          THEN (SELECT count(*) FROM auth.passkey_credentials p WHERE p.user_id = @user_id)
          ELSE 0 END::int AS passkeys,

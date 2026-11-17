@@ -1,4 +1,4 @@
-// Package rbac models permissions, per-tenant roles and their assignment to
+// Package rbac models permissions, per-organization roles and their assignment to
 // users and groups, and enforces route policies (Enforce). Mutating methods
 // take a pgx.Tx so the caller commits the change and its audit row together;
 // reads use the pool directly.
@@ -84,14 +84,14 @@ func ValidateMachineScopes(scopes []string) error {
 	return nil
 }
 
-// Role is a named set of permissions in a tenant.
+// Role is a named set of permissions in an organization.
 type Role struct {
-	ID          uuid.UUID `json:"id"`
-	TenantID    uuid.UUID `json:"tenant_id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	IsSystem    bool      `json:"is_system"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID             uuid.UUID `json:"id"`
+	OrganizationID uuid.UUID `json:"tenant_id"`
+	Name           string    `json:"name"`
+	Description    string    `json:"description"`
+	IsSystem       bool      `json:"is_system"`
+	CreatedAt      time.Time `json:"created_at"`
 	// Holders counts who holds the role, set by the roles list only.
 	Holders *RoleHolderCounts `json:"holders,omitempty"`
 }
@@ -142,16 +142,16 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 // transactions that wrap an RBAC mutation and its audit row.
 func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
-// UsersWithPermission lists up to 200 active members of tenantID who hold
+// UsersWithPermission lists up to 200 active members of organizationID who hold
 // permKey, directly or through a group.
-func (r *Repository) UsersWithPermission(ctx context.Context, tenantID uuid.UUID, permKey string) ([]uuid.UUID, error) {
-	return r.q.UsersWithPermission(ctx, dbgen.UsersWithPermissionParams{TenantID: tenantID, PermKey: permKey})
+func (r *Repository) UsersWithPermission(ctx context.Context, organizationID uuid.UUID, permKey string) ([]uuid.UUID, error) {
+	return r.q.UsersWithPermission(ctx, dbgen.UsersWithPermissionParams{OrganizationID: organizationID, PermKey: permKey})
 }
 
-// CountCustomRoles returns the number of non-system (custom) roles tenantID
+// CountCustomRoles returns the number of non-system (custom) roles organizationID
 // has defined.
-func (r *Repository) CountCustomRoles(ctx context.Context, tenantID uuid.UUID) (int64, error) {
-	return r.q.CountCustomRoles(ctx, tenantID)
+func (r *Repository) CountCustomRoles(ctx context.Context, organizationID uuid.UUID) (int64, error) {
+	return r.q.CountCustomRoles(ctx, organizationID)
 }
 
 // toPermission maps a generated RbacPermission row to the domain Permission type.
@@ -162,12 +162,12 @@ func toPermission(row dbgen.RbacPermission) Permission {
 // toRole maps a generated RbacRole row to the domain Role type.
 func toRole(row dbgen.RbacRole) Role {
 	return Role{
-		ID:          row.ID,
-		TenantID:    row.TenantID,
-		Name:        row.Name,
-		Description: row.Description,
-		IsSystem:    row.IsSystem,
-		CreatedAt:   row.CreatedAt,
+		ID:             row.ID,
+		OrganizationID: row.OrganizationID,
+		Name:           row.Name,
+		Description:    row.Description,
+		IsSystem:       row.IsSystem,
+		CreatedAt:      row.CreatedAt,
 	}
 }
 
@@ -202,13 +202,13 @@ func (r *Repository) ListPermissions(ctx context.Context) ([]Permission, error) 
 	return out, nil
 }
 
-// CreateRole adds a role to the tenant.
-func (r *Repository) CreateRole(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, name, desc string, isSystem bool) (*Role, error) {
+// CreateRole adds a role to the organization.
+func (r *Repository) CreateRole(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, name, desc string, isSystem bool) (*Role, error) {
 	row, err := r.q.WithTx(tx).CreateRole(ctx, dbgen.CreateRoleParams{
-		TenantID:    tenantID,
-		Name:        name,
-		Description: desc,
-		IsSystem:    isSystem,
+		OrganizationID: organizationID,
+		Name:           name,
+		Description:    desc,
+		IsSystem:       isSystem,
 	})
 	if err != nil {
 		if pgxerr.IsUnique(err) {
@@ -220,9 +220,9 @@ func (r *Repository) CreateRole(ctx context.Context, tx pgx.Tx, tenantID uuid.UU
 	return &role, nil
 }
 
-// ListRoles returns the tenant's roles.
-func (r *Repository) ListRoles(ctx context.Context, tenantID uuid.UUID) ([]Role, error) {
-	rows, err := r.q.ListRoles(ctx, tenantID)
+// ListRoles returns the organization's roles.
+func (r *Repository) ListRoles(ctx context.Context, organizationID uuid.UUID) ([]Role, error) {
+	rows, err := r.q.ListRoles(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -233,9 +233,9 @@ func (r *Repository) ListRoles(ctx context.Context, tenantID uuid.UUID) ([]Role,
 	return out, nil
 }
 
-// WithHolderCounts sets how many hold each of the tenant's roles, in one query.
-func (r *Repository) WithHolderCounts(ctx context.Context, tenantID uuid.UUID, roles []Role) error {
-	rows, err := r.q.RoleHolderCounts(ctx, tenantID)
+// WithHolderCounts sets how many hold each of the organization's roles, in one query.
+func (r *Repository) WithHolderCounts(ctx context.Context, organizationID uuid.UUID, roles []Role) error {
+	rows, err := r.q.RoleHolderCounts(ctx, organizationID)
 	if err != nil {
 		return err
 	}
@@ -250,10 +250,10 @@ func (r *Repository) WithHolderCounts(ctx context.Context, tenantID uuid.UUID, r
 	return nil
 }
 
-// Holders returns limit people holding roleID of tenantID from offset, by
+// Holders returns limit people holding roleID of organizationID from offset, by
 // email, and every group it is granted to.
-func (r *Repository) Holders(ctx context.Context, tenantID, roleID uuid.UUID, offset, limit int) (*RoleHolders, error) {
-	groups, err := r.q.ListRoleHolderGroups(ctx, dbgen.ListRoleHolderGroupsParams{TenantID: tenantID, RoleID: roleID})
+func (r *Repository) Holders(ctx context.Context, organizationID, roleID uuid.UUID, offset, limit int) (*RoleHolders, error) {
+	groups, err := r.q.ListRoleHolderGroups(ctx, dbgen.ListRoleHolderGroupsParams{OrganizationID: organizationID, RoleID: roleID})
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +264,7 @@ func (r *Repository) Holders(ctx context.Context, tenantID, roleID uuid.UUID, of
 		names[g.ID] = g.Name
 	}
 	people, err := r.q.ListRoleHolderPeople(ctx, dbgen.ListRoleHolderPeopleParams{
-		TenantID: tenantID, RoleID: roleID, RowOffset: int32(offset), RowLimit: int32(limit + 1), // #nosec G115 -- bounded by the handler
+		OrganizationID: organizationID, RoleID: roleID, RowOffset: int32(offset), RowLimit: int32(limit + 1), // #nosec G115 -- bounded by the handler
 	})
 	if err != nil {
 		return nil, err
@@ -283,10 +283,10 @@ func (r *Repository) Holders(ctx context.Context, tenantID, roleID uuid.UUID, of
 	return out, nil
 }
 
-// RoleTenant returns the tenant a role belongs to, or ErrNotFound. Routes that
-// name only a {roleID} use it to keep callers to their own tenant's roles.
-func (r *Repository) RoleTenant(ctx context.Context, roleID uuid.UUID) (uuid.UUID, error) {
-	tid, err := r.q.GetRoleTenant(ctx, roleID)
+// RoleOrganization returns the organization a role belongs to, or ErrNotFound. Routes that
+// name only a {roleID} use it to keep callers to their own organization's roles.
+func (r *Repository) RoleOrganization(ctx context.Context, roleID uuid.UUID) (uuid.UUID, error) {
+	tid, err := r.q.GetRoleOrganization(ctx, roleID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, errs.ErrNotFound
 	}
@@ -329,16 +329,16 @@ func (r *Repository) RevokePermission(ctx context.Context, tx pgx.Tx, roleID, pe
 	return r.q.WithTx(tx).RevokePermission(ctx, dbgen.RevokePermissionParams{RoleID: roleID, PermissionID: permID})
 }
 
-// AssignRole grants roleID to userID in tenantID; re-assigning is a no-op. The
-// INSERT itself requires a role of tenantID and a live member of it, so no
-// other tenant's user or role can be attached. Every refusal is
+// AssignRole grants roleID to userID in organizationID; re-assigning is a no-op. The
+// INSERT itself requires a role of organizationID and a live member of it, so no
+// other organization's user or role can be attached. Every refusal is
 // ErrRBACUserOrRoleNotFound, whichever ID was wrong.
-func (r *Repository) AssignRole(ctx context.Context, tx pgx.Tx, userID, tenantID, roleID uuid.UUID, grantedBy *uuid.UUID) error {
+func (r *Repository) AssignRole(ctx context.Context, tx pgx.Tx, userID, organizationID, roleID uuid.UUID, grantedBy *uuid.UUID) error {
 	valid, err := r.q.WithTx(tx).AssignUserRole(ctx, dbgen.AssignUserRoleParams{
-		UserID:    userID,
-		TenantID:  tenantID,
-		RoleID:    roleID,
-		GrantedBy: uuidPtrToPgtype(grantedBy),
+		UserID:         userID,
+		OrganizationID: organizationID,
+		RoleID:         roleID,
+		GrantedBy:      uuidPtrToPgtype(grantedBy),
 	})
 	if err != nil {
 		return err
@@ -349,30 +349,30 @@ func (r *Repository) AssignRole(ctx context.Context, tx pgx.Tx, userID, tenantID
 	return nil
 }
 
-// UnassignRole takes a role away from a user in the tenant.
-func (r *Repository) UnassignRole(ctx context.Context, tx pgx.Tx, userID, tenantID, roleID uuid.UUID) error {
+// UnassignRole takes a role away from a user in the organization.
+func (r *Repository) UnassignRole(ctx context.Context, tx pgx.Tx, userID, organizationID, roleID uuid.UUID) error {
 	return r.q.WithTx(tx).UnassignUserRole(ctx, dbgen.UnassignUserRoleParams{
-		UserID:   userID,
-		TenantID: tenantID,
-		RoleID:   roleID,
+		UserID:         userID,
+		OrganizationID: organizationID,
+		RoleID:         roleID,
 	})
 }
 
-// LeftTenant reports, through tx, whether userID is no longer a member of
-// tenantID: it isn't their home and they hold no role there.
-func (r *Repository) LeftTenant(ctx context.Context, tx pgx.Tx, userID, tenantID uuid.UUID) (bool, error) {
-	return r.q.WithTx(tx).LeftTenant(ctx, dbgen.LeftTenantParams{UserID: userID, TenantID: tenantID})
+// LeftOrganization reports, through tx, whether userID is no longer a member of
+// organizationID: it isn't their home and they hold no role there.
+func (r *Repository) LeftOrganization(ctx context.Context, tx pgx.Tx, userID, organizationID uuid.UUID) (bool, error) {
+	return r.q.WithTx(tx).LeftOrganization(ctx, dbgen.LeftOrganizationParams{UserID: userID, OrganizationID: organizationID})
 }
 
 // AssignRoleToGroup grants roleID to groupID; re-granting is a no-op. The
-// INSERT requires both to belong to tenantID, so no role crosses tenants. It
+// INSERT requires both to belong to organizationID, so no role crosses organizations. It
 // reports false, for the caller to answer 404, when the pair isn't valid there.
-func (r *Repository) AssignRoleToGroup(ctx context.Context, tx pgx.Tx, groupID, tenantID, roleID uuid.UUID, grantedBy *uuid.UUID) (bool, error) {
+func (r *Repository) AssignRoleToGroup(ctx context.Context, tx pgx.Tx, groupID, organizationID, roleID uuid.UUID, grantedBy *uuid.UUID) (bool, error) {
 	valid, err := r.q.WithTx(tx).AssignRoleToGroup(ctx, dbgen.AssignRoleToGroupParams{
-		GroupID:   groupID,
-		TenantID:  tenantID,
-		RoleID:    roleID,
-		GrantedBy: uuidPtrToPgtype(grantedBy),
+		GroupID:        groupID,
+		OrganizationID: organizationID,
+		RoleID:         roleID,
+		GrantedBy:      uuidPtrToPgtype(grantedBy),
 	})
 	if err != nil {
 		return false, err
@@ -383,12 +383,12 @@ func (r *Repository) AssignRoleToGroup(ctx context.Context, tx pgx.Tx, groupID, 
 	return *valid, nil
 }
 
-// RemoveRoleFromGroup revokes a role from a group within a tenant.
-func (r *Repository) RemoveRoleFromGroup(ctx context.Context, tx pgx.Tx, groupID, tenantID, roleID uuid.UUID) error {
+// RemoveRoleFromGroup revokes a role from a group within an organization.
+func (r *Repository) RemoveRoleFromGroup(ctx context.Context, tx pgx.Tx, groupID, organizationID, roleID uuid.UUID) error {
 	return r.q.WithTx(tx).RemoveRoleFromGroup(ctx, dbgen.RemoveRoleFromGroupParams{
-		GroupID:  groupID,
-		TenantID: tenantID,
-		RoleID:   roleID,
+		GroupID:        groupID,
+		OrganizationID: organizationID,
+		RoleID:         roleID,
 	})
 }
 
@@ -400,9 +400,9 @@ type GroupRole struct {
 	GrantedAt time.Time `json:"granted_at"`
 }
 
-// ListGroupRoles returns every role granted to a group within a tenant.
-func (r *Repository) ListGroupRoles(ctx context.Context, groupID, tenantID uuid.UUID) ([]GroupRole, error) {
-	rows, err := r.q.ListGroupRoles(ctx, dbgen.ListGroupRolesParams{GroupID: groupID, TenantID: tenantID})
+// ListGroupRoles returns every role granted to a group within an organization.
+func (r *Repository) ListGroupRoles(ctx context.Context, groupID, organizationID uuid.UUID) ([]GroupRole, error) {
+	rows, err := r.q.ListGroupRoles(ctx, dbgen.ListGroupRolesParams{GroupID: groupID, OrganizationID: organizationID})
 	if err != nil {
 		return nil, err
 	}
@@ -413,14 +413,14 @@ func (r *Repository) ListGroupRoles(ctx context.Context, groupID, tenantID uuid.
 	return out, nil
 }
 
-// Check reports whether userID holds a role in tenantID, directly or through a
-// group, that grants permKey. Both paths are scoped by tenant_id, so a grant
-// never leaks across tenants.
-func (r *Repository) Check(ctx context.Context, userID, tenantID uuid.UUID, permKey string) (bool, error) {
+// Check reports whether userID holds a role in organizationID, directly or through a
+// group, that grants permKey. Both paths are scoped by organization_id, so a grant
+// never leaks across organizations.
+func (r *Repository) Check(ctx context.Context, userID, organizationID uuid.UUID, permKey string) (bool, error) {
 	ok, err := r.q.CheckPermission(ctx, dbgen.CheckPermissionParams{
-		UserID:   userID,
-		TenantID: tenantID,
-		PermKey:  permKey,
+		UserID:         userID,
+		OrganizationID: organizationID,
+		PermKey:        permKey,
 	})
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return false, err
@@ -428,13 +428,13 @@ func (r *Repository) Check(ctx context.Context, userID, tenantID uuid.UUID, perm
 	return ok, nil
 }
 
-// EffectivePermissions returns all permission keys granted to a user within a
-// tenant — via roles granted directly to the user UNION roles granted to any
+// EffectivePermissions returns all permission keys granted to a user within an
+// organization — via roles granted directly to the user UNION roles granted to any
 // group the user belongs to.
-func (r *Repository) EffectivePermissions(ctx context.Context, userID, tenantID uuid.UUID) ([]string, error) {
+func (r *Repository) EffectivePermissions(ctx context.Context, userID, organizationID uuid.UUID) ([]string, error) {
 	return r.q.ListEffectivePermissions(ctx, dbgen.ListEffectivePermissionsParams{
-		UserID:   userID,
-		TenantID: tenantID,
+		UserID:         userID,
+		OrganizationID: organizationID,
 	})
 }
 
@@ -464,10 +464,10 @@ func grantStep(permission, via string, groupID pgtype.UUID, groupName *string, r
 	return step
 }
 
-// Grants lists every grant behind userID's permissions in tenantID, by
+// Grants lists every grant behind userID's permissions in organizationID, by
 // permission: the role granting it, directly or through which group.
-func (r *Repository) Grants(ctx context.Context, userID, tenantID uuid.UUID) ([]GrantStep, error) {
-	rows, err := r.q.ExplainAllGrants(ctx, dbgen.ExplainAllGrantsParams{UserID: userID, TenantID: tenantID})
+func (r *Repository) Grants(ctx context.Context, userID, organizationID uuid.UUID) ([]GrantStep, error) {
+	rows, err := r.q.ExplainAllGrants(ctx, dbgen.ExplainAllGrantsParams{UserID: userID, OrganizationID: organizationID})
 	if err != nil {
 		return nil, err
 	}
@@ -494,13 +494,13 @@ type Explanation struct {
 const ReasonNoRoleGrant = "authz.no_role_grant"
 
 // Explain lists every role, direct or through a group, that grants permKey to
-// userID in tenantID; Allowed reports whether there is any. Both paths are
-// scoped by tenant_id, so a path never names another tenant's grant.
-func (r *Repository) Explain(ctx context.Context, userID, tenantID uuid.UUID, permKey string) (*Explanation, error) {
+// userID in organizationID; Allowed reports whether there is any. Both paths are
+// scoped by organization_id, so a path never names another organization's grant.
+func (r *Repository) Explain(ctx context.Context, userID, organizationID uuid.UUID, permKey string) (*Explanation, error) {
 	rows, err := r.q.ExplainGrants(ctx, dbgen.ExplainGrantsParams{
-		UserID:   userID,
-		TenantID: tenantID,
-		PermKey:  permKey,
+		UserID:         userID,
+		OrganizationID: organizationID,
+		PermKey:        permKey,
 	})
 	if err != nil {
 		return nil, err
@@ -519,7 +519,7 @@ func (r *Repository) Explain(ctx context.Context, userID, tenantID uuid.UUID, pe
 	return exp, nil
 }
 
-// SeedBuiltins upserts the built-in permissions and gives every organisation's
+// SeedBuiltins upserts the built-in permissions and gives every organization's
 // built-in roles the ones their definitions cover, so a permission added in a
 // release reaches its owners, admins and viewers. It is idempotent and safe to
 // run on every boot.

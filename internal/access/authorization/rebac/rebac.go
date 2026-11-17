@@ -1,4 +1,4 @@
-// Package rebac is per-tenant relationship-based authorization (ReBAC), a
+// Package rebac is per-organization relationship-based authorization (ReBAC), a
 // Zanzibar-style subset. A tuple says a subject (user:<id>, or the userset
 // <type>:<id>#<relation>) holds a relation on an object; Check walks tuples and
 // expands usersets recursively, with a depth cap and a visited set for cycles.
@@ -184,7 +184,7 @@ type Tuple struct {
 	Object   string    `json:"object"`
 	Relation string    `json:"relation"`
 	Subject  string    `json:"subject"`
-	// SubjectName names a user: subject who belongs to the organisation.
+	// SubjectName names a user: subject who belongs to the organization.
 	SubjectName string `json:"subject_name,omitempty"`
 }
 
@@ -197,7 +197,7 @@ func subjectString(typ, id, rel string) string {
 
 // Write upserts a relationship tuple, recorded as actor's. object = "type:id",
 // subject = "user:<id>" or "type:id#relation".
-func (s *Service) Write(ctx context.Context, tenantID uuid.UUID, object, relation, subject string, actor audit.Actor) (*Tuple, error) {
+func (s *Service) Write(ctx context.Context, organizationID uuid.UUID, object, relation, subject string, actor audit.Actor) (*Tuple, error) {
 	o, ok := parseObject(object)
 	if !ok {
 		return nil, errs.ErrReBACObjectInvalid
@@ -215,7 +215,7 @@ func (s *Service) Write(ctx context.Context, tenantID uuid.UUID, object, relatio
 	}
 	defer tx.Rollback(ctx)
 	id, err := s.q.WithTx(tx).InsertRelationTuple(ctx, dbgen.InsertRelationTupleParams{
-		TenantID:        tenantID,
+		OrganizationID:  organizationID,
 		ObjectType:      o.Type,
 		ObjectID:        o.ID,
 		Relation:        relation,
@@ -228,10 +228,10 @@ func (s *Service) Write(ctx context.Context, tenantID uuid.UUID, object, relatio
 	}
 	tuple := &Tuple{ID: id, Object: object, Relation: relation, Subject: subjectString(subj.Type, subj.ID, subj.Relation)}
 	metadata := map[string]any{"object": tuple.Object, "relation": tuple.Relation, "subject": tuple.Subject}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "rebac.tuple_written", "relation_tuple", tuple.ID, metadata)); err != nil {
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "rebac.tuple_written", "relation_tuple", tuple.ID, metadata)); err != nil {
 		return nil, err
 	}
-	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: tuple.ID, Topic: "authorization.events", EventType: "rebac.tuple_written", Payload: map[string]any{"tuple_id": tuple.ID, "tenant_id": tenantID, "object": tuple.Object, "relation": tuple.Relation, "subject": tuple.Subject}}); err != nil {
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: tuple.ID, Topic: "authorization.events", EventType: "rebac.tuple_written", Payload: map[string]any{"tuple_id": tuple.ID, "tenant_id": organizationID, "object": tuple.Object, "relation": tuple.Relation, "subject": tuple.Subject}}); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -240,14 +240,14 @@ func (s *Service) Write(ctx context.Context, tenantID uuid.UUID, object, relatio
 	return tuple, nil
 }
 
-// Delete removes one of the tenant's relationship tuples, recorded as actor's.
-func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
+// Delete removes one of the organization's relationship tuples, recorded as actor's.
+func (s *Service) Delete(ctx context.Context, id, organizationID uuid.UUID, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	row, err := s.q.WithTx(tx).DeleteRelationTuple(ctx, dbgen.DeleteRelationTupleParams{ID: id, TenantID: tenantID})
+	row, err := s.q.WithTx(tx).DeleteRelationTuple(ctx, dbgen.DeleteRelationTupleParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return errs.ErrNotFound
 	}
@@ -259,25 +259,25 @@ func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID, actor audi
 		"relation": row.Relation,
 		"subject":  subjectString(row.SubjectType, row.SubjectID, row.SubjectRelation),
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "rebac.tuple_deleted", "relation_tuple", id, metadata)); err != nil {
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "rebac.tuple_deleted", "relation_tuple", id, metadata)); err != nil {
 		return err
 	}
-	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "authorization.events", EventType: "rebac.tuple_deleted", Payload: map[string]any{"tuple_id": id, "tenant_id": tenantID}}); err != nil {
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "authorization.events", EventType: "rebac.tuple_deleted", Payload: map[string]any{"tuple_id": id, "tenant_id": organizationID}}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
 
 // List returns the tuples on a given object (type:id).
-func (s *Service) List(ctx context.Context, tenantID uuid.UUID, object string) ([]Tuple, error) {
+func (s *Service) List(ctx context.Context, organizationID uuid.UUID, object string) ([]Tuple, error) {
 	o, ok := parseObject(object)
 	if !ok {
 		return nil, errs.ErrReBACObjectInvalid
 	}
 	rows, err := s.q.ListRelationTuplesByObject(ctx, dbgen.ListRelationTuplesByObjectParams{
-		TenantID:   tenantID,
-		ObjectType: o.Type,
-		ObjectID:   o.ID,
+		OrganizationID: organizationID,
+		ObjectType:     o.Type,
+		ObjectID:       o.ID,
 	})
 	if err != nil {
 		return nil, err
@@ -295,7 +295,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, object string) (
 			people = append(people, row.SubjectID)
 		}
 	}
-	names, err := s.namePeople(ctx, tenantID, people)
+	names, err := s.namePeople(ctx, organizationID, people)
 	if err != nil {
 		return nil, err
 	}
@@ -307,8 +307,8 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, object string) (
 	return out, nil
 }
 
-// namePeople names those of ids, user: subject ids, who belong to tenantID.
-func (s *Service) namePeople(ctx context.Context, tenantID uuid.UUID, ids []string) (map[string]string, error) {
+// namePeople names those of ids, user: subject ids, who belong to organizationID.
+func (s *Service) namePeople(ctx context.Context, organizationID uuid.UUID, ids []string) (map[string]string, error) {
 	parsed := make([]uuid.UUID, 0, len(ids))
 	for _, id := range ids {
 		if u, err := uuid.Parse(id); err == nil {
@@ -319,7 +319,7 @@ func (s *Service) namePeople(ctx context.Context, tenantID uuid.UUID, ids []stri
 	if len(parsed) == 0 {
 		return names, nil
 	}
-	rows, err := s.q.NamePeople(ctx, dbgen.NamePeopleParams{Ids: parsed, TenantID: pgtype.UUID{Bytes: tenantID, Valid: true}})
+	rows, err := s.q.NamePeople(ctx, dbgen.NamePeopleParams{Ids: parsed, OrganizationID: pgtype.UUID{Bytes: organizationID, Valid: true}})
 	if err != nil {
 		return nil, err
 	}
@@ -329,7 +329,7 @@ func (s *Service) namePeople(ctx context.Context, tenantID uuid.UUID, ids []stri
 	return names, nil
 }
 
-// ObjectType is a type of object the tenant's tuples name, with how many
+// ObjectType is a type of object the organization's tuples name, with how many
 // objects of it they name and how many tuples.
 type ObjectType struct {
 	Type    string `json:"type"`
@@ -337,9 +337,9 @@ type ObjectType struct {
 	Tuples  int    `json:"tuples"`
 }
 
-// ObjectTypes returns the types of object the tenant's tuples name.
-func (s *Service) ObjectTypes(ctx context.Context, tenantID uuid.UUID) ([]ObjectType, error) {
-	rows, err := s.q.ListRelationObjectTypes(ctx, tenantID)
+// ObjectTypes returns the types of object the organization's tuples name.
+func (s *Service) ObjectTypes(ctx context.Context, organizationID uuid.UUID) ([]ObjectType, error) {
+	rows, err := s.q.ListRelationObjectTypes(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -350,7 +350,7 @@ func (s *Service) ObjectTypes(ctx context.Context, tenantID uuid.UUID) ([]Object
 	return out, nil
 }
 
-// Object is an object the tenant's tuples name, with how many.
+// Object is an object the organization's tuples name, with how many.
 type Object struct {
 	Object string `json:"object"`
 	ID     string `json:"id"`
@@ -365,8 +365,8 @@ type ObjectPage struct {
 }
 
 // Objects returns a page of up to limit (1..500, default 100) of the objects
-// of objType the tenant's tuples name, by id, after cursor.
-func (s *Service) Objects(ctx context.Context, tenantID uuid.UUID, objType string, limit int, cursor string) (*ObjectPage, error) {
+// of objType the organization's tuples name, by id, after cursor.
+func (s *Service) Objects(ctx context.Context, organizationID uuid.UUID, objType string, limit int, cursor string) (*ObjectPage, error) {
 	if strings.TrimSpace(objType) == "" {
 		return nil, errs.ErrBadRequest.WithMessage("Name the type of object to list.")
 	}
@@ -381,12 +381,12 @@ func (s *Service) Objects(ctx context.Context, tenantID uuid.UUID, objType strin
 		}
 		after = string(raw)
 	}
-	total, err := s.q.CountRelationObjects(ctx, dbgen.CountRelationObjectsParams{TenantID: tenantID, ObjectType: objType})
+	total, err := s.q.CountRelationObjects(ctx, dbgen.CountRelationObjectsParams{OrganizationID: organizationID, ObjectType: objType})
 	if err != nil {
 		return nil, err
 	}
 	rows, err := s.q.ListRelationObjects(ctx, dbgen.ListRelationObjectsParams{
-		TenantID: tenantID, ObjectType: objType, After: after, RowLimit: int32(limit + 1), // #nosec G115 -- limit is at most 500
+		OrganizationID: organizationID, ObjectType: objType, After: after, RowLimit: int32(limit + 1), // #nosec G115 -- limit is at most 500
 	})
 	if err != nil {
 		return nil, err
@@ -402,11 +402,11 @@ func (s *Service) Objects(ctx context.Context, tenantID uuid.UUID, objType strin
 	return page, nil
 }
 
-// tupleFetcher returns a fetcher scoped to one tenant, backed by the database
+// tupleFetcher returns a fetcher scoped to one organization, backed by the database
 // and reading each object#relation once, however often a walk meets it. Each
 // read draws on ctx's request budget (WithRequestBudget), if it carries one.
 // FetchSubjects is the hot-path query for Check/Explain/Expand.
-func (s *Service) tupleFetcher(ctx context.Context, tenantID uuid.UUID) fetcher {
+func (s *Service) tupleFetcher(ctx context.Context, organizationID uuid.UUID) fetcher {
 	read := map[string][]tuple{}
 	left, _ := ctx.Value(requestBudgetKey{}).(*atomic.Int64)
 	return func(objectType, objectID, rel string) ([]tuple, error) {
@@ -418,10 +418,10 @@ func (s *Service) tupleFetcher(ctx context.Context, tenantID uuid.UUID) fetcher 
 			return nil, errs.ErrReBACCheckTooComplex
 		}
 		rows, err := s.q.FetchSubjects(ctx, dbgen.FetchSubjectsParams{
-			TenantID:   tenantID,
-			ObjectType: objectType,
-			ObjectID:   objectID,
-			Relation:   rel,
+			OrganizationID: organizationID,
+			ObjectType:     objectType,
+			ObjectID:       objectID,
+			Relation:       rel,
 		})
 		if err != nil {
 			return nil, err
@@ -435,25 +435,25 @@ func (s *Service) tupleFetcher(ctx context.Context, tenantID uuid.UUID) fetcher 
 	}
 }
 
-// Check answers whether userID has relation on object (type:id) for a tenant.
-func (s *Service) Check(ctx context.Context, tenantID uuid.UUID, object, relation, userID string) (bool, error) {
+// Check answers whether userID has relation on object (type:id) for an organization.
+func (s *Service) Check(ctx context.Context, organizationID uuid.UUID, object, relation, userID string) (bool, error) {
 	o, ok := parseObject(object)
 	if !ok {
 		return false, errs.ErrReBACObjectInvalid
 	}
-	allowed, _, err := resolve(s.tupleFetcher(ctx, tenantID), o.Type, o.ID, relation, userID, map[string]int{}, 0)
+	allowed, _, err := resolve(s.tupleFetcher(ctx, organizationID), o.Type, o.ID, relation, userID, map[string]int{}, 0)
 	return allowed, err
 }
 
 // CheckExplain resolves the same decision as Check but also returns the
 // root-to-leaf chain of relation tuples that granted it (empty on denial) —
 // the ReBAC counterpart to rbac.Repository.Explain.
-func (s *Service) CheckExplain(ctx context.Context, tenantID uuid.UUID, object, relation, userID string) (*Explanation, error) {
+func (s *Service) CheckExplain(ctx context.Context, organizationID uuid.UUID, object, relation, userID string) (*Explanation, error) {
 	o, ok := parseObject(object)
 	if !ok {
 		return nil, errs.ErrReBACObjectInvalid
 	}
-	allowed, path, err := resolve(s.tupleFetcher(ctx, tenantID), o.Type, o.ID, relation, userID, map[string]int{}, 0)
+	allowed, path, err := resolve(s.tupleFetcher(ctx, organizationID), o.Type, o.ID, relation, userID, map[string]int{}, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -467,7 +467,7 @@ type GraphNode struct {
 	ID    string `json:"id"`             // e.g. "document:readme"
 	Type  string `json:"type"`           // e.g. "document"
 	Label string `json:"label"`          // e.g. "readme"
-	Name  string `json:"name,omitempty"` // a user node's person, when they belong to the organisation
+	Name  string `json:"name,omitempty"` // a user node's person, when they belong to the organization
 }
 
 // GraphEdge is a directed relationship between two nodes.
@@ -542,7 +542,7 @@ func expand(fetch fetcher, objType, objID, relation string, limit int) (map[stri
 // ("who can reach this resource?"), following usersets up to depth hops
 // (maxExpandDepth when depth is out of range). Each node appears once. It
 // reads within one request budget: a wider graph is ErrReBACCheckTooComplex.
-func (s *Service) Expand(ctx context.Context, tenantID uuid.UUID, object, relation string, depth int) (*Graph, error) {
+func (s *Service) Expand(ctx context.Context, organizationID uuid.UUID, object, relation string, depth int) (*Graph, error) {
 	o, ok := parseObject(object)
 	if !ok {
 		return nil, errs.ErrReBACObjectInvalid
@@ -553,7 +553,7 @@ func (s *Service) Expand(ctx context.Context, tenantID uuid.UUID, object, relati
 	if depth <= 0 || depth > maxExpandDepth {
 		depth = maxExpandDepth
 	}
-	nodes, edges, err := expand(s.tupleFetcher(WithRequestBudget(ctx), tenantID), o.Type, o.ID, relation, depth)
+	nodes, edges, err := expand(s.tupleFetcher(WithRequestBudget(ctx), organizationID), o.Type, o.ID, relation, depth)
 	if err != nil {
 		return nil, err
 	}
@@ -564,7 +564,7 @@ func (s *Service) Expand(ctx context.Context, tenantID uuid.UUID, object, relati
 			people = append(people, n.Label)
 		}
 	}
-	names, err := s.namePeople(ctx, tenantID, people)
+	names, err := s.namePeople(ctx, organizationID, people)
 	if err != nil {
 		return nil, err
 	}
@@ -580,22 +580,22 @@ func (s *Service) Expand(ctx context.Context, tenantID uuid.UUID, object, relati
 
 // ListBySubject returns every tuple in which subject (type:id) appears, the
 // reverse of List.
-func (s *Service) ListBySubject(ctx context.Context, tenantID uuid.UUID, subject string) ([]Tuple, error) {
+func (s *Service) ListBySubject(ctx context.Context, organizationID uuid.UUID, subject string) ([]Tuple, error) {
 	subj, ok := parseSubject(subject)
 	if !ok {
 		return nil, errs.ErrReBACSubjectInvalid
 	}
 	rows, err := s.q.ListRelationTuplesBySubject(ctx, dbgen.ListRelationTuplesBySubjectParams{
-		TenantID:    tenantID,
-		SubjectType: subj.Type,
-		SubjectID:   subj.ID,
+		OrganizationID: organizationID,
+		SubjectType:    subj.Type,
+		SubjectID:      subj.ID,
 	})
 	if err != nil {
 		return nil, err
 	}
 	name := ""
 	if subj.Type == "user" {
-		names, err := s.namePeople(ctx, tenantID, []string{subj.ID})
+		names, err := s.namePeople(ctx, organizationID, []string{subj.ID})
 		if err != nil {
 			return nil, err
 		}
@@ -638,12 +638,12 @@ func (h *Handler) Mount(r chi.Router) {
 }
 
 func (h *Handler) objectTypes(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out, err := h.Service.ObjectTypes(r.Context(), tenantID)
+	out, err := h.Service.ObjectTypes(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -652,14 +652,14 @@ func (h *Handler) objectTypes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) objects(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
-	out, err := h.Service.Objects(r.Context(), tenantID, q.Get("type"), limit, q.Get("cursor"))
+	out, err := h.Service.Objects(r.Context(), organizationID, q.Get("type"), limit, q.Get("cursor"))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -668,7 +668,7 @@ func (h *Handler) objects(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -680,14 +680,14 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	case object != "" && subject != "":
 		httpx.WriteError(w, r, errs.ErrReBACObjectSubjectExclusive)
 	case object != "":
-		out, err := h.Service.List(r.Context(), tenantID, object)
+		out, err := h.Service.List(r.Context(), organizationID, object)
 		if err != nil {
 			httpx.WriteError(w, r, err)
 			return
 		}
 		httpx.WriteJSON(w, http.StatusOK, paging.List(out))
 	case subject != "":
-		out, err := h.Service.ListBySubject(r.Context(), tenantID, subject)
+		out, err := h.Service.ListBySubject(r.Context(), organizationID, subject)
 		if err != nil {
 			httpx.WriteError(w, r, err)
 			return
@@ -699,7 +699,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) write(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -713,7 +713,7 @@ func (h *Handler) write(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	t, err := h.Service.Write(r.Context(), tenantID, in.Object, in.Relation, in.Subject, audit.ActorOf(r))
+	t, err := h.Service.Write(r.Context(), organizationID, in.Object, in.Relation, in.Subject, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -722,7 +722,7 @@ func (h *Handler) write(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -732,7 +732,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	if err := h.Service.Delete(r.Context(), id, tenantID, audit.ActorOf(r)); err != nil {
+	if err := h.Service.Delete(r.Context(), id, organizationID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -740,7 +740,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -764,17 +764,17 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 	}
 	// The check and its explanation share one budget.
 	r = r.WithContext(WithRequestBudget(r.Context()))
-	dec, err := h.Decider.Relation(r.Context(), tenantID, in.UserID, in.Object, in.Relation)
+	dec, err := h.Decider.Relation(r.Context(), organizationID, in.UserID, in.Object, in.Relation)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	h.Decisions.Record(r.Context(), decisionlog.Entry{TenantID: tenantID, Source: decisionlog.SourceRelationCheck, Subject: in.UserID,
+	h.Decisions.Record(r.Context(), decisionlog.Entry{OrganizationID: organizationID, Source: decisionlog.SourceRelationCheck, Subject: in.UserID,
 		Resource: in.Object, Action: in.Relation, Allowed: dec.Allow, Model: dec.Model, Rule: dec.Rule, ReasonCode: dec.ReasonCode})
-	dec = h.Decider.ForViewer(r.Context(), httpx.PrincipalFromCtx(r.Context()), tenantID, dec)
+	dec = h.Decider.ForViewer(r.Context(), httpx.PrincipalFromCtx(r.Context()), organizationID, dec)
 	out := map[string]any{"allowed": dec.Allow, "decided_by": dec.DecidedBy()}
 	if r.URL.Query().Get("explain") == "true" {
-		exp, err := h.Service.CheckExplain(r.Context(), tenantID, in.Object, in.Relation, in.UserID)
+		exp, err := h.Service.CheckExplain(r.Context(), organizationID, in.Object, in.Relation, in.UserID)
 		if err != nil {
 			httpx.WriteError(w, r, err)
 			return
@@ -791,7 +791,7 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 // graph for ?object=<type:id>&relation=<rel>[&depth=<n>]: who or what can reach
 // the resource, and through which relationships.
 func (h *Handler) graph(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -809,7 +809,7 @@ func (h *Handler) graph(w http.ResponseWriter, r *http.Request) {
 			depth = n
 		}
 	}
-	g, err := h.Service.Expand(r.Context(), tenantID, object, relation, depth)
+	g, err := h.Service.Expand(r.Context(), organizationID, object, relation, depth)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

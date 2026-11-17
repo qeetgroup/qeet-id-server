@@ -28,14 +28,14 @@ type Service struct {
 	// limits gates application (relying-party) registration by plan (nil = off).
 	limits PlanLimiter
 	// grantMaxAge ends a grant that long after it starts however often it is
-	// renewed, where its organisation sets no maximum session age of its own.
+	// renewed, where its organization sets no maximum session age of its own.
 	grantMaxAge time.Duration
-	// addresses is the organisations' address rules (nil = no rules). See
+	// addresses is the organizations' address rules (nil = no rules). See
 	// address.go.
 	addresses AddressPolicy
-	// sessionFactors is the second factor an organisation still requires of a
+	// sessionFactors is the second factor an organization still requires of a
 	// person's session (nil: none checked).
-	sessionFactors func(ctx context.Context, sessionID, userID, tenantID uuid.UUID) error
+	sessionFactors func(ctx context.Context, sessionID, userID, organizationID uuid.UUID) error
 	// lockout bounds wrong application secrets. See client_lockout.go.
 	lockout ClientLockout
 	// logoutClient sends back-channel sign-out notices under logoutEgress
@@ -91,7 +91,7 @@ func (s *Service) SetTokenExchangeMaxDepth(n int) {
 }
 
 // SetGrantMaxAge sets how long an application's grant lasts however often it is
-// renewed, where its organisation sets no maximum session age (config
+// renewed, where its organization sets no maximum session age (config
 // SESSION_MAX_AGE).
 func (s *Service) SetGrantMaxAge(d time.Duration) { s.grantMaxAge = d }
 

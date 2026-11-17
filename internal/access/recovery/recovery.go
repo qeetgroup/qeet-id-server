@@ -65,21 +65,21 @@ type Service struct {
 }
 
 // PasswordRules checks a new password against the rules of the account's
-// organisation (uuid.Nil: the platform baseline), the offline strength check
+// organization (uuid.Nil: the platform baseline), the offline strength check
 // and, when enabled, the breach check. Satisfied by *authpolicy.Service.
 type PasswordRules interface {
-	ValidateForTenant(ctx context.Context, tenantID uuid.UUID, email, pw string) error
+	ValidateForOrganization(ctx context.Context, organizationID uuid.UUID, email, pw string) error
 }
 
 // MagicLinkPolicy is the slice of the authentication policy that decides
-// whether an organisation allows magic-link sign-in and how long its links
+// whether an organization allows magic-link sign-in and how long its links
 // live. Satisfied by *authpolicy.Service.
 type MagicLinkPolicy interface {
-	MagicLinkPolicy(ctx context.Context, tenantID uuid.UUID) (enabled bool, ttl time.Duration, err error)
+	MagicLinkPolicy(ctx context.Context, organizationID uuid.UUID) (enabled bool, ttl time.Duration, err error)
 }
 
 // SetDomainCapture sets the check that refuses resets and magic links to an
-// address whose organisation requires single sign-on (nil: none is refused).
+// address whose organization requires single sign-on (nil: none is refused).
 func (s *Service) SetDomainCapture(c auth.DomainCapture) { s.capture = c }
 
 // refuseCaptured returns errs.ErrAuthSSORequired when email's domain is
@@ -94,20 +94,20 @@ func (s *Service) refuseCaptured(ctx context.Context, email string) error {
 // SetSessionSignals sets how ended sessions are announced.
 func (s *Service) SetSessionSignals(sig *sessionsignal.Signaller) { s.signals = sig }
 
-// SetMagicLinkPolicy sets the policy that decides whether an organisation
+// SetMagicLinkPolicy sets the policy that decides whether an organization
 // allows magic links and how long they live.
 func (s *Service) SetMagicLinkPolicy(p MagicLinkPolicy) { s.magicLinks = p }
 
-// magicLinkTTL is how long a magic link for tenantID lives, or
-// ErrAuthMethodDisabled when the tenant has switched magic links off
-// (uuid.Nil: no organisation, the platform default).
-func (s *Service) magicLinkTTL(ctx context.Context, tenantID uuid.UUID) (time.Duration, error) {
-	// No organisation, no organisation policy: the platform allows magic
+// magicLinkTTL is how long a magic link for organizationID lives, or
+// ErrAuthMethodDisabled when the organization has switched magic links off
+// (uuid.Nil: no organization, the platform default).
+func (s *Service) magicLinkTTL(ctx context.Context, organizationID uuid.UUID) (time.Duration, error) {
+	// No organization, no organization policy: the platform allows magic
 	// links, with the default lifetime.
-	if s.magicLinks == nil || tenantID == uuid.Nil {
+	if s.magicLinks == nil || organizationID == uuid.Nil {
 		return s.ttl, nil
 	}
-	enabled, ttl, err := s.magicLinks.MagicLinkPolicy(ctx, tenantID)
+	enabled, ttl, err := s.magicLinks.MagicLinkPolicy(ctx, organizationID)
 	if err != nil {
 		return 0, err
 	}
@@ -176,7 +176,7 @@ func (s *Service) SetResetLimit(perAddress Limiter) { s.resetPerAddress = perAdd
 // handlers, empty when no account matched. The link goes to the address as
 // stored, and ends the account's earlier ones. Past the per-address bound it
 // returns ErrTooManyRequests, whether or not an account matched; an address
-// whose organisation requires single sign-on is then refused before any
+// whose organization requires single sign-on is then refused before any
 // account is looked up.
 func (s *Service) StartPasswordReset(ctx context.Context, email string, from ResetOrigin) (string, error) {
 	if s.resetPerAddress != nil {
@@ -188,11 +188,11 @@ func (s *Service) StartPasswordReset(ctx context.Context, email string, from Res
 		return "", err
 	}
 	var userID uuid.UUID
-	var tenantID *uuid.UUID
+	var organizationID *uuid.UUID
 	var stored string
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, tenant_id, email FROM account.users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL`, email,
-	).Scan(&userID, &tenantID, &stored)
+		`SELECT id, organization_id, email FROM account.users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL`, email,
+	).Scan(&userID, &organizationID, &stored)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
@@ -230,8 +230,8 @@ func (s *Service) StartPasswordReset(ctx context.Context, email string, from Res
 			return err
 		}
 		var orgs []uuid.UUID
-		if tenantID != nil {
-			orgs = []uuid.UUID{*tenantID}
+		if organizationID != nil {
+			orgs = []uuid.UUID{*organizationID}
 		}
 		s.recordRequest(ctx, "auth.password_reset_requested", userID, orgs, from.Audit, map[string]any{"app": from.App})
 		return nil
@@ -278,7 +278,7 @@ func init() {
 }
 
 // recordRequest records a recovery request in the audit trail of each of orgs
-// (none: no organisation's), naming the account as the subject, not the actor,
+// (none: no organization's), naming the account as the subject, not the actor,
 // since whoever asked may not own it. It is bounded per account and best
 // effort: a record that can't be written is logged.
 func (s *Service) recordRequest(ctx context.Context, action string, userID uuid.UUID, orgs []uuid.UUID, ac AuditCtx, meta map[string]any) {
@@ -299,7 +299,7 @@ func (s *Service) recordRequest(ctx context.Context, action string, userID uuid.
 		subject := userID
 		for _, org := range auditOrgs(orgs) {
 			if err := audit.Record(ctx, tx, audit.Event{
-				TenantID: org, ActorType: "anonymous", Action: action, ResourceType: "user", ResourceID: &subject,
+				OrganizationID: org, ActorType: "anonymous", Action: action, ResourceType: "user", ResourceID: &subject,
 				IP: ac.IP, UserAgent: ac.UserAgent, RequestID: ac.RequestID, Metadata: meta,
 			}); err != nil {
 				return err
@@ -337,7 +337,7 @@ func proveAddress(ctx context.Context, tx pgx.Tx, userID uuid.UUID, org *uuid.UU
 		{"auth.credentials_removed", map[string]any{"proof": proof, "removed": removed}},
 	} {
 		if err := audit.Record(ctx, tx, audit.Event{
-			TenantID: org, ActorUserID: &subject, ActorType: "user", Action: e.action, ResourceType: "user",
+			OrganizationID: org, ActorUserID: &subject, ActorType: "user", Action: e.action, ResourceType: "user",
 			ResourceID: &subject, IP: ac.IP, UserAgent: ac.UserAgent, RequestID: ac.RequestID, Metadata: e.meta,
 		}); err != nil {
 			return false, err
@@ -346,8 +346,8 @@ func proveAddress(ctx context.Context, tx pgx.Tx, userID uuid.UUID, org *uuid.UU
 	return true, nil
 }
 
-// auditOrgs is the audit tenant of each distinct organisation in orgs, or one
-// nil tenant (no organisation's trail) when there are none.
+// auditOrgs is each distinct organization in orgs, as an audit row names it, or
+// one nil (no organization's trail) when there are none.
 func auditOrgs(orgs []uuid.UUID) []*uuid.UUID {
 	var out []*uuid.UUID
 	for i, org := range orgs {
@@ -362,7 +362,7 @@ func auditOrgs(orgs []uuid.UUID) []*uuid.UUID {
 }
 
 // ConfirmPasswordReset sets a new password with a reset link, checked against
-// the rules of the account's organisation once the link is known to be good. A
+// the rules of the account's organization once the link is known to be good. A
 // refused password, or an address that must now sign in with single sign-on,
 // leaves the credential and link untouched. On success the address counts as
 // verified and every sign-in ends (see auth.EndSignIns).
@@ -372,7 +372,7 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPasswor
 	}
 	hash := codes.Hash(rawToken)
 	// The password is checked before the transaction, as the check reads the
-	// organisation's rules and may call the breach service; the link is
+	// organization's rules and may call the breach service; the link is
 	// checked again under lock inside it.
 	row, err := resetLink(ctx, s.q, hash)
 	if err != nil {
@@ -385,13 +385,13 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPasswor
 	if err := s.refuseCaptured(ctx, account.Email); err != nil {
 		return err
 	}
-	var tenantID uuid.UUID // uuid.Nil: the account belongs to no organisation
-	var orgOf *uuid.UUID   // the trail the reset is recorded in
-	if account.TenantID.Valid {
-		tenantID = account.TenantID.Bytes
-		orgOf = &tenantID
+	var organizationID uuid.UUID // uuid.Nil: the account belongs to no organization
+	var orgOf *uuid.UUID         // the trail the reset is recorded in
+	if account.OrganizationID.Valid {
+		organizationID = account.OrganizationID.Bytes
+		orgOf = &organizationID
 	}
-	if err := s.rules.ValidateForTenant(ctx, tenantID, account.Email, newPassword); err != nil {
+	if err := s.rules.ValidateForOrganization(ctx, organizationID, account.Email, newPassword); err != nil {
 		return err
 	}
 	pwHash, err := password.Hash(newPassword)
@@ -434,15 +434,15 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPasswor
 	userID := row.UserID
 	target := userID
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     orgOf,
-		ActorUserID:  &target,
-		ActorType:    "system",
-		Action:       "auth.password_reset_confirmed",
-		ResourceType: "user",
-		ResourceID:   &target,
-		IP:           ac.IP,
-		UserAgent:    ac.UserAgent,
-		RequestID:    ac.RequestID,
+		OrganizationID: orgOf,
+		ActorUserID:    &target,
+		ActorType:      "system",
+		Action:         "auth.password_reset_confirmed",
+		ResourceType:   "user",
+		ResourceID:     &target,
+		IP:             ac.IP,
+		UserAgent:      ac.UserAgent,
+		RequestID:      ac.RequestID,
 		Metadata: map[string]any{
 			"sessions_revoked": true, "revoked_sessions": ended.Sessions, "revoked_login_sessions": ended.LoginSessions,
 			"revoked_app_grants": ended.AppGrants, "revoked_trusted_devices": ended.TrustedDevices,

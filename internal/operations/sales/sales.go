@@ -1,6 +1,6 @@
 // Package sales captures in-app "Contact sales" leads. A lead is saved for
 // follow-up and, best-effort, emailed to the sales inbox. Any signed-in user may
-// submit one: tenant and user are recorded when known, since a lead can come
+// submit one: organization and user are recorded when known, since a lead can come
 // before an organization exists.
 package sales
 
@@ -54,20 +54,20 @@ func pgUUID(id *uuid.UUID) pgtype.UUID {
 
 // Submit saves the lead and, best-effort, emails the sales inbox. The email
 // address is required.
-func (s *Service) Submit(ctx context.Context, tenantID, userID *uuid.UUID, in Lead) error {
+func (s *Service) Submit(ctx context.Context, organizationID, userID *uuid.UUID, in Lead) error {
 	email := strings.TrimSpace(in.Email)
 	if email == "" {
 		return errs.ErrBadRequest.WithMessage("A work email is required.")
 	}
 	if _, err := s.q.InsertSalesLead(ctx, dbgen.InsertSalesLeadParams{
-		TenantID: pgUUID(tenantID),
-		UserID:   pgUUID(userID),
-		Name:     strings.TrimSpace(in.Name),
-		Email:    email,
-		Company:  strings.TrimSpace(in.Company),
-		TeamSize: strings.TrimSpace(in.TeamSize),
-		Message:  strings.TrimSpace(in.Message),
-		Source:   strings.TrimSpace(in.Source),
+		OrganizationID: pgUUID(organizationID),
+		UserID:         pgUUID(userID),
+		Name:           strings.TrimSpace(in.Name),
+		Email:          email,
+		Company:        strings.TrimSpace(in.Company),
+		TeamSize:       strings.TrimSpace(in.TeamSize),
+		Message:        strings.TrimSpace(in.Message),
+		Source:         strings.TrimSpace(in.Source),
 	}); err != nil {
 		return err
 	}
@@ -115,11 +115,11 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	var tenantID, userID *uuid.UUID
+	var organizationID, userID *uuid.UUID
 	if p := httpx.PrincipalFromCtx(r.Context()); p != nil {
-		tenantID, userID = p.TenantID, p.UserID
+		organizationID, userID = p.OrganizationID, p.UserID
 	}
-	if err := h.Service.Submit(r.Context(), tenantID, userID, in); err != nil {
+	if err := h.Service.Submit(r.Context(), organizationID, userID, in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

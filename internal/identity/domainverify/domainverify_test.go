@@ -70,7 +70,7 @@ func TestDeriveStatus(t *testing.T) {
 	}
 }
 
-// TestLoginRecordsAreDeterministic checks that a tenant's DNS instructions are
+// TestLoginRecordsAreDeterministic checks that an organization's DNS instructions are
 // the same on every call, so records an operator created stay valid.
 func TestLoginRecordsAreDeterministic(t *testing.T) {
 	id := uuid.MustParse("fa139717-1577-496e-823a-6a335738898a")
@@ -128,7 +128,7 @@ func hostedLogin(t *testing.T, status int, body string, trusted bool) *http.Clie
 // to active only as each stage is observed: its DNS records, a certificate
 // valid for it, and the hosted login answering on it.
 func TestLoginDomainStages(t *testing.T) {
-	tenant := uuid.MustParse("fa139717-1577-496e-823a-6a335738898a")
+	organization := uuid.MustParse("fa139717-1577-496e-823a-6a335738898a")
 	published := txtResolver{"qeetid-verify=fa139717"}
 	healthy := `{"status":"ok","service":"qeet-id-hosted"}`
 	for _, tc := range []struct {
@@ -148,7 +148,7 @@ func TestLoginDomainStages(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &Service{resolver: tc.dns, web: tc.web}
-			st := s.loginDomainStatus(t.Context(), tenant, tc.host)
+			st := s.loginDomainStatus(t.Context(), organization, tc.host)
 			if st.Status != tc.status || st.TLSState != tc.tlsState || st.EndpointState != tc.endpoint {
 				t.Errorf("status %s, TLS %s, endpoint %s; want %s, %s, %s",
 					st.Status, st.TLSState, st.EndpointState, tc.status, tc.tlsState, tc.endpoint)

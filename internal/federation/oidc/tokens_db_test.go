@@ -17,10 +17,10 @@ import (
 func TestRefreshRotationAndReuse(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
-	tenant := dbtest.Tenant(t)
-	user := dbtest.User(t, tenant, tenant)
-	client, secret := registerClient(t, svc, tenant)
-	other, otherSecret := registerClient(t, svc, tenant)
+	organization := dbtest.Organization(t)
+	user := dbtest.User(t, organization, organization)
+	client, secret := registerClient(t, svc, organization)
+	other, otherSecret := registerClient(t, svc, organization)
 	issued := redeemCode(t, svc, client, secret, user.ID, "")
 
 	if _, err := svc.RefreshToken(ctx, client.ClientID, "wrong-secret", issued.RefreshToken, ""); err == nil {
@@ -40,7 +40,7 @@ func TestRefreshRotationAndReuse(t *testing.T) {
 	if _, err := svc.RefreshToken(ctx, client.ClientID, secret, rotated.RefreshToken, ""); err == nil {
 		t.Error("the chain's live refresh token survived the reuse of a rotated one")
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'oidc.refresh_reuse_detected' AND tenant_id = $1`, tenant); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'oidc.refresh_reuse_detected' AND organization_id = $1`, organization); n != 1 {
 		t.Errorf("the reuse was audited %d times, want once", n)
 	}
 }
@@ -52,10 +52,10 @@ func TestRefreshRotationAndReuse(t *testing.T) {
 func TestRevocationAndIntrospection(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
-	tenant := dbtest.Tenant(t)
-	user := dbtest.User(t, tenant, tenant)
-	client, secret := registerClient(t, svc, tenant)
-	other, otherSecret := registerClient(t, svc, tenant)
+	organization := dbtest.Organization(t)
+	user := dbtest.User(t, organization, organization)
+	client, secret := registerClient(t, svc, organization)
+	other, otherSecret := registerClient(t, svc, organization)
 	issued := redeemCode(t, svc, client, secret, user.ID, "")
 	active := func(clientID, clientSecret, token string) bool {
 		t.Helper()
@@ -73,7 +73,7 @@ func TestRevocationAndIntrospection(t *testing.T) {
 	if active(other.ClientID, otherSecret, issued.AccessToken) || active(other.ClientID, otherSecret, issued.RefreshToken) {
 		t.Error("another application of the organisation learned of the tokens")
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'oidc.introspection_refused' AND tenant_id = $1`, tenant); n == 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'oidc.introspection_refused' AND organization_id = $1`, organization); n == 0 {
 		t.Error("asking about another application's token was not audited")
 	}
 	if !active(client.ClientID, secret, issued.RefreshToken) {
@@ -104,17 +104,17 @@ func TestRevocationAndIntrospection(t *testing.T) {
 
 // TestTokenExchange checks that an application exchanges its own token for one
 // with no more scope, which can't outlive it, within the exchange depth; and
-// that an application without the grant, or another organisation's, can't.
+// that an application without the grant, or another organization's, can't.
 func TestTokenExchange(t *testing.T) {
 	ctx := dbtest.Context(t)
 	issuer := dbtest.Issuer(t)
 	svc := NewService(dbtest.Pool(t), issuer)
-	tenant, otherTenant := dbtest.Tenant(t), dbtest.Tenant(t)
-	user := dbtest.User(t, tenant, tenant)
+	organization, otherOrganization := dbtest.Organization(t), dbtest.Organization(t)
+	user := dbtest.User(t, organization, organization)
 	grants := []string{"authorization_code", "refresh_token", "token_exchange"}
-	client, secret := registerClientWith(t, svc, CreateClientInput{TenantID: tenant, GrantTypes: grants})
-	plain, plainSecret := registerClient(t, svc, tenant)
-	foreign, foreignSecret := registerClientWith(t, svc, CreateClientInput{TenantID: otherTenant, GrantTypes: grants})
+	client, secret := registerClientWith(t, svc, CreateClientInput{OrganizationID: organization, GrantTypes: grants})
+	plain, plainSecret := registerClient(t, svc, organization)
+	foreign, foreignSecret := registerClientWith(t, svc, CreateClientInput{OrganizationID: otherOrganization, GrantTypes: grants})
 	subject := redeemCode(t, svc, client, secret, user.ID, "")
 	exchange := func(clientID, clientSecret, token, scope string) (*TokenResponse, error) {
 		return svc.TokenExchange(ctx, clientID, clientSecret, token, "", "", scope, "", "", "")
@@ -130,7 +130,7 @@ func TestTokenExchange(t *testing.T) {
 		claims.ExpiresAt.After(from.ExpiresAt.Time) {
 		t.Fatalf("exchanged token %+v, %v; want the user's, issued to the caller, one exchange deep, expiring no later", claims, err)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'oidc.token_exchanged' AND tenant_id = $1`, tenant); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'oidc.token_exchanged' AND organization_id = $1`, organization); n != 1 {
 		t.Error("the exchange was not audited")
 	}
 
@@ -158,10 +158,10 @@ func TestTokenExchange(t *testing.T) {
 func TestTokenExchangeHoldsOnlyWhatTheCallerMay(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
-	tenant := dbtest.Tenant(t)
-	user := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	user := dbtest.User(t, organization, organization)
 	grants := []string{"authorization_code", "refresh_token", "token_exchange"}
-	app, appSecret := registerClientWith(t, svc, CreateClientInput{TenantID: tenant, GrantTypes: grants, Scopes: []string{"openid", "email", "profile"}})
+	app, appSecret := registerClientWith(t, svc, CreateClientInput{OrganizationID: organization, GrantTypes: grants, Scopes: []string{"openid", "email", "profile"}})
 	verifier, challenge, err := codes.URLToken()
 	if err != nil {
 		t.Fatal(err)
@@ -174,8 +174,8 @@ func TestTokenExchangeHoldsOnlyWhatTheCallerMay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	delegate, delegateSecret := registerClientWith(t, svc, CreateClientInput{TenantID: tenant, GrantTypes: grants, Scopes: []string{"openid", "email", "profile"}})
-	narrow, narrowSecret := registerClientWith(t, svc, CreateClientInput{TenantID: tenant, GrantTypes: grants, Scopes: []string{"openid"}})
+	delegate, delegateSecret := registerClientWith(t, svc, CreateClientInput{OrganizationID: organization, GrantTypes: grants, Scopes: []string{"openid", "email", "profile"}})
+	narrow, narrowSecret := registerClientWith(t, svc, CreateClientInput{OrganizationID: organization, GrantTypes: grants, Scopes: []string{"openid"}})
 	for _, c := range []*Client{delegate, narrow} {
 		if err := svc.GrantConsent(ctx, user.ID, c.ClientID, []string{"openid", "email"}); err != nil {
 			t.Fatal(err)

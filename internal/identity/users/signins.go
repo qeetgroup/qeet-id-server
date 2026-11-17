@@ -22,7 +22,7 @@ const (
 	signInTopAddrs    = 20
 )
 
-// SignInSummary is how a member signed in to an organisation over a period:
+// SignInSummary is how a member signed in to an organization over a period:
 // by method, and how many of those met a second step; by address and by
 // browser; and the failed attempts by reason.
 type SignInSummary struct {
@@ -66,15 +66,15 @@ type FailureReason struct {
 }
 
 // signInEvents is the member's ($2) sign-in events of action ($3) in the
-// organisation ($1) over [from, to) ($4, $5).
+// organization ($1) over [from, to) ($4, $5).
 const signInEvents = `FROM audit.events
-	WHERE tenant_id = $1 AND actor_user_id = $2 AND action = $3 AND created_at >= $4 AND created_at < $5`
+	WHERE organization_id = $1 AND actor_user_id = $2 AND action = $3 AND created_at >= $4 AND created_at < $5`
 
-// SignInSummary summarises id's sign-ins to tenantID over [from, to).
-func (r *Repository) SignInSummary(ctx context.Context, tenantID, id uuid.UUID, from, to time.Time) (*SignInSummary, error) {
+// SignInSummary summarises id's sign-ins to organizationID over [from, to).
+func (r *Repository) SignInSummary(ctx context.Context, organizationID, id uuid.UUID, from, to time.Time) (*SignInSummary, error) {
 	out := &SignInSummary{From: from, To: to, ByMethod: []MethodCount{}, ByAddress: []AddressCount{},
 		ByBrowser: []BrowserCount{}, FailuresBy: []FailureReason{}}
-	args := []any{tenantID, id, "auth.login_succeeded", from, to}
+	args := []any{organizationID, id, "auth.login_succeeded", from, to}
 	rows, err := r.pool.Query(ctx, `SELECT COALESCE(metadata->>'method', 'unknown'), count(*),
 		count(*) FILTER (WHERE COALESCE(metadata->>'second_factor', '') <> '' OR metadata->>'method' LIKE '%\_mfa')
 		`+signInEvents+` GROUP BY 1 ORDER BY 2 DESC, 1`, args...)
@@ -199,13 +199,13 @@ func signInRange(r *http.Request) (time.Time, time.Time, error) {
 }
 
 // signIns handles GET /v1/tenants/{tenantID}/users/{id}/sign-ins: how the
-// member signed in to the organisation over a period.
+// member signed in to the organization over a period.
 func (h *Handler) signIns(w http.ResponseWriter, r *http.Request) {
-	if _, err := httpx.PathTenant(r); err != nil {
+	if _, err := httpx.PathOrganization(r); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	id, tenantID, err := h.memberID(r)
+	id, organizationID, err := h.memberID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -215,7 +215,7 @@ func (h *Handler) signIns(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out, err := h.Repo.SignInSummary(r.Context(), tenantID, id, from, to)
+	out, err := h.Repo.SignInSummary(r.Context(), organizationID, id, from, to)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

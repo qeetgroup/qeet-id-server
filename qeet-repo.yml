@@ -44,7 +44,7 @@ architecture:
   shared_kernel: internal/platform
   bounded_contexts:
     - internal/access        # authentication, authorization, MFA, passkeys, risk
-    - internal/identity      # tenants, users, groups, invitations, verification
+    - internal/identity      # organizations, users, groups, invitations, verification
     - internal/federation    # OIDC provider, SAML, SCIM, LDAP, social
     - internal/developer     # API keys, principals, agents, webhooks, vaults
     - internal/operations    # audit, billing, GDPR, analytics, SIEM, retention
@@ -83,7 +83,7 @@ data:
     tool: golang-migrate
     embedded: true         # //go:embed *.sql in runner.go
     range: "0001..0012"    # the schema baseline: 12 pairs, one file per schema
-    schemas: [auth, tenant, account, rbac, audit, platform, qeetai]
+    schemas: [auth, organization, account, rbac, audit, platform, qeetai]
 
 http:
   router: chi/v5
@@ -99,10 +99,10 @@ dependencies:
   dev_only: [mailpit]
 
 security:
-  tenant_isolation:
+  organization_isolation:
     mechanism: principal/path/query enforcement, backed by row-level security
-    rls: true              # migration 0160: tenant_isolation on organisation-owned tables, organisation-administration requests only
-    guard: internal/platform/http/httpx/auth.go  # EnforceTenantScope, RequireTenant
+    rls: true              # migration 0011: organization_isolation on organization-owned tables, organization-administration requests only
+    guard: internal/platform/http/httpx/auth.go  # EnforceOrganizationScope, RequireOrganization
   authentication: internal/platform/http/httpx/auth.go
   authorization: internal/access/authorization/
   permission_map: internal/bootstrap/permissions.go

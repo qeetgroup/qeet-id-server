@@ -19,7 +19,7 @@ const (
 )
 
 // openIncident posts the incident args describe (-component, -impact, -title
-// and -detail), shown to every organisation, and returns the exit code.
+// and -detail), shown to every organization, and returns the exit code.
 func openIncident(ctx context.Context, svc *servicehealth.Service, args []string) int {
 	fs := flag.NewFlagSet(openIncidentCommand, flag.ContinueOnError)
 	component := fs.String("component", "", "api, sign_in, email, webhooks or directory")

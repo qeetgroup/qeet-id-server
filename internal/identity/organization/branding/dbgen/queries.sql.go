@@ -13,13 +13,13 @@ import (
 
 const getBranding = `-- name: GetBranding :one
 
-SELECT tenant_id, logo_url, primary_color, secondary_color,
+SELECT organization_id, logo_url, primary_color, secondary_color,
        custom_domain, email_from_name, email_from_address, settings
-FROM tenant.branding WHERE tenant_id = $1
+FROM organization.branding WHERE organization_id = $1
 `
 
 type GetBrandingRow struct {
-	TenantID         uuid.UUID
+	OrganizationID   uuid.UUID
 	LogoUrl          *string
 	PrimaryColor     *string
 	SecondaryColor   *string
@@ -30,14 +30,14 @@ type GetBrandingRow struct {
 }
 
 // Queries for the branding domain.
-// Static queries against tenant.branding live here and are compiled by sqlc into ./dbgen.
+// Static queries against organization.branding live here and are compiled by sqlc into ./dbgen.
 // The Upsert query uses a COALESCE/NULLIF expression that sqlc cannot parse reliably;
 // it intentionally remains hand-written in branding.go.
-func (q *Queries) GetBranding(ctx context.Context, tenantID uuid.UUID) (GetBrandingRow, error) {
-	row := q.db.QueryRow(ctx, getBranding, tenantID)
+func (q *Queries) GetBranding(ctx context.Context, organizationID uuid.UUID) (GetBrandingRow, error) {
+	row := q.db.QueryRow(ctx, getBranding, organizationID)
 	var i GetBrandingRow
 	err := row.Scan(
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.LogoUrl,
 		&i.PrimaryColor,
 		&i.SecondaryColor,

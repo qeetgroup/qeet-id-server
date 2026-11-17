@@ -22,31 +22,31 @@ import (
 func TestGroupMembershipNeedsTheGroupsAuthority(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.Pool(t)
-	tenant := dbtest.Tenant(t)
-	editor := dbtest.User(t, tenant)
-	dbtest.Assign(t, editor.ID, tenant, dbtest.Role(t, tenant, "group.write", "user.read"))
+	organization := dbtest.Organization(t)
+	editor := dbtest.User(t, organization)
+	dbtest.Assign(t, editor.ID, organization, dbtest.Role(t, organization, "group.write", "user.read"))
 	group := func(name string, roles ...uuid.UUID) uuid.UUID {
 		t.Helper()
 		var id uuid.UUID
-		if err := pool.QueryRow(ctx, `INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, $2) RETURNING id`, tenant, name).Scan(&id); err != nil {
+		if err := pool.QueryRow(ctx, `INSERT INTO organization.groups (organization_id, name) VALUES ($1, $2) RETURNING id`, organization, name).Scan(&id); err != nil {
 			t.Fatal(err)
 		}
 		for _, role := range roles {
-			if _, err := pool.Exec(ctx, `INSERT INTO rbac.group_roles (tenant_id, group_id, role_id) VALUES ($1, $2, $3)`, tenant, id, role); err != nil {
+			if _, err := pool.Exec(ctx, `INSERT INTO rbac.group_roles (organization_id, group_id, role_id) VALUES ($1, $2, $3)`, organization, id, role); err != nil {
 				t.Fatal(err)
 			}
 		}
 		return id
 	}
 	var ownerRole uuid.UUID
-	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, tenant).Scan(&ownerRole); err != nil {
+	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (organization_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, organization).Scan(&ownerRole); err != nil {
 		t.Fatal(err)
 	}
 	owners := group("Owners", ownerRole)
-	admins := group("Administrators", dbtest.Role(t, tenant, "role.write", "user.write"))
+	admins := group("Administrators", dbtest.Role(t, organization, "role.write", "user.write"))
 	team := group("Payments team")
 
-	h := dbtest.Serve(dbtest.Principal(editor.ID, tenant),
+	h := dbtest.Serve(dbtest.Principal(editor.ID, organization),
 		(&Handler{Service: NewService(pool), GrantCheck: rbac.NewRepository(pool).CheckGrantGroup}).Mount)
 	add := func(g uuid.UUID) (int, string) {
 		rec := dbtest.Do(t, h, http.MethodPost, "/groups/"+g.String()+"/members/"+editor.ID.String(), nil)
@@ -61,7 +61,7 @@ func TestGroupMembershipNeedsTheGroupsAuthority(t *testing.T) {
 	if code, body := add(team); code != http.StatusNoContent {
 		t.Errorf("a group editor joins a group with no roles: %d %s, want 204", code, body)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.group_members WHERE tenant_id = $1 AND user_id = $2`, tenant, editor.ID); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM organization.group_members WHERE organization_id = $1 AND user_id = $2`, organization, editor.ID); n != 1 {
 		t.Errorf("the editor is in %d groups, want only the one without roles", n)
 	}
 }
@@ -74,17 +74,17 @@ func TestGroupMembershipNeedsTheGroupsAuthority(t *testing.T) {
 func TestRemovingFromAGroupIsHeldToTheGrantRule(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.Pool(t)
-	tenant := dbtest.Tenant(t)
-	editor := dbtest.User(t, tenant)
-	dbtest.Assign(t, editor.ID, tenant, dbtest.Role(t, tenant, "group.write", "user.read"))
+	organization := dbtest.Organization(t)
+	editor := dbtest.User(t, organization)
+	dbtest.Assign(t, editor.ID, organization, dbtest.Role(t, organization, "group.write", "user.read"))
 	group := func(name string, roles ...uuid.UUID) uuid.UUID {
 		t.Helper()
 		var id uuid.UUID
-		if err := pool.QueryRow(ctx, `INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, $2) RETURNING id`, tenant, name).Scan(&id); err != nil {
+		if err := pool.QueryRow(ctx, `INSERT INTO organization.groups (organization_id, name) VALUES ($1, $2) RETURNING id`, organization, name).Scan(&id); err != nil {
 			t.Fatal(err)
 		}
 		for _, role := range roles {
-			if _, err := pool.Exec(ctx, `INSERT INTO rbac.group_roles (tenant_id, group_id, role_id) VALUES ($1, $2, $3)`, tenant, id, role); err != nil {
+			if _, err := pool.Exec(ctx, `INSERT INTO rbac.group_roles (organization_id, group_id, role_id) VALUES ($1, $2, $3)`, organization, id, role); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -92,26 +92,26 @@ func TestRemovingFromAGroupIsHeldToTheGrantRule(t *testing.T) {
 	}
 	member := func(g uuid.UUID) dbtest.Account {
 		t.Helper()
-		a := dbtest.User(t, tenant, tenant)
-		if _, err := pool.Exec(ctx, `INSERT INTO tenant.group_members (tenant_id, group_id, user_id) VALUES ($1, $2, $3)`, tenant, g, a.ID); err != nil {
+		a := dbtest.User(t, organization, organization)
+		if _, err := pool.Exec(ctx, `INSERT INTO organization.group_members (organization_id, group_id, user_id) VALUES ($1, $2, $3)`, organization, g, a.ID); err != nil {
 			t.Fatal(err)
 		}
 		return a
 	}
 	var ownerRole uuid.UUID
-	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, tenant).Scan(&ownerRole); err != nil {
+	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (organization_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, organization).Scan(&ownerRole); err != nil {
 		t.Fatal(err)
 	}
 	owners := group("Owners", ownerRole)
-	admins := group("Administrators", dbtest.Role(t, tenant, "role.write", "user.write"))
-	team, readers := group("Payments team"), group("Readers", dbtest.Role(t, tenant, "user.read"))
+	admins := group("Administrators", dbtest.Role(t, organization, "role.write", "user.write"))
+	team, readers := group("Payments team"), group("Readers", dbtest.Role(t, organization, "user.read"))
 	owner, admin := member(owners), member(admins)
 	senior, plain := member(team), member(team)
-	dbtest.Assign(t, senior.ID, tenant, dbtest.Role(t, tenant, "role.write"))
+	dbtest.Assign(t, senior.ID, organization, dbtest.Role(t, organization, "role.write"))
 	member(readers)
 
 	repo := rbac.NewRepository(pool)
-	h := dbtest.Serve(dbtest.Principal(editor.ID, tenant),
+	h := dbtest.Serve(dbtest.Principal(editor.ID, organization),
 		(&Handler{Service: NewService(pool), GrantCheck: repo.CheckGrantGroup, ActOnCheck: repo.CheckActOn}).Mount)
 	call := func(method, path string) (int, string) {
 		rec := dbtest.Do(t, h, method, path, nil)
@@ -139,7 +139,7 @@ func TestRemovingFromAGroupIsHeldToTheGrantRule(t *testing.T) {
 		}
 	}
 	for _, a := range []dbtest.Account{owner, admin, senior} {
-		if n := dbtest.Count(t, `SELECT count(*) FROM tenant.group_members WHERE tenant_id = $1 AND user_id = $2`, tenant, a.ID); n != 1 {
+		if n := dbtest.Count(t, `SELECT count(*) FROM organization.group_members WHERE organization_id = $1 AND user_id = $2`, organization, a.ID); n != 1 {
 			t.Errorf("%s left their group, want them kept", a.Email)
 		}
 	}

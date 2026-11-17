@@ -13,26 +13,26 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
-// TestOrganisationsKeepAnOwnerButOffboardTheirOwn checks that an organisation
+// TestOrganizationsKeepAnOwnerButOffboardTheirOwn checks that an organization
 // still can't suspend, delete or strip its own last active owner, but can
 // suspend and delete its own account when that account is the last owner of an
-// organisation it created elsewhere.
-func TestOrganisationsKeepAnOwnerButOffboardTheirOwn(t *testing.T) {
+// organization it created elsewhere.
+func TestOrganizationsKeepAnOwnerButOffboardTheirOwn(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.Pool(t)
 	lastOwner := func(err error) bool {
 		var pgErr *pgconn.PgError
 		return errors.As(err, &pgErr) && pgErr.Code == "QI409"
 	}
-	ownerRole := func(tenant uuid.UUID) uuid.UUID {
+	ownerRole := func(organization uuid.UUID) uuid.UUID {
 		t.Helper()
 		var id uuid.UUID
-		if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, tenant).Scan(&id); err != nil {
+		if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (organization_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, organization).Scan(&id); err != nil {
 			t.Fatal(err)
 		}
 		return id
 	}
-	employer, side := dbtest.Tenant(t), dbtest.Tenant(t)
+	employer, side := dbtest.Organization(t), dbtest.Organization(t)
 	boss := dbtest.User(t, employer)
 	dbtest.Assign(t, boss.ID, employer, ownerRole(employer))
 	employee := dbtest.User(t, employer, employer)
@@ -42,7 +42,7 @@ func TestOrganisationsKeepAnOwnerButOffboardTheirOwn(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE account.users SET status = 'suspended' WHERE id = $1`, boss.ID); !lastOwner(err) {
 		t.Errorf("suspend the employer's last owner: %v, want QI409", err)
 	}
-	if _, err := pool.Exec(ctx, `DELETE FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2`, employee.ID, side); !lastOwner(err) {
+	if _, err := pool.Exec(ctx, `DELETE FROM rbac.user_roles WHERE user_id = $1 AND organization_id = $2`, employee.ID, side); !lastOwner(err) {
 		t.Errorf("take the owner role from the side organisation's last owner: %v, want QI409", err)
 	}
 	if _, err := pool.Exec(ctx, `UPDATE account.users SET status = 'suspended' WHERE id = $1`, employee.ID); err != nil {

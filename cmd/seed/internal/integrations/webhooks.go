@@ -50,7 +50,7 @@ var (
 		"rate_limits.updated", "credential.revoked", "tenant.suspended"}
 )
 
-// subSpecs are each organisation's webhook subscriptions, on its own hosts,
+// subSpecs are each organization's webhook subscriptions, on its own hosts,
 // none of which resolve.
 var subSpecs = map[string][]subSpec{
 	"qeet": {
@@ -116,7 +116,7 @@ func (d *dev) refuseUnknownEvent() {
 		}
 		tx, err := w.Pool.Begin(w.Ctx)
 		w.Check(err, "begin")
-		_, err = w.Deps.Webhook.Service.Create(w.Ctx, tx, webhook.CreateInput{TenantID: o.ID,
+		_, err = w.Deps.Webhook.Service.Create(w.Ctx, tx, webhook.CreateInput{OrganizationID: o.ID,
 			URL: "https://hooks." + o.Spec.Domain + "/qeet-id", Events: []string{"user.login"}})
 		_ = tx.Rollback(w.Ctx)
 		if !errors.Is(err, errs.ErrWebhookEventUnknown) {
@@ -126,7 +126,7 @@ func (d *dev) refuseUnknownEvent() {
 	}
 }
 
-// subscriptions creates the organisation's webhook subscriptions through the
+// subscriptions creates the organization's webhook subscriptions through the
 // webhook service, audited as the console does, then brings each to its state.
 func (d *dev) subscriptions(o *world.Org) {
 	w := d.w
@@ -145,7 +145,7 @@ func (d *dev) subscriptions(o *world.Org) {
 		w.At(at, func() {
 			w.Tx("webhook "+s.url, func(tx pgx.Tx) error {
 				var err error
-				created, err = w.Deps.Webhook.Service.Create(w.Ctx, tx, webhook.CreateInput{TenantID: o.ID, URL: s.url, Events: s.events})
+				created, err = w.Deps.Webhook.Service.Create(w.Ctx, tx, webhook.CreateInput{OrganizationID: o.ID, URL: s.url, Events: s.events})
 				if err != nil {
 					return err
 				}
@@ -167,13 +167,13 @@ func (d *dev) subscriptions(o *world.Org) {
 						map[string]any{"previous_secret_expires_at": rt.Add(webhook.SecretRotationOverlap)}))
 				})
 			})
-			w.Exec("webhook secret overlap", `UPDATE tenant.webhook_subscriptions SET previous_secret_expires_at = $3 WHERE id = $1 AND tenant_id = $2`,
+			w.Exec("webhook secret overlap", `UPDATE organization.webhook_subscriptions SET previous_secret_expires_at = $3 WHERE id = $1 AND organization_id = $2`,
 				created.ID, o.ID, rt.Add(webhook.SecretRotationOverlap))
 		}
 		switch s.state {
 		case "failing":
 			sb.failing = w.Now.Add(-time.Duration(s.since * float64(time.Hour)))
-			w.Exec("webhook failing", `UPDATE tenant.webhook_subscriptions SET failing_since = $3 WHERE id = $1 AND tenant_id = $2`, created.ID, o.ID, sb.failing)
+			w.Exec("webhook failing", `UPDATE organization.webhook_subscriptions SET failing_since = $3 WHERE id = $1 AND organization_id = $2`, created.ID, o.ID, sb.failing)
 		case "disabled":
 			dt := d.when(o, s.since, by)
 			sb.until = dt
@@ -203,10 +203,10 @@ func (d *dev) autoDisable(o *world.Org, sb *sub) {
 	sb.failing = off.Add(-3*24*time.Hour - time.Duration(20+w.Rand.IntN(200))*time.Minute)
 	sb.until = off
 	w.Exec("webhook auto-disabled", `
-		UPDATE tenant.webhook_subscriptions SET failing_since = $3, disabled_at = $4, disabled_reason = 'failing'
-		WHERE id = $1 AND tenant_id = $2`, sb.id, o.ID, sb.failing, off)
+		UPDATE organization.webhook_subscriptions SET failing_since = $3, disabled_at = $4, disabled_reason = 'failing'
+		WHERE id = $1 AND organization_id = $2`, sb.id, o.ID, sb.failing, off)
 	id := sb.id
-	w.Audit(off, audit.Event{TenantID: &o.ID, ActorType: "system", Action: "webhook.subscription_auto_disabled",
+	w.Audit(off, audit.Event{OrganizationID: &o.ID, ActorType: "system", Action: "webhook.subscription_auto_disabled",
 		ResourceType: "webhook_subscription", ResourceID: &id, Metadata: map[string]any{"url": sb.spec.url, "failing_since": sb.failing}})
 	desc := "Deliveries to " + sb.spec.url + " failed for 3 days, so the webhook was turned off. Fix the endpoint, then turn the webhook back on."
 	managers := people(o, off, builders)
@@ -217,13 +217,13 @@ func (d *dev) autoDisable(o *world.Org, sb *sub) {
 	})
 	for i, p := range managers {
 		if i%2 == 0 {
-			w.Exec("notification read", `UPDATE auth.notifications SET read_at = $3 WHERE user_id = $1 AND tenant_id = $2 AND href = $4`,
+			w.Exec("notification read", `UPDATE auth.notifications SET read_at = $3 WHERE user_id = $1 AND organization_id = $2 AND href = $4`,
 				p.ID, o.ID, off.Add(time.Duration(30+w.Rand.IntN(600))*time.Minute), "/developer/webhooks/"+sb.id.String())
 		}
 	}
 }
 
-// event is one event the organisation emitted: what the relay would hand
+// event is one event the organization emitted: what the relay would hand
 // its subscriptions.
 type event struct {
 	id   uuid.UUID
@@ -232,7 +232,7 @@ type event struct {
 	data json.RawMessage
 }
 
-// orgEvents is every catalogue event of the organisation in the delivery
+// orgEvents is every catalogue event of the organization in the delivery
 // window: the ones the seed's services emitted into the outbox, and the
 // day-to-day ones (sign-outs, password changes, profile syncs, joiners and
 // leavers) where no step emitted them.
@@ -330,7 +330,7 @@ func pickReason(w *world.World) string {
 	}
 }
 
-// delivery is a row of tenant.webhook_deliveries.
+// delivery is a row of organization.webhook_deliveries.
 type delivery struct {
 	id, sub, eventID      uuid.UUID
 	typ, payload          string
@@ -351,7 +351,7 @@ type try struct {
 	duration int32 // milliseconds
 }
 
-// deliveries writes the organisation's webhook delivery history: every event
+// deliveries writes the organization's webhook delivery history: every event
 // each subscription took over the last fortnight, delivered while its
 // endpoint answered, retrying or dead-lettered since it stopped.
 func (d *dev) deliveries(o *world.Org) {
@@ -386,13 +386,13 @@ func (d *dev) deliveries(o *world.Org) {
 			}
 		}
 	}
-	_, err := w.Admin.CopyFrom(w.Ctx, pgx.Identifier{"tenant", "webhook_deliveries"},
+	_, err := w.Admin.CopyFrom(w.Ctx, pgx.Identifier{"organization", "webhook_deliveries"},
 		[]string{"id", "subscription_id", "event_id", "event_type", "payload", "status_code", "response_body", "error",
 			"attempt", "created_at", "delivered_at", "next_attempt_at", "dead_at"},
 		pgx.CopyFromRows(rows))
 	w.Check(err, "webhook deliveries of "+o.Spec.Slug)
-	_, err = w.Admin.CopyFrom(w.Ctx, pgx.Identifier{"tenant", "webhook_delivery_attempts"},
-		[]string{"id", "tenant_id", "delivery_id", "attempted_at", "status_code", "duration_ms", "error"},
+	_, err = w.Admin.CopyFrom(w.Ctx, pgx.Identifier{"organization", "webhook_delivery_attempts"},
+		[]string{"id", "organization_id", "delivery_id", "attempted_at", "status_code", "duration_ms", "error"},
 		pgx.CopyFromRows(attempts))
 	w.Check(err, "webhook delivery attempts of "+o.Spec.Slug)
 }

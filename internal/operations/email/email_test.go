@@ -114,12 +114,12 @@ func TestEmailTestThrottle(t *testing.T) {
 }
 
 type templateFixture struct {
-	tenant uuid.UUID
-	calls  int
+	organization uuid.UUID
+	calls        int
 }
 
-func (fixture *templateFixture) Get(_ context.Context, tenantID uuid.UUID, key string) (*Resolved, error) {
-	fixture.tenant = tenantID
+func (fixture *templateFixture) Get(_ context.Context, organizationID uuid.UUID, key string) (*Resolved, error) {
+	fixture.organization = organizationID
 	fixture.calls++
 	return &Resolved{Key: key, Subject: "Custom sign-in", Body: "Use this link:\n{{magic_url}}", Options: EditorOptions{HTML: `<p><strong>Use</strong> <a href="{{magic_url}}">Sign in</a></p>`}, Custom: true}, nil
 }
@@ -156,13 +156,13 @@ func TestTemplateSenderUsesRecipientLocale(t *testing.T) {
 	}{
 		{"anne@example.test", "en", "Connexion"},   // French profile, French translation
 		{"dirk@example.test", "en", "Sign in"},     // German profile, no German translation
-		{"dirk@example.test", "fr", "Connexion"},   // ... so the organisation's default
+		{"dirk@example.test", "fr", "Connexion"},   // ... so the organization's default
 		{"emma@example.test", "fr", "Sign in"},     // English profile, the base content
-		{"nobody@example.test", "fr", "Connexion"}, // no account: the organisation's default
+		{"nobody@example.test", "fr", "Connexion"}, // no account: the organization's default
 	} {
 		sink := &emailSink{}
 		sender := TemplateSender{Templates: localizedTemplates{defaultLocale: test.defaultLocale, locales: locales}, Next: sink}
-		message := notifier.Message{TenantID: uuid.NewString(), Channel: "email", To: test.to, TemplateKey: "magic_link", TemplateVariables: map[string]string{"magic_url": "https://example.test/once"}, Subject: "Original", Body: "Original"}
+		message := notifier.Message{OrganizationID: uuid.NewString(), Channel: "email", To: test.to, TemplateKey: "magic_link", TemplateVariables: map[string]string{"magic_url": "https://example.test/once"}, Subject: "Original", Body: "Original"}
 		if err := sender.Send(context.Background(), message); err != nil {
 			t.Fatal(err)
 		}
@@ -198,18 +198,18 @@ func (sink *emailSink) Send(_ context.Context, message notifier.Message) error {
 }
 
 func TestTemplateSenderScope(t *testing.T) {
-	tenantID := uuid.New()
+	organizationID := uuid.New()
 	templates := &templateFixture{}
 	sink := &emailSink{}
 	sender := TemplateSender{Templates: templates, Next: sink}
-	message := notifier.Message{TenantID: tenantID.String(), Channel: "email", TemplateKey: "magic_link", TemplateVariables: map[string]string{"magic_url": "https://example.test/once"}, Subject: "Original", Body: "Original"}
+	message := notifier.Message{OrganizationID: organizationID.String(), Channel: "email", TemplateKey: "magic_link", TemplateVariables: map[string]string{"magic_url": "https://example.test/once"}, Subject: "Original", Body: "Original"}
 	if err := sender.Send(context.Background(), message); err != nil {
 		t.Fatal(err)
 	}
-	if templates.tenant != tenantID || sink.last.Subject != "Custom sign-in" || !strings.Contains(sink.last.HTML, "https://example.test/once") {
+	if templates.organization != organizationID || sink.last.Subject != "Custom sign-in" || !strings.Contains(sink.last.HTML, "https://example.test/once") {
 		t.Fatal("scoped template not applied")
 	}
-	for _, message := range []notifier.Message{{TemplateKey: "magic_link", Subject: "Platform"}, {TenantID: tenantID.String(), TemplateKey: "password_reset", Subject: "Platform"}, {TenantID: tenantID.String(), Channel: "sms", TemplateKey: "magic_link", Subject: "Platform"}} {
+	for _, message := range []notifier.Message{{TemplateKey: "magic_link", Subject: "Platform"}, {OrganizationID: organizationID.String(), TemplateKey: "password_reset", Subject: "Platform"}, {OrganizationID: organizationID.String(), Channel: "sms", TemplateKey: "magic_link", Subject: "Platform"}} {
 		if err := sender.Send(context.Background(), message); err != nil {
 			t.Fatal(err)
 		}
@@ -262,7 +262,7 @@ func TestActionVariablesCannotLeakThroughExternalAssets(t *testing.T) {
 
 // TestActionURLOnlyInHref checks that a template may carry its one-time link
 // only as a whole href in the HTML and on a line of its own in the text, never
-// in the subject, the preheader or among the words, so an organisation's
+// in the subject, the preheader or among the words, so an organization's
 // wording can't dress the link up as something else.
 func TestActionURLOnlyInHref(t *testing.T) {
 	standalone := EditorInput{Subject: "Sign in", Body: "Use the link below to sign in.\n\n{{magic_url}}\n\nIt works once.",

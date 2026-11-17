@@ -16,7 +16,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// captureDomain refuses every address on its domain, as an organisation that
+// captureDomain refuses every address on its domain, as an organization that
 // requires single sign-on there does.
 type captureDomain string
 
@@ -36,10 +36,10 @@ func TestCapturedAddressesSignInElsewhere(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := newService(t)
 	svc.SetRegistrationPolicy(anyPassword{})
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	domain := dbtest.Unique("acme") + ".example.test"
 	svc.SetDomainCapture(captureDomain(domain))
-	captured := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, tenant, tenant)
+	captured := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, organization, organization)
 	dbtest.SetPassword(t, captured.ID, testPassword)
 	nobody := dbtest.Unique("nobody") + "@" + domain
 
@@ -69,7 +69,7 @@ func TestCapturedAddressesSignInElsewhere(t *testing.T) {
 	h.Mount(srv)
 	for path, body := range map[string]map[string]any{
 		"/auth/signup":   {"email": nobody, "password": testPassword},
-		"/auth/register": {"tenant_id": tenant, "email": nobody, "password": testPassword},
+		"/auth/register": {"tenant_id": organization, "email": nobody, "password": testPassword},
 	} {
 		rec := dbtest.Do(t, srv, http.MethodPost, path, body)
 		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeAuthSSORequired) {

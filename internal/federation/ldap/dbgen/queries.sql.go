@@ -14,16 +14,16 @@ import (
 )
 
 const deleteLdapConnection = `-- name: DeleteLdapConnection :execrows
-DELETE FROM tenant.ldap_connections WHERE id = $1 AND tenant_id = $2
+DELETE FROM organization.ldap_connections WHERE id = $1 AND organization_id = $2
 `
 
 type DeleteLdapConnectionParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) DeleteLdapConnection(ctx context.Context, arg DeleteLdapConnectionParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteLdapConnection, arg.ID, arg.TenantID)
+	result, err := q.db.Exec(ctx, deleteLdapConnection, arg.ID, arg.OrganizationID)
 	if err != nil {
 		return 0, err
 	}
@@ -32,20 +32,20 @@ func (q *Queries) DeleteLdapConnection(ctx context.Context, arg DeleteLdapConnec
 
 const getExternalIdentityUser = `-- name: GetExternalIdentityUser :one
 SELECT user_id FROM account.external_identities
-WHERE tenant_id = $1 AND provider = $2 AND connection_id = $3::uuid
+WHERE organization_id = $1 AND provider = $2 AND connection_id = $3::uuid
   AND subject = $4
 `
 
 type GetExternalIdentityUserParams struct {
-	TenantID     uuid.UUID
-	Provider     string
-	ConnectionID uuid.UUID
-	Subject      string
+	OrganizationID uuid.UUID
+	Provider       string
+	ConnectionID   uuid.UUID
+	Subject        string
 }
 
 func (q *Queries) GetExternalIdentityUser(ctx context.Context, arg GetExternalIdentityUserParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, getExternalIdentityUser,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Provider,
 		arg.ConnectionID,
 		arg.Subject,
@@ -56,20 +56,20 @@ func (q *Queries) GetExternalIdentityUser(ctx context.Context, arg GetExternalId
 }
 
 const getLdapConnection = `-- name: GetLdapConnection :one
-SELECT id, tenant_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
+SELECT id, organization_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
        base_dn, user_filter, email_attribute, name_attribute, status,
        created_at, updated_at, last_login_at
-FROM tenant.ldap_connections WHERE id = $1 AND tenant_id = $2
+FROM organization.ldap_connections WHERE id = $1 AND organization_id = $2
 `
 
 type GetLdapConnectionParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type GetLdapConnectionRow struct {
 	ID             uuid.UUID
-	TenantID       uuid.UUID
+	OrganizationID uuid.UUID
 	Name           string
 	ServerUrl      string
 	StartTls       bool
@@ -86,11 +86,11 @@ type GetLdapConnectionRow struct {
 }
 
 func (q *Queries) GetLdapConnection(ctx context.Context, arg GetLdapConnectionParams) (GetLdapConnectionRow, error) {
-	row := q.db.QueryRow(ctx, getLdapConnection, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, getLdapConnection, arg.ID, arg.OrganizationID)
 	var i GetLdapConnectionRow
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Name,
 		&i.ServerUrl,
 		&i.StartTls,
@@ -120,43 +120,43 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (uuid.UUID, 
 }
 
 const insertUserWithEmail = `-- name: InsertUserWithEmail :one
-INSERT INTO account.users (tenant_id, email, email_verified_at, display_name, status)
+INSERT INTO account.users (organization_id, email, email_verified_at, display_name, status)
 VALUES ($1, $2, NOW(), $3, 'active')
 RETURNING id
 `
 
 type InsertUserWithEmailParams struct {
-	TenantID    pgtype.UUID
-	Email       string
-	DisplayName *string
+	OrganizationID pgtype.UUID
+	Email          string
+	DisplayName    *string
 }
 
 func (q *Queries) InsertUserWithEmail(ctx context.Context, arg InsertUserWithEmailParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, insertUserWithEmail, arg.TenantID, arg.Email, arg.DisplayName)
+	row := q.db.QueryRow(ctx, insertUserWithEmail, arg.OrganizationID, arg.Email, arg.DisplayName)
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
 }
 
 const linkExternalIdentity = `-- name: LinkExternalIdentity :exec
-INSERT INTO account.external_identities (user_id, tenant_id, provider, connection_id, subject, email)
+INSERT INTO account.external_identities (user_id, organization_id, provider, connection_id, subject, email)
 VALUES ($1, $2, $3, $4::uuid, $5, $6)
-ON CONFLICT (tenant_id, provider, connection_id, subject) DO NOTHING
+ON CONFLICT (organization_id, provider, connection_id, subject) DO NOTHING
 `
 
 type LinkExternalIdentityParams struct {
-	UserID       uuid.UUID
-	TenantID     uuid.UUID
-	Provider     string
-	ConnectionID uuid.UUID
-	Subject      string
-	Email        *string
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
+	Provider       string
+	ConnectionID   uuid.UUID
+	Subject        string
+	Email          *string
 }
 
 func (q *Queries) LinkExternalIdentity(ctx context.Context, arg LinkExternalIdentityParams) error {
 	_, err := q.db.Exec(ctx, linkExternalIdentity,
 		arg.UserID,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Provider,
 		arg.ConnectionID,
 		arg.Subject,
@@ -167,16 +167,16 @@ func (q *Queries) LinkExternalIdentity(ctx context.Context, arg LinkExternalIden
 
 const listLdapConnections = `-- name: ListLdapConnections :many
 
-SELECT id, tenant_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
+SELECT id, organization_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
        base_dn, user_filter, email_attribute, name_attribute, status,
        created_at, updated_at, last_login_at
-FROM tenant.ldap_connections WHERE tenant_id = $1 ORDER BY created_at DESC
+FROM organization.ldap_connections WHERE organization_id = $1 ORDER BY created_at DESC
 LIMIT 1001
 `
 
 type ListLdapConnectionsRow struct {
 	ID             uuid.UUID
-	TenantID       uuid.UUID
+	OrganizationID uuid.UUID
 	Name           string
 	ServerUrl      string
 	StartTls       bool
@@ -194,10 +194,10 @@ type ListLdapConnectionsRow struct {
 
 // Queries for the ldap domain.
 // All queries below are STATIC and compiled by sqlc into ./dbgen.
-// getFull (conditional WHERE tenant_id) stays hand-written in ldap.go.
+// getFull (conditional WHERE organization_id) stays hand-written in ldap.go.
 // At most paging.MaxListItems+1 rows: the API truncates the rest.
-func (q *Queries) ListLdapConnections(ctx context.Context, tenantID uuid.UUID) ([]ListLdapConnectionsRow, error) {
-	rows, err := q.db.Query(ctx, listLdapConnections, tenantID)
+func (q *Queries) ListLdapConnections(ctx context.Context, organizationID uuid.UUID) ([]ListLdapConnectionsRow, error) {
+	rows, err := q.db.Query(ctx, listLdapConnections, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +207,7 @@ func (q *Queries) ListLdapConnections(ctx context.Context, tenantID uuid.UUID) (
 		var i ListLdapConnectionsRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.Name,
 			&i.ServerUrl,
 			&i.StartTls,
@@ -233,7 +233,7 @@ func (q *Queries) ListLdapConnections(ctx context.Context, tenantID uuid.UUID) (
 }
 
 const touchLdapLastLogin = `-- name: TouchLdapLastLogin :exec
-UPDATE tenant.ldap_connections SET last_login_at = NOW() WHERE id = $1
+UPDATE organization.ldap_connections SET last_login_at = NOW() WHERE id = $1
 `
 
 func (q *Queries) TouchLdapLastLogin(ctx context.Context, id uuid.UUID) error {
@@ -242,7 +242,7 @@ func (q *Queries) TouchLdapLastLogin(ctx context.Context, id uuid.UUID) error {
 }
 
 const updateLdapConnection = `-- name: UpdateLdapConnection :one
-UPDATE tenant.ldap_connections SET
+UPDATE organization.ldap_connections SET
     name            = COALESCE($1, name),
     server_url      = COALESCE($2, server_url),
     start_tls       = COALESCE($3, start_tls),
@@ -254,8 +254,8 @@ UPDATE tenant.ldap_connections SET
     name_attribute  = COALESCE($9, name_attribute),
     status          = COALESCE($10, status),
     updated_at      = NOW()
-WHERE id = $11 AND tenant_id = $12
-RETURNING id, tenant_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
+WHERE id = $11 AND organization_id = $12
+RETURNING id, organization_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
           base_dn, user_filter, email_attribute, name_attribute, status,
           created_at, updated_at, last_login_at
 `
@@ -272,12 +272,12 @@ type UpdateLdapConnectionParams struct {
 	NameAttribute  *string
 	Status         *string
 	ID             uuid.UUID
-	TenantID       uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type UpdateLdapConnectionRow struct {
 	ID             uuid.UUID
-	TenantID       uuid.UUID
+	OrganizationID uuid.UUID
 	Name           string
 	ServerUrl      string
 	StartTls       bool
@@ -306,12 +306,12 @@ func (q *Queries) UpdateLdapConnection(ctx context.Context, arg UpdateLdapConnec
 		arg.NameAttribute,
 		arg.Status,
 		arg.ID,
-		arg.TenantID,
+		arg.OrganizationID,
 	)
 	var i UpdateLdapConnectionRow
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Name,
 		&i.ServerUrl,
 		&i.StartTls,

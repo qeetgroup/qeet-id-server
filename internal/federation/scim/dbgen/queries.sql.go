@@ -14,53 +14,53 @@ import (
 )
 
 const addGroupMember = `-- name: AddGroupMember :exec
-INSERT INTO tenant.group_members AS gm (group_id, user_id, tenant_id)
+INSERT INTO organization.group_members AS gm (group_id, user_id, organization_id)
 VALUES ($1, $2, $3)
 ON CONFLICT (group_id, user_id) DO UPDATE SET source_connection_id = NULL
-WHERE gm.tenant_id = EXCLUDED.tenant_id AND gm.source_connection_id IS NOT NULL
+WHERE gm.organization_id = EXCLUDED.organization_id AND gm.source_connection_id IS NOT NULL
 `
 
 type AddGroupMemberParams struct {
-	GroupID  uuid.UUID
-	UserID   uuid.UUID
-	TenantID uuid.UUID
+	GroupID        uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 // AddGroupMember makes a membership a single sign-on made the directory's, so
 // the person's sign-ins no longer remove it.
 func (q *Queries) AddGroupMember(ctx context.Context, arg AddGroupMemberParams) error {
-	_, err := q.db.Exec(ctx, addGroupMember, arg.GroupID, arg.UserID, arg.TenantID)
+	_, err := q.db.Exec(ctx, addGroupMember, arg.GroupID, arg.UserID, arg.OrganizationID)
 	return err
 }
 
-const checkUserInTenant = `-- name: CheckUserInTenant :one
+const checkUserInOrganization = `-- name: CheckUserInOrganization :one
 SELECT EXISTS(
-    SELECT 1 FROM account.users WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+    SELECT 1 FROM account.users WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
 )
 `
 
-type CheckUserInTenantParams struct {
-	ID       uuid.UUID
-	TenantID pgtype.UUID
+type CheckUserInOrganizationParams struct {
+	ID             uuid.UUID
+	OrganizationID pgtype.UUID
 }
 
-func (q *Queries) CheckUserInTenant(ctx context.Context, arg CheckUserInTenantParams) (bool, error) {
-	row := q.db.QueryRow(ctx, checkUserInTenant, arg.ID, arg.TenantID)
+func (q *Queries) CheckUserInOrganization(ctx context.Context, arg CheckUserInOrganizationParams) (bool, error) {
+	row := q.db.QueryRow(ctx, checkUserInOrganization, arg.ID, arg.OrganizationID)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
 }
 
 const countLiveScimTokens = `-- name: CountLiveScimTokens :one
-SELECT count(*) FROM tenant.scim_tokens
-WHERE tenant_id = $1 AND revoked_at IS NULL AND replaced_by IS NULL
+SELECT count(*) FROM organization.scim_tokens
+WHERE organization_id = $1 AND revoked_at IS NULL AND replaced_by IS NULL
   AND (expires_at IS NULL OR expires_at > NOW())
 `
 
-// CountLiveScimTokens counts the organisation's tokens that work and haven't
+// CountLiveScimTokens counts the organization's tokens that work and haven't
 // been rotated: the ones the cap on creating tokens counts.
-func (q *Queries) CountLiveScimTokens(ctx context.Context, tenantID uuid.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, countLiveScimTokens, tenantID)
+func (q *Queries) CountLiveScimTokens(ctx context.Context, organizationID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countLiveScimTokens, organizationID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -68,41 +68,41 @@ func (q *Queries) CountLiveScimTokens(ctx context.Context, tenantID uuid.UUID) (
 
 const countProvisionedUsers = `-- name: CountProvisionedUsers :one
 SELECT count(*) FROM account.users
-WHERE tenant_id = $1 AND provisioned_via = 'scim' AND deleted_at IS NULL
+WHERE organization_id = $1 AND provisioned_via = 'scim' AND deleted_at IS NULL
 `
 
-func (q *Queries) CountProvisionedUsers(ctx context.Context, tenantID pgtype.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, countProvisionedUsers, tenantID)
+func (q *Queries) CountProvisionedUsers(ctx context.Context, organizationID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countProvisionedUsers, organizationID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
 }
 
 const deleteGroupMembers = `-- name: DeleteGroupMembers :exec
-DELETE FROM tenant.group_members WHERE group_id = $1 AND tenant_id = $2
+DELETE FROM organization.group_members WHERE group_id = $1 AND organization_id = $2
 `
 
 type DeleteGroupMembersParams struct {
-	GroupID  uuid.UUID
-	TenantID uuid.UUID
+	GroupID        uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) DeleteGroupMembers(ctx context.Context, arg DeleteGroupMembersParams) error {
-	_, err := q.db.Exec(ctx, deleteGroupMembers, arg.GroupID, arg.TenantID)
+	_, err := q.db.Exec(ctx, deleteGroupMembers, arg.GroupID, arg.OrganizationID)
 	return err
 }
 
 const deleteScimGroup = `-- name: DeleteScimGroup :execrows
-DELETE FROM tenant.groups WHERE id = $1 AND tenant_id = $2 AND provisioned_via = 'scim'
+DELETE FROM organization.groups WHERE id = $1 AND organization_id = $2 AND provisioned_via = 'scim'
 `
 
 type DeleteScimGroupParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) DeleteScimGroup(ctx context.Context, arg DeleteScimGroupParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteScimGroup, arg.ID, arg.TenantID)
+	result, err := q.db.Exec(ctx, deleteScimGroup, arg.ID, arg.OrganizationID)
 	if err != nil {
 		return 0, err
 	}
@@ -112,12 +112,12 @@ func (q *Queries) DeleteScimGroup(ctx context.Context, arg DeleteScimGroupParams
 const getProvisionedUser = `-- name: GetProvisionedUser :one
 
 SELECT id, email, display_name, status, external_id, created_at, updated_at
-FROM account.users WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+FROM account.users WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
 `
 
 type GetProvisionedUserParams struct {
-	ID       uuid.UUID
-	TenantID pgtype.UUID
+	ID             uuid.UUID
+	OrganizationID pgtype.UUID
 }
 
 type GetProvisionedUserRow struct {
@@ -134,7 +134,7 @@ type GetProvisionedUserRow struct {
 // Users (provisioned read + tag)
 // ==========================================================================
 func (q *Queries) GetProvisionedUser(ctx context.Context, arg GetProvisionedUserParams) (GetProvisionedUserRow, error) {
-	row := q.db.QueryRow(ctx, getProvisionedUser, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, getProvisionedUser, arg.ID, arg.OrganizationID)
 	var i GetProvisionedUserRow
 	err := row.Scan(
 		&i.ID,
@@ -151,12 +151,12 @@ func (q *Queries) GetProvisionedUser(ctx context.Context, arg GetProvisionedUser
 const getScimGroup = `-- name: GetScimGroup :one
 
 SELECT id, name, external_id, created_at, updated_at
-FROM tenant.groups WHERE id = $1 AND tenant_id = $2 AND provisioned_via = 'scim'
+FROM organization.groups WHERE id = $1 AND organization_id = $2 AND provisioned_via = 'scim'
 `
 
 type GetScimGroupParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type GetScimGroupRow struct {
@@ -171,7 +171,7 @@ type GetScimGroupRow struct {
 // Groups
 // ==========================================================================
 func (q *Queries) GetScimGroup(ctx context.Context, arg GetScimGroupParams) (GetScimGroupRow, error) {
-	row := q.db.QueryRow(ctx, getScimGroup, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, getScimGroup, arg.ID, arg.OrganizationID)
 	var i GetScimGroupRow
 	err := row.Scan(
 		&i.ID,
@@ -185,33 +185,33 @@ func (q *Queries) GetScimGroup(ctx context.Context, arg GetScimGroupParams) (Get
 
 const homeUserByEmail = `-- name: HomeUserByEmail :one
 SELECT id FROM account.users
-WHERE tenant_id = $1::uuid AND LOWER(email) = LOWER($2) AND deleted_at IS NULL
+WHERE organization_id = $1::uuid AND LOWER(email) = LOWER($2) AND deleted_at IS NULL
 `
 
 type HomeUserByEmailParams struct {
-	TenantID uuid.UUID
-	Email    string
+	OrganizationID uuid.UUID
+	Email          string
 }
 
-// HomeUserByEmail finds a live account whose home is @tenant_id by its
+// HomeUserByEmail finds a live account whose home is @organization_id by its
 // address, whoever created it.
 func (q *Queries) HomeUserByEmail(ctx context.Context, arg HomeUserByEmailParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, homeUserByEmail, arg.TenantID, arg.Email)
+	row := q.db.QueryRow(ctx, homeUserByEmail, arg.OrganizationID, arg.Email)
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
 }
 
 const insertScimGroup = `-- name: InsertScimGroup :one
-INSERT INTO tenant.groups (tenant_id, name, external_id, provisioned_via)
+INSERT INTO organization.groups (organization_id, name, external_id, provisioned_via)
 VALUES ($1, $2, $3, 'scim')
 RETURNING id, name, external_id, created_at, updated_at
 `
 
 type InsertScimGroupParams struct {
-	TenantID   uuid.UUID
-	Name       string
-	ExternalID *string
+	OrganizationID uuid.UUID
+	Name           string
+	ExternalID     *string
 }
 
 type InsertScimGroupRow struct {
@@ -223,7 +223,7 @@ type InsertScimGroupRow struct {
 }
 
 func (q *Queries) InsertScimGroup(ctx context.Context, arg InsertScimGroupParams) (InsertScimGroupRow, error) {
-	row := q.db.QueryRow(ctx, insertScimGroup, arg.TenantID, arg.Name, arg.ExternalID)
+	row := q.db.QueryRow(ctx, insertScimGroup, arg.OrganizationID, arg.Name, arg.ExternalID)
 	var i InsertScimGroupRow
 	err := row.Scan(
 		&i.ID,
@@ -236,19 +236,19 @@ func (q *Queries) InsertScimGroup(ctx context.Context, arg InsertScimGroupParams
 }
 
 const insertScimToken = `-- name: InsertScimToken :one
-INSERT INTO tenant.scim_tokens (tenant_id, name, token_hash, token_prefix, expires_at, created_by)
+INSERT INTO organization.scim_tokens (organization_id, name, token_hash, token_prefix, expires_at, created_by)
 VALUES ($1, $2, $3, $4, $5,
         NULLIF($6::uuid, '00000000-0000-0000-0000-000000000000'))
 RETURNING id, name, token_prefix, created_at, expires_at, last_used_at, revoked_at, replaced_by
 `
 
 type InsertScimTokenParams struct {
-	TenantID    uuid.UUID
-	Name        string
-	TokenHash   string
-	TokenPrefix string
-	ExpiresAt   pgtype.Timestamptz
-	CreatedBy   uuid.UUID
+	OrganizationID uuid.UUID
+	Name           string
+	TokenHash      string
+	TokenPrefix    string
+	ExpiresAt      pgtype.Timestamptz
+	CreatedBy      uuid.UUID
 }
 
 type InsertScimTokenRow struct {
@@ -264,7 +264,7 @@ type InsertScimTokenRow struct {
 
 func (q *Queries) InsertScimToken(ctx context.Context, arg InsertScimTokenParams) (InsertScimTokenRow, error) {
 	row := q.db.QueryRow(ctx, insertScimToken,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Name,
 		arg.TokenHash,
 		arg.TokenPrefix,
@@ -287,15 +287,15 @@ func (q *Queries) InsertScimToken(ctx context.Context, arg InsertScimTokenParams
 
 const lastSCIMOperation = `-- name: LastSCIMOperation :one
 SELECT started_at, operation, resource_type, http_status, status, error_code, reason
-FROM tenant.directory_events
-WHERE tenant_id = $1 AND connection_id = $2
+FROM organization.directory_events
+WHERE organization_id = $1 AND connection_id = $2
 ORDER BY started_at DESC, id DESC
 LIMIT 1
 `
 
 type LastSCIMOperationParams struct {
-	TenantID     uuid.UUID
-	ConnectionID string
+	OrganizationID uuid.UUID
+	ConnectionID   string
 }
 
 type LastSCIMOperationRow struct {
@@ -308,10 +308,10 @@ type LastSCIMOperationRow struct {
 	Reason       string
 }
 
-// LastSCIMOperation returns the last change the organisation's identity
+// LastSCIMOperation returns the last change the organization's identity
 // provider sent, as its directory event recorded it.
 func (q *Queries) LastSCIMOperation(ctx context.Context, arg LastSCIMOperationParams) (LastSCIMOperationRow, error) {
-	row := q.db.QueryRow(ctx, lastSCIMOperation, arg.TenantID, arg.ConnectionID)
+	row := q.db.QueryRow(ctx, lastSCIMOperation, arg.OrganizationID, arg.ConnectionID)
 	var i LastSCIMOperationRow
 	err := row.Scan(
 		&i.StartedAt,
@@ -327,15 +327,15 @@ func (q *Queries) LastSCIMOperation(ctx context.Context, arg LastSCIMOperationPa
 
 const listGroupMembers = `-- name: ListGroupMembers :many
 SELECT gm.user_id, u.email, u.display_name
-FROM tenant.group_members gm
+FROM organization.group_members gm
 JOIN account.users u ON u.id = gm.user_id
-WHERE gm.group_id = $1 AND gm.tenant_id = $2 AND u.deleted_at IS NULL
+WHERE gm.group_id = $1 AND gm.organization_id = $2 AND u.deleted_at IS NULL
 ORDER BY u.email
 `
 
 type ListGroupMembersParams struct {
-	GroupID  uuid.UUID
-	TenantID uuid.UUID
+	GroupID        uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type ListGroupMembersRow struct {
@@ -345,7 +345,7 @@ type ListGroupMembersRow struct {
 }
 
 func (q *Queries) ListGroupMembers(ctx context.Context, arg ListGroupMembersParams) ([]ListGroupMembersRow, error) {
-	rows, err := q.db.Query(ctx, listGroupMembers, arg.GroupID, arg.TenantID)
+	rows, err := q.db.Query(ctx, listGroupMembers, arg.GroupID, arg.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -368,8 +368,8 @@ const listScimTokens = `-- name: ListScimTokens :many
 
 
 SELECT id, name, token_prefix, created_at, expires_at, last_used_at, revoked_at, replaced_by
-FROM tenant.scim_tokens
-WHERE tenant_id = $1
+FROM organization.scim_tokens
+WHERE organization_id = $1
 ORDER BY created_at DESC, id DESC
 LIMIT 1001
 `
@@ -395,10 +395,10 @@ type ListScimTokensRow struct {
 // ==========================================================================
 // Token management
 // ==========================================================================
-// ListScimTokens is every token of the organisation, newest first.
+// ListScimTokens is every token of the organization, newest first.
 // At most paging.MaxListItems+1 rows: the API truncates the rest.
-func (q *Queries) ListScimTokens(ctx context.Context, tenantID uuid.UUID) ([]ListScimTokensRow, error) {
-	rows, err := q.db.Query(ctx, listScimTokens, tenantID)
+func (q *Queries) ListScimTokens(ctx context.Context, organizationID uuid.UUID) ([]ListScimTokensRow, error) {
+	rows, err := q.db.Query(ctx, listScimTokens, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -428,14 +428,14 @@ func (q *Queries) ListScimTokens(ctx context.Context, tenantID uuid.UUID) ([]Lis
 
 const lockScimToken = `-- name: LockScimToken :one
 SELECT id, name, token_prefix, created_at, expires_at, last_used_at, revoked_at, replaced_by
-FROM tenant.scim_tokens
-WHERE id = $1 AND tenant_id = $2
+FROM organization.scim_tokens
+WHERE id = $1 AND organization_id = $2
 FOR UPDATE
 `
 
 type LockScimTokenParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type LockScimTokenRow struct {
@@ -449,10 +449,10 @@ type LockScimTokenRow struct {
 	ReplacedBy  pgtype.UUID
 }
 
-// LockScimToken reads one of the organisation's tokens and locks it for a
+// LockScimToken reads one of the organization's tokens and locks it for a
 // rotation.
 func (q *Queries) LockScimToken(ctx context.Context, arg LockScimTokenParams) (LockScimTokenRow, error) {
-	row := q.db.QueryRow(ctx, lockScimToken, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, lockScimToken, arg.ID, arg.OrganizationID)
 	var i LockScimTokenRow
 	err := row.Scan(
 		&i.ID,
@@ -471,22 +471,22 @@ const provisionedUserState = `-- name: ProvisionedUserState :one
 SELECT u.status, COALESCE(u.suspension_source, '')::text AS suspension_source,
        EXISTS (
            SELECT 1 FROM rbac.user_roles ur
-           JOIN rbac.roles ro ON ro.id = ur.role_id AND ro.tenant_id = ur.tenant_id AND ro.is_system AND ro.name = 'owner'
-           WHERE ur.user_id = u.id AND ur.tenant_id = $1
+           JOIN rbac.roles ro ON ro.id = ur.role_id AND ro.organization_id = ur.organization_id AND ro.is_system AND ro.name = 'owner'
+           WHERE ur.user_id = u.id AND ur.organization_id = $1
            UNION ALL
-           SELECT 1 FROM tenant.group_members gm
-           JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
-           JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.tenant_id = gr.tenant_id AND ro.is_system AND ro.name = 'owner'
-           WHERE gm.user_id = u.id AND gm.tenant_id = $1
+           SELECT 1 FROM organization.group_members gm
+           JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.organization_id = gm.organization_id
+           JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.organization_id = gr.organization_id AND ro.is_system AND ro.name = 'owner'
+           WHERE gm.user_id = u.id AND gm.organization_id = $1
        )::bool AS owner
 FROM account.users u
-WHERE u.id = $2 AND u.tenant_id = $1 AND u.deleted_at IS NULL
+WHERE u.id = $2 AND u.organization_id = $1 AND u.deleted_at IS NULL
 FOR UPDATE OF u
 `
 
 type ProvisionedUserStateParams struct {
-	TenantID uuid.UUID
-	ID       uuid.UUID
+	OrganizationID uuid.UUID
+	ID             uuid.UUID
 }
 
 type ProvisionedUserStateRow struct {
@@ -496,45 +496,45 @@ type ProvisionedUserStateRow struct {
 }
 
 // ProvisionedUserState is a user's status, what suspended them (” when
-// not suspended), and whether they own the organisation, directly or through
+// not suspended), and whether they own the organization, directly or through
 // a group; the row is locked for the change it decides.
 func (q *Queries) ProvisionedUserState(ctx context.Context, arg ProvisionedUserStateParams) (ProvisionedUserStateRow, error) {
-	row := q.db.QueryRow(ctx, provisionedUserState, arg.TenantID, arg.ID)
+	row := q.db.QueryRow(ctx, provisionedUserState, arg.OrganizationID, arg.ID)
 	var i ProvisionedUserStateRow
 	err := row.Scan(&i.Status, &i.SuspensionSource, &i.Owner)
 	return i, err
 }
 
 const removeGroupMember = `-- name: RemoveGroupMember :exec
-DELETE FROM tenant.group_members
-WHERE group_id = $1 AND user_id = $2 AND tenant_id = $3
+DELETE FROM organization.group_members
+WHERE group_id = $1 AND user_id = $2 AND organization_id = $3
 `
 
 type RemoveGroupMemberParams struct {
-	GroupID  uuid.UUID
-	UserID   uuid.UUID
-	TenantID uuid.UUID
+	GroupID        uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) RemoveGroupMember(ctx context.Context, arg RemoveGroupMemberParams) error {
-	_, err := q.db.Exec(ctx, removeGroupMember, arg.GroupID, arg.UserID, arg.TenantID)
+	_, err := q.db.Exec(ctx, removeGroupMember, arg.GroupID, arg.UserID, arg.OrganizationID)
 	return err
 }
 
 const replaceScimToken = `-- name: ReplaceScimToken :one
-UPDATE tenant.scim_tokens
+UPDATE organization.scim_tokens
 SET replaced_by = $1,
     expires_at  = LEAST(expires_at, NOW() + make_interval(hours => $2::int)),
     revoked_at  = CASE WHEN $2::int = 0 THEN NOW() END
-WHERE id = $3 AND tenant_id = $4 AND revoked_at IS NULL AND replaced_by IS NULL
+WHERE id = $3 AND organization_id = $4 AND revoked_at IS NULL AND replaced_by IS NULL
 RETURNING id, name, token_prefix, created_at, expires_at, last_used_at, revoked_at, replaced_by
 `
 
 type ReplaceScimTokenParams struct {
-	ReplacedBy   pgtype.UUID
-	OverlapHours int32
-	ID           uuid.UUID
-	TenantID     uuid.UUID
+	ReplacedBy     pgtype.UUID
+	OverlapHours   int32
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type ReplaceScimTokenRow struct {
@@ -555,7 +555,7 @@ func (q *Queries) ReplaceScimToken(ctx context.Context, arg ReplaceScimTokenPara
 		arg.ReplacedBy,
 		arg.OverlapHours,
 		arg.ID,
-		arg.TenantID,
+		arg.OrganizationID,
 	)
 	var i ReplaceScimTokenRow
 	err := row.Scan(
@@ -572,9 +572,9 @@ func (q *Queries) ReplaceScimToken(ctx context.Context, arg ReplaceScimTokenPara
 }
 
 const resolveScimToken = `-- name: ResolveScimToken :one
-SELECT t.id, t.tenant_id, t.last_used_at
-FROM tenant.scim_tokens t
-JOIN tenant.tenants o ON o.id = t.tenant_id
+SELECT t.id, t.organization_id, t.last_used_at
+FROM organization.scim_tokens t
+JOIN organization.organizations o ON o.id = t.organization_id
 WHERE t.token_hash = $1
   AND t.revoked_at IS NULL
   AND (t.expires_at IS NULL OR t.expires_at > NOW())
@@ -582,38 +582,38 @@ WHERE t.token_hash = $1
 `
 
 type ResolveScimTokenRow struct {
-	ID         uuid.UUID
-	TenantID   uuid.UUID
-	LastUsedAt pgtype.Timestamptz
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	LastUsedAt     pgtype.Timestamptz
 }
 
 // ResolveScimToken finds the token an identity provider presented, if it
-// works: not revoked or expired, of an organisation that is active and not
+// works: not revoked or expired, of an organization that is active and not
 // due for deletion.
 func (q *Queries) ResolveScimToken(ctx context.Context, tokenHash string) (ResolveScimTokenRow, error) {
 	row := q.db.QueryRow(ctx, resolveScimToken, tokenHash)
 	var i ResolveScimTokenRow
-	err := row.Scan(&i.ID, &i.TenantID, &i.LastUsedAt)
+	err := row.Scan(&i.ID, &i.OrganizationID, &i.LastUsedAt)
 	return i, err
 }
 
 const revokeLiveScimTokens = `-- name: RevokeLiveScimTokens :execrows
-UPDATE tenant.scim_tokens
+UPDATE organization.scim_tokens
 SET revoked_at = NOW(), replaced_by = COALESCE(replaced_by, $1::uuid)
-WHERE tenant_id = $2 AND revoked_at IS NULL
+WHERE organization_id = $2 AND revoked_at IS NULL
   AND (expires_at IS NULL OR expires_at > NOW())
   AND id IS DISTINCT FROM $1::uuid
 `
 
 type RevokeLiveScimTokensParams struct {
-	Replacement pgtype.UUID
-	TenantID    uuid.UUID
+	Replacement    pgtype.UUID
+	OrganizationID uuid.UUID
 }
 
-// RevokeLiveScimTokens stops every token of the organisation that still
+// RevokeLiveScimTokens stops every token of the organization that still
 // works, except the replacement when one is given, which it then names.
 func (q *Queries) RevokeLiveScimTokens(ctx context.Context, arg RevokeLiveScimTokensParams) (int64, error) {
-	result, err := q.db.Exec(ctx, revokeLiveScimTokens, arg.Replacement, arg.TenantID)
+	result, err := q.db.Exec(ctx, revokeLiveScimTokens, arg.Replacement, arg.OrganizationID)
 	if err != nil {
 		return 0, err
 	}
@@ -621,14 +621,14 @@ func (q *Queries) RevokeLiveScimTokens(ctx context.Context, arg RevokeLiveScimTo
 }
 
 const revokeScimToken = `-- name: RevokeScimToken :one
-UPDATE tenant.scim_tokens SET revoked_at = NOW()
-WHERE id = $1 AND tenant_id = $2 AND revoked_at IS NULL
+UPDATE organization.scim_tokens SET revoked_at = NOW()
+WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL
 RETURNING id, name, token_prefix, created_at, expires_at, last_used_at, revoked_at, replaced_by
 `
 
 type RevokeScimTokenParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type RevokeScimTokenRow struct {
@@ -643,7 +643,7 @@ type RevokeScimTokenRow struct {
 }
 
 func (q *Queries) RevokeScimToken(ctx context.Context, arg RevokeScimTokenParams) (RevokeScimTokenRow, error) {
-	row := q.db.QueryRow(ctx, revokeScimToken, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, revokeScimToken, arg.ID, arg.OrganizationID)
 	var i RevokeScimTokenRow
 	err := row.Scan(
 		&i.ID,
@@ -677,18 +677,18 @@ func (q *Queries) TagProvisionedUser(ctx context.Context, arg TagProvisionedUser
 }
 
 const touchScimTokenUsed = `-- name: TouchScimTokenUsed :exec
-UPDATE tenant.scim_tokens SET last_used_at = NOW()
-WHERE id = $1 AND tenant_id = $2
+UPDATE organization.scim_tokens SET last_used_at = NOW()
+WHERE id = $1 AND organization_id = $2
   AND (last_used_at IS NULL OR last_used_at < NOW() - INTERVAL '1 minute')
 `
 
 type TouchScimTokenUsedParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 // TouchScimTokenUsed records a token's use, at most once a minute.
 func (q *Queries) TouchScimTokenUsed(ctx context.Context, arg TouchScimTokenUsedParams) error {
-	_, err := q.db.Exec(ctx, touchScimTokenUsed, arg.ID, arg.TenantID)
+	_, err := q.db.Exec(ctx, touchScimTokenUsed, arg.ID, arg.OrganizationID)
 	return err
 }

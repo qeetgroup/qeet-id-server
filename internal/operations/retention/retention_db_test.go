@@ -38,9 +38,9 @@ func purgeFailures(t *testing.T) float64 {
 // skipped and counted, not left to stop the rest.
 func TestPurgeRemovesEachRipeUser(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
-	tenant := dbtest.Tenant(t)
-	sponsor, reviewer, held, recent := dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant),
-		dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	sponsor, reviewer, held, recent := dbtest.User(t, organization, organization), dbtest.User(t, organization, organization),
+		dbtest.User(t, organization, organization), dbtest.User(t, organization, organization)
 	client := dbtest.Unique("app")
 	var agent, request uuid.UUID
 	for _, s := range []struct {
@@ -48,10 +48,10 @@ func TestPurgeRemovesEachRipeUser(t *testing.T) {
 		args []any
 		scan *uuid.UUID
 	}{
-		{`INSERT INTO auth.agents (tenant_id, name, secret_hash, sponsor_user_id) VALUES ($1, 'bot', 'hash', $2) RETURNING id`, []any{tenant, sponsor.ID}, &agent},
-		{`INSERT INTO auth.oidc_clients (tenant_id, client_id, name, reviewed_by, reviewed_at) VALUES ($1, $2, 'Payroll', $3, NOW()) RETURNING id`, []any{tenant, client, reviewer.ID}, new(uuid.UUID)},
-		{`INSERT INTO auth.api_keys (tenant_id, user_id, name, prefix, key_hash) VALUES ($1, $2, 'laptop', $3, 'hash') RETURNING id`, []any{tenant, reviewer.ID, dbtest.Unique("qk")}, new(uuid.UUID)},
-		{`INSERT INTO account.purge_requests (tenant_id, user_id, subject_id, grace_until, status, completed_at) VALUES ($1, $2, $2, NOW(), 'completed', NOW()) RETURNING id`, []any{tenant, reviewer.ID}, &request},
+		{`INSERT INTO auth.agents (organization_id, name, secret_hash, sponsor_user_id) VALUES ($1, 'bot', 'hash', $2) RETURNING id`, []any{organization, sponsor.ID}, &agent},
+		{`INSERT INTO auth.oidc_clients (organization_id, client_id, name, reviewed_by, reviewed_at) VALUES ($1, $2, 'Payroll', $3, NOW()) RETURNING id`, []any{organization, client, reviewer.ID}, new(uuid.UUID)},
+		{`INSERT INTO auth.api_keys (organization_id, user_id, name, prefix, key_hash) VALUES ($1, $2, 'laptop', $3, 'hash') RETURNING id`, []any{organization, reviewer.ID, dbtest.Unique("qk")}, new(uuid.UUID)},
+		{`INSERT INTO account.purge_requests (organization_id, user_id, subject_id, grace_until, status, completed_at) VALUES ($1, $2, $2, NOW(), 'completed', NOW()) RETURNING id`, []any{organization, reviewer.ID}, &request},
 	} {
 		if err := pool.QueryRow(ctx, s.sql, s.args...).Scan(s.scan); err != nil {
 			t.Fatalf("%s: %v", s.sql, err)
@@ -75,7 +75,7 @@ func TestPurgeRemovesEachRipeUser(t *testing.T) {
 	}
 
 	failures := purgeFailures(t)
-	n, err := NewService(pool).PurgeTenant(ctx, tenant, 30)
+	n, err := NewService(pool).PurgeOrganization(ctx, organization, 30)
 	if err != nil || n != 2 {
 		t.Fatalf("purged %d (%v), want the sponsor and the reviewer", n, err)
 	}
@@ -91,7 +91,7 @@ func TestPurgeRemovesEachRipeUser(t *testing.T) {
 		{"accounts left", `SELECT count(*) FROM account.users WHERE id = ANY($1)`, []uuid.UUID{sponsor.ID, reviewer.ID, held.ID, recent.ID}, 2},
 		{"the agent, without its sponsor", `SELECT count(*) FROM auth.agents WHERE id = $1 AND sponsor_user_id IS NULL`, agent, 1},
 		{"the application, without its reviewer", `SELECT count(*) FROM auth.oidc_clients WHERE client_id = $1 AND reviewed_by IS NULL`, client, 1},
-		{"the reviewer's personal key", `SELECT count(*) FROM auth.api_keys WHERE tenant_id = $1`, tenant, 0},
+		{"the reviewer's personal key", `SELECT count(*) FROM auth.api_keys WHERE organization_id = $1`, organization, 0},
 		{"the purged accounts' memberships", `SELECT count(*) FROM rbac.user_roles WHERE user_id = ANY($1)`, []uuid.UUID{sponsor.ID, reviewer.ID}, 0},
 		{"the erasure request, naming the account", `SELECT count(*) FROM account.purge_requests WHERE id = $1 AND user_id IS NULL AND subject_id = $2`, nil, 1},
 	} {
@@ -110,20 +110,20 @@ func TestPurgeRemovesEachRipeUser(t *testing.T) {
 // and that one that removes nobody records none.
 func TestSweepIsAudited(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	svc := NewService(pool)
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Update(ctx, tx, tenant, Policy{DeletedUsersEnabled: true, DeletedUsersDays: 30}, nil); err != nil {
+	if _, err := svc.Update(ctx, tx, organization, Policy{DeletedUsersEnabled: true, DeletedUsersDays: 30}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
-		u := dbtest.User(t, tenant, tenant)
+		u := dbtest.User(t, organization, organization)
 		if _, err := pool.Exec(ctx, `UPDATE account.users SET status = 'deleted', deleted_at = NOW() - INTERVAL '40 days' WHERE id = $1`, u.ID); err != nil {
 			t.Fatal(err)
 		}
@@ -133,12 +133,12 @@ func TestSweepIsAudited(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'retention.purge_run'
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'retention.purge_run'
 		AND actor_type = 'system' AND actor_user_id IS NULL
-		AND metadata->>'purged' = '2' AND metadata->>'deleted_users_days' = '30'`, tenant); n != 1 {
+		AND metadata->>'purged' = '2' AND metadata->>'deleted_users_days' = '30'`, organization); n != 1 {
 		t.Errorf("%d purge runs of two people recorded over two sweeps, want 1", n)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'retention.purge_run'`, tenant); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'retention.purge_run'`, organization); n != 1 {
 		t.Errorf("%d purge runs recorded in all, want only the sweep that removed someone", n)
 	}
 }
@@ -146,10 +146,10 @@ func TestSweepIsAudited(t *testing.T) {
 // TestThePolicySaysWhoLastChangedIt checks that the retention policy says
 // when it was last changed and by whom.
 func TestThePolicySaysWhoLastChangedIt(t *testing.T) {
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: NewService(dbtest.Pool(t))}).Mount)
-	path := "/tenants/" + tenant.String() + "/retention"
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: NewService(dbtest.Pool(t))}).Mount)
+	path := "/tenants/" + organization.String() + "/retention"
 	var p Policy
 	dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, path, nil), &p)
 	if p.UpdatedAt != nil || p.UpdatedBy != nil {

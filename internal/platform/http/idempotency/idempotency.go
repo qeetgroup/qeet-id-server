@@ -41,7 +41,7 @@ const abandonedAfter = time.Minute
 // purpose is the encryption context of a stored answer.
 const purpose = "idempotency"
 
-// platformScope stands in for the tenant in the encryption context of a
+// platformScope stands in for the organization in the encryption context of a
 // caller with none.
 var platformScope = uuid.NewSHA1(uuid.NameSpaceOID, []byte("qeet-id idempotency"))
 
@@ -230,26 +230,26 @@ func (s *Store) replay(w http.ResponseWriter, r *http.Request, scope, key, hash 
 	_, _ = w.Write(body) // #nosec G705 -- this server's own earlier answer, replayed with its Content-Type
 }
 
-// scopeOf returns whose key a request's is, its tenant and principal, and the
-// tenant its answer is sealed under.
+// scopeOf returns whose key a request's is, its organization and principal, and the
+// organization its answer is sealed under.
 func scopeOf(r *http.Request) (string, uuid.UUID) {
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil {
 		return "anonymous", platformScope
 	}
-	tenant := "-"
-	if p.TenantID != nil {
-		tenant = p.TenantID.String()
+	organization := "-"
+	if p.OrganizationID != nil {
+		organization = p.OrganizationID.String()
 	}
-	scope := tenant + "|" + p.ActorType + ":" + p.Subject
+	scope := organization + "|" + p.ActorType + ":" + p.Subject
 	return scope, SealedAs(scope)
 }
 
-// SealedAs returns the tenant the answer stored for scope is sealed under: the
-// caller's organisation, or a fixed stand-in for a caller with none.
+// SealedAs returns the organization the answer stored for scope is sealed under: the
+// caller's organization, or a fixed stand-in for a caller with none.
 func SealedAs(scope string) uuid.UUID {
-	tenant, _, _ := strings.Cut(scope, "|")
-	if id, err := uuid.Parse(tenant); err == nil {
+	organization, _, _ := strings.Cut(scope, "|")
+	if id, err := uuid.Parse(organization); err == nil {
 		return id
 	}
 	return platformScope

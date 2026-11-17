@@ -11,17 +11,17 @@ import (
 	"github.com/google/uuid"
 )
 
-// Operation is one change an organisation's identity provider sent. Reason is
+// Operation is one change an organization's identity provider sent. Reason is
 // the SCIM error type the answer gave (scim.uniqueness, say), "" for none.
 type Operation struct {
-	TenantID   uuid.UUID
-	Operation  string
-	Resource   string
-	ResourceID string
-	Status     int
-	Reason     string
-	Started    time.Time
-	Duration   time.Duration
+	OrganizationID uuid.UUID
+	Operation      string
+	Resource       string
+	ResourceID     string
+	Status         int
+	Reason         string
+	Started        time.Time
+	Duration       time.Duration
 }
 
 // OperationObserver records each provisioning operation.
@@ -75,7 +75,7 @@ func (writer *outcomeWriter) Unwrap() http.ResponseWriter { return writer.Respon
 
 func (handler *Handler) observeMutations(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		tenantID, authenticated := tenantFromCtx(request.Context())
+		organizationID, authenticated := organizationFromCtx(request.Context())
 		resource := ""
 		if strings.HasPrefix(request.URL.Path, "/scim/v2/Users") {
 			resource = "user"
@@ -102,10 +102,10 @@ func (handler *Handler) observeMutations(next http.Handler) http.Handler {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(request.Context()), 2*time.Second)
 		defer cancel()
 		if err := handler.Service.observer.RecordSCIMOperation(ctx, Operation{
-			TenantID: tenantID, Operation: strings.ToLower(request.Method), Resource: resource, ResourceID: resourceID,
+			OrganizationID: organizationID, Operation: strings.ToLower(request.Method), Resource: resource, ResourceID: resourceID,
 			Status: status, Reason: writer.reason, Started: started, Duration: time.Since(started),
 		}); err != nil {
-			slog.Warn("SCIM operation telemetry unavailable", "tenant_id", tenantID, "err", err)
+			slog.Warn("SCIM operation telemetry unavailable", "tenant_id", organizationID, "err", err)
 		}
 	})
 }

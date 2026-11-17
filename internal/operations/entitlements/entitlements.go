@@ -1,4 +1,4 @@
-// Package entitlements maps a tenant's plan to its capabilities: boolean
+// Package entitlements maps an organization's plan to its capabilities: boolean
 // features such as SSO, SCIM and webhooks, and numeric limits such as seats,
 // apps and API keys. Backend enforcement points and the console both read it,
 // so they agree on what a plan includes. Catalog defines the tiers.
@@ -48,7 +48,7 @@ const (
 // Unlimited marks a numeric limit as uncapped.
 const Unlimited = -1
 
-// Entitlements is the resolved plan capability set for a tenant.
+// Entitlements is the resolved plan capability set for an organization.
 type Entitlements struct {
 	Plan     string          `json:"plan"`
 	Features map[string]bool `json:"features"`
@@ -176,21 +176,21 @@ func For(code string) Entitlements {
 	return Catalog[NormalizePlan(code)].clone()
 }
 
-// PlanResolver returns a tenant's effective plan code, from its billing
+// PlanResolver returns an organization's effective plan code, from its billing
 // subscription or else its plan label. It keeps this package from importing
-// billing and tenant.
+// billing and organization.
 type PlanResolver interface {
-	EffectivePlan(ctx context.Context, tenantID uuid.UUID) (string, error)
+	EffectivePlan(ctx context.Context, organizationID uuid.UUID) (string, error)
 }
 
-// UsageResolver returns a tenant's current consumption, keyed like Limits
+// UsageResolver returns an organization's current consumption, keyed like Limits
 // (seats, apps, api_keys, …). It is optional and only feeds the billing usage
 // display.
 type UsageResolver interface {
-	Usage(ctx context.Context, tenantID uuid.UUID) (map[string]int, error)
+	Usage(ctx context.Context, organizationID uuid.UUID) (map[string]int, error)
 }
 
-// Service answers entitlement questions for a tenant. Enforcement points use
+// Service answers entitlement questions for an organization. Enforcement points use
 // it through their own small interfaces.
 type Service struct {
 	resolver PlanResolver
@@ -198,28 +198,28 @@ type Service struct {
 }
 
 // NewService returns a Service that resolves plans with r. A nil r puts every
-// tenant on the free tier.
+// organization on the free tier.
 func NewService(r PlanResolver) *Service { return &Service{resolver: r} }
 
 // SetUsageResolver sets the optional usage provider. Without one, Usage reports
 // nothing.
 func (s *Service) SetUsageResolver(u UsageResolver) { s.usage = u }
 
-// Usage returns the tenant's current consumption per resource, or an empty map
+// Usage returns the organization's current consumption per resource, or an empty map
 // without a usage provider.
-func (s *Service) Usage(ctx context.Context, tenantID uuid.UUID) (map[string]int, error) {
+func (s *Service) Usage(ctx context.Context, organizationID uuid.UUID) (map[string]int, error) {
 	if s.usage == nil {
 		return map[string]int{}, nil
 	}
-	return s.usage.Usage(ctx, tenantID)
+	return s.usage.Usage(ctx, organizationID)
 }
 
-// Resolve returns the tenant's entitlements. With a nil PlanResolver, or an
+// Resolve returns the organization's entitlements. With a nil PlanResolver, or an
 // unknown plan, that is the free tier.
-func (s *Service) Resolve(ctx context.Context, tenantID uuid.UUID) (Entitlements, error) {
+func (s *Service) Resolve(ctx context.Context, organizationID uuid.UUID) (Entitlements, error) {
 	code := "free"
 	if s.resolver != nil {
-		c, err := s.resolver.EffectivePlan(ctx, tenantID)
+		c, err := s.resolver.EffectivePlan(ctx, organizationID)
 		if err != nil {
 			return Entitlements{}, err
 		}
@@ -228,20 +228,20 @@ func (s *Service) Resolve(ctx context.Context, tenantID uuid.UUID) (Entitlements
 	return For(code), nil
 }
 
-// FeatureAllowed reports whether the tenant's plan includes feature.
-func (s *Service) FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error) {
-	ent, err := s.Resolve(ctx, tenantID)
+// FeatureAllowed reports whether the organization's plan includes feature.
+func (s *Service) FeatureAllowed(ctx context.Context, organizationID uuid.UUID, feature string) (bool, error) {
+	ent, err := s.Resolve(ctx, organizationID)
 	if err != nil {
 		return false, err
 	}
 	return ent.Features[feature], nil
 }
 
-// Limit returns the tenant's cap on resource. A resource the plan does not cap,
+// Limit returns the organization's cap on resource. A resource the plan does not cap,
 // or that is not modelled, is Unlimited: only deliberately gated resources have
 // limits.
-func (s *Service) Limit(ctx context.Context, tenantID uuid.UUID, resource string) (int, error) {
-	ent, err := s.Resolve(ctx, tenantID)
+func (s *Service) Limit(ctx context.Context, organizationID uuid.UUID, resource string) (int, error) {
+	ent, err := s.Resolve(ctx, organizationID)
 	if err != nil {
 		return 0, err
 	}

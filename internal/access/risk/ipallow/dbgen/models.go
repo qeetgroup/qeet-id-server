@@ -10,11 +10,11 @@ import (
 	"github.com/google/uuid"
 )
 
-type TenantIpRule struct {
-	ID        uuid.UUID
-	TenantID  uuid.UUID
-	Cidr      string
-	Label     string
-	Action    string
-	CreatedAt time.Time
+type OrganizationIpRule struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	Cidr           string
+	Label          string
+	Action         string
+	CreatedAt      time.Time
 }

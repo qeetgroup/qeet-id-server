@@ -14,7 +14,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
 	"github.com/qeetgroup/qeet-id-server/internal/access/threat/risk"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/organization"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/billing"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
@@ -63,7 +63,7 @@ func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller, box *
 			Run: func(ctx context.Context) error {
 				run, err := verifier.VerifyAll(ctx)
 				if err == nil {
-					slog.Info("audit chains intact", "scope", run.Scope, "tenants", run.TenantsWalked, "rows_checked", run.RowsChecked)
+					slog.Info("audit chains intact", "scope", run.Scope, "tenants", run.OrganizationsWalked, "rows_checked", run.RowsChecked)
 				}
 				return err
 			},
@@ -82,11 +82,11 @@ func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller, box *
 			},
 		},
 		{
-			// An organisation whose scheduled deletion is due is deleted.
+			// An organization whose scheduled deletion is due is deleted.
 			Name:     "tenant-deletions",
 			Interval: 15 * time.Minute,
 			Run: func(ctx context.Context) error {
-				n, err := tenant.DeleteDue(postgres.AcrossTenants(ctx), tenant.NewRepository(pool), signals)
+				n, err := organization.DeleteDue(postgres.AcrossOrganizations(ctx), organization.NewRepository(pool), signals)
 				if n > 0 {
 					slog.Info("organisations deleted as scheduled", "deleted", n)
 				}
@@ -207,7 +207,7 @@ func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller, box *
 			},
 		},
 		{
-			// A deleted organisation's data is purged once its restore window
+			// A deleted organization's data is purged once its restore window
 			// has passed, its people's accounts with it, leaving a record that
 			// it was.
 			Name:     "tenant-purges",
@@ -215,7 +215,7 @@ func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller, box *
 			Run: func(ctx context.Context) error {
 				svc := gdpr.NewService(pool, 0)
 				svc.SetSessionSignals(signals)
-				n, err := svc.PurgeDeletedTenants(ctx, gdpr.TenantPurgeAfter)
+				n, err := svc.PurgeDeletedOrganizations(ctx, gdpr.OrganizationPurgeAfter)
 				if n > 0 {
 					slog.Info("deleted organisations purged", "purged", n)
 				}
@@ -223,7 +223,7 @@ func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller, box *
 			},
 		},
 		{
-			// An organisation's Qeet AI conversations go once untouched for
+			// An organization's Qeet AI conversations go once untouched for
 			// longer than it keeps them.
 			Name:     "qeetai-conversation-retention",
 			Interval: 24 * time.Hour,
@@ -283,22 +283,22 @@ func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller, box *
 	}
 }
 
-// AuditRetentionInterval is how often audit events past their organisation's
+// AuditRetentionInterval is how often audit events past their organization's
 // plan's retention are deleted.
 const AuditRetentionInterval = 24 * time.Hour
 
-// AuditRetentionJobs returns the job that deletes each organisation's audit
+// AuditRetentionJobs returns the job that deletes each organization's audit
 // events older than its plan keeps them (audit_retention_days), the plan
 // resolved as everywhere else: its billing subscription, then its plan label.
 // box signs the chains' purge checkpoints.
 func AuditRetentionJobs(pool *pgxpool.Pool, billingService *billing.Service, box *envelope.Cipher) []worker.Scheduled {
-	plans := entitlements.NewService(entitlementPlanResolver{billing: billingService, tenants: tenant.NewRepository(pool)})
+	plans := entitlements.NewService(entitlementPlanResolver{billing: billingService, organizations: organization.NewRepository(pool)})
 	return []worker.Scheduled{{
 		Name:     "audit-retention",
 		Interval: AuditRetentionInterval,
 		Run: func(ctx context.Context) error {
-			n, err := audit.PurgeExpired(ctx, pool, box, func(ctx context.Context, tenantID uuid.UUID) (int, error) {
-				return plans.Limit(ctx, tenantID, entitlements.LimitAuditRetentionDays)
+			n, err := audit.PurgeExpired(ctx, pool, box, func(ctx context.Context, organizationID uuid.UUID) (int, error) {
+				return plans.Limit(ctx, organizationID, entitlements.LimitAuditRetentionDays)
 			})
 			if n > 0 {
 				slog.Info("audit events past their plan's retention deleted", "deleted", n)
@@ -308,10 +308,10 @@ func AuditRetentionJobs(pool *pgxpool.Pool, billingService *billing.Service, box
 	}}
 }
 
-// runSweeps runs the retention sweeps across every organisation and logs what
+// runSweeps runs the retention sweeps across every organization and logs what
 // each deleted as msg.
 func runSweeps(ctx context.Context, pool *pgxpool.Pool, msg string, sweeps []retention.Sweep) error {
-	deleted, err := retention.RunSweeps(postgres.AcrossTenants(ctx), pool, sweeps)
+	deleted, err := retention.RunSweeps(postgres.AcrossOrganizations(ctx), pool, sweeps)
 	attrs := make([]any, 0, 2*len(deleted))
 	for _, s := range sweeps {
 		attrs = append(attrs, s.Name, deleted[s.Name])

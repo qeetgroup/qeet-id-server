@@ -1,7 +1,7 @@
 // Package saml implements SAML 2.0 single sign-on in both directions. As a
-// service provider it signs people in through a tenant's IdP connection, using
+// service provider it signs people in through an organization's IdP connection, using
 // gosaml2 and goxmldsig to validate assertions; as an identity provider
-// (idp.go) it issues signed assertions to the tenant's registered SPs.
+// (idp.go) it issues signed assertions to the organization's registered SPs.
 package saml
 
 import (
@@ -53,7 +53,7 @@ const (
 	replayIDTTL     = 24 * time.Hour
 )
 
-// Connection is a tenant's connection to an external SAML IdP.
+// Connection is an organization's connection to an external SAML IdP.
 // AllowIdPInitiated and GroupsAttribute aren't in the generated connection
 // queries, so they are read separately. GroupsAttribute names the attribute
 // carrying a person's groups; "" reads the common ones (assertedGroups).
@@ -61,7 +61,7 @@ const (
 // oldest of them. MetadataURL is where it refreshes its IdP settings from.
 type Connection struct {
 	ID                uuid.UUID     `json:"id"`
-	TenantID          uuid.UUID     `json:"tenant_id"`
+	OrganizationID    uuid.UUID     `json:"tenant_id"`
 	Name              string        `json:"name"`
 	IdpEntityID       string        `json:"idp_entity_id"`
 	IdpSSOURL         string        `json:"idp_sso_url"`
@@ -80,7 +80,7 @@ type Connection struct {
 	LastLoginAt       *time.Time    `json:"last_login_at"`
 }
 
-// Service manages a tenant's IdP connections and runs SP-initiated sign-in.
+// Service manages an organization's IdP connections and runs SP-initiated sign-in.
 // nextRequestSweep and nextReplaySweep throttle deleting expired AuthnRequest and
 // replay rows, separately so a busy login or ACS path can't starve the other.
 // IdP metadata is fetched with metadataHTTP, within the egress policy; box
@@ -139,12 +139,12 @@ func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 // SetPlanGate wires the plan-feature gate (nil allows all features).
 func (s *Service) SetPlanGate(g PlanGate) { s.gate = g }
 
-// RequireSSO refuses with errs.ErrUpgradeRequired when the tenant's plan
+// RequireSSO refuses with errs.ErrUpgradeRequired when the organization's plan
 // doesn't include enterprise SSO: setting up a connection and every sign-in
 // through one need it. It reads on the pool, so callers run it before they
 // open the transaction Create joins.
-func (s *Service) RequireSSO(ctx context.Context, tenantID uuid.UUID) error {
-	return requireSSO(ctx, s.gate, tenantID)
+func (s *Service) RequireSSO(ctx context.Context, organizationID uuid.UUID) error {
+	return requireSSO(ctx, s.gate, organizationID)
 }
 
 // toConnection maps a sqlc-generated row to the API-facing Connection type.
@@ -158,7 +158,7 @@ func toConnection(r dbgen.GetSamlConnectionRow) *Connection {
 	}
 	return &Connection{
 		ID:             r.ID,
-		TenantID:       r.TenantID,
+		OrganizationID: r.OrganizationID,
 		Name:           r.Name,
 		IdpEntityID:    r.IdpEntityID,
 		IdpSSOURL:      r.IdpSsoUrl,
@@ -240,9 +240,9 @@ func validStatus(status string) bool {
 	return status == "draft" || status == "active" || status == "disabled"
 }
 
-// Create stores a connection in tenantID within tx, refusing input that fails
+// Create stores a connection in organizationID within tx, refusing input that fails
 // check whichever API sent it.
-func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in CreateInput) (*Connection, error) {
+func (s *Service) Create(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, in CreateInput) (*Connection, error) {
 	if err := in.check(); err != nil {
 		return nil, err
 	}
@@ -252,7 +252,7 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in 
 	}
 	q := s.q.WithTx(tx)
 	row, err := q.InsertSamlConnection(ctx, dbgen.InsertSamlConnectionParams{
-		TenantID:       tenantID,
+		OrganizationID: organizationID,
 		Name:           in.Name,
 		IdpEntityID:    in.IdpEntityID,
 		IdpSsoUrl:      in.IdpSSOURL,
@@ -269,17 +269,17 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in 
 		if err != nil {
 			return nil, errs.ErrSAMLCertificateInvalid
 		}
-		if err := replaceCertificates(ctx, q, row.ID, tenantID, cert); err != nil {
+		if err := replaceCertificates(ctx, q, row.ID, organizationID, cert); err != nil {
 			return nil, err
 		}
 	}
 	out := toConnection(dbgen.GetSamlConnectionRow(row))
-	if out.Certificates, err = listCertificates(ctx, q, row.ID, tenantID); err != nil {
+	if out.Certificates, err = listCertificates(ctx, q, row.ID, organizationID); err != nil {
 		return nil, err
 	}
 	if in.GroupsAttribute != "" {
 		if err := q.SetSamlGroupsAttribute(ctx, dbgen.SetSamlGroupsAttributeParams{
-			ID: out.ID, TenantID: tenantID, GroupsAttribute: in.GroupsAttribute,
+			ID: out.ID, OrganizationID: organizationID, GroupsAttribute: in.GroupsAttribute,
 		}); err != nil {
 			return nil, err
 		}
@@ -288,9 +288,9 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in 
 	return out, nil
 }
 
-// List returns the tenant's SAML connections.
-func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Connection, error) {
-	rows, err := s.q.ListSamlConnections(ctx, tenantID)
+// List returns the organization's SAML connections.
+func (s *Service) List(ctx context.Context, organizationID uuid.UUID) ([]Connection, error) {
+	rows, err := s.q.ListSamlConnections(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -298,11 +298,11 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Connection, e
 	for i, r := range rows {
 		out[i] = *toConnection(dbgen.GetSamlConnectionRow(r))
 	}
-	flags, err := s.idpInitiatedFlags(ctx, tenantID)
+	flags, err := s.idpInitiatedFlags(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
-	attributes, err := s.q.ListSamlGroupsAttributes(ctx, tenantID)
+	attributes, err := s.q.ListSamlGroupsAttributes(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -310,7 +310,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Connection, e
 	for _, a := range attributes {
 		groups[a.ID] = a.GroupsAttribute
 	}
-	certs, err := s.q.ListSamlCertificatesForTenant(ctx, tenantID)
+	certs, err := s.q.ListSamlCertificatesForOrganization(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -325,18 +325,18 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Connection, e
 			out[i].Certificates = c
 		}
 	}
-	if err := s.withMetadataSources(ctx, tenantID, out); err != nil {
+	if err := s.withMetadataSources(ctx, organizationID, out); err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// idpInitiatedFlags loads the whole tenant's opt-in state in one round trip so
+// idpInitiatedFlags loads the whole organization's opt-in state in one round trip so
 // List doesn't issue a query per connection.
-func (s *Service) idpInitiatedFlags(ctx context.Context, tenantID uuid.UUID) (map[uuid.UUID]bool, error) {
+func (s *Service) idpInitiatedFlags(ctx context.Context, organizationID uuid.UUID) (map[uuid.UUID]bool, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, allow_idp_initiated FROM tenant.saml_connections WHERE tenant_id = $1
-	`, tenantID)
+		SELECT id, allow_idp_initiated FROM organization.saml_connections WHERE organization_id = $1
+	`, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -353,9 +353,9 @@ func (s *Service) idpInitiatedFlags(ctx context.Context, tenantID uuid.UUID) (ma
 	return flags, rows.Err()
 }
 
-// Get returns one of the tenant's SAML connections.
-func (s *Service) Get(ctx context.Context, id, tenantID uuid.UUID) (*Connection, error) {
-	r, err := s.q.GetSamlConnection(ctx, dbgen.GetSamlConnectionParams{ID: id, TenantID: tenantID})
+// Get returns one of the organization's SAML connections.
+func (s *Service) Get(ctx context.Context, id, organizationID uuid.UUID) (*Connection, error) {
+	r, err := s.q.GetSamlConnection(ctx, dbgen.GetSamlConnectionParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
 	}
@@ -371,7 +371,7 @@ func (s *Service) Get(ctx context.Context, id, tenantID uuid.UUID) (*Connection,
 	if err != nil {
 		return nil, err
 	}
-	if out.Certificates, err = listCertificates(ctx, s.q, id, tenantID); err != nil {
+	if out.Certificates, err = listCertificates(ctx, s.q, id, organizationID); err != nil {
 		return nil, err
 	}
 	if err := withMetadataSource(ctx, s.q, out); err != nil {
@@ -382,10 +382,10 @@ func (s *Service) Get(ctx context.Context, id, tenantID uuid.UUID) (*Connection,
 
 // groupsAttribute returns the attribute conn reads a person's groups from.
 func (s *Service) groupsAttribute(ctx context.Context, conn *Connection) (string, error) {
-	return s.q.GetSamlGroupsAttribute(ctx, dbgen.GetSamlGroupsAttributeParams{ID: conn.ID, TenantID: conn.TenantID})
+	return s.q.GetSamlGroupsAttribute(ctx, dbgen.GetSamlGroupsAttributeParams{ID: conn.ID, OrganizationID: conn.OrganizationID})
 }
 
-// getByID loads a connection without tenant scoping, for the public SSO
+// getByID loads a connection without organization scoping, for the public SSO
 // endpoints, where the unguessable connection ID in the path is the key.
 func (s *Service) getByID(ctx context.Context, id uuid.UUID) (*Connection, error) {
 	r, err := s.q.GetSamlConnectionByID(ctx, id)
@@ -451,16 +451,16 @@ func (in *UpdateInput) check() error {
 	return nil
 }
 
-// Update changes the given fields of a connection in tenantID within tx,
+// Update changes the given fields of a connection in organizationID within tx,
 // refusing input that fails check whichever API sent it.
-func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID, in UpdateInput) (*Connection, error) {
+func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, organizationID uuid.UUID, in UpdateInput) (*Connection, error) {
 	if err := in.check(); err != nil {
 		return nil, err
 	}
 	q := s.q.WithTx(tx)
 	r, err := q.UpdateSamlConnection(ctx, dbgen.UpdateSamlConnectionParams{
 		ID:             id,
-		TenantID:       tenantID,
+		OrganizationID: organizationID,
 		Name:           in.Name,
 		IdpEntityID:    in.IdpEntityID,
 		IdpSsoUrl:      in.IdpSSOURL,
@@ -480,41 +480,41 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID,
 		if err != nil {
 			return nil, errs.ErrSAMLCertificateInvalid
 		}
-		if err := replaceCertificates(ctx, q, id, tenantID, cert); err != nil {
+		if err := replaceCertificates(ctx, q, id, organizationID, cert); err != nil {
 			return nil, err
 		}
 	}
 	// The generated update doesn't include allow_idp_initiated.
 	if in.AllowIdPInitiated != nil {
 		if _, err := tx.Exec(ctx, `
-			UPDATE tenant.saml_connections
+			UPDATE organization.saml_connections
 			SET allow_idp_initiated = $3, updated_at = NOW()
-			WHERE id = $1 AND tenant_id = $2
-		`, id, tenantID, *in.AllowIdPInitiated); err != nil {
+			WHERE id = $1 AND organization_id = $2
+		`, id, organizationID, *in.AllowIdPInitiated); err != nil {
 			return nil, err
 		}
 	}
 	if in.GroupsAttribute != nil {
 		if err := s.q.WithTx(tx).SetSamlGroupsAttribute(ctx, dbgen.SetSamlGroupsAttributeParams{
-			ID: id, TenantID: tenantID, GroupsAttribute: *in.GroupsAttribute,
+			ID: id, OrganizationID: organizationID, GroupsAttribute: *in.GroupsAttribute,
 		}); err != nil {
 			return nil, err
 		}
 	}
 	out := toConnection(dbgen.GetSamlConnectionRow(r))
 	if out.GroupsAttribute, err = s.q.WithTx(tx).GetSamlGroupsAttribute(ctx, dbgen.GetSamlGroupsAttributeParams{
-		ID: id, TenantID: tenantID,
+		ID: id, OrganizationID: organizationID,
 	}); err != nil {
 		return nil, err
 	}
 	if in.AllowIdPInitiated != nil {
 		out.AllowIdPInitiated = *in.AllowIdPInitiated
 	} else if err := tx.QueryRow(ctx, `
-		SELECT allow_idp_initiated FROM tenant.saml_connections WHERE id = $1 AND tenant_id = $2
-	`, id, tenantID).Scan(&out.AllowIdPInitiated); err != nil {
+		SELECT allow_idp_initiated FROM organization.saml_connections WHERE id = $1 AND organization_id = $2
+	`, id, organizationID).Scan(&out.AllowIdPInitiated); err != nil {
 		return nil, err
 	}
-	if out.Certificates, err = listCertificates(ctx, q, id, tenantID); err != nil {
+	if out.Certificates, err = listCertificates(ctx, q, id, organizationID); err != nil {
 		return nil, err
 	}
 	// A connection that signs people in has its IdP's details, however it got
@@ -534,7 +534,7 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID,
 func (s *Service) AllowsIdPInitiated(ctx context.Context, connectionID uuid.UUID) (bool, error) {
 	var allowed bool
 	err := s.pool.QueryRow(ctx, `
-		SELECT allow_idp_initiated FROM tenant.saml_connections WHERE id = $1
+		SELECT allow_idp_initiated FROM organization.saml_connections WHERE id = $1
 	`, connectionID).Scan(&allowed)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, errs.ErrNotFound
@@ -542,9 +542,9 @@ func (s *Service) AllowsIdPInitiated(ctx context.Context, connectionID uuid.UUID
 	return allowed, err
 }
 
-// Delete removes one of the tenant's SAML connections.
-func (s *Service) Delete(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID) error {
-	n, err := s.q.WithTx(tx).DeleteSamlConnection(ctx, dbgen.DeleteSamlConnectionParams{ID: id, TenantID: tenantID})
+// Delete removes one of the organization's SAML connections.
+func (s *Service) Delete(ctx context.Context, tx pgx.Tx, id, organizationID uuid.UUID) error {
+	n, err := s.q.WithTx(tx).DeleteSamlConnection(ctx, dbgen.DeleteSamlConnectionParams{ID: id, OrganizationID: organizationID})
 	if err != nil {
 		return err
 	}
@@ -574,8 +574,8 @@ type TestResult struct {
 // admin can catch the common misconfigurations (missing entity ID, a non-https
 // SSO URL, an unparseable or expired signing certificate, no email mapping)
 // before turning the connection on for real logins. It performs no network I/O.
-func (s *Service) TestConnection(ctx context.Context, id, tenantID uuid.UUID) (*TestResult, error) {
-	c, err := s.Get(ctx, id, tenantID)
+func (s *Service) TestConnection(ctx context.Context, id, organizationID uuid.UUID) (*TestResult, error) {
+	c, err := s.Get(ctx, id, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -922,20 +922,20 @@ type assertion struct {
 // findOrCreateUser returns the user the connection linked to the NameID
 // subject, else the user with the asserted email, else a new user, and links
 // the subject to the connection. An address is adopted or given an account
-// only on a domain the organisation manages, a new account only where that
+// only on a domain the organization manages, a new account only where that
 // domain has just-in-time provisioning on, and an adopted account must have
-// tenantID as its home, a verified address, and not administer the
-// organisation. The account's profile and groups are then brought in step
+// organizationID as its home, a verified address, and not administer the
+// organization. The account's profile and groups are then brought in step
 // with the assertion (ssosync.Apply), recorded as actor's. One transaction,
 // so concurrent logins can't duplicate rows.
-func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UUID, a assertion, actor audit.Actor) (uuid.UUID, error) {
+func (s *Service) findOrCreateUser(ctx context.Context, organizationID, connID uuid.UUID, a assertion, actor audit.Actor) (uuid.UUID, error) {
 	subject, email, name := a.subject, a.email, a.name
-	// Read before the transaction: it reads every organisation's domains.
-	domain, managed, err := domainverify.ManagingDomain(postgres.AcrossTenants(ctx), s.pool, email)
+	// Read before the transaction: it reads every organization's domains.
+	domain, managed, err := domainverify.ManagingDomain(postgres.AcrossOrganizations(ctx), s.pool, email)
 	if err != nil {
 		return uuid.Nil, err
 	}
-	manager := domain.TenantID
+	manager := domain.OrganizationID
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return uuid.Nil, err
@@ -944,27 +944,27 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UU
 	q := s.q.WithTx(tx)
 	sync := func(userID uuid.UUID) error {
 		return ssosync.Apply(ctx, tx, ssosync.SignIn{
-			TenantID: tenantID, UserID: userID, ConnectionID: connID, Provider: provider,
-			DisplayName: name, Email: email, EmailManaged: managed && manager == tenantID,
+			OrganizationID: organizationID, UserID: userID, ConnectionID: connID, Provider: provider,
+			DisplayName: name, Email: email, EmailManaged: managed && manager == organizationID,
 			Groups: a.groups, GroupsWithheld: a.groupsWithheld, Actor: actor,
 		})
 	}
 
 	userID, err := q.GetExternalIdentityUser(ctx, dbgen.GetExternalIdentityUserParams{
-		TenantID:     tenantID,
-		Provider:     provider,
-		ConnectionID: connID,
-		Subject:      subject,
+		OrganizationID: organizationID,
+		Provider:       provider,
+		ConnectionID:   connID,
+		Subject:        subject,
 	})
 	if err == nil {
-		// A linked subject signs in only while this organisation is still the
+		// A linked subject signs in only while this organization is still the
 		// account's home.
-		home, herr := identitylink.HomeIn(ctx, tx, userID, tenantID)
+		home, herr := identitylink.HomeIn(ctx, tx, userID, organizationID)
 		if herr != nil {
 			return uuid.Nil, herr
 		}
 		if !home {
-			return uuid.Nil, errs.ErrSAMLUserTenantMismatch
+			return uuid.Nil, errs.ErrSAMLUserOrganizationMismatch
 		}
 		if err := sync(userID); err != nil {
 			return uuid.Nil, err
@@ -976,8 +976,8 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UU
 	}
 	// The assertion proves only that this connection's IdP vouched for the
 	// address. Anyone who can configure a connection runs one, so it speaks
-	// only for the organisation's own domains.
-	if !managed || manager != tenantID {
+	// only for the organization's own domains.
+	if !managed || manager != organizationID {
 		return uuid.Nil, errs.ErrSAMLEmailDomainUnverified
 	}
 
@@ -991,9 +991,9 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UU
 			displayName = &name
 		}
 		userID, err = q.InsertUserWithEmail(ctx, dbgen.InsertUserWithEmailParams{
-			TenantID:    pgtype.UUID{Bytes: tenantID, Valid: true},
-			Email:       email,
-			DisplayName: displayName,
+			OrganizationID: pgtype.UUID{Bytes: organizationID, Valid: true},
+			Email:          email,
+			DisplayName:    displayName,
 		})
 		if err != nil {
 			return uuid.Nil, err
@@ -1001,15 +1001,15 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UU
 	} else if err != nil {
 		return uuid.Nil, err
 	} else {
-		// Emails are globally unique, so the address may be another tenant's
+		// Emails are globally unique, so the address may be another organization's
 		// user's; and an administrator keeps the credentials they have, or the
 		// connection's IdP could take over an owner.
-		home, herr := identitylink.HomeIn(ctx, tx, userID, tenantID)
+		home, herr := identitylink.HomeIn(ctx, tx, userID, organizationID)
 		if herr != nil {
 			return uuid.Nil, herr
 		}
 		if !home {
-			return uuid.Nil, errs.ErrSAMLUserTenantMismatch
+			return uuid.Nil, errs.ErrSAMLUserOrganizationMismatch
 		}
 		verified, verr := identitylink.AddressVerified(ctx, tx, userID)
 		if verr != nil {
@@ -1021,7 +1021,7 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UU
 		if err := identitylink.MarkAddressVerified(ctx, tx, userID); err != nil {
 			return uuid.Nil, err
 		}
-		admin, aerr := identitylink.Administers(ctx, tx, userID, tenantID)
+		admin, aerr := identitylink.Administers(ctx, tx, userID, organizationID)
 		if aerr != nil {
 			return uuid.Nil, aerr
 		}
@@ -1031,12 +1031,12 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UU
 	}
 
 	if err := q.LinkExternalIdentity(ctx, dbgen.LinkExternalIdentityParams{
-		UserID:       userID,
-		TenantID:     tenantID,
-		Provider:     provider,
-		ConnectionID: connID,
-		Subject:      subject,
-		Email:        &email,
+		UserID:         userID,
+		OrganizationID: organizationID,
+		Provider:       provider,
+		ConnectionID:   connID,
+		Subject:        subject,
+		Email:          &email,
 	}); err != nil {
 		return uuid.Nil, err
 	}
@@ -1049,11 +1049,11 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UU
 // ExchangeLogin trades a one-time SAML login code for a Qeet token pair, while
 // the connection that issued it is still active.
 func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*auth.TokenPair, error) {
-	userID, tenantID, err := s.consumeLoginCode(ctx, rawCode)
+	userID, organizationID, err := s.consumeLoginCode(ctx, rawCode)
 	if err != nil {
 		return nil, err
 	}
-	return s.auth.IssuePair(ctx, userID, tenantID, ip, ua, provider)
+	return s.auth.IssuePair(ctx, userID, organizationID, ip, ua, provider)
 }
 
 // consumeLoginCode spends a one-time code the ACS issued, once, and returns whom it signs in.
@@ -1085,23 +1085,23 @@ func (s *Service) consumeLoginCode(ctx context.Context, rawCode string) (uuid.UU
 	if err := signInStatus(row.Status); err != nil {
 		return uuid.Nil, uuid.Nil, err
 	}
-	if err := q.MarkSamlLoginCodeUsed(ctx, dbgen.MarkSamlLoginCodeUsedParams{CodeHash: codeHash, TenantID: row.TenantID}); err != nil {
+	if err := q.MarkSamlLoginCodeUsed(ctx, dbgen.MarkSamlLoginCodeUsedParams{CodeHash: codeHash, OrganizationID: row.OrganizationID}); err != nil {
 		return uuid.Nil, uuid.Nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return uuid.Nil, uuid.Nil, err
 	}
-	return row.UserID, row.TenantID, nil
+	return row.UserID, row.OrganizationID, nil
 }
 
 // insertLoginCode persists a one-time code connection conn issued at its ACS endpoint.
 func (s *Service) insertLoginCode(ctx context.Context, codeHash string, userID uuid.UUID, conn *Connection, expiresAt time.Time) error {
 	return s.q.InsertSamlLoginCode(ctx, dbgen.InsertSamlLoginCodeParams{
-		CodeHash:     codeHash,
-		UserID:       userID,
-		TenantID:     conn.TenantID,
-		ConnectionID: conn.ID,
-		ExpiresAt:    expiresAt,
+		CodeHash:       codeHash,
+		UserID:         userID,
+		OrganizationID: conn.OrganizationID,
+		ConnectionID:   conn.ID,
+		ExpiresAt:      expiresAt,
 	})
 }
 
@@ -1126,10 +1126,10 @@ type Handler struct {
 	ActOnCheck identitylink.ActOn
 }
 
-// checkTrust refuses changing what connection id of tenantID trusts unless the
+// checkTrust refuses changing what connection id of organizationID trusts unless the
 // caller may act on every administrator linked to it (see ActOnCheck).
-func (h *Handler) checkTrust(r *http.Request, tenantID, id uuid.UUID) error {
-	return identitylink.CheckTrustChange(r.Context(), h.Service.Pool(), httpx.PrincipalFromCtx(r.Context()), h.ActOnCheck, tenantID, id, "")
+func (h *Handler) checkTrust(r *http.Request, organizationID, id uuid.UUID) error {
+	return identitylink.CheckTrustChange(r.Context(), h.Service.Pool(), httpx.PrincipalFromCtx(r.Context()), h.ActOnCheck, organizationID, id, "")
 }
 
 // binding ties an SP-initiated sign-in to the browser that began it, so the
@@ -1183,7 +1183,7 @@ func (h *Handler) MountPublic(r chi.Router) {
 	r.Post("/saml/exchange", h.exchange)
 	r.Post("/saml/session", h.session)
 
-	// IdP side (Qeet as IdP), per organisation: metadata + SingleSignOnService
+	// IdP side (Qeet as IdP), per organization: metadata + SingleSignOnService
 	// (redirect + POST).
 	r.Get("/saml/idp/{tenantID}/metadata", h.idpMetadata)
 	r.Get("/saml/idp/{tenantID}/certificate", h.idpCertificate)
@@ -1191,37 +1191,37 @@ func (h *Handler) MountPublic(r chi.Router) {
 	r.Post("/saml/idp/{tenantID}/sso", h.idpSSO) // CSRF-exempt (see router.go); SP-initiated cross-origin POST
 }
 
-func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	return httpx.PathTenantOr(r, errs.ErrSAMLTenantIDInvalid, errs.ErrSAMLTenantMismatch)
+func requirePathOrganization(r *http.Request) (uuid.UUID, error) {
+	return httpx.PathOrganizationOr(r, errs.ErrSAMLOrganizationIDInvalid, errs.ErrSAMLOrganizationMismatch)
 }
 
-func (h *Handler) recordAudit(ctx context.Context, tx pgx.Tx, r *http.Request, tenantID, resourceID uuid.UUID, action string, meta map[string]any) error {
+func (h *Handler) recordAudit(ctx context.Context, tx pgx.Tx, r *http.Request, organizationID, resourceID uuid.UUID, action string, meta map[string]any) error {
 	actorID, actorType := audit.ActorOf(r).Identity()
-	tid := tenantID
+	tid := organizationID
 	rid := resourceID
 	return audit.Record(ctx, tx, audit.Event{
-		TenantID:     &tid,
-		ActorUserID:  actorID,
-		ActorType:    actorType,
-		Action:       action,
-		ResourceType: "saml_connection",
-		ResourceID:   &rid,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
-		Metadata:     meta,
+		OrganizationID: &tid,
+		ActorUserID:    actorID,
+		ActorType:      actorType,
+		Action:         action,
+		ResourceType:   "saml_connection",
+		ResourceID:     &rid,
+		IP:             httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
+		RequestID:      httpx.RequestID(r),
+		Metadata:       meta,
 	})
 }
 
 // --- admin CRUD handlers ---
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out, err := h.Service.List(r.Context(), tenantID)
+	out, err := h.Service.List(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1245,7 +1245,7 @@ func (h *Handler) view(r *http.Request, conn *Connection) connectionView {
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1269,7 +1269,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	if err := h.Service.RequireSSO(ctx, tenantID); err != nil {
+	if err := h.Service.RequireSSO(ctx, organizationID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -1279,12 +1279,12 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	conn, err := h.Service.Create(ctx, tx, tenantID, in)
+	conn, err := h.Service.Create(ctx, tx, organizationID, in)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.recordAudit(ctx, tx, r, tenantID, conn.ID, "saml.connection_created", map[string]any{"name": conn.Name, "idp": conn.IdpEntityID}); err != nil {
+	if err := h.recordAudit(ctx, tx, r, organizationID, conn.ID, "saml.connection_created", map[string]any{"name": conn.Name, "idp": conn.IdpEntityID}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -1296,7 +1296,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1306,7 +1306,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrSAMLIDInvalid)
 		return
 	}
-	conn, err := h.Service.Get(r.Context(), id, tenantID)
+	conn, err := h.Service.Get(r.Context(), id, organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1317,7 +1317,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 // test runs a config preflight over a SAML connection and returns per-check
 // results so the admin can fix issues before enabling it.
 func (h *Handler) test(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1327,7 +1327,7 @@ func (h *Handler) test(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrSAMLIDInvalid)
 		return
 	}
-	res, err := h.Service.TestConnection(r.Context(), id, tenantID)
+	res, err := h.Service.TestConnection(r.Context(), id, organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1336,7 +1336,7 @@ func (h *Handler) test(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1361,13 +1361,13 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	if in.IdpEntityID != nil || in.IdpCertificate != nil {
-		current, err := h.Service.Get(ctx, id, tenantID)
+		current, err := h.Service.Get(ctx, id, organizationID)
 		if err != nil {
 			httpx.WriteError(w, r, err)
 			return
 		}
 		if in.ChangesTrust(current) {
-			if err := h.checkTrust(r, tenantID, id); err != nil {
+			if err := h.checkTrust(r, organizationID, id); err != nil {
 				httpx.WriteError(w, r, err)
 				return
 			}
@@ -1379,12 +1379,12 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	conn, err := h.Service.Update(ctx, tx, id, tenantID, in)
+	conn, err := h.Service.Update(ctx, tx, id, organizationID, in)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.recordAudit(ctx, tx, r, tenantID, conn.ID, "saml.connection_updated", map[string]any{"status": conn.Status}); err != nil {
+	if err := h.recordAudit(ctx, tx, r, organizationID, conn.ID, "saml.connection_updated", map[string]any{"status": conn.Status}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -1396,7 +1396,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1413,11 +1413,11 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	if err := h.Service.Delete(ctx, tx, id, tenantID); err != nil {
+	if err := h.Service.Delete(ctx, tx, id, organizationID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.recordAudit(ctx, tx, r, tenantID, id, "saml.connection_deleted", nil); err != nil {
+	if err := h.recordAudit(ctx, tx, r, organizationID, id, "saml.connection_deleted", nil); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -1488,7 +1488,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.RequireSSO(r.Context(), conn.TenantID); err != nil {
+	if err := h.Service.RequireSSO(r.Context(), conn.OrganizationID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -1559,7 +1559,7 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 	}
 	// The plan is checked when the assertion arrives too, so a connection set
 	// up on a plan that has since lapsed signs no one in.
-	if err := h.Service.RequireSSO(r.Context(), conn.TenantID); err != nil {
+	if err := h.Service.RequireSSO(r.Context(), conn.OrganizationID); err != nil {
 		fail(err)
 		return
 	}
@@ -1639,7 +1639,7 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	groups, withheld := assertedGroups(info.Values, groupsAttribute)
-	userID, err := h.Service.findOrCreateUser(ctx, conn.TenantID, conn.ID, assertion{
+	userID, err := h.Service.findOrCreateUser(ctx, conn.OrganizationID, conn.ID, assertion{
 		subject: info.NameID, email: email, name: assertedName(info.Values, conn.NameAttribute),
 		groups: groups, groupsWithheld: withheld,
 	}, audit.Actor{Type: provider, IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)})
@@ -1720,7 +1720,7 @@ func trustedCorrelation(response *samltypes.Response) (string, []string, error) 
 }
 
 // session trades a sign-in the hosted login started for the hosted login session: the one-time
-// code from the identity provider's answer, then the organisation's address rules. It answers as
+// code from the identity provider's answer, then the organization's address rules. It answers as
 // POST /v1/auth/session does, with the session cookie and the user's id.
 func (h *Handler) session(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -1730,12 +1730,12 @@ func (h *Handler) session(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	userID, tenantID, err := h.Service.consumeLoginCode(r.Context(), body.Code)
+	userID, organizationID, err := h.Service.consumeLoginCode(r.Context(), body.Code)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	raw, err := h.Service.auth.BeginSSOLoginSession(r.Context(), userID, tenantID, provider, httpx.ClientIP(r), r.UserAgent())
+	raw, err := h.Service.auth.BeginSSOLoginSession(r.Context(), userID, organizationID, provider, httpx.ClientIP(r), r.UserAgent())
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

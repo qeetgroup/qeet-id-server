@@ -19,16 +19,16 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// rememberIn is a device policy under which only its organisation remembers
+// rememberIn is a device policy under which only its organization remembers
 // devices, for the default time.
 type rememberIn uuid.UUID
 
-func (r rememberIn) RememberDeviceEnabled(_ context.Context, tenantID uuid.UUID) (bool, error) {
-	return tenantID == uuid.UUID(r), nil
+func (r rememberIn) RememberDeviceEnabled(_ context.Context, organizationID uuid.UUID) (bool, error) {
+	return organizationID == uuid.UUID(r), nil
 }
 
-func (r rememberIn) RememberDevicePolicy(_ context.Context, tenantID uuid.UUID) (bool, time.Duration, error) {
-	return tenantID == uuid.UUID(r), 0, nil
+func (r rememberIn) RememberDevicePolicy(_ context.Context, organizationID uuid.UUID) (bool, time.Duration, error) {
+	return organizationID == uuid.UUID(r), 0, nil
 }
 
 // hostedChallenge starts a hosted sign-in as a from b, failing t unless it
@@ -96,13 +96,13 @@ func TestHostedSignInCookie(t *testing.T) {
 	}
 
 	var me struct {
-		UserID   uuid.UUID  `json:"user_id"`
-		TenantID uuid.UUID  `json:"tenant_id"`
-		Session  *uuid.UUID `json:"session_id"`
+		UserID         uuid.UUID  `json:"user_id"`
+		OrganizationID uuid.UUID  `json:"tenant_id"`
+		Session        *uuid.UUID `json:"session_id"`
 	}
 	rec = b.do(http.MethodGet, "/auth/me", nil)
 	dbtest.Decode(t, rec, &me)
-	if rec.Code != http.StatusOK || me.UserID != a.ID || me.TenantID != home || me.Session != nil {
+	if rec.Code != http.StatusOK || me.UserID != a.ID || me.OrganizationID != home || me.Session != nil {
 		t.Errorf("me with the cookie: %d %+v, want %s in %s with no API session", rec.Code, me, a.ID, home)
 	}
 	if rec := b.do(http.MethodGet, "/auth/sessions", nil); !answered(rec, http.StatusUnauthorized, errs.CodeUnauthorized) {
@@ -137,7 +137,7 @@ func TestHostedSignInCookie(t *testing.T) {
 		t.Errorf("sign out with no cookie: %d, want 204", rec.Code)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'auth.signed_out' AND actor_user_id = $1
-		AND tenant_id = $2 AND metadata->>'initiated_by' = $3`, a.ID, home, SignOutByHostedLogin); n != 1 {
+		AND organization_id = $2 AND metadata->>'initiated_by' = $3`, a.ID, home, SignOutByHostedLogin); n != 1 {
 		t.Errorf("signing out was recorded %d times, want once", n)
 	}
 
@@ -163,8 +163,8 @@ func TestHostedSignInCookie(t *testing.T) {
 // TestHostedSecondFactor checks the hosted two-step sign-in: a wrong code sets
 // no cookie; the right code sets it, records the session as having met a
 // second factor, which counts as a fresh step-up and satisfies an
-// organisation requiring one, and remembers the device in an HttpOnly cookie
-// only when asked and where the organisation remembers devices.
+// organization requiring one, and remembers the device in an HttpOnly cookie
+// only when asked and where the organization remembers devices.
 func TestHostedSecondFactor(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := newService(t)
@@ -192,7 +192,7 @@ func TestHostedSecondFactor(t *testing.T) {
 		device.MaxAge != int(trustedDeviceTTL.Seconds()) {
 		t.Fatalf("remembered-device cookie %+v; want HttpOnly, Secure, SameSite=Lax for %s", device, trustedDeviceTTL)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM auth.trusted_devices WHERE token_hash = $1 AND user_id = $2 AND tenant_id = $3
+	if n := dbtest.Count(t, `SELECT count(*) FROM auth.trusted_devices WHERE token_hash = $1 AND user_id = $2 AND organization_id = $3
 		AND label = $4`, tokens.HashRefresh(device.Value), a.ID, home, testUserAgent); n != 1 {
 		t.Error("the remembered device is not stored by its hash for the person and organisation")
 	}
@@ -202,7 +202,7 @@ func TestHostedSecondFactor(t *testing.T) {
 	if _, _, at, err := svc.resolveLoginSession(ctx, b.cookies[LoginSessionCookie].Value); err != nil || at.IsZero() {
 		t.Errorf("a session that met a second factor resolves with sign-in time %v, %v; want it, as a step-up", at, err)
 	}
-	strict := requiringOrganisation(t, a)
+	strict := requiringOrganization(t, a)
 	if err := svc.LoginSessionFactorShortfall(ctx, sessionIDOf(t, svc, b.cookies[LoginSessionCookie].Value), a.ID, strict); err != nil {
 		t.Errorf("a session that met a second factor entering an organisation requiring one: %v", err)
 	}
@@ -250,25 +250,25 @@ func sessionIDOf(t *testing.T, svc *Service, raw string) uuid.UUID {
 	return id
 }
 
-// requiringOrganisation creates an organisation that requires a second factor
+// requiringOrganization creates an organization that requires a second factor
 // at once and makes a a member of it.
-func requiringOrganisation(t *testing.T, a dbtest.Account) uuid.UUID {
+func requiringOrganization(t *testing.T, a dbtest.Account) uuid.UUID {
 	t.Helper()
-	tenant := dbtest.Tenant(t)
-	dbtest.Assign(t, a.ID, tenant, dbtest.Role(t, tenant))
+	organization := dbtest.Organization(t)
+	dbtest.Assign(t, a.ID, organization, dbtest.Role(t, organization))
 	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `
-		INSERT INTO tenant.security_policies (tenant_id, mfa_enforcement, mfa_grace_days, mfa_enforced_since)
+		INSERT INTO organization.security_policies (organization_id, mfa_enforcement, mfa_grace_days, mfa_enforced_since)
 		VALUES ($1, 'required', 0, NOW())
-	`, tenant); err != nil {
+	`, organization); err != nil {
 		t.Fatalf("require a second factor: %v", err)
 	}
-	return tenant
+	return organization
 }
 
 // TestRememberedDeviceSkipsTheFactor checks that a remembered device skips the
 // second factor at the hosted sign-in, recorded as such, for its own person
-// and organisation only: not for another person, not with trust from another
-// organisation, not on a risky sign-in, not once the organisation stops
+// and organization only: not for another person, not with trust from another
+// organization, not on a risky sign-in, not once the organization stops
 // remembering devices or the device expires, and not once it is forgotten;
 // and that a session it opens is no fresh step-up, unlike a passkey's.
 func TestRememberedDeviceSkipsTheFactor(t *testing.T) {
@@ -281,7 +281,7 @@ func TestRememberedDeviceSkipsTheFactor(t *testing.T) {
 	svc.SetDevicePolicy(rememberIn(home))
 	colleague := dbtest.User(t, home, home)
 	dbtest.SetPassword(t, colleague.ID, testPassword)
-	other := dbtest.Tenant(t)
+	other := dbtest.Organization(t)
 	h := publicRoutes(newHandler(svc))
 	device, err := svc.CreateTrustedDevice(ctx, a.ID, home, testUserAgent, time.Hour)
 	if err != nil {
@@ -308,7 +308,7 @@ func TestRememberedDeviceSkipsTheFactor(t *testing.T) {
 	if factor := latestLoginSessionFactor(t, a); factor != secondFactorTrustedDevice {
 		t.Errorf("the hosted-login session records second factor %q, want %q", factor, secondFactorTrustedDevice)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'auth.trusted_device_used' AND actor_user_id = $1 AND tenant_id = $2`, a.ID, home); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'auth.trusted_device_used' AND actor_user_id = $1 AND organization_id = $2`, a.ID, home); n != 1 {
 		t.Errorf("the device's use was recorded %d times, want once", n)
 	}
 	raw := b.cookies[LoginSessionCookie].Value
@@ -362,22 +362,22 @@ func TestRememberedDeviceSkipsTheFactor(t *testing.T) {
 }
 
 // TestTrustedDevicesOverHTTP checks the views of remembered devices: a person
-// lists theirs in every organisation, marked where it is the requesting one,
+// lists theirs in every organization, marked where it is the requesting one,
 // and forgets one or all, never another person's; an administrator sees,
-// counts and forgets only those remembered in their own organisation, and for
+// counts and forgets only those remembered in their own organization, and for
 // its members only.
 func TestTrustedDevicesOverHTTP(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := newService(t)
 	a, home := member(t)
-	other := dbtest.Tenant(t)
+	other := dbtest.Organization(t)
 	dbtest.Assign(t, a.ID, other, dbtest.Role(t, other))
 	colleague := dbtest.User(t, home, home)
 	outsider, _ := member(t)
 	admin := dbtest.User(t, home, home)
-	remember := func(userID, tenant uuid.UUID) (string, uuid.UUID) {
+	remember := func(userID, organization uuid.UUID) (string, uuid.UUID) {
 		t.Helper()
-		raw, err := svc.CreateTrustedDevice(ctx, userID, tenant, testUserAgent, time.Hour)
+		raw, err := svc.CreateTrustedDevice(ctx, userID, organization, testUserAgent, time.Hour)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -390,7 +390,7 @@ func TestTrustedDevicesOverHTTP(t *testing.T) {
 	current, atHome := remember(a.ID, home)
 	_, atOther := remember(a.ID, other)
 	_, colleagues := remember(colleague.ID, home)
-	if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO auth.trusted_devices (user_id, tenant_id, token_hash, expires_at)
+	if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO auth.trusted_devices (user_id, organization_id, token_hash, expires_at)
 		VALUES ($1, $2, $3, NOW() - INTERVAL '1 minute')`, a.ID, home, dbtest.Unique("expired")); err != nil {
 		t.Fatal(err)
 	}
@@ -459,7 +459,7 @@ func TestTrustedDevicesOverHTTP(t *testing.T) {
 		t.Errorf("forget a member's device: %d forgotten, want 1", n)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'auth.trusted_device_revoked' AND resource_id = $1
-		AND tenant_id = $2 AND actor_user_id = $3`, atHome, home, admin.ID); n != 1 {
+		AND organization_id = $2 AND actor_user_id = $3`, atHome, home, admin.ID); n != 1 {
 		t.Errorf("forgetting the device was audited %d times, want once by the administrator", n)
 	}
 	if n := forgotten(adm.do(http.MethodDelete, "/users/"+a.ID.String()+"/trusted-devices", nil)); n != 1 {
@@ -474,11 +474,11 @@ func TestTrustedDevicesOverHTTP(t *testing.T) {
 }
 
 // TestMagicLinkSignIn checks that a consumed magic link signs in like a
-// password: an inactive account or organisation is refused, a held second
+// password: an inactive account or organization is refused, a held second
 // factor is asked for and the session it opens recorded as magic_link_mfa, a
 // risky link sign-in, having proved the email, asks for no emailed code, and
 // the hosted form skips the factor only on a device remembered for the link's
-// organisation.
+// organization.
 func TestMagicLinkSignIn(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
@@ -486,8 +486,8 @@ func TestMagicLinkSignIn(t *testing.T) {
 
 	t.Run("signs in", func(t *testing.T) {
 		svc := newService(t)
-		a, tenant := member(t)
-		res, err := svc.BeginMagicLinkSignIn(ctx, a.ID, tenant, ip, testUserAgent)
+		a, organization := member(t)
+		res, err := svc.BeginMagicLinkSignIn(ctx, a.ID, organization, ip, testUserAgent)
 		if err != nil || res.Pair == nil || res.Pair.UserID != a.ID {
 			t.Fatalf("sign in: %+v, %v", res, err)
 		}
@@ -503,13 +503,13 @@ func TestMagicLinkSignIn(t *testing.T) {
 			want         error
 		}{
 			{"suspended account", `UPDATE account.users SET status = 'suspended' WHERE id = $1`, errs.ErrAuthAccountInactive},
-			{"suspended organisation", `UPDATE tenant.tenants SET status = 'suspended' WHERE id = (SELECT tenant_id FROM account.users WHERE id = $1)`, errs.ErrAuthTenantInactive},
+			{"suspended organisation", `UPDATE organization.organizations SET status = 'suspended' WHERE id = (SELECT organization_id FROM account.users WHERE id = $1)`, errs.ErrAuthOrganizationInactive},
 		} {
-			a, tenant := member(t)
+			a, organization := member(t)
 			if _, err := pool.Exec(ctx, tc.change, a.ID); err != nil {
 				t.Fatal(err)
 			}
-			if res, err := svc.BeginMagicLinkSignIn(ctx, a.ID, tenant, ip, testUserAgent); !errors.Is(err, tc.want) || res != nil {
+			if res, err := svc.BeginMagicLinkSignIn(ctx, a.ID, organization, ip, testUserAgent); !errors.Is(err, tc.want) || res != nil {
 				t.Errorf("%s: %+v, %v; want %v", tc.name, res, err, tc.want)
 			}
 		}
@@ -517,8 +517,8 @@ func TestMagicLinkSignIn(t *testing.T) {
 	t.Run("second factor", func(t *testing.T) {
 		svc := newService(t)
 		svc.SetMFA(heldFactor{code: "975310"})
-		a, tenant := member(t)
-		res, err := svc.BeginMagicLinkSignIn(ctx, a.ID, tenant, ip, testUserAgent)
+		a, organization := member(t)
+		res, err := svc.BeginMagicLinkSignIn(ctx, a.ID, organization, ip, testUserAgent)
 		if err != nil || res.Pair != nil || !res.MFARequired {
 			t.Fatalf("sign in holding a factor: %+v, %v; want a challenge", res, err)
 		}
@@ -538,22 +538,22 @@ func TestMagicLinkSignIn(t *testing.T) {
 		svc := newService(t)
 		svc.SetMFA(noFactors{})
 		svc.SetRiskAssessor(&riskStub{risky: true})
-		a, tenant := member(t)
-		if res, err := svc.BeginMagicLinkSignIn(ctx, a.ID, tenant, ip, testUserAgent); err != nil || res.Pair == nil {
+		a, organization := member(t)
+		if res, err := svc.BeginMagicLinkSignIn(ctx, a.ID, organization, ip, testUserAgent); err != nil || res.Pair == nil {
 			t.Errorf("risky link sign-in: %+v, %v; want a session, the email being proved", res, err)
 		}
 	})
 	t.Run("hosted", func(t *testing.T) {
 		svc := newService(t)
 		svc.SetMFA(heldFactor{code: "975310"})
-		a, tenant := member(t)
-		svc.SetDevicePolicy(rememberIn(tenant))
-		device, err := svc.CreateTrustedDevice(ctx, a.ID, tenant, testUserAgent, time.Hour)
+		a, organization := member(t)
+		svc.SetDevicePolicy(rememberIn(organization))
+		device, err := svc.CreateTrustedDevice(ctx, a.ID, organization, testUserAgent, time.Hour)
 		if err != nil {
 			t.Fatal(err)
 		}
-		other := dbtest.Tenant(t)
-		if res, err := svc.BeginMagicLinkSession(ctx, a.ID, tenant, ip, testUserAgent, device, ""); err != nil || res.RawCookie == "" {
+		other := dbtest.Organization(t)
+		if res, err := svc.BeginMagicLinkSession(ctx, a.ID, organization, ip, testUserAgent, device, ""); err != nil || res.RawCookie == "" {
 			t.Errorf("hosted link on the remembered device: %+v, %v; want the session cookie", res, err)
 		}
 		res, err := svc.BeginMagicLinkSession(ctx, a.ID, other, ip, testUserAgent, device, "")
@@ -567,11 +567,11 @@ func TestMagicLinkSignIn(t *testing.T) {
 	})
 }
 
-// TestTokenReuseOnATenantlessSession checks that the theft of a tenant-less
-// session's refresh token is recorded as an event of no organisation, like
-// the session's other records, rather than of an organisation that doesn't
+// TestTokenReuseOnAOrganizationlessSession checks that the theft of an organization-less
+// session's refresh token is recorded as an event of no organization, like
+// the session's other records, rather than of an organization that doesn't
 // exist.
-func TestTokenReuseOnATenantlessSession(t *testing.T) {
+func TestTokenReuseOnAOrganizationlessSession(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := newService(t)
 	a := dbtest.User(t, uuid.Nil)
@@ -586,7 +586,7 @@ func TestTokenReuseOnATenantlessSession(t *testing.T) {
 		t.Fatalf("reuse the spent token: %v, want %v", err, errs.ErrAuthSessionRevoked)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'auth.token_reuse_detected' AND resource_id = $1
-		AND tenant_id IS NULL`, pair.SessionID); n != 1 {
+		AND organization_id IS NULL`, pair.SessionID); n != 1 {
 		t.Errorf("the reuse was recorded with no organisation %d times, want once", n)
 	}
 }
@@ -625,20 +625,20 @@ func TestSuspensionEndsTheHostedLogin(t *testing.T) {
 	}
 }
 
-// TestRememberedDeviceForAnotherOrganisationsApplication checks that a hosted
-// sign-in to the application of an organisation that requires a second factor
+// TestRememberedDeviceForAnotherOrganizationsApplication checks that a hosted
+// sign-in to the application of an organization that requires a second factor
 // and remembers no devices asks for the factor, even on a device the person's
-// own organisation remembers, and that the session it opens does not satisfy
-// that organisation's requirement.
-func TestRememberedDeviceForAnotherOrganisationsApplication(t *testing.T) {
+// own organization remembers, and that the session it opens does not satisfy
+// that organization's requirement.
+func TestRememberedDeviceForAnotherOrganizationsApplication(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := newService(t)
 	svc.SetMFA(heldFactor{code: "135790"})
 	a, home := member(t)
 	svc.SetDevicePolicy(rememberIn(home))
-	strict := requiringOrganisation(t, a)
+	strict := requiringOrganization(t, a)
 	client := dbtest.Unique("app")
-	if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO auth.oidc_clients (tenant_id, client_id, name) VALUES ($1, $2, $2)`, strict, client); err != nil {
+	if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO auth.oidc_clients (organization_id, client_id, name) VALUES ($1, $2, $2)`, strict, client); err != nil {
 		t.Fatal(err)
 	}
 	device, err := svc.CreateTrustedDevice(ctx, a.ID, home, testUserAgent, time.Hour)
@@ -661,12 +661,12 @@ func TestRememberedDeviceForAnotherOrganisationsApplication(t *testing.T) {
 
 // TestHostedSignInsAreRecorded checks that every hosted sign-in records the
 // auth.login_succeeded event an API sign-in does, once, for its hosted-login
-// session, by method and against the organisation signed in to, so the
+// session, by method and against the organization signed in to, so the
 // dashboard counts it; and that signing up, which signs the account in, does
 // too.
 func TestHostedSignInsAreRecorded(t *testing.T) {
 	ctx := dbtest.Context(t)
-	recorded := func(t *testing.T, a dbtest.Account, tenant uuid.UUID, method string) {
+	recorded := func(t *testing.T, a dbtest.Account, organization uuid.UUID, method string) {
 		t.Helper()
 		if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'auth.login_succeeded' AND actor_user_id = $1`, a.ID); n != 1 {
 			t.Errorf("%d sign-ins recorded, want 1", n)
@@ -674,8 +674,8 @@ func TestHostedSignInsAreRecorded(t *testing.T) {
 		if n := dbtest.Count(t, `SELECT count(*) FROM audit.events e
 			JOIN auth.login_sessions s ON s.id = e.resource_id AND s.user_id = e.actor_user_id
 			WHERE e.action = 'auth.login_succeeded' AND e.resource_type = 'login_session' AND e.actor_user_id = $1
-			  AND e.tenant_id = $2 AND e.metadata->>'method' = $3`, a.ID, tenant, method); n != 1 {
-			t.Errorf("the hosted sign-in is not recorded as %s to %s for its session", method, tenant)
+			  AND e.organization_id = $2 AND e.metadata->>'method' = $3`, a.ID, organization, method); n != 1 {
+			t.Errorf("the hosted sign-in is not recorded as %s to %s for its session", method, organization)
 		}
 	}
 
@@ -712,7 +712,7 @@ func TestHostedSignInsAreRecorded(t *testing.T) {
 	t.Run("social", func(t *testing.T) {
 		svc := newService(t)
 		a, _ := member(t)
-		served := dbtest.Tenant(t)
+		served := dbtest.Organization(t)
 		dbtest.Assign(t, a.ID, served, dbtest.Role(t, served))
 		res, err := svc.BeginSocialLoginSession(ctx, a.ID, served, freshIP(), testUserAgent, "", "")
 		if err != nil || res.RawCookie == "" {
@@ -722,12 +722,12 @@ func TestHostedSignInsAreRecorded(t *testing.T) {
 	})
 	t.Run("magic link", func(t *testing.T) {
 		svc := newService(t)
-		a, tenant := member(t)
-		res, err := svc.BeginMagicLinkSession(ctx, a.ID, tenant, freshIP(), testUserAgent, "", "")
+		a, organization := member(t)
+		res, err := svc.BeginMagicLinkSession(ctx, a.ID, organization, freshIP(), testUserAgent, "", "")
 		if err != nil || res.RawCookie == "" {
 			t.Fatalf("hosted magic link: %+v, %v", res, err)
 		}
-		recorded(t, a, tenant, "magic_link")
+		recorded(t, a, organization, "magic_link")
 	})
 	t.Run("sign-up", func(t *testing.T) {
 		svc := newService(t)
@@ -737,15 +737,15 @@ func TestHostedSignInsAreRecorded(t *testing.T) {
 			t.Fatalf("sign up: %v", err)
 		}
 		if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'auth.login_succeeded' AND actor_user_id = $1
-			AND resource_type = 'session' AND resource_id = $2 AND tenant_id IS NULL AND metadata->>'method' = 'password'`, u.ID, pair.SessionID); n != 1 {
+			AND resource_type = 'session' AND resource_id = $2 AND organization_id IS NULL AND metadata->>'method' = 'password'`, u.ID, pair.SessionID); n != 1 {
 			t.Error("signing up is not recorded as a password sign-in to no organisation")
 		}
 	})
 }
 
 // TestHostedLoginSessionRefusedFromABlockedAddress checks that no hosted-login
-// session is opened from an address the account's own organisation refuses:
-// not by a passkey, a password, nor a password through another organisation's
+// session is opened from an address the account's own organization refuses:
+// not by a passkey, a password, nor a password through another organization's
 // application whose rules allow the address, and that each refusal is
 // recorded; from an allowed address the session opens.
 func TestHostedLoginSessionRefusedFromABlockedAddress(t *testing.T) {
@@ -754,9 +754,9 @@ func TestHostedLoginSessionRefusedFromABlockedAddress(t *testing.T) {
 	svc.SetAddressPolicy(ipallow.NewService(dbtest.Pool(t)))
 	a, home := member(t)
 	enforceAddressRules(t, home) // only 192.0.2.0/24
-	other := dbtest.Tenant(t)
+	other := dbtest.Organization(t)
 	client := dbtest.Unique("app")
-	if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO auth.oidc_clients (tenant_id, client_id, name) VALUES ($1, $2, $2)`, other, client); err != nil {
+	if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO auth.oidc_clients (organization_id, client_id, name) VALUES ($1, $2, $2)`, other, client); err != nil {
 		t.Fatal(err)
 	}
 	const blocked = "198.51.100.7"
@@ -772,7 +772,7 @@ func TestHostedLoginSessionRefusedFromABlockedAddress(t *testing.T) {
 	if n := dbtest.Count(t, `SELECT count(*) FROM auth.login_sessions WHERE user_id = $1`, a.ID); n != 0 {
 		t.Errorf("%d hosted-login sessions opened from a blocked address", n)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'auth.address_refused' AND tenant_id = $1 AND metadata->>'address' = $2`, home, blocked); n != 3 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'auth.address_refused' AND organization_id = $1 AND metadata->>'address' = $2`, home, blocked); n != 3 {
 		t.Errorf("%d refusals recorded, want 3", n)
 	}
 	if _, err := svc.CreatePasskeyLoginSession(ctx, a.ID, "192.0.2.10", testUserAgent); err != nil {

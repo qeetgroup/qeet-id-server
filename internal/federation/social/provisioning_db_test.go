@@ -21,17 +21,17 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// openTenant creates a tenant that lets people register themselves.
-func openTenant(t *testing.T) uuid.UUID {
+// openOrganization creates an organization that lets people register themselves.
+func openOrganization(t *testing.T) uuid.UUID {
 	t.Helper()
-	tenant := dbtest.Tenant(t)
-	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `INSERT INTO tenant.auth_policy (tenant_id, self_registration_enabled) VALUES ($1, TRUE)`, tenant); err != nil {
+	organization := dbtest.Organization(t)
+	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `INSERT INTO organization.auth_policy (organization_id, self_registration_enabled) VALUES ($1, TRUE)`, organization); err != nil {
 		t.Fatalf("policy: %v", err)
 	}
-	return tenant
+	return organization
 }
 
-// provisioningService returns the service reading each tenant's registration
+// provisioningService returns the service reading each organization's registration
 // policy and domain capture, as bootstrap wires it.
 func provisioningService(t *testing.T) *Service {
 	t.Helper()
@@ -45,12 +45,12 @@ func provisioningService(t *testing.T) *Service {
 	return svc
 }
 
-// addProvider gives tenant the fixture's identity provider under name, an
+// addProvider gives organization the fixture's identity provider under name, an
 // OpenID Connect provider found by its discovery URL, through the admin route.
-func addProvider(t *testing.T, f *socialFixture, tenant uuid.UUID, name string) {
+func addProvider(t *testing.T, f *socialFixture, organization uuid.UUID, name string) {
 	t.Helper()
-	admin := dbtest.User(t, tenant, tenant)
-	rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(admin.ID, tenant), f.mount), http.MethodPost, "/social/providers", map[string]string{
+	admin := dbtest.User(t, organization, organization)
+	rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(admin.ID, organization), f.mount), http.MethodPost, "/social/providers", map[string]string{
 		"provider": name, "client_id": "qeet", "client_secret": "idp-client-secret",
 		"discovery_url": f.idp.URL + "/.well-known/openid-configuration",
 	})
@@ -59,17 +59,17 @@ func addProvider(t *testing.T, f *socialFixture, tenant uuid.UUID, name string) 
 	}
 }
 
-// requireSSO makes tenant require single sign-on on its verified domains,
+// requireSSO makes organization require single sign-on on its verified domains,
 // through an active SAML connection.
-func requireSSO(t *testing.T, tenant uuid.UUID) {
+func requireSSO(t *testing.T, organization uuid.UUID) {
 	t.Helper()
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
-	if _, err := pool.Exec(ctx, `UPDATE tenant.domains SET sso_enabled = TRUE WHERE tenant_id = $1`, tenant); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE organization.domains SET sso_enabled = TRUE WHERE organization_id = $1`, organization); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO tenant.saml_connections (tenant_id, name, idp_entity_id, idp_sso_url, idp_certificate, status)
-		VALUES ($1, 'Okta', 'https://idp.example.test', 'https://idp.example.test/sso', 'cert', 'active')`, tenant); err != nil {
+		INSERT INTO organization.saml_connections (organization_id, name, idp_entity_id, idp_sso_url, idp_certificate, status)
+		VALUES ($1, 'Okta', 'https://idp.example.test', 'https://idp.example.test/sso', 'cert', 'active')`, organization); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -82,10 +82,10 @@ func capturing(t *testing.T, f *socialFixture) {
 	f.svc.SetDomainCapture(capture)
 }
 
-// breakGlass names a as a member of tenant who keeps their own sign-in methods.
-func breakGlass(t *testing.T, tenant uuid.UUID, a dbtest.Account) {
+// breakGlass names a as a member of organization who keeps their own sign-in methods.
+func breakGlass(t *testing.T, organization uuid.UUID, a dbtest.Account) {
 	t.Helper()
-	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `INSERT INTO tenant.break_glass_members (tenant_id, user_id) VALUES ($1, $2)`, tenant, a.ID); err != nil {
+	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `INSERT INTO organization.break_glass_members (organization_id, user_id) VALUES ($1, $2)`, organization, a.ID); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -101,18 +101,18 @@ func proved(t *testing.T, id uuid.UUID) bool {
 	return dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND email_verified_at IS NOT NULL`, id) == 1
 }
 
-// TestOIDCSocialProviderDoesNotVerifyAnAddressItsOrganisationDoesNotManage
-// checks that a provider whose endpoints the organisation chooses vouches only
-// for addresses on the organisation's verified domains. Elsewhere a new
+// TestOIDCSocialProviderDoesNotVerifyAnAddressItsOrganizationDoesNotManage
+// checks that a provider whose endpoints the organization chooses vouches only
+// for addresses on the organization's verified domains. Elsewhere a new
 // account's address stays unproved and an existing account isn't adopted,
 // while GitHub's fixed endpoints still vouch for any address.
-func TestOIDCSocialProviderDoesNotVerifyAnAddressItsOrganisationDoesNotManage(t *testing.T) {
+func TestOIDCSocialProviderDoesNotVerifyAnAddressItsOrganizationDoesNotManage(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := provisioningService(t)
-	tenant := openTenant(t)
-	domain := dbtest.Domain(t, tenant)
+	organization := openOrganization(t)
+	domain := dbtest.Domain(t, organization)
 	signIn := func(provider string, person userInfo) (uuid.UUID, error) {
-		return svc.findOrCreateUser(ctx, tenant, provider, person)
+		return svc.findOrCreateUser(ctx, organization, provider, person)
 	}
 
 	outsider := claims(dbtest.Unique("outsider") + "@example.test")
@@ -130,20 +130,20 @@ func TestOIDCSocialProviderDoesNotVerifyAnAddressItsOrganisationDoesNotManage(t 
 		t.Errorf("a new account GitHub verified: %v; want it created proved", err)
 	}
 
-	elsewhere := dbtest.User(t, tenant, tenant)
+	elsewhere := dbtest.User(t, organization, organization)
 	if got, err := signIn("okta", verified(t, elsewhere)); !errors.Is(err, errs.ErrSocialEmailUnverified) {
 		t.Errorf("an account on a domain the organisation doesn't manage = %s, %v; want %v", got, err, errs.ErrSocialEmailUnverified)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE user_id = $1`, elsewhere.ID); n != 0 {
 		t.Errorf("%d identities linked to an account the provider can't vouch for, want none", n)
 	}
-	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, tenant, tenant)
+	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, organization, organization)
 	if got, err := signIn("okta", verified(t, member)); err != nil || got != member.ID {
 		t.Errorf("an account on the organisation's own domain = %s, %v; want it adopted", got, err)
 	}
 }
 
-// TestInboxClosedToAnAddressOnlyAProviderAsserted checks that an organisation
+// TestInboxClosedToAnAddressOnlyAProviderAsserted checks that an organization
 // can't reach another's invitation by pointing a provider of its own at a
 // server that claims the invited address: the account it creates is unproved,
 // so the invitations inbox stays closed to it.
@@ -152,19 +152,19 @@ func TestInboxClosedToAnAddressOnlyAProviderAsserted(t *testing.T) {
 	pool := dbtest.Pool(t)
 	f := newSocialFixture(t)
 
-	inviting := dbtest.Tenant(t)
+	inviting := dbtest.Organization(t)
 	inviter := dbtest.User(t, inviting, inviting)
 	invitee := dbtest.Unique("new.hire") + "@example.test"
 	role := dbtest.Role(t, inviting, "user.read")
 	invites := invite.NewService(pool, &dbtest.Mailbox{}, 0, "https://console.example.test")
-	inv, _, err := invites.Create(ctx, invite.CreateInput{TenantID: inviting, Email: invitee, RoleID: &role}, audit.Actor{UserID: &inviter.ID, Type: "user"})
+	inv, _, err := invites.Create(ctx, invite.CreateInput{OrganizationID: inviting, Email: invitee, RoleID: &role}, audit.Actor{UserID: &inviter.ID, Type: "user"})
 	if err != nil {
 		t.Fatalf("invite: %v", err)
 	}
 
-	tenant := openTenant(t)
-	addProvider(t, f, tenant, "corp")
-	if _, q := redirectQuery(t, f.signIn(t, "corp", "/social/corp/start?tenant_id="+tenant.String(), claims(invitee))); q.Get("code") == "" {
+	organization := openOrganization(t)
+	addProvider(t, f, organization, "corp")
+	if _, q := redirectQuery(t, f.signIn(t, "corp", "/social/corp/start?tenant_id="+organization.String(), claims(invitee))); q.Get("code") == "" {
 		t.Fatalf("sign-up through the organisation's provider: %v; want a one-time code", q)
 	}
 	var id uuid.UUID
@@ -178,26 +178,26 @@ func TestInboxClosedToAnAddressOnlyAProviderAsserted(t *testing.T) {
 	if _, err := invites.AcceptAuthenticatedByID(ctx, id, inv.ID, audit.Actor{}); !errors.Is(err, errs.ErrInviteEmailNotVerified) {
 		t.Errorf("accepting from the inbox: %v; want %v", err, errs.ErrInviteEmailNotVerified)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2`, id, inviting); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM rbac.user_roles WHERE user_id = $1 AND organization_id = $2`, id, inviting); n != 0 {
 		t.Errorf("the account holds %d roles in the inviting organisation, want none", n)
 	}
 }
 
-// TestSocialSignUpRefusedOnADomainAnotherOrganisationManages checks that no
-// provider of an organisation, whatever its kind, creates an account on a
-// domain another organisation verified, or below it, while the organisation
+// TestSocialSignUpRefusedOnADomainAnotherOrganizationManages checks that no
+// provider of an organization, whatever its kind, creates an account on a
+// domain another organization verified, or below it, while the organization
 // that manages the domain still can. The browser is told no more than that
 // the sign-in failed.
-func TestSocialSignUpRefusedOnADomainAnotherOrganisationManages(t *testing.T) {
+func TestSocialSignUpRefusedOnADomainAnotherOrganizationManages(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := provisioningService(t)
-	tenant, manager := openTenant(t), openTenant(t)
+	organization, manager := openOrganization(t), openOrganization(t)
 	domain := dbtest.Domain(t, manager)
 
 	f := newSocialFixture(t)
-	addProvider(t, f, tenant, "corp")
+	addProvider(t, f, organization, "corp")
 	taken := dbtest.Unique("x") + "@" + domain
-	target, q := redirectQuery(t, f.signIn(t, "corp", "/social/corp/start?tenant_id="+tenant.String(), claims(taken)))
+	target, q := redirectQuery(t, f.signIn(t, "corp", "/social/corp/start?tenant_id="+organization.String(), claims(taken)))
 	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, taken); target != "https://login.example.test/sign-in" || q.Get("error") != "social" || q.Get("code") != "" || n != 0 {
 		t.Errorf("sign-up through the routes went to %s %v, %d accounts; want the hosted login with error=social and no account", target, q, n)
 	}
@@ -205,69 +205,69 @@ func TestSocialSignUpRefusedOnADomainAnotherOrganisationManages(t *testing.T) {
 	for _, provider := range []string{"okta", "github"} {
 		for _, host := range []string{domain, "eu." + domain} {
 			email := dbtest.Unique("x") + "@" + host
-			_, err := svc.findOrCreateUser(ctx, tenant, provider, claims(email))
+			_, err := svc.findOrCreateUser(ctx, organization, provider, claims(email))
 			if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, email); !errors.Is(err, errs.ErrUserDomainManaged) || n != 0 {
 				t.Errorf("%s sign-up at %s: %v, %d accounts; want %v and no account", provider, host, err, n, errs.ErrUserDomainManaged)
 			}
 		}
 	}
 	email := dbtest.Unique("own") + "@" + domain
-	if id, err := svc.findOrCreateUser(ctx, manager, "okta", claims(email)); err != nil || dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND tenant_id = $2`, id, manager) != 1 {
+	if id, err := svc.findOrCreateUser(ctx, manager, "okta", claims(email)); err != nil || dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND organization_id = $2`, id, manager) != 1 {
 		t.Errorf("sign-up through the managing organisation's own provider: %v; want an account in it", err)
 	}
 }
 
-// TestSocialSignUpRefusedOnACapturedDomain checks that once an organisation
+// TestSocialSignUpRefusedOnACapturedDomain checks that once an organization
 // requires single sign-on on its domain, with an active connection, its social
 // providers create no account there: new people arrive through the connection.
 func TestSocialSignUpRefusedOnACapturedDomain(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := provisioningService(t)
-	tenant := openTenant(t)
-	domain := dbtest.Domain(t, tenant)
+	organization := openOrganization(t)
+	domain := dbtest.Domain(t, organization)
 	signUp := func() (string, error) {
 		email := dbtest.Unique("x") + "@" + domain
-		_, err := svc.findOrCreateUser(ctx, tenant, "github", claims(email))
+		_, err := svc.findOrCreateUser(ctx, organization, "github", claims(email))
 		return email, err
 	}
 
 	if email, err := signUp(); err != nil || dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, email) != 1 {
 		t.Errorf("sign-up on the organisation's domain before it requires single sign-on: %v; want an account", err)
 	}
-	requireSSO(t, tenant)
+	requireSSO(t, organization)
 	if email, err := signUp(); !errors.Is(err, errs.ErrAuthSSORequired) || dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, email) != 0 {
 		t.Errorf("sign-up on a domain that requires single sign-on: %v; want %v and no account", err, errs.ErrAuthSSORequired)
 	}
 }
 
 // TestSocialDoesNotAdoptAnAdministrator checks that no provider of an
-// organisation, whatever its kind, takes over by its address an account that
-// owns or administers the organisation, directly or through a group, while a
+// organization, whatever its kind, takes over by its address an account that
+// owns or administers the organization, directly or through a group, while a
 // member holding only read permissions is still adopted. Through the routes
 // the browser is told no more than that the sign-in failed.
 func TestSocialDoesNotAdoptAnAdministrator(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	svc := provisioningService(t)
-	tenant := dbtest.Tenant(t)
-	domain := dbtest.Domain(t, tenant)
+	organization := dbtest.Organization(t)
+	domain := dbtest.Domain(t, organization)
 	account := func(roles ...uuid.UUID) dbtest.Account {
-		a := dbtest.UserAt(t, dbtest.Unique("user")+"@"+domain, tenant, tenant)
+		a := dbtest.UserAt(t, dbtest.Unique("user")+"@"+domain, organization, organization)
 		for _, role := range roles {
-			dbtest.Assign(t, a.ID, tenant, role)
+			dbtest.Assign(t, a.ID, organization, role)
 		}
 		return a
 	}
 	var ownerRole uuid.UUID
-	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, tenant).Scan(&ownerRole); err != nil {
+	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (organization_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, organization).Scan(&ownerRole); err != nil {
 		t.Fatal(err)
 	}
 	grouped := account()
 	if _, err := pool.Exec(ctx, `
-		WITH g AS (INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, 'Identity team') RETURNING id),
-		     r AS (INSERT INTO rbac.group_roles (group_id, tenant_id, role_id) SELECT id, $1, $3 FROM g)
-		INSERT INTO tenant.group_members (group_id, user_id, tenant_id) SELECT id, $2, $1 FROM g
-	`, tenant, grouped.ID, dbtest.Role(t, tenant, "role.write")); err != nil {
+		WITH g AS (INSERT INTO organization.groups (organization_id, name) VALUES ($1, 'Identity team') RETURNING id),
+		     r AS (INSERT INTO rbac.group_roles (group_id, organization_id, role_id) SELECT id, $1, $3 FROM g)
+		INSERT INTO organization.group_members (group_id, user_id, organization_id) SELECT id, $2, $1 FROM g
+	`, organization, grouped.ID, dbtest.Role(t, organization, "role.write")); err != nil {
 		t.Fatal(err)
 	}
 	owner := account(ownerRole)
@@ -277,11 +277,11 @@ func TestSocialDoesNotAdoptAnAdministrator(t *testing.T) {
 
 	for name, a := range map[string]dbtest.Account{
 		"an owner":                               owner,
-		"an account holding connection.write":    account(dbtest.Role(t, tenant, "user.read", "connection.write")),
+		"an account holding connection.write":    account(dbtest.Role(t, organization, "user.read", "connection.write")),
 		"a member of a group holding role.write": grouped,
 	} {
 		for _, provider := range []string{"okta", "github"} {
-			if got, err := svc.findOrCreateUser(ctx, tenant, provider, verified(t, a)); !errors.Is(err, errs.ErrSocialAccountAdministers) {
+			if got, err := svc.findOrCreateUser(ctx, organization, provider, verified(t, a)); !errors.Is(err, errs.ErrSocialAccountAdministers) {
 				t.Errorf("%s through %s = %s, %v; want %v", name, provider, got, err, errs.ErrSocialAccountAdministers)
 			}
 		}
@@ -290,20 +290,20 @@ func TestSocialDoesNotAdoptAnAdministrator(t *testing.T) {
 		}
 	}
 
-	reader := account(dbtest.Role(t, tenant, "user.read", "audit.read"))
-	if got, err := svc.findOrCreateUser(ctx, tenant, "okta", verified(t, reader)); err != nil || got != reader.ID {
+	reader := account(dbtest.Role(t, organization, "user.read", "audit.read"))
+	if got, err := svc.findOrCreateUser(ctx, organization, "okta", verified(t, reader)); err != nil || got != reader.ID {
 		t.Errorf("an account holding only read permissions = %s, %v; want it adopted", got, err)
 	}
 
 	f := newSocialFixture(t)
-	addProvider(t, f, tenant, "corp")
-	target, q := redirectQuery(t, f.signIn(t, "corp", "/social/corp/start?tenant_id="+tenant.String(), verified(t, owner)))
+	addProvider(t, f, organization, "corp")
+	target, q := redirectQuery(t, f.signIn(t, "corp", "/social/corp/start?tenant_id="+organization.String(), verified(t, owner)))
 	if target != "https://login.example.test/sign-in" || q.Get("error") != "social" || q.Get("code") != "" || linked(owner) != 0 {
 		t.Errorf("the owner's address through the routes went to %s %v; want the hosted login with error=social and no link", target, q)
 	}
 }
 
-// TestSocialSignInRefusedOnACapturedDomain checks that once an organisation
+// TestSocialSignInRefusedOnACapturedDomain checks that once an organization
 // requires single sign-on on its domain, none of its social providers signs a
 // member in there, whether their identity is linked already or would be
 // adopted by address, and nothing new is linked; a break-glass member still
@@ -311,12 +311,12 @@ func TestSocialDoesNotAdoptAnAdministrator(t *testing.T) {
 func TestSocialSignInRefusedOnACapturedDomain(t *testing.T) {
 	f := newSocialFixture(t)
 	capturing(t, f)
-	tenant := dbtest.Tenant(t)
-	domain := dbtest.Domain(t, tenant)
-	addProvider(t, f, tenant, "corp")
-	start := "/social/corp/start?tenant_id=" + tenant.String()
+	organization := dbtest.Organization(t)
+	domain := dbtest.Domain(t, organization)
+	addProvider(t, f, organization, "corp")
+	start := "/social/corp/start?tenant_id=" + organization.String()
 	member := func() (dbtest.Account, userInfo) {
-		a := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, tenant, tenant)
+		a := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, organization, organization)
 		return a, verified(t, a)
 	}
 	signIn := func(person userInfo) url.Values {
@@ -328,10 +328,10 @@ func TestSocialSignInRefusedOnACapturedDomain(t *testing.T) {
 		t.Fatalf("sign-in before the organisation requires single sign-on: %v; want a code", q)
 	}
 	exempt, exemptAs := member()
-	breakGlass(t, tenant, exempt)
+	breakGlass(t, organization, exempt)
 	adopted, adoptedAs := member()
 
-	requireSSO(t, tenant)
+	requireSSO(t, organization)
 	if q := signIn(linkedAs); q.Get("code") != "" || q.Get("error") != "social" {
 		t.Errorf("a linked member's sign-in on a captured domain: %v; want error=social and no code", q)
 	}

@@ -45,8 +45,8 @@ var SignInSweeps = []Sweep{
 		SELECT c.ctid FROM auth.oauth_states c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))`},
 	{"platform social link codes", `DELETE FROM auth.platform_social_link_codes WHERE ctid = ANY(ARRAY(
 		SELECT c.ctid FROM auth.platform_social_link_codes c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))`},
-	{"connected-account states", `DELETE FROM tenant.token_vault_connect_states WHERE ctid = ANY(ARRAY(
-		SELECT c.ctid FROM tenant.token_vault_connect_states c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))`},
+	{"connected-account states", `DELETE FROM organization.token_vault_connect_states WHERE ctid = ANY(ARRAY(
+		SELECT c.ctid FROM organization.token_vault_connect_states c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))`},
 	{"second-factor sign-ins", `DELETE FROM auth.mfa_login_challenges WHERE ctid = ANY(ARRAY(
 		SELECT c.ctid FROM auth.mfa_login_challenges c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))`},
 	{"failed sign-in counts", `DELETE FROM auth.login_attempts WHERE ctid = ANY(ARRAY(
@@ -74,10 +74,10 @@ var SignInSweeps = []Sweep{
 // they were raised, invitations 90 days after they lapse, application grants a
 // week after they end, and access decisions after 30 days. A delivery still to
 // be made, an open alert and a live grant are kept. audit.events goes by each
-// organisation's plan instead (audit.PurgeExpired).
+// organization's plan instead (audit.PurgeExpired).
 var RecordSweeps = []Sweep{
-	{"webhook deliveries", `DELETE FROM tenant.webhook_deliveries WHERE ctid = ANY(ARRAY(
-		SELECT d.ctid FROM tenant.webhook_deliveries d
+	{"webhook deliveries", `DELETE FROM organization.webhook_deliveries WHERE ctid = ANY(ARRAY(
+		SELECT d.ctid FROM organization.webhook_deliveries d
 		WHERE d.delivered_at < NOW() - INTERVAL '30 days' OR d.dead_at < NOW() - INTERVAL '30 days'
 		LIMIT $1))`},
 	{"logout deliveries", `DELETE FROM auth.oidc_logout_deliveries WHERE ctid = ANY(ARRAY(
@@ -94,18 +94,18 @@ var RecordSweeps = []Sweep{
 		SELECT a.ctid FROM audit.anomalies a
 		WHERE a.resolved_at < NOW() - INTERVAL '90 days' OR a.created_at < NOW() - INTERVAL '365 days'
 		LIMIT $1))`},
-	{"directory sync events", `DELETE FROM tenant.directory_events WHERE ctid = ANY(ARRAY(
-		SELECT e.ctid FROM tenant.directory_events e WHERE e.started_at < NOW() - INTERVAL '90 days' LIMIT $1))`},
+	{"directory sync events", `DELETE FROM organization.directory_events WHERE ctid = ANY(ARRAY(
+		SELECT e.ctid FROM organization.directory_events e WHERE e.started_at < NOW() - INTERVAL '90 days' LIMIT $1))`},
 	{"notifications", `DELETE FROM auth.notifications WHERE ctid = ANY(ARRAY(
 		SELECT n.ctid FROM auth.notifications n WHERE n.created_at < NOW() - INTERVAL '90 days' LIMIT $1))`},
 	{"access decisions", `DELETE FROM auth.authz_decisions WHERE ctid = ANY(ARRAY(
 		SELECT d.ctid FROM auth.authz_decisions d WHERE d.decided_at < NOW() - INTERVAL '30 days' LIMIT $1))`},
 	// 13 months, so a year-on-year comparison and the last invoice's month remain.
-	{"monthly active users", `DELETE FROM tenant.monthly_active_users WHERE ctid = ANY(ARRAY(
-		SELECT m.ctid FROM tenant.monthly_active_users m
+	{"monthly active users", `DELETE FROM organization.monthly_active_users WHERE ctid = ANY(ARRAY(
+		SELECT m.ctid FROM organization.monthly_active_users m
 		WHERE m.month < (date_trunc('month', NOW() AT TIME ZONE 'UTC') - INTERVAL '13 months')::date LIMIT $1))`},
-	{"invitations", `DELETE FROM tenant.invites WHERE ctid = ANY(ARRAY(
-		SELECT i.ctid FROM tenant.invites i WHERE i.expires_at < NOW() - INTERVAL '90 days' LIMIT $1))`},
+	{"invitations", `DELETE FROM organization.invites WHERE ctid = ANY(ARRAY(
+		SELECT i.ctid FROM organization.invites i WHERE i.expires_at < NOW() - INTERVAL '90 days' LIMIT $1))`},
 	// Oldest first, so a token goes no later than the one it was renewed from.
 	{"application grants", `DELETE FROM auth.oidc_refresh_tokens WHERE ctid = ANY(ARRAY(
 		SELECT t.ctid FROM auth.oidc_refresh_tokens t WHERE t.grant_expires_at < NOW() - INTERVAL '7 days'

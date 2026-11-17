@@ -33,15 +33,15 @@ type TemplateNode struct {
 	Children    []TemplateNode `json:"children,omitempty"`
 }
 
-// GroupTemplate is a stored tree of groups the tenant can apply.
+// GroupTemplate is a stored tree of groups the organization can apply.
 type GroupTemplate struct {
-	ID          uuid.UUID      `json:"id"`
-	TenantID    uuid.UUID      `json:"tenant_id"`
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	Nodes       []TemplateNode `json:"nodes"`
-	CreatedAt   time.Time      `json:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
+	ID             uuid.UUID      `json:"id"`
+	OrganizationID uuid.UUID      `json:"tenant_id"`
+	Name           string         `json:"name"`
+	Description    string         `json:"description"`
+	Nodes          []TemplateNode `json:"nodes"`
+	CreatedAt      time.Time      `json:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at"`
 	// GroupCount is how many groups applying this template would create.
 	GroupCount int `json:"group_count"`
 }
@@ -118,14 +118,14 @@ func validateTemplate(in TemplateInput) (int, error) {
 
 // The template queries below are hand-written SQL, not sqlc.
 
-// ListTemplates returns the tenant's group templates.
-func (s *Service) ListTemplates(ctx context.Context, tenantID uuid.UUID) ([]GroupTemplate, error) {
+// ListTemplates returns the organization's group templates.
+func (s *Service) ListTemplates(ctx context.Context, organizationID uuid.UUID) ([]GroupTemplate, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, tenant_id, name, description, nodes, created_at, updated_at
-		FROM tenant.group_templates
-		WHERE tenant_id = $1
+		SELECT id, organization_id, name, description, nodes, created_at, updated_at
+		FROM organization.group_templates
+		WHERE organization_id = $1
 		ORDER BY created_at DESC
-	`, tenantID)
+	`, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +135,7 @@ func (s *Service) ListTemplates(ctx context.Context, tenantID uuid.UUID) ([]Grou
 	for rows.Next() {
 		var t GroupTemplate
 		var raw []byte
-		if err := rows.Scan(&t.ID, &t.TenantID, &t.Name, &t.Description, &raw,
+		if err := rows.Scan(&t.ID, &t.OrganizationID, &t.Name, &t.Description, &raw,
 			&t.CreatedAt, &t.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -148,9 +148,9 @@ func (s *Service) ListTemplates(ctx context.Context, tenantID uuid.UUID) ([]Grou
 	return out, rows.Err()
 }
 
-// CreateTemplate stores a group template for the tenant.
+// CreateTemplate stores a group template for the organization.
 func (s *Service) CreateTemplate(
-	ctx context.Context, tenantID uuid.UUID, in TemplateInput, actor audit.Actor,
+	ctx context.Context, organizationID uuid.UUID, in TemplateInput, actor audit.Actor,
 ) (*GroupTemplate, error) {
 	count, err := validateTemplate(in)
 	if err != nil {
@@ -169,11 +169,11 @@ func (s *Service) CreateTemplate(
 
 	var t GroupTemplate
 	err = tx.QueryRow(ctx, `
-		INSERT INTO tenant.group_templates (tenant_id, name, description, nodes)
+		INSERT INTO organization.group_templates (organization_id, name, description, nodes)
 		VALUES ($1, $2, $3, $4)
-		RETURNING id, tenant_id, name, description, created_at, updated_at
-	`, tenantID, strings.TrimSpace(in.Name), in.Description, raw).
-		Scan(&t.ID, &t.TenantID, &t.Name, &t.Description, &t.CreatedAt, &t.UpdatedAt)
+		RETURNING id, organization_id, name, description, created_at, updated_at
+	`, organizationID, strings.TrimSpace(in.Name), in.Description, raw).
+		Scan(&t.ID, &t.OrganizationID, &t.Name, &t.Description, &t.CreatedAt, &t.UpdatedAt)
 	if err != nil {
 		if pgxerr.IsUnique(err) {
 			return nil, errs.ErrGroupTemplateNameExists
@@ -182,7 +182,7 @@ func (s *Service) CreateTemplate(
 	}
 	t.Nodes, t.GroupCount = in.Nodes, count
 
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "group_template.created",
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "group_template.created",
 		"group_template", t.ID, map[string]any{"name": t.Name, "groups": count})); err != nil {
 		return nil, err
 	}
@@ -192,9 +192,9 @@ func (s *Service) CreateTemplate(
 	return &t, nil
 }
 
-// DeleteTemplate removes one of the tenant's group templates.
+// DeleteTemplate removes one of the organization's group templates.
 func (s *Service) DeleteTemplate(
-	ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor,
+	ctx context.Context, id, organizationID uuid.UUID, actor audit.Actor,
 ) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -204,15 +204,15 @@ func (s *Service) DeleteTemplate(
 
 	var name string
 	err = tx.QueryRow(ctx,
-		`DELETE FROM tenant.group_templates WHERE id = $1 AND tenant_id = $2 RETURNING name`,
-		id, tenantID).Scan(&name)
+		`DELETE FROM organization.group_templates WHERE id = $1 AND organization_id = $2 RETURNING name`,
+		id, organizationID).Scan(&name)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errs.ErrNotFound
 		}
 		return err
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "group_template.deleted",
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "group_template.deleted",
 		"group_template", id, map[string]any{"name": name})); err != nil {
 		return err
 	}
@@ -269,14 +269,14 @@ func (o ApplyOptions) named(nodes []TemplateNode) ([]TemplateNode, error) {
 // ApplyTemplate makes the template's groups in one transaction, named as opts
 // says; a name already taken makes none.
 func (s *Service) ApplyTemplate(
-	ctx context.Context, id, tenantID uuid.UUID, opts ApplyOptions, actor audit.Actor,
+	ctx context.Context, id, organizationID uuid.UUID, opts ApplyOptions, actor audit.Actor,
 ) ([]Group, error) {
 	parentID := opts.ParentID
 	var raw []byte
 	var tmplName string
 	err := s.pool.QueryRow(ctx,
-		`SELECT name, nodes FROM tenant.group_templates WHERE id = $1 AND tenant_id = $2`,
-		id, tenantID).Scan(&tmplName, &raw)
+		`SELECT name, nodes FROM organization.group_templates WHERE id = $1 AND organization_id = $2`,
+		id, organizationID).Scan(&tmplName, &raw)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errs.ErrNotFound
@@ -291,10 +291,10 @@ func (s *Service) ApplyTemplate(
 		return nil, err
 	}
 
-	// The parent is caller-supplied and must be one of this tenant's groups;
+	// The parent is caller-supplied and must be one of this organization's groups;
 	// checking first gives ErrGroupNotFound rather than a foreign-key error.
 	if parentID != nil {
-		ok, err := s.q.GroupExists(ctx, dbgen.GroupExistsParams{ID: *parentID, TenantID: tenantID})
+		ok, err := s.q.GroupExists(ctx, dbgen.GroupExistsParams{ID: *parentID, OrganizationID: organizationID})
 		if err != nil {
 			return nil, err
 		}
@@ -309,18 +309,18 @@ func (s *Service) ApplyTemplate(
 	}
 	defer tx.Rollback(ctx)
 
-	created, err := insertTree(ctx, tx, tenantID, parentID, nodes)
+	created, err := insertTree(ctx, tx, organizationID, parentID, nodes)
 	if err != nil {
 		return nil, err
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "group_template.applied",
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "group_template.applied",
 		"group_template", id,
 		map[string]any{"name": tmplName, "groups_created": len(created), "prefix": opts.Prefix, "root_name": opts.RootName})); err != nil {
 		return nil, err
 	}
 	if err := outbox.Enqueue(ctx, tx, outbox.Event{
 		AggregateID: id, Topic: "group.events", EventType: "group_template.applied",
-		Payload: map[string]any{"template_id": id, "tenant_id": tenantID, "groups": created},
+		Payload: map[string]any{"template_id": id, "tenant_id": organizationID, "groups": created},
 	}); err != nil {
 		return nil, err
 	}
@@ -331,7 +331,7 @@ func (s *Service) ApplyTemplate(
 }
 
 func insertTree(
-	ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, parentID *uuid.UUID, nodes []TemplateNode,
+	ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, parentID *uuid.UUID, nodes []TemplateNode,
 ) ([]Group, error) {
 	out := make([]Group, 0, len(nodes))
 	for _, n := range nodes {
@@ -341,11 +341,11 @@ func insertTree(
 			parent = *parentID
 		}
 		err := tx.QueryRow(ctx, `
-			INSERT INTO tenant.groups (tenant_id, parent_id, name, description)
+			INSERT INTO organization.groups (organization_id, parent_id, name, description)
 			VALUES ($1, $2, $3, $4)
-			RETURNING id, tenant_id, name, description, created_at
-		`, tenantID, parent, strings.TrimSpace(n.Name), n.Description).
-			Scan(&g.ID, &g.TenantID, &g.Name, &g.Description, &g.CreatedAt)
+			RETURNING id, organization_id, name, description, created_at
+		`, organizationID, parent, strings.TrimSpace(n.Name), n.Description).
+			Scan(&g.ID, &g.OrganizationID, &g.Name, &g.Description, &g.CreatedAt)
 		if err != nil {
 			if pgxerr.IsUnique(err) {
 				return nil, errs.ErrGroupNameExists.WithDetail(
@@ -357,7 +357,7 @@ func insertTree(
 		out = append(out, g)
 
 		if len(n.Children) > 0 {
-			kids, err := insertTree(ctx, tx, tenantID, &g.ID, n.Children)
+			kids, err := insertTree(ctx, tx, organizationID, &g.ID, n.Children)
 			if err != nil {
 				return nil, err
 			}

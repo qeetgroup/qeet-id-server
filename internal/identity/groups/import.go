@@ -58,7 +58,7 @@ const (
 // passes, since a child may come before its parent; rows whose parent never
 // appears (or that form a cycle) are reported as failed.
 func (s *Service) ImportGroups(
-	ctx context.Context, tenantID uuid.UUID, rows []ImportRow, actor audit.Actor,
+	ctx context.Context, organizationID uuid.UUID, rows []ImportRow, actor audit.Actor,
 ) (*ImportResult, error) {
 	if len(rows) == 0 {
 		return nil, errs.ErrGroupImportEmpty
@@ -67,7 +67,7 @@ func (s *Service) ImportGroups(
 		return nil, errs.ErrGroupImportTooLarge
 	}
 
-	existing, err := s.List(ctx, tenantID)
+	existing, err := s.List(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -117,10 +117,10 @@ func (s *Service) ImportGroups(
 			}
 
 			g, err := s.Create(ctx, CreateInput{
-				TenantID:    tenantID,
-				ParentID:    parentID,
-				Name:        r.Name,
-				Description: r.Description,
+				OrganizationID: organizationID,
+				ParentID:       parentID,
+				Name:           r.Name,
+				Description:    r.Description,
 			}, actor)
 			if err != nil {
 				row := ImportRowResult{Name: r.Name, Status: "failed", Reason: "could not be created", Code: errs.CodeInternal}
@@ -130,7 +130,7 @@ func (s *Service) ImportGroups(
 				case errors.Is(err, errs.ErrGroupParentNotFound):
 					row.Reason, row.Code, row.Field = "parent group \""+r.Parent+"\" was not found", CodeImportParentNotFound, "parent"
 				default:
-					slog.Warn("group import row not created", "tenant_id", tenantID, "err", err)
+					slog.Warn("group import row not created", "tenant_id", organizationID, "err", err)
 				}
 				res.Failed++
 				res.Rows = append(res.Rows, row)

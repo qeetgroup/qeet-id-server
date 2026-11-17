@@ -19,23 +19,23 @@ import (
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
 
-// TestAgentsStayInTheirTenant checks that one tenant can neither read nor
-// change another tenant's agent, nor make another tenant's user its sponsor,
-// and that its kill switch stops only its own agents. A tenant's own account
+// TestAgentsStayInTheirOrganization checks that one organization can neither read nor
+// change another organization's agent, nor make another organization's user its sponsor,
+// and that its kill switch stops only its own agents. An organization's own account
 // sponsors without holding a role.
-func TestAgentsStayInTheirTenant(t *testing.T) {
+func TestAgentsStayInTheirOrganization(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
-	tenantA, tenantB := dbtest.Tenant(t), dbtest.Tenant(t)
-	sponsorA := dbtest.User(t, tenantA)
-	adminB := dbtest.User(t, tenantB, tenantB)
-	agentA, err := svc.Create(ctx, tenantA, "triage-bot", nil, 0, sponsorA.ID, audit.Actor{Type: "system"})
+	organizationA, organizationB := dbtest.Organization(t), dbtest.Organization(t)
+	sponsorA := dbtest.User(t, organizationA)
+	adminB := dbtest.User(t, organizationB, organizationB)
+	agentA, err := svc.Create(ctx, organizationA, "triage-bot", nil, 0, sponsorA.ID, audit.Actor{Type: "system"})
 	if err != nil {
 		t.Fatalf("create agent in A: %v", err)
 	}
 
-	asB := dbtest.Serve(dbtest.Principal(adminB.ID, tenantB), (&Handler{Service: svc, GrantCheck: rbac.NewRepository(dbtest.Pool(t)).CheckGrantScopes}).Mount)
-	inB := "/tenants/" + tenantB.String() + "/agents"
+	asB := dbtest.Serve(dbtest.Principal(adminB.ID, organizationB), (&Handler{Service: svc, GrantCheck: rbac.NewRepository(dbtest.Pool(t)).CheckGrantScopes}).Mount)
+	inB := "/tenants/" + organizationB.String() + "/agents"
 	for _, tc := range []struct {
 		method, path string
 		body         any
@@ -48,7 +48,7 @@ func TestAgentsStayInTheirTenant(t *testing.T) {
 		{http.MethodPost, inB, map[string]any{"name": "b-bot", "sponsor_user_id": sponsorA.ID}, http.StatusUnprocessableEntity},
 		{http.MethodPost, inB + "/sponsored-by/" + sponsorA.ID.String() + "/transfer", map[string]any{"to_user_id": adminB.ID}, http.StatusOK},
 		{http.MethodPost, inB + "/kill-all", nil, http.StatusOK},
-		{http.MethodGet, "/tenants/" + tenantA.String() + "/agents", nil, http.StatusForbidden},
+		{http.MethodGet, "/tenants/" + organizationA.String() + "/agents", nil, http.StatusForbidden},
 	} {
 		if rec := dbtest.Do(t, asB, tc.method, tc.path, tc.body); rec.Code != tc.want {
 			t.Errorf("tenant B %s %s: status %d, want %d (%s)", tc.method, tc.path, rec.Code, tc.want, rec.Body.String())
@@ -76,13 +76,13 @@ func TestAgentsStayInTheirTenant(t *testing.T) {
 func TestTokenChecksTheSecretFirst(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
-	tenant := dbtest.Tenant(t)
-	sponsor := dbtest.User(t, tenant, tenant)
-	a, err := svc.Create(ctx, tenant, "batch-bot", nil, 0, sponsor.ID, audit.Actor{Type: "system"})
+	organization := dbtest.Organization(t)
+	sponsor := dbtest.User(t, organization, organization)
+	a, err := svc.Create(ctx, organization, "batch-bot", nil, 0, sponsor.ID, audit.Actor{Type: "system"})
 	if err != nil {
 		t.Fatalf("create agent: %v", err)
 	}
-	if _, err := svc.Transition(ctx, a.ID, tenant, "suspended", audit.Actor{Type: "system"}); err != nil {
+	if _, err := svc.Transition(ctx, a.ID, organization, "suspended", audit.Actor{Type: "system"}); err != nil {
 		t.Fatalf("suspend: %v", err)
 	}
 	if _, err := svc.IssueToken(ctx, a.ID.String(), "wrong-secret"); !errors.Is(err, errs.ErrAgentTokenInvalid) {
@@ -96,13 +96,13 @@ func TestTokenChecksTheSecretFirst(t *testing.T) {
 // TestAgentSecretsRotateAndAgentsResumeTogether checks that a rotated agent's
 // old secret goes on minting tokens until its overlap ends, that a token
 // minted is noted as its last use, and that resume-all undoes the kill switch
-// for its own tenant only.
+// for its own organization only.
 func TestAgentSecretsRotateAndAgentsResumeTogether(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
 	system := audit.Actor{Type: "system"}
-	a, err := svc.Create(ctx, tenant, "triage-bot", nil, 0, dbtest.User(t, tenant, tenant).ID, system)
+	a, err := svc.Create(ctx, organization, "triage-bot", nil, 0, dbtest.User(t, organization, organization).ID, system)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestAgentSecretsRotateAndAgentsResumeTogether(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	secret, _, err := svc.RotateSecret(ctx, tenant, a.ID, time.Hour, system)
+	secret, _, err := svc.RotateSecret(ctx, organization, a.ID, time.Hour, system)
 	if err != nil {
 		t.Fatalf("rotate: %v", err)
 	}
@@ -119,11 +119,11 @@ func TestAgentSecretsRotateAndAgentsResumeTogether(t *testing.T) {
 			t.Errorf("the %s secret during the overlap: %v", name, err)
 		}
 	}
-	list, err := svc.List(ctx, tenant)
+	list, err := svc.List(ctx, organization)
 	if err != nil || len(list) != 1 || list[0].LastUsedAt == nil || list[0].PreviousSecretExpiresAt == nil {
 		t.Errorf("listed agents %+v, %v: want a last use and the overlap's end", list, err)
 	}
-	if _, _, err := svc.RotateSecret(ctx, tenant, a.ID, 0, system); err != nil {
+	if _, _, err := svc.RotateSecret(ctx, organization, a.ID, 0, system); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.IssueToken(ctx, a.ID.String(), secret); !errors.Is(err, errs.ErrAgentTokenInvalid) {
@@ -133,12 +133,12 @@ func TestAgentSecretsRotateAndAgentsResumeTogether(t *testing.T) {
 		t.Errorf("rotate from another tenant: %v, want %v", err, errs.ErrAgentNotFound)
 	}
 
-	for _, tid := range []uuid.UUID{tenant, other} {
+	for _, tid := range []uuid.UUID{organization, other} {
 		if _, err := svc.KillAll(ctx, tid, system); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if n, err := svc.ResumeAll(ctx, tenant, system); err != nil || n != 1 {
+	if n, err := svc.ResumeAll(ctx, organization, system); err != nil || n != 1 {
 		t.Errorf("resume all: %d, %v; want 1", n, err)
 	}
 	for id, want := range map[uuid.UUID]string{a.ID: "active", b.ID: "suspended"} {
@@ -148,17 +148,17 @@ func TestAgentSecretsRotateAndAgentsResumeTogether(t *testing.T) {
 	}
 }
 
-// TestAgentOfDeletedOrganisationIsRefused checks that an agent of a suspended
-// or deleted organisation gets no token, its right secret included, and that
+// TestAgentOfDeletedOrganizationIsRefused checks that an agent of a suspended
+// or deleted organization gets no token, its right secret included, and that
 // the tokens it was already issued stop: its status is no longer active.
-// Reactivating the organisation restores both.
-func TestAgentOfDeletedOrganisationIsRefused(t *testing.T) {
+// Reactivating the organization restores both.
+func TestAgentOfDeletedOrganizationIsRefused(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	svc := NewService(pool, dbtest.Issuer(t))
-	tenant := dbtest.Tenant(t)
-	sponsor := dbtest.User(t, tenant, tenant)
-	a, err := svc.Create(ctx, tenant, "batch-bot", nil, 0, sponsor.ID, audit.Actor{Type: "system"})
+	organization := dbtest.Organization(t)
+	sponsor := dbtest.User(t, organization, organization)
+	a, err := svc.Create(ctx, organization, "batch-bot", nil, 0, sponsor.ID, audit.Actor{Type: "system"})
 	if err != nil {
 		t.Fatalf("create agent: %v", err)
 	}
@@ -166,11 +166,11 @@ func TestAgentOfDeletedOrganisationIsRefused(t *testing.T) {
 		name, change string
 		works        bool
 	}{
-		{"suspended", `UPDATE tenant.tenants SET status = 'suspended' WHERE id = $1`, false},
-		{"reactivated", `UPDATE tenant.tenants SET status = 'active' WHERE id = $1`, true},
-		{"deleted", `UPDATE tenant.tenants SET deleted_at = NOW() WHERE id = $1`, false},
+		{"suspended", `UPDATE organization.organizations SET status = 'suspended' WHERE id = $1`, false},
+		{"reactivated", `UPDATE organization.organizations SET status = 'active' WHERE id = $1`, true},
+		{"deleted", `UPDATE organization.organizations SET deleted_at = NOW() WHERE id = $1`, false},
 	} {
-		if _, err := pool.Exec(ctx, step.change, tenant); err != nil {
+		if _, err := pool.Exec(ctx, step.change, organization); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := svc.IssueToken(ctx, a.ID.String(), a.Secret); (err == nil) != step.works {

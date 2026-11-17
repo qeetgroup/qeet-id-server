@@ -12,7 +12,7 @@ const (
 	CodeQeetAITurnInProgress = "qeetai.turn_in_progress"
 )
 
-// Qeet AI errors. The provider errors answer a test of a tenant's provider
+// Qeet AI errors. The provider errors answer a test of an organization's provider
 // settings.
 var (
 	ErrQeetAIUnconfigured         = New(CodeQeetAIUnconfigured, "Qeet AI is not configured for this organization")

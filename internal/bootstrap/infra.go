@@ -67,13 +67,13 @@ func connectActivityNATS(cfg *config.Config) *nats.Conn {
 	return activityNATSConn
 }
 
-// rateLimits are the request limiters: per tenant, user and API key, with
-// each tenant's overrides, and the tighter magic-link limits.
+// rateLimits are the request limiters: per organization, user and API key, with
+// each organization's overrides, and the tighter magic-link limits.
 type rateLimits struct {
-	store                     ratelimit.Store // Redis, shared across replicas; nil keeps limits per instance
-	tenant, user, apiKey      *ratelimit.TenantLimiter
-	magicAddress, magicCaller *ratelimit.Limiter
-	resetAddress              *ratelimit.Limiter
+	store                      ratelimit.Store // Redis, shared across replicas; nil keeps limits per instance
+	organization, user, apiKey *ratelimit.OrganizationLimiter
+	magicAddress, magicCaller  *ratelimit.Limiter
+	resetAddress               *ratelimit.Limiter
 }
 
 // newRateLimits builds the limiters, exiting when REDIS_URL is set but
@@ -97,15 +97,15 @@ func newRateLimits(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Po
 		slog.Info("rate limiting via Redis (shared across replicas)")
 	}
 
-	// Build tenant-aware limiters that allow per-tenant rate overrides stored in DB.
-	newTenantLim := func(def ratelimits.Bucket, key string) *ratelimit.TenantLimiter {
+	// Build organization-aware limiters that allow per-organization rate overrides stored in DB.
+	newOrganizationLim := func(def ratelimits.Bucket, key string) *ratelimit.OrganizationLimiter {
 		var store ratelimit.Store
 		if rlStore != nil {
 			store = rlStore
 		} else {
 			store = ratelimit.NewMemStore()
 		}
-		lim := ratelimit.NewTenantLimiter(store, def.Rate, def.Capacity, pool, key)
+		lim := ratelimit.NewOrganizationLimiter(store, def.Rate, def.Capacity, pool, key)
 		lim.LoadOverrides(rootCtx)
 		return lim
 	}
@@ -118,9 +118,9 @@ func newRateLimits(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Po
 	}
 	return rateLimits{
 		store:        rlStore,
-		tenant:       newTenantLim(tenantLimitDefault, "tenant"),
-		user:         newTenantLim(userLimitDefault, "user"),
-		apiKey:       newTenantLim(apiKeyLimitDefault, "api_key"),
+		organization: newOrganizationLim(organizationLimitDefault, "tenant"),
+		user:         newOrganizationLim(userLimitDefault, "user"),
+		apiKey:       newOrganizationLim(apiKeyLimitDefault, "api_key"),
 		magicAddress: ratelimit.NewWithStore(magicStore, magicAddressLimit.Rate, magicAddressLimit.Capacity),
 		magicCaller:  ratelimit.NewWithStore(magicStore, magicCallerLimit.Rate, magicCallerLimit.Capacity),
 		resetAddress: ratelimit.NewWithStore(magicStore, resetAddressLimit.Rate, resetAddressLimit.Capacity),

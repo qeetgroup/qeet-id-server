@@ -37,15 +37,15 @@ var erasureFailures = promauto.NewCounter(prometheus.CounterOpts{
 
 // Request is a right-to-erasure request.
 type Request struct {
-	ID          uuid.UUID  `json:"id"`
-	TenantID    uuid.UUID  `json:"tenant_id"`
-	UserID      uuid.UUID  `json:"user_id"`
-	RequestedBy *uuid.UUID `json:"requested_by"`
-	Reason      *string    `json:"reason"`
-	Status      string     `json:"status"`
-	GraceUntil  time.Time  `json:"grace_until"`
-	CompletedAt *time.Time `json:"completed_at"`
-	CreatedAt   time.Time  `json:"created_at"`
+	ID             uuid.UUID  `json:"id"`
+	OrganizationID uuid.UUID  `json:"tenant_id"`
+	UserID         uuid.UUID  `json:"user_id"`
+	RequestedBy    *uuid.UUID `json:"requested_by"`
+	Reason         *string    `json:"reason"`
+	Status         string     `json:"status"`
+	GraceUntil     time.Time  `json:"grace_until"`
+	CompletedAt    *time.Time `json:"completed_at"`
+	CreatedAt      time.Time  `json:"created_at"`
 	// The person's email and name as the request was filed, until they are
 	// erased; Redacted says they were.
 	SubjectEmail *string `json:"subject_email"`
@@ -91,16 +91,16 @@ func NewService(pool *pgxpool.Pool, grace time.Duration) *Service {
 
 // CreateInput is an erasure request to file.
 type CreateInput struct {
-	TenantID uuid.UUID `json:"tenant_id"`
-	UserID   uuid.UUID `json:"user_id"`
-	Reason   string    `json:"reason"`
+	OrganizationID uuid.UUID `json:"tenant_id"`
+	UserID         uuid.UUID `json:"user_id"`
+	Reason         string    `json:"reason"`
 }
 
 // Request files an erasure request by actor, recorded as theirs, for a user
-// whose home tenant is in.TenantID; other users return errs.ErrNotFound. The
+// whose home organization is in.OrganizationID; other users return errs.ErrNotFound. The
 // purge runs once the grace period ends.
 func (s *Service) Request(ctx context.Context, in CreateInput, actor audit.Actor) (*Request, error) {
-	owned, err := s.userBelongsToTenant(ctx, in.UserID, in.TenantID)
+	owned, err := s.userBelongsToOrganization(ctx, in.UserID, in.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -119,18 +119,18 @@ func (s *Service) Request(ctx context.Context, in CreateInput, actor audit.Actor
 	}
 	defer tx.Rollback(ctx)
 	row, err := s.q.WithTx(tx).InsertPurgeRequest(ctx, dbgen.InsertPurgeRequestParams{
-		TenantID:    in.TenantID,
-		SubjectID:   in.UserID,
-		RequestedBy: pgUUIDNullable(actor.UserID),
-		Reason:      reason,
-		GraceUntil:  time.Now().UTC().Add(s.grace),
+		OrganizationID: in.OrganizationID,
+		SubjectID:      in.UserID,
+		RequestedBy:    pgUUIDNullable(actor.UserID),
+		Reason:         reason,
+		GraceUntil:     time.Now().UTC().Add(s.grace),
 	})
 	if err != nil {
 		return nil, err
 	}
 	req := purgeRequestFromRow(dbgen.ListPurgeRequestsRow(row))
 	req.GraceDays = s.GraceDays()
-	if err := audit.Record(ctx, tx, actor.Event(req.TenantID, "gdpr.erasure_requested", "purge_request", req.ID,
+	if err := audit.Record(ctx, tx, actor.Event(req.OrganizationID, "gdpr.erasure_requested", "purge_request", req.ID,
 		map[string]any{"user_id": req.UserID, "grace_until": req.GraceUntil})); err != nil {
 		return nil, err
 	}
@@ -140,52 +140,52 @@ func (s *Service) Request(ctx context.Context, in CreateInput, actor audit.Actor
 	return req, nil
 }
 
-// userBelongsToTenant reports whether tenantID is the user's home tenant
-// (users.tenant_id), not merely one where the user holds a role. Erasure is
-// irreversible, so only the owning tenant may order it.
-func (s *Service) userBelongsToTenant(ctx context.Context, userID, tenantID uuid.UUID) (bool, error) {
+// userBelongsToOrganization reports whether organizationID is the user's home organization
+// (users.organization_id), not merely one where the user holds a role. Erasure is
+// irreversible, so only the owning organization may order it.
+func (s *Service) userBelongsToOrganization(ctx context.Context, userID, organizationID uuid.UUID) (bool, error) {
 	var owned bool
 	err := s.pool.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM account.users
-			WHERE id = $1 AND tenant_id = $2
+			WHERE id = $1 AND organization_id = $2
 		)
-	`, userID, tenantID).Scan(&owned)
+	`, userID, organizationID).Scan(&owned)
 	return owned, err
 }
 
-// Cancel cancels one of the tenant's pending erasure requests, recorded as
+// Cancel cancels one of the organization's pending erasure requests, recorded as
 // actor's. It returns errs.ErrNotFound if there is no such pending request.
-func (s *Service) Cancel(ctx context.Context, tenantID, id uuid.UUID, actor audit.Actor) error {
+func (s *Service) Cancel(ctx context.Context, organizationID, id uuid.UUID, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	userID, err := s.q.WithTx(tx).CancelPurgeRequest(ctx, dbgen.CancelPurgeRequestParams{ID: id, TenantID: tenantID})
+	userID, err := s.q.WithTx(tx).CancelPurgeRequest(ctx, dbgen.CancelPurgeRequestParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return errs.ErrNotFound
 	}
 	if err != nil {
 		return err
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "gdpr.erasure_canceled", "purge_request", id,
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "gdpr.erasure_canceled", "purge_request", id,
 		map[string]any{"user_id": userID})); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
 
-// recordSweep records, in tx, the background sweep finishing tenantID's data
+// recordSweep records, in tx, the background sweep finishing organizationID's data
 // request requestID about userID.
-func recordSweep(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, action, resourceType string, requestID, userID uuid.UUID) error {
-	return audit.Record(ctx, tx, audit.Actor{Type: "system"}.Event(tenantID, action, resourceType, requestID,
+func recordSweep(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, action, resourceType string, requestID, userID uuid.UUID) error {
+	return audit.Record(ctx, tx, audit.Actor{Type: "system"}.Event(organizationID, action, resourceType, requestID,
 		map[string]any{"user_id": userID}))
 }
 
-// List returns the tenant's 200 most recent erasure requests, newest first.
-func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Request, error) {
-	rows, err := s.q.ListPurgeRequests(ctx, tenantID)
+// List returns the organization's 200 most recent erasure requests, newest first.
+func (s *Service) List(ctx context.Context, organizationID uuid.UUID) ([]Request, error) {
+	rows, err := s.q.ListPurgeRequests(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -204,18 +204,18 @@ func (s *Service) GraceDays() int { return int(s.grace / (24 * time.Hour)) }
 // purgeRequestFromRow converts a purge-request row to a Request.
 func purgeRequestFromRow(r dbgen.ListPurgeRequestsRow) *Request {
 	return &Request{
-		ID:           r.ID,
-		TenantID:     r.TenantID,
-		UserID:       r.SubjectID,
-		RequestedBy:  toUUIDPtr(r.RequestedBy),
-		Reason:       r.Reason,
-		Status:       r.Status,
-		GraceUntil:   r.GraceUntil,
-		CompletedAt:  toTimePtr(r.CompletedAt),
-		CreatedAt:    r.CreatedAt,
-		SubjectEmail: r.SubjectEmail,
-		SubjectName:  r.SubjectName,
-		Redacted:     r.Status == "completed",
+		ID:             r.ID,
+		OrganizationID: r.OrganizationID,
+		UserID:         r.SubjectID,
+		RequestedBy:    toUUIDPtr(r.RequestedBy),
+		Reason:         r.Reason,
+		Status:         r.Status,
+		GraceUntil:     r.GraceUntil,
+		CompletedAt:    toTimePtr(r.CompletedAt),
+		CreatedAt:      r.CreatedAt,
+		SubjectEmail:   r.SubjectEmail,
+		SubjectName:    r.SubjectName,
+		Redacted:       r.Status == "completed",
 	}
 }
 
@@ -283,7 +283,7 @@ func (s *Service) tick(ctx context.Context) error {
 	return nil
 }
 
-// purgeOne erases the user of one leased request. If the user's home tenant
+// purgeOne erases the user of one leased request. If the user's home organization
 // does not match the request's, the request is quarantined instead; if the
 // account is already gone, the request is completed.
 func (s *Service) purgeOne(ctx context.Context, requestID, userID uuid.UUID) error {
@@ -293,27 +293,27 @@ func (s *Service) purgeOne(ctx context.Context, requestID, userID uuid.UUID) err
 	}
 	defer tx.Rollback(ctx)
 
-	var requestTenant uuid.UUID
+	var requestOrganization uuid.UUID
 	if err := tx.QueryRow(ctx, `
-		SELECT tenant_id
+		SELECT organization_id
 		FROM account.purge_requests
 		WHERE id = $1 AND subject_id = $2 AND status = 'pending' AND lease_owner = $3
 		FOR UPDATE
-	`, requestID, userID, s.workerID).Scan(&requestTenant); errors.Is(err, pgx.ErrNoRows) {
+	`, requestID, userID, s.workerID).Scan(&requestOrganization); errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	} else if err != nil {
 		return err
 	}
 
-	var userTenant *uuid.UUID
+	var userOrganization *uuid.UUID
 	err = tx.QueryRow(ctx, `
-		SELECT tenant_id FROM account.users WHERE id = $1 FOR UPDATE
-	`, userID).Scan(&userTenant)
+		SELECT organization_id FROM account.users WHERE id = $1 FOR UPDATE
+	`, userID).Scan(&userOrganization)
 	gone := errors.Is(err, pgx.ErrNoRows)
 	if err != nil && !gone {
 		return err
 	}
-	if !gone && (userTenant == nil || *userTenant != requestTenant) {
+	if !gone && (userOrganization == nil || *userOrganization != requestOrganization) {
 		if _, err := tx.Exec(ctx, `
 			UPDATE account.purge_requests
 			SET status = 'quarantined', quarantined_at = NOW(),
@@ -323,10 +323,10 @@ func (s *Service) purgeOne(ctx context.Context, requestID, userID uuid.UUID) err
 		`, requestID, s.workerID); err != nil {
 			return err
 		}
-		if err := recordSweep(ctx, tx, requestTenant, "gdpr.erasure_quarantined", "purge_request", requestID, userID); err != nil {
+		if err := recordSweep(ctx, tx, requestOrganization, "gdpr.erasure_quarantined", "purge_request", requestID, userID); err != nil {
 			return err
 		}
-		slog.Warn("gdpr purge quarantined", "request_id", requestID, "user_id", userID, "tenant_id", requestTenant)
+		slog.Warn("gdpr purge quarantined", "request_id", requestID, "user_id", userID, "tenant_id", requestOrganization)
 		return tx.Commit(ctx)
 	}
 
@@ -347,7 +347,7 @@ func (s *Service) purgeOne(ctx context.Context, requestID, userID uuid.UUID) err
 	if tag.RowsAffected() != 1 {
 		return errors.New("GDPR purge lease lost before completion")
 	}
-	if err := recordSweep(ctx, tx, requestTenant, "gdpr.erasure_completed", "purge_request", requestID, userID); err != nil {
+	if err := recordSweep(ctx, tx, requestOrganization, "gdpr.erasure_completed", "purge_request", requestID, userID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -389,28 +389,28 @@ func (s *Service) PurgeSelf(ctx context.Context, userID uuid.UUID) error {
 // ExportRequest is a data-export job. The background sweep (exportSweepTick)
 // fills in Payload and sets Status to "ready".
 type ExportRequest struct {
-	ID          uuid.UUID      `json:"id"`
-	TenantID    uuid.UUID      `json:"tenant_id"`
-	UserID      uuid.UUID      `json:"user_id"`
-	RequestedBy *uuid.UUID     `json:"requested_by"`
-	Status      string         `json:"status"`
-	Payload     map[string]any `json:"payload,omitempty"`
-	Error       *string        `json:"error,omitempty"`
-	CompletedAt *time.Time     `json:"completed_at"`
-	CreatedAt   time.Time      `json:"created_at"`
+	ID             uuid.UUID      `json:"id"`
+	OrganizationID uuid.UUID      `json:"tenant_id"`
+	UserID         uuid.UUID      `json:"user_id"`
+	RequestedBy    *uuid.UUID     `json:"requested_by"`
+	Status         string         `json:"status"`
+	Payload        map[string]any `json:"payload,omitempty"`
+	Error          *string        `json:"error,omitempty"`
+	CompletedAt    *time.Time     `json:"completed_at"`
+	CreatedAt      time.Time      `json:"created_at"`
 }
 
 // ExportInput is a data-export request to queue.
 type ExportInput struct {
-	TenantID uuid.UUID `json:"tenant_id"`
-	UserID   uuid.UUID `json:"user_id"`
+	OrganizationID uuid.UUID `json:"tenant_id"`
+	UserID         uuid.UUID `json:"user_id"`
 }
 
 // RequestExport queues a data export by actor, recorded as theirs, for a user
-// whose home tenant is in.TenantID. The background sweep builds it; poll
+// whose home organization is in.OrganizationID. The background sweep builds it; poll
 // GetExport for the result.
 func (s *Service) RequestExport(ctx context.Context, in ExportInput, actor audit.Actor) (*ExportRequest, error) {
-	owned, err := s.userBelongsToTenant(ctx, in.UserID, in.TenantID)
+	owned, err := s.userBelongsToOrganization(ctx, in.UserID, in.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -423,14 +423,14 @@ func (s *Service) RequestExport(ctx context.Context, in ExportInput, actor audit
 	}
 	defer tx.Rollback(ctx)
 	row, err := s.q.WithTx(tx).InsertExportRequest(ctx, dbgen.InsertExportRequestParams{
-		TenantID:    in.TenantID,
-		SubjectID:   in.UserID,
-		RequestedBy: pgUUIDNullable(actor.UserID),
+		OrganizationID: in.OrganizationID,
+		SubjectID:      in.UserID,
+		RequestedBy:    pgUUIDNullable(actor.UserID),
 	})
 	if err != nil {
 		return nil, err
 	}
-	if err := audit.Record(ctx, tx, actor.Event(row.TenantID, "gdpr.export_requested", "export_request", row.ID,
+	if err := audit.Record(ctx, tx, actor.Event(row.OrganizationID, "gdpr.export_requested", "export_request", row.ID,
 		map[string]any{"user_id": row.SubjectID})); err != nil {
 		return nil, err
 	}
@@ -438,45 +438,45 @@ func (s *Service) RequestExport(ctx context.Context, in ExportInput, actor audit
 		return nil, err
 	}
 	return &ExportRequest{
-		ID:          row.ID,
-		TenantID:    row.TenantID,
-		UserID:      row.SubjectID,
-		RequestedBy: toUUIDPtr(row.RequestedBy),
-		Status:      row.Status,
-		CompletedAt: toTimePtr(row.CompletedAt),
-		CreatedAt:   row.CreatedAt,
+		ID:             row.ID,
+		OrganizationID: row.OrganizationID,
+		UserID:         row.SubjectID,
+		RequestedBy:    toUUIDPtr(row.RequestedBy),
+		Status:         row.Status,
+		CompletedAt:    toTimePtr(row.CompletedAt),
+		CreatedAt:      row.CreatedAt,
 	}, nil
 }
 
-// ListExports returns the tenant's 200 most recent export requests, newest
+// ListExports returns the organization's 200 most recent export requests, newest
 // first, without payloads.
-func (s *Service) ListExports(ctx context.Context, tenantID uuid.UUID) ([]ExportRequest, error) {
-	rows, err := s.q.ListExportRequests(ctx, tenantID)
+func (s *Service) ListExports(ctx context.Context, organizationID uuid.UUID) ([]ExportRequest, error) {
+	rows, err := s.q.ListExportRequests(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]ExportRequest, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, ExportRequest{
-			ID:          r.ID,
-			TenantID:    r.TenantID,
-			UserID:      r.SubjectID,
-			RequestedBy: toUUIDPtr(r.RequestedBy),
-			Status:      r.Status,
-			Error:       r.Error,
-			CompletedAt: toTimePtr(r.CompletedAt),
-			CreatedAt:   r.CreatedAt,
+			ID:             r.ID,
+			OrganizationID: r.OrganizationID,
+			UserID:         r.SubjectID,
+			RequestedBy:    toUUIDPtr(r.RequestedBy),
+			Status:         r.Status,
+			Error:          r.Error,
+			CompletedAt:    toTimePtr(r.CompletedAt),
+			CreatedAt:      r.CreatedAt,
 		})
 	}
 	return out, nil
 }
 
-// GetExport returns one of the tenant's export requests, with its payload once
+// GetExport returns one of the organization's export requests, with its payload once
 // ready.
-func (s *Service) GetExport(ctx context.Context, tenantID, id uuid.UUID) (*ExportRequest, error) {
+func (s *Service) GetExport(ctx context.Context, organizationID, id uuid.UUID) (*ExportRequest, error) {
 	r, err := s.q.GetExportRequest(ctx, dbgen.GetExportRequestParams{
-		ID:       id,
-		TenantID: tenantID,
+		ID:             id,
+		OrganizationID: organizationID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
@@ -485,14 +485,14 @@ func (s *Service) GetExport(ctx context.Context, tenantID, id uuid.UUID) (*Expor
 		return nil, err
 	}
 	out := &ExportRequest{
-		ID:          r.ID,
-		TenantID:    r.TenantID,
-		UserID:      r.SubjectID,
-		RequestedBy: toUUIDPtr(r.RequestedBy),
-		Status:      r.Status,
-		Error:       r.Error,
-		CompletedAt: toTimePtr(r.CompletedAt),
-		CreatedAt:   r.CreatedAt,
+		ID:             r.ID,
+		OrganizationID: r.OrganizationID,
+		UserID:         r.SubjectID,
+		RequestedBy:    toUUIDPtr(r.RequestedBy),
+		Status:         r.Status,
+		Error:          r.Error,
+		CompletedAt:    toTimePtr(r.CompletedAt),
+		CreatedAt:      r.CreatedAt,
 	}
 	if len(r.Payload) > 0 {
 		if err := json.Unmarshal(r.Payload, &out.Payload); err != nil {
@@ -518,16 +518,16 @@ func (s *Service) exportSweepTick(ctx context.Context) error {
 		SET lease_owner = $1, lease_until = $2
 		FROM candidates
 		WHERE request.id = candidates.id
-		RETURNING request.id, request.tenant_id, request.subject_id
+		RETURNING request.id, request.organization_id, request.subject_id
 	`, s.workerID, time.Now().UTC().Add(s.lease))
 	if err != nil {
 		return err
 	}
-	type exportJob struct{ ID, TenantID, UserID uuid.UUID }
+	type exportJob struct{ ID, OrganizationID, UserID uuid.UUID }
 	var batch []exportJob
 	for rows.Next() {
 		var job exportJob
-		if err := rows.Scan(&job.ID, &job.TenantID, &job.UserID); err != nil {
+		if err := rows.Scan(&job.ID, &job.OrganizationID, &job.UserID); err != nil {
 			rows.Close()
 			return err
 		}
@@ -539,9 +539,9 @@ func (s *Service) exportSweepTick(ctx context.Context) error {
 	}
 	rows.Close()
 	for _, e := range batch {
-		if err := s.buildExport(ctx, e.ID, e.TenantID, e.UserID); err != nil {
+		if err := s.buildExport(ctx, e.ID, e.OrganizationID, e.UserID); err != nil {
 			slog.Warn("gdpr export", "user", e.UserID, "err", err)
-			if err := s.failExport(ctx, e.ID, e.TenantID, e.UserID, err.Error()); err != nil {
+			if err := s.failExport(ctx, e.ID, e.OrganizationID, e.UserID, err.Error()); err != nil {
 				slog.Warn("gdpr export: mark failed", "request_id", e.ID, "err", err)
 			}
 		}
@@ -551,8 +551,8 @@ func (s *Service) exportSweepTick(ctx context.Context) error {
 
 // buildExport stores the payload of a leased export request and marks it
 // ready, recorded in the same transaction.
-func (s *Service) buildExport(ctx context.Context, requestID, tenantID, userID uuid.UUID) error {
-	payload, err := s.collectUserData(ctx, tenantID, userID)
+func (s *Service) buildExport(ctx context.Context, requestID, organizationID, userID uuid.UUID) error {
+	payload, err := s.collectUserData(ctx, organizationID, userID)
 	if err != nil {
 		return err
 	}
@@ -577,7 +577,7 @@ func (s *Service) buildExport(ctx context.Context, requestID, tenantID, userID u
 	if tag.RowsAffected() != 1 {
 		return errors.New("GDPR export lease lost before completion")
 	}
-	if err := recordSweep(ctx, tx, tenantID, "gdpr.export_completed", "export_request", requestID, userID); err != nil {
+	if err := recordSweep(ctx, tx, organizationID, "gdpr.export_completed", "export_request", requestID, userID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -586,22 +586,22 @@ func (s *Service) buildExport(ctx context.Context, requestID, tenantID, userID u
 // failExport marks a leased export request failed with msg, recorded in the
 // same transaction. A request whose lease has passed to another worker is left
 // alone.
-func (s *Service) failExport(ctx context.Context, requestID, tenantID, userID uuid.UUID, msg string) error {
+func (s *Service) failExport(ctx context.Context, requestID, organizationID, userID uuid.UUID, msg string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 	n, err := s.q.WithTx(tx).FailExportRequest(ctx, dbgen.FailExportRequestParams{
-		ErrorMsg:   &msg,
-		ID:         requestID,
-		TenantID:   tenantID,
-		LeaseOwner: pgUUIDNullable(&s.workerID),
+		ErrorMsg:       &msg,
+		ID:             requestID,
+		OrganizationID: organizationID,
+		LeaseOwner:     pgUUIDNullable(&s.workerID),
 	})
 	if err != nil || n != 1 {
 		return err
 	}
-	if err := recordSweep(ctx, tx, tenantID, "gdpr.export_failed", "export_request", requestID, userID); err != nil {
+	if err := recordSweep(ctx, tx, organizationID, "gdpr.export_failed", "export_request", requestID, userID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -641,14 +641,14 @@ type exportRole struct {
 	GrantedAt time.Time `json:"granted_at"`
 }
 
-// collectUserData assembles one user's portable data in a tenant: profile,
+// collectUserData assembles one user's portable data in an organization: profile,
 // sessions, passkeys, MFA status, roles and the sections of exportSections.
 // Credentials (password hashes, TOTP secrets, recovery codes) are excluded.
-func (s *Service) collectUserData(ctx context.Context, tenantID, userID uuid.UUID) (map[string]any, error) {
-	// user.users.tenant_id is nullable, so it takes a pgtype.UUID.
+func (s *Service) collectUserData(ctx context.Context, organizationID, userID uuid.UUID) (map[string]any, error) {
+	// account.users.organization_id is nullable, so it takes a pgtype.UUID.
 	profileRow, err := s.q.GetUserProfileForExport(ctx, dbgen.GetUserProfileForExportParams{
-		UserID:   userID,
-		TenantID: pgUUIDNullable(&tenantID),
+		UserID:         userID,
+		OrganizationID: pgUUIDNullable(&organizationID),
 	})
 	if err != nil {
 		return nil, err
@@ -665,10 +665,10 @@ func (s *Service) collectUserData(ctx context.Context, tenantID, userID uuid.UUI
 		CreatedAt:       profileRow.CreatedAt,
 	}
 
-	// auth.sessions.tenant_id is nullable, so it takes a pgtype.UUID.
+	// auth.sessions.organization_id is nullable, so it takes a pgtype.UUID.
 	sessRows, err := s.q.ListUserSessionsForExport(ctx, dbgen.ListUserSessionsForExportParams{
-		UserID:   userID,
-		TenantID: pgUUIDNullable(&tenantID),
+		UserID:         userID,
+		OrganizationID: pgUUIDNullable(&organizationID),
 	})
 	if err != nil {
 		return nil, err
@@ -706,8 +706,8 @@ func (s *Service) collectUserData(ctx context.Context, tenantID, userID uuid.UUI
 	}
 
 	roleRows, err := s.q.ListUserRolesForExport(ctx, dbgen.ListUserRolesForExportParams{
-		UserID:   userID,
-		TenantID: tenantID,
+		UserID:         userID,
+		OrganizationID: organizationID,
 	})
 	if err != nil {
 		return nil, err
@@ -731,7 +731,7 @@ func (s *Service) collectUserData(ctx context.Context, tenantID, userID uuid.UUI
 		"mfa_totp_enabled": mfaEnabled,
 		"generated_at":     time.Now().UTC(),
 	}
-	if err := exportSections(ctx, s.q, userID, &tenantID, out); err != nil {
+	if err := exportSections(ctx, s.q, userID, &organizationID, out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -744,7 +744,7 @@ type exportSelfRole struct {
 }
 
 // ExportSelf assembles the current user's portable data across all their
-// organizations, with no tenant scope: a self-service user may have no tenant.
+// organizations, with no organization scope: a self-service user may have no organization.
 // Credentials are excluded.
 func (s *Service) ExportSelf(ctx context.Context, userID uuid.UUID) (map[string]any, error) {
 	var profile exportProfile
@@ -807,7 +807,7 @@ func (s *Service) ExportSelf(ctx context.Context, userID uuid.UUID) (map[string]
 		SELECT r.name, t.name, ur.granted_at
 		FROM rbac.user_roles ur
 		JOIN rbac.roles r ON r.id = ur.role_id
-		JOIN tenant.tenants t ON t.id = ur.tenant_id
+		JOIN organization.organizations t ON t.id = ur.organization_id
 		WHERE ur.user_id = $1
 		ORDER BY ur.granted_at`, userID)
 	if err != nil {
@@ -862,12 +862,12 @@ type Handler struct {
 	// ActOnCheck refuses an erasure or export of someone who outranks the
 	// caller (rbac.Repository.CheckActOn), as deleting their account is
 	// refused. Without it both are refused.
-	ActOnCheck func(ctx context.Context, caller *httpx.Principal, tenantID, targetID uuid.UUID) error
+	ActOnCheck func(ctx context.Context, caller *httpx.Principal, organizationID, targetID uuid.UUID) error
 }
 
 // Mount registers the routes.
 func (h *Handler) Mount(r chi.Router) {
-	// Self-service: the signed-in user acts on their own account, and no tenant
+	// Self-service: the signed-in user acts on their own account, and no organization
 	// is required.
 	r.Post("/account/export", h.exportSelf)
 	r.Post("/account/delete", h.deleteSelf)
@@ -887,8 +887,8 @@ func (h *Handler) Mount(r chi.Router) {
 // exportSelf returns the current user's portable data as a downloadable JSON
 // document.
 func (h *Handler) exportSelf(w http.ResponseWriter, r *http.Request) {
-	// A person's data spans every organisation they belong to.
-	r = r.WithContext(postgres.AcrossTenants(r.Context()))
+	// A person's data spans every organization they belong to.
+	r = r.WithContext(postgres.AcrossOrganizations(r.Context()))
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
@@ -911,8 +911,8 @@ type deleteSelfInput struct {
 // deleteSelf erases the current user's PII and credentials at once and ends
 // their sessions. The client signs the user out afterwards.
 func (h *Handler) deleteSelf(w http.ResponseWriter, r *http.Request) {
-	// A person's data spans every organisation they belong to.
-	r = r.WithContext(postgres.AcrossTenants(r.Context()))
+	// A person's data spans every organization they belong to.
+	r = r.WithContext(postgres.AcrossOrganizations(r.Context()))
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
@@ -944,16 +944,16 @@ func (h *Handler) deleteSelf(w http.ResponseWriter, r *http.Request) {
 }
 
 // checkActOn applies ActOnCheck to the caller of r acting on userID in
-// tenantID: nobody erases or exports someone who outranks them.
-func (h *Handler) checkActOn(r *http.Request, tenantID, userID uuid.UUID) error {
+// organizationID: nobody erases or exports someone who outranks them.
+func (h *Handler) checkActOn(r *http.Request, organizationID, userID uuid.UUID) error {
 	if h.ActOnCheck == nil {
 		return errs.ErrNotImplemented
 	}
-	return h.ActOnCheck(r.Context(), httpx.PrincipalFromCtx(r.Context()), tenantID, userID)
+	return h.ActOnCheck(r.Context(), httpx.PrincipalFromCtx(r.Context()), organizationID, userID)
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
-	tid, err := httpx.RequireTenant(r)
+	tid, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -963,7 +963,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	in.TenantID = tid
+	in.OrganizationID = tid
 	if err := h.checkActOn(r, tid, in.UserID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -979,7 +979,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrGDPRTenantInvalid)
+		httpx.WriteError(w, r, errs.ErrGDPROrganizationInvalid)
 		return
 	}
 	out, err := h.Service.List(r.Context(), tid)
@@ -996,7 +996,7 @@ func (h *Handler) cancel(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrGDPRIDInvalid)
 		return
 	}
-	tid, err := httpx.RequireTenant(r)
+	tid, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1009,7 +1009,7 @@ func (h *Handler) cancel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) createExport(w http.ResponseWriter, r *http.Request) {
-	tid, err := httpx.RequireTenant(r)
+	tid, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1019,7 +1019,7 @@ func (h *Handler) createExport(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	in.TenantID = tid
+	in.OrganizationID = tid
 	if err := h.checkActOn(r, tid, in.UserID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1035,7 +1035,7 @@ func (h *Handler) createExport(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) listExports(w http.ResponseWriter, r *http.Request) {
 	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrGDPRTenantInvalid)
+		httpx.WriteError(w, r, errs.ErrGDPROrganizationInvalid)
 		return
 	}
 	out, err := h.Service.ListExports(r.Context(), tid)
@@ -1051,7 +1051,7 @@ func (h *Handler) listExports(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) getExport(w http.ResponseWriter, r *http.Request) {
 	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrGDPRTenantInvalid)
+		httpx.WriteError(w, r, errs.ErrGDPROrganizationInvalid)
 		return
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))

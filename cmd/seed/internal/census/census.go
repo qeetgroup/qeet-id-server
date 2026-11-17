@@ -1,4 +1,4 @@
-// Package census creates the seeded organisations: their owners, plans, roles,
+// Package census creates the seeded organizations: their owners, plans, roles,
 // groups and people. It also decides each person's story — when they joined,
 // whether they left or were suspended, which second factors they use, which
 // accounts are for testers — which the later steps carry out.
@@ -17,12 +17,12 @@ import (
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	group "github.com/qeetgroup/qeet-id-server/internal/identity/groups"
 	invite "github.com/qeetgroup/qeet-id-server/internal/identity/invitations"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/organization"
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 )
 
-// Seed plans and creates every organisation, in the order they signed up.
+// Seed plans and creates every organization, in the order they signed up.
 func Seed(w *world.World) {
 	for _, s := range specs(w) {
 		w.Orgs = append(w.Orgs, plan(w, s))
@@ -52,7 +52,7 @@ func billingNote(s world.OrgSpec) string {
 	return "·" + s.Billing
 }
 
-// Org returns the seeded organisation with slug; it panics if there is none.
+// Org returns the seeded organization with slug; it panics if there is none.
 func Org(w *world.World, slug string) *world.Org {
 	for _, o := range w.Orgs {
 		if o.Spec.Slug == slug {
@@ -67,7 +67,7 @@ type fixed struct {
 	email, first, last, title, dept, team, role, login string
 }
 
-// named are each organisation's fixed people; the first is its owner. The
+// named are each organization's fixed people; the first is its owner. The
 // rest of every roster is generated.
 var named = map[string][]fixed{
 	"qeet": {
@@ -118,7 +118,7 @@ var named = map[string][]fixed{
 	},
 }
 
-// plan decides the organisation's people without touching the database.
+// plan decides the organization's people without touching the database.
 func plan(w *world.World, s world.OrgSpec) *world.Org {
 	o := &world.Org{Spec: s, Roles: map[string]uuid.UUID{}, Groups: map[string]uuid.UUID{}, Loc: world.Location(s.TimeZone)}
 	used := map[string]bool{}
@@ -237,7 +237,7 @@ func plan(w *world.World, s world.OrgSpec) *world.Org {
 }
 
 // headRole is the role a department head holds: technical heads administer
-// the organisation, a finance head runs its billing.
+// the organization, a finance head runs its billing.
 func headRole(d world.Dept) string {
 	switch d.Role {
 	case world.RoleDeveloper, world.RoleITAdmin, world.RoleSecurity:
@@ -261,7 +261,7 @@ func pickDept(w *world.World, depts []world.Dept, total int) world.Dept {
 }
 
 // generated is a new person with a unique first.last address at the
-// organisation's domain.
+// organization's domain.
 func generated(w *world.World, o *world.Org, newPerson func(world.Locale, string, string, string) *world.Person, used map[string]bool) *world.Person {
 	for {
 		l := world.Pick(w, o.Spec.Locales)
@@ -274,10 +274,10 @@ func generated(w *world.World, o *world.Org, newPerson func(world.Locale, string
 	}
 }
 
-// taken is every address generated so far, across organisations.
+// taken is every address generated so far, across organizations.
 var taken = map[string]bool{}
 
-// joinDates spreads people over the organisation's life: the owner on day
+// joinDates spreads people over the organization's life: the owner on day
 // one, heads in the first fortnight, most of the rest in the first six weeks'
 // roll-out, and a steady trickle of hires since — some in the last month.
 func joinDates(w *world.World, o *world.Org) {
@@ -357,7 +357,7 @@ func randomID(w *world.World, alphabet string, n int) string {
 
 // lifecycle decides who left and who is suspended (about one in twenty-five
 // each, among people there for two months or more), and who never verified
-// their address (one recent joiner in each larger organisation).
+// their address (one recent joiner in each larger organization).
 func lifecycle(w *world.World, o *world.Org) {
 	if len(o.People) < 12 {
 		return
@@ -401,7 +401,7 @@ func lifecycle(w *world.World, o *world.Org) {
 	}
 }
 
-// factors decides each person's second factors from the organisation's MFA
+// factors decides each person's second factors from the organization's MFA
 // policy: everyone where it is required, administrators where only they must,
 // and the security-minded few where it's optional.
 func factors(w *world.World, o *world.Org) {
@@ -464,7 +464,7 @@ func factors(w *world.World, o *world.Org) {
 	}
 }
 
-// addGuests gives a few people roles in organisations other than their own.
+// addGuests gives a few people roles in organizations other than their own.
 func addGuests(w *world.World) {
 	guest := func(email, homeSlug, slug, role string, since time.Time) {
 		p := Org(w, homeSlug).Person(email)
@@ -507,7 +507,7 @@ var roleDescriptions = map[string]string{
 	world.RoleMember:    "Standard access: sees the directory, changes nothing",
 }
 
-// create writes the organisation: owner and tenant on its first day, the plan,
+// create writes the organization: owner and organization on its first day, the plan,
 // roles and groups that afternoon, then each person on the day they joined.
 func create(w *world.World, o *world.Org) {
 	ctx, d := w.Ctx, w.Deps
@@ -523,17 +523,17 @@ func create(w *world.World, o *world.Org) {
 			owner.ID = u.ID
 			w.Check(d.User.Repo.MarkEmailVerified(ctx, u.ID), "verify "+owner.Email)
 		}
-		t, err := d.Tenant.Repo.CreateWithOwner(ctx, tenant.CreateInput{
+		t, err := d.Organization.Repo.CreateWithOwner(ctx, organization.CreateInput{
 			Slug: s.Slug, Name: s.Name, Plan: s.Plan, Region: s.Region,
 			Metadata: map[string]any{"industry": s.Industry, "headquarters": s.City + ", " + s.Country, "website": "https://" + s.Domain},
 		}, owner.ID)
 		w.Check(err, "create organisation "+s.Slug)
-		o.ID, o.Tenant = t.ID, t
-		w.Audit(s.Since, audit.Event{TenantID: &o.ID, ActorUserID: &owner.ID, Action: "tenant.created", ResourceType: "tenant",
+		o.ID, o.Organization = t.ID, t
+		w.Audit(s.Since, audit.Event{OrganizationID: &o.ID, ActorUserID: &owner.ID, Action: "tenant.created", ResourceType: "tenant",
 			ResourceID: &o.ID, IP: owner.Device.IP, UserAgent: owner.Device.UserAgent, Metadata: map[string]any{"name": s.Name, "plan": s.Plan}})
 	})
 	if owner.Org == o {
-		w.Exec("profile "+owner.Email, `UPDATE account.users SET phone = NULLIF($2, ''), metadata = $3 WHERE id = $1 AND tenant_id = $4`,
+		w.Exec("profile "+owner.Email, `UPDATE account.users SET phone = NULLIF($2, ''), metadata = $3 WHERE id = $1 AND organization_id = $4`,
 			owner.ID, owner.Phone, profile(owner), o.ID)
 	}
 	// The plan: a trial starts as one; everything else as its paid plan.
@@ -551,8 +551,8 @@ func create(w *world.World, o *world.Org) {
 
 	// A trial ends fourteen days after it started, not after the seed ran.
 	if s.Billing == "trialing" {
-		w.Exec("date the trial of "+s.Slug, `UPDATE tenant.subscriptions SET trial_end = $2, current_period_end = $2
-			WHERE tenant_id = $1 AND status = 'trialing'`, o.ID, s.Since.Add(20*time.Minute+14*24*time.Hour))
+		w.Exec("date the trial of "+s.Slug, `UPDATE organization.subscriptions SET trial_end = $2, current_period_end = $2
+			WHERE organization_id = $1 AND status = 'trialing'`, o.ID, s.Since.Add(20*time.Minute+14*24*time.Hour))
 	}
 
 	// Roles: the ones its people hold, plus Admin, Auditor and Member.
@@ -577,7 +577,7 @@ func create(w *world.World, o *world.Org) {
 				if !want[name] {
 					continue
 				}
-				// Every organisation has built-in admin and member roles.
+				// Every organization has built-in admin and member roles.
 				if builtin, ok := builtinRoles[name]; ok {
 					o.Roles[name] = systemRole(w, o, builtin)
 					continue
@@ -595,13 +595,13 @@ func create(w *world.World, o *world.Org) {
 	if len(s.Depts) > 0 {
 		w.At(s.Since.Add(time.Hour), func() {
 			for _, dpt := range s.Depts {
-				g, err := d.Group.Service.Create(ctx, group.CreateInput{TenantID: o.ID, Name: dpt.Name,
+				g, err := d.Group.Service.Create(ctx, group.CreateInput{OrganizationID: o.ID, Name: dpt.Name,
 					Description: "Everyone in " + dpt.Name}, owner.Actor())
 				w.Check(err, "group "+dpt.Name)
 				o.Groups[dpt.Name] = g.ID
 				parent := g.ID
 				for _, team := range dpt.Teams {
-					tg, err := d.Group.Service.Create(ctx, group.CreateInput{TenantID: o.ID, ParentID: &parent, Name: team,
+					tg, err := d.Group.Service.Create(ctx, group.CreateInput{OrganizationID: o.ID, ParentID: &parent, Name: team,
 						Description: dpt.Name + " — " + team}, owner.Actor())
 					w.Check(err, "group "+team)
 					o.Groups[team] = tg.ID
@@ -620,7 +620,7 @@ func create(w *world.World, o *world.Org) {
 		by := admin(o, p.Joined)
 		w.At(p.Joined, func() {
 			u, err := d.User.Repo.CreateWithCredential(ctx, user.CreateInput{
-				TenantID: o.ID, Email: p.Email, DisplayName: p.Name(), Phone: p.Phone, Metadata: profile(p),
+				OrganizationID: o.ID, Email: p.Email, DisplayName: p.Name(), Phone: p.Phone, Metadata: profile(p),
 			}, w.PasswordHash)
 			w.Check(err, "create "+p.Email)
 			p.ID = u.ID
@@ -634,12 +634,12 @@ func create(w *world.World, o *world.Org) {
 			}
 			w.Check(d.RBAC.Service.AssignRole(ctx, u.ID, o.ID, o.Roles[p.Role], &by.ID, actor), "assign "+p.Email)
 			addToGroups(w, o, p, by)
-			w.Audit(p.Joined, audit.Event{TenantID: &o.ID, ActorUserID: actor.UserID, ActorType: actor.Type, Action: "user.created",
+			w.Audit(p.Joined, audit.Event{OrganizationID: &o.ID, ActorUserID: actor.UserID, ActorType: actor.Type, Action: "user.created",
 				ResourceType: "user", ResourceID: &p.ID, IP: actor.IP, UserAgent: actor.UserAgent,
 				Metadata: map[string]any{"email": p.Email, "source": source(p)}})
 		})
 		if p.Provisioned != "" {
-			w.Exec("provisioned "+p.Email, `UPDATE account.users SET provisioned_via = $2, external_id = $3 WHERE id = $1 AND tenant_id = $4`,
+			w.Exec("provisioned "+p.Email, `UPDATE account.users SET provisioned_via = $2, external_id = $3 WHERE id = $1 AND organization_id = $4`,
 				p.ID, p.Provisioned, p.ExternalID, o.ID)
 		}
 	}
@@ -710,27 +710,27 @@ func grant(w *world.World, o *world.Org, roleID uuid.UUID, name string, by *worl
 	}
 }
 
-// ownerRole is the organisation's system owner role.
+// ownerRole is the organization's system owner role.
 func ownerRole(w *world.World, o *world.Org) uuid.UUID { return systemRole(w, o, "owner") }
 
-// builtinRoles are the seed's roles every organisation has built in, by the
+// builtinRoles are the seed's roles every organization has built in, by the
 // built-in role's name.
 var builtinRoles = map[string]string{world.RoleAdmin: "admin", world.RoleMember: "member"}
 
-// systemRole is the organisation's built-in role called name.
+// systemRole is the organization's built-in role called name.
 func systemRole(w *world.World, o *world.Org, name string) uuid.UUID {
 	var id uuid.UUID
-	w.Check(w.Admin.QueryRow(w.Ctx, `SELECT id FROM rbac.roles WHERE tenant_id = $1 AND is_system AND name = $2`, o.ID, name).Scan(&id), name+" role of "+o.Spec.Slug)
+	w.Check(w.Admin.QueryRow(w.Ctx, `SELECT id FROM rbac.roles WHERE organization_id = $1 AND is_system AND name = $2`, o.ID, name).Scan(&id), name+" role of "+o.Spec.Slug)
 	return id
 }
 
-// grantGuest invites a person into another organisation and accepts it as
+// grantGuest invites a person into another organization and accepts it as
 // them: a role there can only be given to someone who accepted one.
 func grantGuest(w *world.World, p *world.Person, r world.GuestRole) {
 	w.At(r.Since, func() {
 		by := r.Org.Owner
 		role := r.Org.Roles[r.Role]
-		_, token, err := w.Deps.Invite.Service.Create(w.Ctx, invite.CreateInput{TenantID: r.Org.ID, Email: p.Email, RoleID: &role}, by.Actor())
+		_, token, err := w.Deps.Invite.Service.Create(w.Ctx, invite.CreateInput{OrganizationID: r.Org.ID, Email: p.Email, RoleID: &role}, by.Actor())
 		w.Check(err, "invite guest "+p.Email+" to "+r.Org.Spec.Slug)
 		_, err = w.Deps.Invite.Service.AcceptAuthenticated(w.Ctx, p.ID, token, p.Actor())
 		w.Check(err, "accept as guest "+p.Email+" in "+r.Org.Spec.Slug)

@@ -67,21 +67,21 @@ func init() {
 		errs.CodeOIDCRefreshTokenReuse:          http.StatusUnauthorized,
 
 		// Request shape & path parameters.
-		errs.CodeOIDCFormInvalid:     http.StatusBadRequest,
-		errs.CodeOIDCTenantIDInvalid: http.StatusBadRequest,
-		errs.CodeOIDCTenantMismatch:  http.StatusForbidden,
-		errs.CodeOIDCIDInvalid:       http.StatusBadRequest,
+		errs.CodeOIDCFormInvalid:           http.StatusBadRequest,
+		errs.CodeOIDCOrganizationIDInvalid: http.StatusBadRequest,
+		errs.CodeOIDCOrganizationMismatch:  http.StatusForbidden,
+		errs.CodeOIDCIDInvalid:             http.StatusBadRequest,
 
 		// Grant & device administration.
 		errs.CodeOIDCGrantNotFound:  http.StatusNotFound,
 		errs.CodeOIDCDeviceNotFound: http.StatusNotFound,
 
 		// Device Authorization Grant (RFC 8628) user-code flow.
-		errs.CodeOIDCUserCodeInvalid:      http.StatusNotFound,
-		errs.CodeOIDCUserCodeExpired:      http.StatusBadRequest,
-		errs.CodeOIDCUserCodeRequired:     http.StatusBadRequest,
-		errs.CodeOIDCDeviceAlreadyDecided: http.StatusConflict,
-		errs.CodeOIDCUserTenantMismatch:   http.StatusForbidden,
+		errs.CodeOIDCUserCodeInvalid:          http.StatusNotFound,
+		errs.CodeOIDCUserCodeExpired:          http.StatusBadRequest,
+		errs.CodeOIDCUserCodeRequired:         http.StatusBadRequest,
+		errs.CodeOIDCDeviceAlreadyDecided:     http.StatusConflict,
+		errs.CodeOIDCUserOrganizationMismatch: http.StatusForbidden,
 
 		// CIBA backchannel sign-in requests.
 		errs.CodeOIDCCIBARequestNotFound:       http.StatusNotFound,

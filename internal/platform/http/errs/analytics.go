@@ -2,11 +2,11 @@ package errs
 
 // Analytics error codes.
 const (
-	CodeAnalyticsTenantInvalid  = "analytics.tenant_invalid"
-	CodeAnalyticsTenantMismatch = "analytics.tenant_mismatch"
+	CodeAnalyticsOrganizationInvalid  = "analytics.tenant_invalid"
+	CodeAnalyticsOrganizationMismatch = "analytics.tenant_mismatch"
 )
 
 var (
-	ErrAnalyticsTenantInvalid  = New(CodeAnalyticsTenantInvalid, "That tenant reference is invalid.")
-	ErrAnalyticsTenantMismatch = New(CodeAnalyticsTenantMismatch, "You can't access another tenant's analytics.")
+	ErrAnalyticsOrganizationInvalid  = New(CodeAnalyticsOrganizationInvalid, "That tenant reference is invalid.")
+	ErrAnalyticsOrganizationMismatch = New(CodeAnalyticsOrganizationMismatch, "You can't access another tenant's analytics.")
 )

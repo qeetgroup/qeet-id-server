@@ -32,8 +32,8 @@ func TestBuildReuseEvents_AuditShape(t *testing.T) {
 	if ae.ResourceID == nil || *ae.ResourceID != sid {
 		t.Errorf("resource_id = %v, want %s", ae.ResourceID, sid)
 	}
-	if ae.TenantID == nil || *ae.TenantID != tid {
-		t.Errorf("tenant_id = %v, want %s", ae.TenantID, tid)
+	if ae.OrganizationID == nil || *ae.OrganizationID != tid {
+		t.Errorf("tenant_id = %v, want %s", ae.OrganizationID, tid)
 	}
 	if ae.ActorUserID == nil || *ae.ActorUserID != uid {
 		t.Errorf("actor_user_id = %v, want %s", ae.ActorUserID, uid)

@@ -1,4 +1,4 @@
-// Package decisionlog keeps the access decisions an organisation asks of the
+// Package decisionlog keeps the access decisions an organization asks of the
 // platform (the check, relationship check, AuthZEN and ABAC evaluate calls)
 // for 30 days, and lists them. Decisions are queued and written in batches in
 // the background, so a check never waits on its record; when the queue is
@@ -40,19 +40,19 @@ const (
 	maxWait    = 2 * time.Second // how long the last batch may take at shutdown
 )
 
-// Entry is one decision to keep: in TenantID, about Subject (a user id, or a
+// Entry is one decision to keep: in OrganizationID, about Subject (a user id, or a
 // type:id subject) doing Action on Resource, its answer, and the model, rule
 // and reason that decided it.
 type Entry struct {
-	TenantID   uuid.UUID
-	Source     string
-	Subject    string
-	Resource   string
-	Action     string
-	Allowed    bool
-	Model      string
-	Rule       string
-	ReasonCode string
+	OrganizationID uuid.UUID
+	Source         string
+	Subject        string
+	Resource       string
+	Action         string
+	Allowed        bool
+	Model          string
+	Rule           string
+	ReasonCode     string
 }
 
 type record struct {
@@ -77,7 +77,7 @@ func New(pool *pgxpool.Pool) *Log {
 
 // Record queues e, asked by ctx's caller, without waiting.
 func (l *Log) Record(ctx context.Context, e Entry) {
-	if l == nil || e.TenantID == uuid.Nil {
+	if l == nil || e.OrganizationID == uuid.Nil {
 		return
 	}
 	r := record{Entry: e, at: time.Now().UTC()}
@@ -135,7 +135,7 @@ func (l *Log) Run(ctx context.Context) {
 // insertDecisions writes a batch of decisions given column by column. COPY
 // isn't allowed on a table with row-level security, so it is an INSERT.
 const insertDecisions = `INSERT INTO auth.authz_decisions
-	(tenant_id, decided_at, source, caller_type, caller_id, caller_client, subject, resource, action, allowed, model, rule, reason_code)
+	(organization_id, decided_at, source, caller_type, caller_id, caller_client, subject, resource, action, allowed, model, rule, reason_code)
 SELECT * FROM unnest($1::uuid[], $2::timestamptz[], $3::text[], $4::text[], $5::uuid[], $6::text[], $7::text[],
 	$8::text[], $9::text[], $10::boolean[], $11::text[], $12::text[], $13::text[])`
 
@@ -145,14 +145,14 @@ func (l *Log) write(ctx context.Context, batch []record) []record {
 		return batch
 	}
 	n := len(batch)
-	tenants, callers := make([]uuid.UUID, n), make([]pgtype.UUID, n)
+	organizations, callers := make([]uuid.UUID, n), make([]pgtype.UUID, n)
 	at, allowed := make([]time.Time, n), make([]bool, n)
 	text := make([][]string, 9)
 	for i := range text {
 		text[i] = make([]string, n)
 	}
 	for i, r := range batch {
-		tenants[i], at[i], allowed[i] = r.TenantID, r.at, r.Allowed
+		organizations[i], at[i], allowed[i] = r.OrganizationID, r.at, r.Allowed
 		if r.callerID != nil {
 			callers[i] = pgtype.UUID{Bytes: *r.callerID, Valid: true}
 		}
@@ -160,7 +160,7 @@ func (l *Log) write(ctx context.Context, batch []record) []record {
 			text[c][i] = v
 		}
 	}
-	if _, err := l.pool.Exec(ctx, insertDecisions, tenants, at, text[0], text[1], callers, text[2],
+	if _, err := l.pool.Exec(ctx, insertDecisions, organizations, at, text[0], text[1], callers, text[2],
 		text[3], text[4], text[5], allowed, text[6], text[7], text[8]); err != nil {
 		slog.Warn("decision log: decisions not written", "count", n, "err", err)
 	}
@@ -199,9 +199,9 @@ type Filter struct {
 	Cursor          string
 }
 
-// List returns a page of up to f.Limit (1..200, default 50) of the tenant's
+// List returns a page of up to f.Limit (1..200, default 50) of the organization's
 // decisions, newest first.
-func (l *Log) List(ctx context.Context, tenantID uuid.UUID, f Filter) (*Page, error) {
+func (l *Log) List(ctx context.Context, organizationID uuid.UUID, f Filter) (*Page, error) {
 	if f.Limit <= 0 || f.Limit > 200 {
 		f.Limit = 50
 	}
@@ -215,7 +215,7 @@ func (l *Log) List(ctx context.Context, tenantID uuid.UUID, f Filter) (*Page, er
 			return nil, errs.ErrBadRequest.WithDetail("invalid cursor")
 		}
 	}
-	params := dbgen.ListDecisionsParams{TenantID: tenantID, Allowed: f.Allowed, Since: time.Now().AddDate(0, 0, -f.Days),
+	params := dbgen.ListDecisionsParams{OrganizationID: organizationID, Allowed: f.Allowed, Since: time.Now().AddDate(0, 0, -f.Days),
 		BeforeTs: before, BeforeID: beforeID, RowLimit: int32(f.Limit + 1)} // #nosec G115 -- limit is at most 200
 	if f.Subject != "" {
 		params.Subject = &f.Subject
@@ -256,7 +256,7 @@ func (h *Handler) Mount(r chi.Router) {
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -273,7 +273,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		}
 		f.Allowed = &allowed
 	}
-	out, err := h.Log.List(r.Context(), tenantID, f)
+	out, err := h.Log.List(r.Context(), organizationID, f)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

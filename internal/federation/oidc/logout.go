@@ -50,7 +50,7 @@ func validLogoutURI(raw string) bool {
 
 // NotifySignOut tells the applications in an ended hosted-login session. It
 // queues a back-channel logout token for each, records who was told in each
-// organisation's own audit trail, and returns the front-channel addresses for
+// organization's own audit trail, and returns the front-channel addresses for
 // the signed-out page. initiatedBy is the application that asked for the
 // sign-out ("" for none).
 func (s *Service) NotifySignOut(ctx context.Context, sessionID, userID uuid.UUID, initiatedBy string) ([]string, error) {
@@ -58,14 +58,14 @@ func (s *Service) NotifySignOut(ctx context.Context, sessionID, userID uuid.UUID
 	if err != nil || len(clients) == 0 {
 		return nil, err
 	}
-	// Each organisation's record names only its own applications.
+	// Each organization's record names only its own applications.
 	type notice struct {
 		backchannel  []string
 		frontchannel int
 	}
 	var frontchannel []string
 	notices := map[uuid.UUID]*notice{}
-	var tenants []uuid.UUID
+	var organizations []uuid.UUID
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -73,11 +73,11 @@ func (s *Service) NotifySignOut(ctx context.Context, sessionID, userID uuid.UUID
 	defer tx.Rollback(ctx)
 	q := s.q.WithTx(tx)
 	for _, c := range clients {
-		n := notices[c.TenantID]
+		n := notices[c.OrganizationID]
 		if n == nil {
 			n = &notice{}
-			notices[c.TenantID] = n
-			tenants = append(tenants, c.TenantID)
+			notices[c.OrganizationID] = n
+			organizations = append(organizations, c.OrganizationID)
 		}
 		if c.BackchannelLogoutUri != "" {
 			token, err := s.logoutToken(c.ClientID, userID, sessionID)
@@ -85,7 +85,7 @@ func (s *Service) NotifySignOut(ctx context.Context, sessionID, userID uuid.UUID
 				return nil, err
 			}
 			if err := q.InsertLogoutDelivery(ctx, dbgen.InsertLogoutDeliveryParams{
-				TenantID: c.TenantID, ClientID: c.ClientID, Uri: c.BackchannelLogoutUri, LogoutToken: token,
+				OrganizationID: c.OrganizationID, ClientID: c.ClientID, Uri: c.BackchannelLogoutUri, LogoutToken: token,
 			}); err != nil {
 				return nil, err
 			}
@@ -98,10 +98,10 @@ func (s *Service) NotifySignOut(ctx context.Context, sessionID, userID uuid.UUID
 		}
 	}
 	sid := sessionID
-	for _, tenantID := range tenants {
-		n := notices[tenantID]
+	for _, organizationID := range organizations {
+		n := notices[organizationID]
 		if err := audit.Record(ctx, tx, audit.Event{
-			TenantID: &tenantID, ActorUserID: &userID, ActorType: "user",
+			OrganizationID: &organizationID, ActorUserID: &userID, ActorType: "user",
 			Action: "oidc.sign_out_notified", ResourceType: "login_session", ResourceID: &sid,
 			Metadata: map[string]any{
 				"initiated_by": initiatedBy, "backchannel": n.backchannel, "frontchannel_clients": n.frontchannel,
@@ -165,7 +165,7 @@ func (s *Service) DeliverLogoutNotices(ctx context.Context) (int, error) {
 				return delivered, merr
 			}
 			if final {
-				s.auditLogoutFailed(ctx, d.TenantID, d.ClientID, d.Uri, err)
+				s.auditLogoutFailed(ctx, d.OrganizationID, d.ClientID, d.Uri, err)
 			}
 			continue
 		}
@@ -200,14 +200,14 @@ func (s *Service) postLogoutToken(ctx context.Context, uri, token string) error 
 	return nil
 }
 
-func (s *Service) auditLogoutFailed(ctx context.Context, tenantID uuid.UUID, clientID, uri string, cause error) {
+func (s *Service) auditLogoutFailed(ctx context.Context, organizationID uuid.UUID, clientID, uri string, cause error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return
 	}
 	defer tx.Rollback(ctx)
 	if audit.Record(ctx, tx, audit.Event{
-		TenantID: &tenantID, ActorType: "system", Action: "oidc.backchannel_logout_failed", ResourceType: "oidc_client",
+		OrganizationID: &organizationID, ActorType: "system", Action: "oidc.backchannel_logout_failed", ResourceType: "oidc_client",
 		Metadata: map[string]any{"client_id": clientID, "uri": uri, "attempts": logoutMaxAttempts, "error": truncate(cause.Error(), 300)},
 	}) == nil {
 		_ = tx.Commit(ctx)

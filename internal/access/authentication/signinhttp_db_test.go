@@ -166,7 +166,7 @@ func loginBody(email, password string) map[string]string {
 func TestPasswordSignInOverHTTP(t *testing.T) {
 	svc := newService(t)
 	b := newBrowser(t, publicRoutes(newHandler(svc)))
-	a, tenant := member(t)
+	a, organization := member(t)
 
 	for _, email := range []string{a.Email, strings.ToUpper(a.Email)} {
 		rec := b.do(http.MethodPost, "/auth/login", loginBody(email, testPassword))
@@ -175,8 +175,8 @@ func TestPasswordSignInOverHTTP(t *testing.T) {
 		}
 		var pair TokenPair
 		dbtest.Decode(t, rec, &pair)
-		if pair.UserID != a.ID || pair.TenantID == nil || *pair.TenantID != tenant || pair.RefreshToken == "" || pair.TokenType != "Bearer" {
-			t.Fatalf("token pair %+v; want a Bearer pair for %s in %s", pair, a.ID, tenant)
+		if pair.UserID != a.ID || pair.OrganizationID == nil || *pair.OrganizationID != organization || pair.RefreshToken == "" || pair.TokenType != "Bearer" {
+			t.Fatalf("token pair %+v; want a Bearer pair for %s in %s", pair, a.ID, organization)
 		}
 		if claims, err := svc.tokens.VerifyAccess(pair.AccessToken); err != nil || claims.SessionID != pair.SessionID {
 			t.Errorf("access token claims %+v, %v; want session %s", claims, err, pair.SessionID)
@@ -324,7 +324,7 @@ func TestSignInWhileTheHasherIsFull(t *testing.T) {
 // TestLockoutCounters checks the wider counters: failures from many networks
 // lock the account everywhere at the account-wide cap, a network failing
 // against many accounts is refused for any account, each reported once; an
-// organisation's own lockout applies to its application's hosted sign-in;
+// organization's own lockout applies to its application's hosted sign-in;
 // and lockout settings that can't be read refuse the sign-in.
 func TestLockoutCounters(t *testing.T) {
 	ctx := dbtest.Context(t)
@@ -380,15 +380,15 @@ func TestLockoutCounters(t *testing.T) {
 
 	t.Run("organisation's own lockout", func(t *testing.T) {
 		svc := newService(t)
-		strict := dbtest.Tenant(t)
-		svc.SetLockoutSource(func(_ context.Context, tenantID uuid.UUID) (Lockout, error) {
-			if tenantID == strict {
+		strict := dbtest.Organization(t)
+		svc.SetLockoutSource(func(_ context.Context, organizationID uuid.UUID) (Lockout, error) {
+			if organizationID == strict {
 				return Lockout{Threshold: 1, Window: time.Minute, Duration: time.Minute}, nil
 			}
 			return DefaultLockoutConfig().Defaults, nil
 		})
 		client := dbtest.Unique("app")
-		if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO auth.oidc_clients (tenant_id, client_id, name) VALUES ($1, $2, $2)`, strict, client); err != nil {
+		if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO auth.oidc_clients (organization_id, client_id, name) VALUES ($1, $2, $2)`, strict, client); err != nil {
 			t.Fatal(err)
 		}
 		a, _ := member(t)

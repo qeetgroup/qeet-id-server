@@ -48,17 +48,22 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
   as newer than this build and has to be recreated (`make db-reset`); no release has shipped, so nothing is
   carried over.
 - The schema `"user"` is named `account`, so it no longer has to be quoted.
+- Inside the server the word is organization, not tenant. The schema `tenant` is `organization`,
+  `tenant.tenants` is `organization.organizations`, every `tenant_id` column is `organization_id`, the
+  row-security policy is `organization_isolation`, and the Go code, SQL and comments follow. The API is
+  unchanged: its paths, JSON fields, token claim and its permission, event and error names still say
+  tenant, and are renamed in one later change.
 - A secret is stored only encrypted. The plaintext columns left from before encryption, and the code that read
   them and encrypted them on first use, are gone: webhook and auth hook signing secrets, Token Vault and
   social provider client secrets, LDAP bind passwords, SIEM tokens, authenticator app secrets and push tokens.
 - The one-time sign-in codes of SAML, OIDC connection, social and console sign-in are one table
   (`auth.login_codes`), and the sign-in states of the last three are one (`auth.oauth_states`). A code or a
   state is accepted only by the flow that issued it.
-- Every table with a `tenant_id` has an index leading on it and, unless it is an append-only log or outlives
-  its organisation, a foreign key to the organisation; ten indexes another index already covered are dropped;
+- Every table with an `organization_id` has an index leading on it and, unless it is an append-only log or outlives
+  its organization, a foreign key to the organization; ten indexes another index already covered are dropped;
   eleven columns whose values are a fixed list have a CHECK.
 - Dropped, as nothing used them: the `pgcrypto` extension, `auth.passkey_challenges`, `auth.agents.disabled_at`,
-  and `tenant.security_policies.password_min_length` and `password_complexity`.
+  and `organization.security_policies.password_min_length` and `password_complexity`.
 
 ### Fixed
 

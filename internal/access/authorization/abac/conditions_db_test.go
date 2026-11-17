@@ -22,20 +22,20 @@ func TestRoleAndRelationConditionsDecide(t *testing.T) {
 	svc := abac.NewService(pool)
 	relations := rebac.NewService(pool)
 	svc.SetRelationCheck(relations.Check)
-	tenant := dbtest.Tenant(t)
-	editor, viewer := dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	editor, viewer := dbtest.User(t, organization, organization), dbtest.User(t, organization, organization)
 	system := audit.Actor{Type: "system"}
-	if _, err := relations.Write(ctx, tenant, "document:plan", "editor", "user:"+editor.ID.String(), system); err != nil {
+	if _, err := relations.Write(ctx, organization, "document:plan", "editor", "user:"+editor.ID.String(), system); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Create(ctx, tenant, abac.CreateInput{Name: "Editors who are writers", Effect: "allow", ResourceType: "document", Action: "edit",
+	if _, err := svc.Create(ctx, organization, abac.CreateInput{Name: "Editors who are writers", Effect: "allow", ResourceType: "document", Action: "edit",
 		Condition: json.RawMessage(`{"all":[{"role":"writer"},{"relation":{"relation":"editor","object":{"attr":"resource.object"}}}]}`),
 		Enabled:   true}, system); err != nil {
 		t.Fatal(err)
 	}
 	decide := func(user string, roles ...any) bool {
 		t.Helper()
-		d, err := svc.Evaluate(ctx, tenant, abac.EvaluationInput{
+		d, err := svc.Evaluate(ctx, organization, abac.EvaluationInput{
 			Subject:  map[string]any{"id": user, "type": "user", "roles": roles},
 			Resource: abac.EvaluationResource{Type: "document", ID: "plan", Attrs: map[string]any{"object": "document:plan"}},
 			Action:   "edit",

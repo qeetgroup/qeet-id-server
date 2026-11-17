@@ -17,13 +17,13 @@ import (
 // TestAdministratorsSeeAndRemoveAMembersPasskeys checks that an
 // administrator lists a member's passkeys and removes one, audited and
 // emailed, but not the account's last way to sign in, not from an account
-// another organisation shares or manages, and not someone else's passkey.
+// another organization shares or manages, and not someone else's passkey.
 func TestAdministratorsSeeAndRemoveAMembersPasskeys(t *testing.T) {
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	solo := dbtest.User(t, tenant, tenant)
-	shared := dbtest.User(t, tenant, tenant, other)
-	guest := dbtest.User(t, other, other, tenant)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	solo := dbtest.User(t, organization, organization)
+	shared := dbtest.User(t, organization, organization, other)
+	guest := dbtest.User(t, other, other, organization)
 	passkey := func(userID uuid.UUID, name string) uuid.UUID {
 		t.Helper()
 		var id uuid.UUID
@@ -39,8 +39,10 @@ func TestAdministratorsSeeAndRemoveAMembersPasskeys(t *testing.T) {
 	passkey(shared.ID, "Spare")
 	passkey(guest.ID, "Spare")
 	mailbox := &dbtest.Mailbox{}
-	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), testHandler(t, mailbox).Mount)
-	path := func(u uuid.UUID) string { return "/tenants/" + tenant.String() + "/users/" + u.String() + "/passkeys" }
+	as := dbtest.Serve(dbtest.Principal(admin.ID, organization), testHandler(t, mailbox).Mount)
+	path := func(u uuid.UUID) string {
+		return "/tenants/" + organization.String() + "/users/" + u.String() + "/passkeys"
+	}
 	remove := func(name string, u, key uuid.UUID, status int, code string) {
 		t.Helper()
 		rec := dbtest.Do(t, as, http.MethodDelete, path(u)+"/"+key.String(), nil)
@@ -71,7 +73,7 @@ func TestAdministratorsSeeAndRemoveAMembersPasskeys(t *testing.T) {
 	}
 
 	remove("one of two passkeys", solo.ID, laptop, http.StatusNoContent, "")
-	if dbtest.Count(t, `SELECT count(*) FROM auth.passkey_credentials WHERE id = $1`, laptop) != 0 || audited(t, tenant, "passkey.admin_deleted", solo.ID) != 1 {
+	if dbtest.Count(t, `SELECT count(*) FROM auth.passkey_credentials WHERE id = $1`, laptop) != 0 || audited(t, organization, "passkey.admin_deleted", solo.ID) != 1 {
 		t.Error("removing a passkey left it or wasn't audited")
 	}
 	if m := mailbox.Last(t); m.To != solo.Email || !strings.Contains(m.Body, `"Laptop"`) {
@@ -84,18 +86,18 @@ func TestAdministratorsSeeAndRemoveAMembersPasskeys(t *testing.T) {
 }
 
 // TestAdministratorsEndOneOfAMembersSessions checks that an administrator ends
-// one session of a member in their organisation, audited, leaving the others,
+// one session of a member in their organization, audited, leaving the others,
 // and that a session elsewhere or already ended answers 404.
 func TestAdministratorsEndOneOfAMembersSessions(t *testing.T) {
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	member := dbtest.User(t, other, other, tenant)
-	here, there := session(t, member.ID, tenant, ""), session(t, member.ID, other, "")
-	session(t, member.ID, tenant, "")
-	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), testHandler(t, &dbtest.Mailbox{}).Mount)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	member := dbtest.User(t, other, other, organization)
+	here, there := session(t, member.ID, organization, ""), session(t, member.ID, other, "")
+	session(t, member.ID, organization, "")
+	as := dbtest.Serve(dbtest.Principal(admin.ID, organization), testHandler(t, &dbtest.Mailbox{}).Mount)
 	end := func(name string, id uuid.UUID, status int) {
 		t.Helper()
-		rec := dbtest.Do(t, as, http.MethodDelete, "/tenants/"+tenant.String()+"/users/"+member.ID.String()+"/sessions/"+id.String(), nil)
+		rec := dbtest.Do(t, as, http.MethodDelete, "/tenants/"+organization.String()+"/users/"+member.ID.String()+"/sessions/"+id.String(), nil)
 		if rec.Code != status {
 			t.Errorf("%s: %d %s, want %d", name, rec.Code, rec.Body.String(), status)
 		}
@@ -103,7 +105,7 @@ func TestAdministratorsEndOneOfAMembersSessions(t *testing.T) {
 	end("a session in the organisation", here, http.StatusNoContent)
 	end("the same again", here, http.StatusNotFound)
 	end("a session in another organisation", there, http.StatusNotFound)
-	if liveSessions(t, member.ID) != 2 || audited(t, tenant, "session.admin_revoked", member.ID) != 1 {
-		t.Errorf("%d live sessions, %d audited; want the other two left and one record", liveSessions(t, member.ID), audited(t, tenant, "session.admin_revoked", member.ID))
+	if liveSessions(t, member.ID) != 2 || audited(t, organization, "session.admin_revoked", member.ID) != 1 {
+		t.Errorf("%d live sessions, %d audited; want the other two left and one record", liveSessions(t, member.ID), audited(t, organization, "session.admin_revoked", member.ID))
 	}
 }

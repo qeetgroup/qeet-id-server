@@ -1,6 +1,6 @@
 package errs
 
-// SAML identity-provider error codes: what an organisation's apps are told
+// SAML identity-provider error codes: what an organization's apps are told
 // about a person, and who may sign in to them.
 const (
 	CodeSAMLNameIDFormatInvalid    = "saml.name_id_format_invalid"

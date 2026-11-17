@@ -1,5 +1,5 @@
 // Package billing manages subscriptions: a platform plan catalogue with prices
-// per currency, one subscription per tenant, invoices, and hosted card checkouts
+// per currency, one subscription per organization, invoices, and hosted card checkouts
 // through Stripe, Razorpay or a dev sandbox. Money is integer minor units plus
 // an ISO 4217 currency code.
 package billing
@@ -38,7 +38,7 @@ type Plan struct {
 	Prices      map[string]int64 `json:"prices"`
 }
 
-// Subscription is a tenant's subscription; Status is "none" if it has none.
+// Subscription is an organization's subscription; Status is "none" if it has none.
 // "past_due" is a renewal billed and not yet paid, and "canceled" one that
 // ended, at EndedAt. See Grants for how long each grants its plan.
 type Subscription struct {
@@ -87,7 +87,7 @@ type Invoice struct {
 	EmailedAt     *time.Time      `json:"emailed_at"`
 }
 
-// BillingProfile is a tenant's billing & tax details, carried onto invoices.
+// BillingProfile is an organization's billing & tax details, carried onto invoices.
 // TaxIDType is one of "none" | "gstin" (India) | "vat" (EU).
 type BillingProfile struct {
 	LegalName    string `json:"legal_name"`
@@ -118,7 +118,7 @@ type Service struct {
 	consoleURL            string // where invoice emails send the reader
 }
 
-// OrgProvisioner creates an organization (tenant) owned by ownerID. It completes
+// OrgProvisioner creates an organization owned by ownerID. It completes
 // a signup checkout, whose organization must not exist until the plan is paid.
 type OrgProvisioner interface {
 	ProvisionOrg(ctx context.Context, ownerID uuid.UUID, name, slug, region, plan string) (uuid.UUID, error)

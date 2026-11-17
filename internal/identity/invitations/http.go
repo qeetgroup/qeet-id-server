@@ -17,22 +17,22 @@ import (
 )
 
 // tokenIssuer is the part of auth.Service this handler needs. Both methods honour
-// the joined organisation's second-factor requirement: a new account may get the
+// the joined organization's second-factor requirement: a new account may get the
 // enrolment challenge, and a signed-in one is refused if its session lacks a
 // required factor.
 type tokenIssuer interface {
-	SignInInvitedAccount(ctx context.Context, userID, tenantID uuid.UUID, ip, ua string) (*auth.LoginResult, error)
-	EnterInvitedTenant(ctx context.Context, userID, tenantID, fromSessionID uuid.UUID, ip, ua string) (*auth.TokenPair, error)
+	SignInInvitedAccount(ctx context.Context, userID, organizationID uuid.UUID, ip, ua string) (*auth.LoginResult, error)
+	EnterInvitedOrganization(ctx context.Context, userID, organizationID, fromSessionID uuid.UUID, ip, ua string) (*auth.TokenPair, error)
 }
 
 // enterAsSignedIn answers an accept by a signed-in account with the token
-// pair for the organisation it joined.
+// pair for the organization it joined.
 func (h *Handler) enterAsSignedIn(w http.ResponseWriter, r *http.Request, p *httpx.Principal, res *AcceptResult) {
 	from := uuid.Nil
 	if p.SessionID != nil {
 		from = *p.SessionID
 	}
-	pair, err := h.AuthService.EnterInvitedTenant(r.Context(), res.UserID, res.TenantID, from, httpx.ClientIP(r), r.UserAgent())
+	pair, err := h.AuthService.EnterInvitedOrganization(r.Context(), res.UserID, res.OrganizationID, from, httpx.ClientIP(r), r.UserAgent())
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -48,7 +48,7 @@ type Handler struct {
 	// GrantCheck refuses an invitation whose role would give the invitee
 	// authority the caller doesn't hold (rbac.Repository.CheckGrantRole).
 	// Without it an invitation that carries a role is refused.
-	GrantCheck func(ctx context.Context, caller *httpx.Principal, tenantID, roleID uuid.UUID) error
+	GrantCheck func(ctx context.Context, caller *httpx.Principal, organizationID, roleID uuid.UUID) error
 }
 
 // MountAuthed mounts the admin-side CRUD that requires authentication, plus the
@@ -75,7 +75,7 @@ func (h *Handler) MountPublic(r chi.Router) {
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
-	tid, err := httpx.RequireTenant(r)
+	tid, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -85,7 +85,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	in.TenantID = tid
+	in.OrganizationID = tid
 	if err := h.Validate.Struct(in); err != nil {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
@@ -116,7 +116,7 @@ func (h *Handler) resend(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	tid, err := httpx.RequireTenant(r)
+	tid, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -147,7 +147,7 @@ func (h *Handler) resend(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tid, err := httpx.PathTenant(r)
+	tid, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -166,7 +166,7 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	tid, err := httpx.RequireTenant(r)
+	tid, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -193,7 +193,7 @@ func (h *Handler) accept(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out, err := h.AuthService.SignInInvitedAccount(r.Context(), res.UserID, res.TenantID, httpx.ClientIP(r), r.UserAgent())
+	out, err := h.AuthService.SignInInvitedAccount(r.Context(), res.UserID, res.OrganizationID, httpx.ClientIP(r), r.UserAgent())
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -206,10 +206,10 @@ func (h *Handler) accept(w http.ResponseWriter, r *http.Request) {
 }
 
 // listMine returns pending invitations addressed to the signed-in user's email.
-// These handlers act on invitations from any organisation, so they run across
-// organisations; each finds the invitation by the caller's own email.
+// These handlers act on invitations from any organization, so they run across
+// organizations; each finds the invitation by the caller's own email.
 func (h *Handler) listMine(w http.ResponseWriter, r *http.Request) {
-	r = r.WithContext(postgres.AcrossTenants(r.Context()))
+	r = r.WithContext(postgres.AcrossOrganizations(r.Context()))
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
@@ -225,7 +225,7 @@ func (h *Handler) listMine(w http.ResponseWriter, r *http.Request) {
 
 // declineMine dismisses a pending invite from the caller's inbox.
 func (h *Handler) declineMine(w http.ResponseWriter, r *http.Request) {
-	r = r.WithContext(postgres.AcrossTenants(r.Context()))
+	r = r.WithContext(postgres.AcrossOrganizations(r.Context()))
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
@@ -245,7 +245,7 @@ func (h *Handler) declineMine(w http.ResponseWriter, r *http.Request) {
 
 // acceptMineByID accepts a pending invite chosen from the caller's inbox.
 func (h *Handler) acceptMineByID(w http.ResponseWriter, r *http.Request) {
-	r = r.WithContext(postgres.AcrossTenants(r.Context()))
+	r = r.WithContext(postgres.AcrossOrganizations(r.Context()))
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
@@ -268,10 +268,10 @@ type acceptAuthedInput struct {
 	Token string `json:"token" validate:"required"`
 }
 
-// acceptAuthenticated joins the caller's existing account to the invited tenant
-// and returns a tenant-scoped token pair so the client can switch straight in.
+// acceptAuthenticated joins the caller's existing account to the invited organization
+// and returns an organization-scoped token pair so the client can switch straight in.
 func (h *Handler) acceptAuthenticated(w http.ResponseWriter, r *http.Request) {
-	r = r.WithContext(postgres.AcrossTenants(r.Context()))
+	r = r.WithContext(postgres.AcrossOrganizations(r.Context()))
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)

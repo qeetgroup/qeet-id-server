@@ -41,7 +41,7 @@ type Certificate struct {
 }
 
 // toCertificate maps a stored certificate to its API form.
-func toCertificate(r dbgen.TenantSamlConnectionCertificate) Certificate {
+func toCertificate(r dbgen.OrganizationSamlConnectionCertificate) Certificate {
 	out := Certificate{ID: r.ID, Certificate: r.Certificate, Source: r.Source, CreatedAt: r.CreatedAt}
 	if cert, err := parseCertificate(r.Certificate); err == nil {
 		notBefore, notAfter := cert.NotBefore, cert.NotAfter
@@ -74,8 +74,8 @@ func sameCertificate(raw string, cert *x509.Certificate) bool {
 }
 
 // listCertificates returns the certificates connectionID trusts, oldest first.
-func listCertificates(ctx context.Context, q *dbgen.Queries, connectionID, tenantID uuid.UUID) ([]Certificate, error) {
-	rows, err := q.ListSamlCertificates(ctx, dbgen.ListSamlCertificatesParams{ConnectionID: connectionID, TenantID: tenantID})
+func listCertificates(ctx context.Context, q *dbgen.Queries, connectionID, organizationID uuid.UUID) ([]Certificate, error) {
+	rows, err := q.ListSamlCertificates(ctx, dbgen.ListSamlCertificatesParams{ConnectionID: connectionID, OrganizationID: organizationID})
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +89,7 @@ func listCertificates(ctx context.Context, q *dbgen.Queries, connectionID, tenan
 // signingCertificates returns the certificates conn's IdP may sign with, leaving
 // out any that don't parse.
 func (s *Service) signingCertificates(ctx context.Context, conn *Connection) ([]*x509.Certificate, error) {
-	rows, err := s.q.ListSamlCertificates(ctx, dbgen.ListSamlCertificatesParams{ConnectionID: conn.ID, TenantID: conn.TenantID})
+	rows, err := s.q.ListSamlCertificates(ctx, dbgen.ListSamlCertificatesParams{ConnectionID: conn.ID, OrganizationID: conn.OrganizationID})
 	if err != nil {
 		return nil, err
 	}
@@ -104,30 +104,30 @@ func (s *Service) signingCertificates(ctx context.Context, conn *Connection) ([]
 
 // replaceCertificates makes cert the only one connectionID trusts, within q's
 // transaction.
-func replaceCertificates(ctx context.Context, q *dbgen.Queries, connectionID, tenantID uuid.UUID, cert *x509.Certificate) error {
-	if err := q.DeleteSamlCertificates(ctx, dbgen.DeleteSamlCertificatesParams{ConnectionID: connectionID, TenantID: tenantID}); err != nil {
+func replaceCertificates(ctx context.Context, q *dbgen.Queries, connectionID, organizationID uuid.UUID, cert *x509.Certificate) error {
+	if err := q.DeleteSamlCertificates(ctx, dbgen.DeleteSamlCertificatesParams{ConnectionID: connectionID, OrganizationID: organizationID}); err != nil {
 		return err
 	}
 	_, err := q.InsertSamlCertificate(ctx, dbgen.InsertSamlCertificateParams{
-		TenantID: tenantID, ConnectionID: connectionID, Certificate: certificatePEM(cert), Source: certificateManual,
+		OrganizationID: organizationID, ConnectionID: connectionID, Certificate: certificatePEM(cert), Source: certificateManual,
 	})
 	return err
 }
 
 // AddCertificate makes connectionID also trust the certificate raw, within tx,
 // such as the IdP's next one ahead of a rollover.
-func (s *Service) AddCertificate(ctx context.Context, tx pgx.Tx, connectionID, tenantID uuid.UUID, raw string) (*Certificate, error) {
+func (s *Service) AddCertificate(ctx context.Context, tx pgx.Tx, connectionID, organizationID uuid.UUID, raw string) (*Certificate, error) {
 	cert, err := parseCertificate(raw)
 	if err != nil {
 		return nil, errs.ErrSAMLCertificateInvalid
 	}
 	q := s.q.WithTx(tx)
-	if _, err := q.LockSamlConnection(ctx, dbgen.LockSamlConnectionParams{ID: connectionID, TenantID: tenantID}); errors.Is(err, pgx.ErrNoRows) {
+	if _, err := q.LockSamlConnection(ctx, dbgen.LockSamlConnectionParams{ID: connectionID, OrganizationID: organizationID}); errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
 	} else if err != nil {
 		return nil, err
 	}
-	rows, err := q.ListSamlCertificates(ctx, dbgen.ListSamlCertificatesParams{ConnectionID: connectionID, TenantID: tenantID})
+	rows, err := q.ListSamlCertificates(ctx, dbgen.ListSamlCertificatesParams{ConnectionID: connectionID, OrganizationID: organizationID})
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +140,7 @@ func (s *Service) AddCertificate(ctx context.Context, tx pgx.Tx, connectionID, t
 		return nil, errs.ErrSAMLCertificateLimit
 	}
 	row, err := q.InsertSamlCertificate(ctx, dbgen.InsertSamlCertificateParams{
-		TenantID: tenantID, ConnectionID: connectionID, Certificate: certificatePEM(cert), Source: certificateManual,
+		OrganizationID: organizationID, ConnectionID: connectionID, Certificate: certificatePEM(cert), Source: certificateManual,
 	})
 	if err != nil {
 		return nil, err
@@ -151,14 +151,14 @@ func (s *Service) AddCertificate(ctx context.Context, tx pgx.Tx, connectionID, t
 
 // RemoveCertificate stops connectionID trusting certificateID, within tx, and
 // returns what it removed. The connection's last certificate can't be removed.
-func (s *Service) RemoveCertificate(ctx context.Context, tx pgx.Tx, connectionID, tenantID, certificateID uuid.UUID) (*Certificate, error) {
+func (s *Service) RemoveCertificate(ctx context.Context, tx pgx.Tx, connectionID, organizationID, certificateID uuid.UUID) (*Certificate, error) {
 	q := s.q.WithTx(tx)
-	if _, err := q.LockSamlConnection(ctx, dbgen.LockSamlConnectionParams{ID: connectionID, TenantID: tenantID}); errors.Is(err, pgx.ErrNoRows) {
+	if _, err := q.LockSamlConnection(ctx, dbgen.LockSamlConnectionParams{ID: connectionID, OrganizationID: organizationID}); errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
 	} else if err != nil {
 		return nil, err
 	}
-	certs, err := listCertificates(ctx, q, connectionID, tenantID)
+	certs, err := listCertificates(ctx, q, connectionID, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -174,16 +174,16 @@ func (s *Service) RemoveCertificate(ctx context.Context, tx pgx.Tx, connectionID
 	if len(certs) == 1 {
 		return nil, errs.ErrSAMLCertificateLast
 	}
-	if err := q.DeleteSamlCertificate(ctx, dbgen.DeleteSamlCertificateParams{ID: certificateID, ConnectionID: connectionID, TenantID: tenantID}); err != nil {
+	if err := q.DeleteSamlCertificate(ctx, dbgen.DeleteSamlCertificateParams{ID: certificateID, ConnectionID: connectionID, OrganizationID: organizationID}); err != nil {
 		return nil, err
 	}
-	return removed, q.SyncSamlPrimaryCertificate(ctx, dbgen.SyncSamlPrimaryCertificateParams{ID: connectionID, TenantID: tenantID})
+	return removed, q.SyncSamlPrimaryCertificate(ctx, dbgen.SyncSamlPrimaryCertificateParams{ID: connectionID, OrganizationID: organizationID})
 }
 
 // --- admin handlers ---
 
 func (h *Handler) addCertificate(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -203,7 +203,7 @@ func (h *Handler) addCertificate(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	// Another certificate trusted is another key that can sign its linked
 	// accounts in.
-	if err := h.checkTrust(r, tenantID, id); err != nil {
+	if err := h.checkTrust(r, organizationID, id); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -213,12 +213,12 @@ func (h *Handler) addCertificate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	cert, err := h.Service.AddCertificate(ctx, tx, id, tenantID, body.Certificate)
+	cert, err := h.Service.AddCertificate(ctx, tx, id, organizationID, body.Certificate)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.recordAudit(ctx, tx, r, tenantID, id, "saml.certificate_added", map[string]any{
+	if err := h.recordAudit(ctx, tx, r, organizationID, id, "saml.certificate_added", map[string]any{
 		"fingerprint_sha256": cert.FingerprintSHA256, "not_after": cert.NotAfter,
 	}); err != nil {
 		httpx.WriteError(w, r, err)
@@ -232,7 +232,7 @@ func (h *Handler) addCertificate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) removeCertificate(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -254,12 +254,12 @@ func (h *Handler) removeCertificate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	removed, err := h.Service.RemoveCertificate(ctx, tx, id, tenantID, certificateID)
+	removed, err := h.Service.RemoveCertificate(ctx, tx, id, organizationID, certificateID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.recordAudit(ctx, tx, r, tenantID, id, "saml.certificate_removed", map[string]any{
+	if err := h.recordAudit(ctx, tx, r, organizationID, id, "saml.certificate_removed", map[string]any{
 		"fingerprint_sha256": removed.FingerprintSHA256,
 	}); err != nil {
 		httpx.WriteError(w, r, err)

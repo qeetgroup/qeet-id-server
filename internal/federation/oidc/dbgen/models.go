@@ -12,7 +12,7 @@ import (
 
 type AuthOidcResource struct {
 	ID             uuid.UUID
-	TenantID       uuid.UUID
+	OrganizationID uuid.UUID
 	Identifier     string
 	Name           string
 	ServerClientID *string

@@ -6,8 +6,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant/branding"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/organization"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/organization/branding"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/billing"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/email"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
@@ -16,9 +16,9 @@ import (
 
 // NewBillingService returns the billing service cfg configures: card providers
 // routed by billing country, invoice-only billing, tax and the payment grace.
-// tenants creates a paid signup's organisation. It emails nothing until
+// organizations creates a paid signup's organization. It emails nothing until
 // SetMailer is called.
-func NewBillingService(cfg *config.Config, pool *pgxpool.Pool, tenants *tenant.Repository) *billing.Service {
+func NewBillingService(cfg *config.Config, pool *pgxpool.Pool, organizations *organization.Repository) *billing.Service {
 	svc := billing.NewService(pool)
 	payments := billing.NewPayments(
 		cfg.StripeSecretKey, cfg.StripeWebhookSecret,
@@ -28,10 +28,10 @@ func NewBillingService(cfg *config.Config, pool *pgxpool.Pool, tenants *tenant.R
 		payments = payments.WithSandbox(cfg.PaymentSandboxBaseURL, "sandbox-dev-secret") // dev-only fake provider; config.Validate refuses it outside dev
 	}
 	svc.SetPayments(payments)
-	svc.SetAllowUnpaidActivation(cfg.BillingAllowUnpaidActivation) // else a paid plan with no provider is refused, not granted free
-	svc.SetOrgProvisioner(billingOrgProvisioner{tenants: tenants}) // creates the org when a signup checkout is paid
-	svc.SetPaymentGrace(cfg.BillingPaymentGrace)                   // how long a renewal may go unpaid
-	svc.SetTaxConfig(billing.TaxConfig{                            // invoice GST/VAT (off unless configured)
+	svc.SetAllowUnpaidActivation(cfg.BillingAllowUnpaidActivation)             // else a paid plan with no provider is refused, not granted free
+	svc.SetOrgProvisioner(billingOrgProvisioner{organizations: organizations}) // creates the org when a signup checkout is paid
+	svc.SetPaymentGrace(cfg.BillingPaymentGrace)                               // how long a renewal may go unpaid
+	svc.SetTaxConfig(billing.TaxConfig{                                        // invoice GST/VAT (off unless configured)
 		Enabled:       cfg.BillingTaxEnabled,
 		SellerCountry: cfg.BillingSellerCountry,
 		SellerState:   cfg.BillingSellerState,
@@ -45,7 +45,7 @@ func NewBillingService(cfg *config.Config, pool *pgxpool.Pool, tenants *tenant.R
 // SchedulerBilling is the billing service for the standalone scheduler, with
 // its own outbound mail chain.
 func SchedulerBilling(cfg *config.Config, pool *pgxpool.Pool) *billing.Service {
-	svc := NewBillingService(cfg, pool, tenant.NewRepository(pool))
+	svc := NewBillingService(cfg, pool, organization.NewRepository(pool))
 	svc.SetMailer(newMailer(cfg, pool, branding.NewRepository(pool), email.NewService(pool)).sender, cfg.AppBaseURL)
 	return svc
 }

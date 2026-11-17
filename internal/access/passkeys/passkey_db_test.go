@@ -49,8 +49,8 @@ func newService(t *testing.T) *Service {
 func TestBeginLoginAnswersAlike(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := newService(t)
-	tenant := dbtest.Tenant(t)
-	withPasskey, without := dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	withPasskey, without := dbtest.User(t, organization, organization), dbtest.User(t, organization, organization)
 	if _, err := dbtest.Pool(t).Exec(ctx, `
 		INSERT INTO auth.passkey_credentials (user_id, credential_id, public_key) VALUES ($1, $2, $3)
 	`, withPasskey.ID, []byte(dbtest.Unique("credential")), []byte("key")); err != nil {
@@ -116,7 +116,7 @@ func signUp(t *testing.T, srv http.Handler, email string) (beginStatus int, begi
 
 // TestPasskeySignupBeginAnswersAlikeForATakenAddress checks that starting a
 // passkey sign-up answers the same for a free address, one that already has
-// an account and one on a domain an organisation manages, and claims nothing,
+// an account and one on a domain an organization manages, and claims nothing,
 // so a second start for the same address works; the taken and managed ones are
 // refused when the ceremony finishes, with the same neutral answer and no
 // account created, and the free one signs up.
@@ -126,7 +126,7 @@ func TestPasskeySignupBeginAnswersAlikeForATakenAddress(t *testing.T) {
 	h.MountPublic(srv)
 	free := dbtest.Unique("free") + "@example.test"
 	taken := dbtest.User(t, uuid.Nil).Email
-	managed := dbtest.Unique("x") + "@" + dbtest.Domain(t, dbtest.Tenant(t))
+	managed := dbtest.Unique("x") + "@" + dbtest.Domain(t, dbtest.Organization(t))
 
 	if rec := dbtest.Do(t, srv, http.MethodPost, "/signup/passkey/begin", map[string]any{"email": free}); rec.Code != http.StatusOK {
 		t.Fatalf("begin for a free address: %d %s", rec.Code, rec.Body.String())
@@ -239,8 +239,8 @@ func TestPasskeySecondFactorWithOneConnection(t *testing.T) {
 	factors.SetWebAuthn(passkeys)
 	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
 	authSvc.SetMFA(factors)
-	tenant := dbtest.Tenant(t)
-	a := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	a := dbtest.User(t, organization, organization)
 	dbtest.SetPassword(t, a.ID, "Kx7mQ2vLp9Wz")
 	passkey := newTestPasskey(t)
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.passkey_credentials (user_id, credential_id, public_key) VALUES ($1, $2, $3)`,

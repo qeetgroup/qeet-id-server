@@ -22,9 +22,9 @@ import (
 func TestRotatingAPrincipalNeedsItsScopes(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	tenant := dbtest.Tenant(t)
-	developer := dbtest.User(t, tenant)
-	dbtest.Assign(t, developer.ID, tenant, dbtest.Role(t, tenant, "apikey.write", "user.read"))
+	organization := dbtest.Organization(t)
+	developer := dbtest.User(t, organization)
+	dbtest.Assign(t, developer.ID, organization, dbtest.Role(t, organization, "apikey.write", "user.read"))
 	svc := NewService(pool, dbtest.Issuer(t))
 	create := func(scopes ...string) uuid.UUID {
 		t.Helper()
@@ -33,7 +33,7 @@ func TestRotatingAPrincipalNeedsItsScopes(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer tx.Rollback(ctx)
-		p, _, err := svc.Create(ctx, tx, CreateInput{TenantID: tenant, Name: dbtest.Unique("ci"), Scopes: scopes})
+		p, _, err := svc.Create(ctx, tx, CreateInput{OrganizationID: organization, Name: dbtest.Unique("ci"), Scopes: scopes})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -45,15 +45,15 @@ func TestRotatingAPrincipalNeedsItsScopes(t *testing.T) {
 	secret := func(id uuid.UUID) string {
 		t.Helper()
 		var hash string
-		if err := pool.QueryRow(ctx, `SELECT secret_hash FROM auth.service_principals WHERE tenant_id = $1 AND id = $2`, tenant, id).Scan(&hash); err != nil {
+		if err := pool.QueryRow(ctx, `SELECT secret_hash FROM auth.service_principals WHERE organization_id = $1 AND id = $2`, organization, id).Scan(&hash); err != nil {
 			t.Fatal(err)
 		}
 		return hash
 	}
-	h := dbtest.Serve(dbtest.Principal(developer.ID, tenant),
+	h := dbtest.Serve(dbtest.Principal(developer.ID, organization),
 		(&Handler{Service: svc, GrantCheck: rbac.NewRepository(pool).CheckGrantScopes}).Mount)
 	rotate := func(id uuid.UUID) (int, string) {
-		rec := dbtest.Do(t, h, http.MethodPost, "/tenants/"+tenant.String()+"/service-principals/"+id.String()+"/rotate-secret", nil)
+		rec := dbtest.Do(t, h, http.MethodPost, "/tenants/"+organization.String()+"/service-principals/"+id.String()+"/rotate-secret", nil)
 		return rec.Code, rec.Body.String()
 	}
 

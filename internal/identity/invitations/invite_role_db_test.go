@@ -17,16 +17,16 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// TestInviteRoleMustBelongToTheTenant checks that an invitation can carry only
-// a role of the inviting tenant, answering another tenant's role as a missing
-// one, and that the database refuses to store one carrying another tenant's.
-func TestInviteRoleMustBelongToTheTenant(t *testing.T) {
+// TestInviteRoleMustBelongToTheOrganization checks that an invitation can carry only
+// a role of the inviting organization, answering another organization's role as a missing
+// one, and that the database refuses to store one carrying another organization's.
+func TestInviteRoleMustBelongToTheOrganization(t *testing.T) {
 	ctx := dbtest.Context(t)
 	h, _ := newHandler(t)
-	tenantA, tenantB := dbtest.Tenant(t), dbtest.Tenant(t)
-	roleA := dbtest.Role(t, tenantA, "users:write")
-	adminB := dbtest.User(t, tenantB, tenantB)
-	asB := dbtest.Serve(dbtest.Principal(adminB.ID, tenantB), h.MountAuthed)
+	organizationA, organizationB := dbtest.Organization(t), dbtest.Organization(t)
+	roleA := dbtest.Role(t, organizationA, "users:write")
+	adminB := dbtest.User(t, organizationB, organizationB)
+	asB := dbtest.Serve(dbtest.Principal(adminB.ID, organizationB), h.MountAuthed)
 
 	type answer struct {
 		Status                int
@@ -48,7 +48,7 @@ func TestInviteRoleMustBelongToTheTenant(t *testing.T) {
 		if rec.Code != http.StatusNotFound || body.Error.Code != errs.CodeNotFound {
 			t.Errorf("invite with %s: %d %s, want 404 %s (%s)", name, rec.Code, body.Error.Code, errs.CodeNotFound, rec.Body.String())
 		}
-		if n := dbtest.Count(t, `SELECT count(*) FROM tenant.invites WHERE email = $1`, email); n != 0 {
+		if n := dbtest.Count(t, `SELECT count(*) FROM organization.invites WHERE email = $1`, email); n != 0 {
 			t.Errorf("invite with %s was stored", name)
 		}
 	}
@@ -62,9 +62,9 @@ func TestInviteRoleMustBelongToTheTenant(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = dbtest.Pool(t).Exec(ctx, `
-		INSERT INTO tenant.invites (tenant_id, email, role_id, token_hash, expires_at)
+		INSERT INTO organization.invites (organization_id, email, role_id, token_hash, expires_at)
 		VALUES ($1, $2, $3, $4, NOW() + INTERVAL '1 day')
-	`, tenantB, dbtest.Unique("invitee")+"@example.test", roleA, hash)
+	`, organizationB, dbtest.Unique("invitee")+"@example.test", roleA, hash)
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || pgErr.Code != "23503" {
 		t.Errorf("an invitation carrying another tenant's role was stored: %v, want a foreign key violation", err)
@@ -79,23 +79,23 @@ func TestInviteRoleMustBelongToTheTenant(t *testing.T) {
 func TestResendingAnInvitationNeedsItsRole(t *testing.T) {
 	ctx := dbtest.Context(t)
 	h, _ := newHandler(t)
-	tenant := dbtest.Tenant(t)
-	powerful := dbtest.Role(t, tenant, "user.write", "member.invite")
+	organization := dbtest.Organization(t)
+	powerful := dbtest.Role(t, organization, "user.write", "member.invite")
 	invite := func(role *uuid.UUID) uuid.UUID {
 		t.Helper()
-		iv, _, err := h.Service.Create(ctx, CreateInput{TenantID: tenant, Email: dbtest.Unique("invitee") + "@example.test", RoleID: role}, audit.Actor{})
+		iv, _, err := h.Service.Create(ctx, CreateInput{OrganizationID: organization, Email: dbtest.Unique("invitee") + "@example.test", RoleID: role}, audit.Actor{})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE tenant.invites SET status = 'expired' WHERE id = $1`, iv.ID); err != nil {
+		if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE organization.invites SET status = 'expired' WHERE id = $1`, iv.ID); err != nil {
 			t.Fatal(err)
 		}
 		return iv.ID
 	}
 	asCaller := func(permissions ...string) http.Handler {
-		caller := dbtest.User(t, tenant)
-		dbtest.Assign(t, caller.ID, tenant, dbtest.Role(t, tenant, permissions...))
-		return dbtest.Serve(dbtest.Principal(caller.ID, tenant), h.MountAuthed)
+		caller := dbtest.User(t, organization)
+		dbtest.Assign(t, caller.ID, organization, dbtest.Role(t, organization, permissions...))
+		return dbtest.Serve(dbtest.Principal(caller.ID, organization), h.MountAuthed)
 	}
 	inviter := asCaller("member.invite")
 
@@ -103,7 +103,7 @@ func TestResendingAnInvitationNeedsItsRole(t *testing.T) {
 	if rec := dbtest.Do(t, inviter, http.MethodPost, "/invites/"+withRole.String()+"/resend", nil); rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeRBACGrantExceedsCaller) {
 		t.Errorf("resend an invitation to a role above the caller's: %d %s, want 403 %s", rec.Code, rec.Body.String(), errs.CodeRBACGrantExceedsCaller)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.invites WHERE id = $1 AND status = 'expired'`, withRole); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM organization.invites WHERE id = $1 AND status = 'expired'`, withRole); n != 1 {
 		t.Error("a refused resend revived the invitation")
 	}
 	if rec := dbtest.Do(t, inviter, http.MethodPost, "/invites/"+invite(nil).String()+"/resend", nil); rec.Code != http.StatusOK {

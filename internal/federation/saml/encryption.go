@@ -49,7 +49,7 @@ func (s *Service) encryptionCertificate(ctx context.Context, conn *Connection) (
 	if s.box == nil {
 		return "", nil
 	}
-	key := dbgen.GetSamlConnectionKeyParams{ConnectionID: conn.ID, TenantID: conn.TenantID}
+	key := dbgen.GetSamlConnectionKeyParams{ConnectionID: conn.ID, OrganizationID: conn.OrganizationID}
 	row, err := s.q.GetSamlConnectionKey(ctx, key)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if err := s.createEncryptionKey(ctx, conn); err != nil {
@@ -68,7 +68,7 @@ func (s *Service) encryptionCertificate(ctx context.Context, conn *Connection) (
 }
 
 // createEncryptionKey makes conn's SP key pair and stores it, the private key
-// sealed to the organisation and connection. A concurrent first request may
+// sealed to the organization and connection. A concurrent first request may
 // make one too; the first stored wins.
 func (s *Service) createEncryptionKey(ctx context.Context, conn *Connection) error {
 	key, err := rsa.GenerateKey(rand.Reader, spKeyBits)
@@ -97,7 +97,7 @@ func (s *Service) createEncryptionKey(ctx context.Context, conn *Connection) err
 		return err
 	}
 	defer clear(pkcs8)
-	ct, nonce, err := s.box.Seal(conn.TenantID, spKeyPurpose, conn.ID.String(), pkcs8)
+	ct, nonce, err := s.box.Seal(conn.OrganizationID, spKeyPurpose, conn.ID.String(), pkcs8)
 	if err != nil {
 		return err
 	}
@@ -106,7 +106,7 @@ func (s *Service) createEncryptionKey(ctx context.Context, conn *Connection) err
 		return err
 	}
 	return s.q.InsertSamlConnectionKey(ctx, dbgen.InsertSamlConnectionKeyParams{
-		ConnectionID: conn.ID, TenantID: conn.TenantID, Certificate: certificatePEM(cert), KeyCt: ct, KeyNonce: nonce,
+		ConnectionID: conn.ID, OrganizationID: conn.OrganizationID, Certificate: certificatePEM(cert), KeyCt: ct, KeyNonce: nonce,
 	})
 }
 
@@ -116,14 +116,14 @@ func (s *Service) decryptionKey(ctx context.Context, conn *Connection) (*tls.Cer
 	if s.box == nil {
 		return nil, nil
 	}
-	row, err := s.q.GetSamlConnectionKey(ctx, dbgen.GetSamlConnectionKeyParams{ConnectionID: conn.ID, TenantID: conn.TenantID})
+	row, err := s.q.GetSamlConnectionKey(ctx, dbgen.GetSamlConnectionKeyParams{ConnectionID: conn.ID, OrganizationID: conn.OrganizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	pkcs8, err := s.box.Open(conn.TenantID, spKeyPurpose, conn.ID.String(), row.KeyCt, row.KeyNonce)
+	pkcs8, err := s.box.Open(conn.OrganizationID, spKeyPurpose, conn.ID.String(), row.KeyCt, row.KeyNonce)
 	if err != nil {
 		return nil, fmt.Errorf("open the SP key: %w", err)
 	}

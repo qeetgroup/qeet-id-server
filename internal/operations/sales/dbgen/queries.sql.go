@@ -15,27 +15,27 @@ import (
 const insertSalesLead = `-- name: InsertSalesLead :one
 
 INSERT INTO platform.sales_leads
-    (tenant_id, user_id, name, email, company, team_size, message, source)
+    (organization_id, user_id, name, email, company, team_size, message, source)
 VALUES ($1, $2, $3, $4, $5,
         $6, $7, $8)
 RETURNING id
 `
 
 type InsertSalesLeadParams struct {
-	TenantID pgtype.UUID
-	UserID   pgtype.UUID
-	Name     string
-	Email    string
-	Company  string
-	TeamSize string
-	Message  string
-	Source   string
+	OrganizationID pgtype.UUID
+	UserID         pgtype.UUID
+	Name           string
+	Email          string
+	Company        string
+	TeamSize       string
+	Message        string
+	Source         string
 }
 
 // Queries for the sales-leads domain (in-app "Contact sales").
 func (q *Queries) InsertSalesLead(ctx context.Context, arg InsertSalesLeadParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, insertSalesLead,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.UserID,
 		arg.Name,
 		arg.Email,

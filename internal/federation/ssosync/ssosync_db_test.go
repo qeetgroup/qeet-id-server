@@ -16,31 +16,31 @@ import (
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
 
-// fixture is an organisation with groups, a person and helpers to sign them
+// fixture is an organization with groups, a person and helpers to sign them
 // in through a connection.
 type fixture struct {
-	t      *testing.T
-	tenant uuid.UUID
-	domain string
-	person dbtest.Account
+	t            *testing.T
+	organization uuid.UUID
+	domain       string
+	person       dbtest.Account
 }
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
-	tenant := dbtest.Tenant(t)
-	domain := dbtest.Domain(t, tenant)
-	return &fixture{t: t, tenant: tenant, domain: domain, person: dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, tenant)}
+	organization := dbtest.Organization(t)
+	domain := dbtest.Domain(t, organization)
+	return &fixture{t: t, organization: organization, domain: domain, person: dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, organization)}
 }
 
-// group creates one of the organisation's groups holding roles.
+// group creates one of the organization's groups holding roles.
 func (f *fixture) group(name string, roles ...uuid.UUID) uuid.UUID {
 	f.t.Helper()
-	return makeGroup(f.t, f.tenant, name, "", roles...)
+	return makeGroup(f.t, f.organization, name, "", roles...)
 }
 
-// makeGroup creates a group of tenant holding roles; a non-empty externalID
+// makeGroup creates a group of organization holding roles; a non-empty externalID
 // makes it a group SCIM provisioned.
-func makeGroup(t *testing.T, tenant uuid.UUID, name, externalID string, roles ...uuid.UUID) uuid.UUID {
+func makeGroup(t *testing.T, organization uuid.UUID, name, externalID string, roles ...uuid.UUID) uuid.UUID {
 	t.Helper()
 	ctx := context.Background()
 	var ext, via any
@@ -49,36 +49,36 @@ func makeGroup(t *testing.T, tenant uuid.UUID, name, externalID string, roles ..
 	}
 	var id uuid.UUID
 	if err := dbtest.Pool(t).QueryRow(ctx, `
-		INSERT INTO tenant.groups (tenant_id, name, external_id, provisioned_via) VALUES ($1, $2, $3, $4) RETURNING id
-	`, tenant, name+"-"+uuid.NewString()[:8], ext, via).Scan(&id); err != nil {
+		INSERT INTO organization.groups (organization_id, name, external_id, provisioned_via) VALUES ($1, $2, $3, $4) RETURNING id
+	`, organization, name+"-"+uuid.NewString()[:8], ext, via).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
 	for _, role := range roles {
-		if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO rbac.group_roles (tenant_id, group_id, role_id) VALUES ($1, $2, $3)`, tenant, id, role); err != nil {
+		if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO rbac.group_roles (organization_id, group_id, role_id) VALUES ($1, $2, $3)`, organization, id, role); err != nil {
 			t.Fatal(err)
 		}
 	}
 	return id
 }
 
-// ownerRole creates tenant's owner role.
-func ownerRole(t *testing.T, tenant uuid.UUID) uuid.UUID {
+// ownerRole creates organization's owner role.
+func ownerRole(t *testing.T, organization uuid.UUID) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID
 	if err := dbtest.Pool(t).QueryRow(context.Background(), `
-		INSERT INTO rbac.roles (tenant_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id
-	`, tenant).Scan(&id); err != nil {
+		INSERT INTO rbac.roles (organization_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id
+	`, organization).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
 	return id
 }
 
 // mapGroup maps idpGroup to groupID for connection, bypassing the API's checks.
-func mapGroup(t *testing.T, tenant, connection uuid.UUID, idpGroup string, groupID uuid.UUID) {
+func mapGroup(t *testing.T, organization, connection uuid.UUID, idpGroup string, groupID uuid.UUID) {
 	t.Helper()
 	if _, err := dbtest.Pool(t).Exec(context.Background(), `
-		INSERT INTO tenant.sso_group_mappings (tenant_id, connection_id, idp_group, group_id) VALUES ($1, $2, $3, $4)
-	`, tenant, connection, idpGroup, groupID); err != nil {
+		INSERT INTO organization.sso_group_mappings (organization_id, connection_id, idp_group, group_id) VALUES ($1, $2, $3, $4)
+	`, organization, connection, idpGroup, groupID); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -88,7 +88,7 @@ func mapGroup(t *testing.T, tenant, connection uuid.UUID, idpGroup string, group
 func (f *fixture) signIn(connection uuid.UUID, in SignIn) {
 	f.t.Helper()
 	ctx := dbtest.Context(f.t)
-	in.TenantID, in.UserID, in.ConnectionID = f.tenant, f.person.ID, connection
+	in.OrganizationID, in.UserID, in.ConnectionID = f.organization, f.person.ID, connection
 	if in.Provider == "" {
 		in.Provider = "saml"
 	}
@@ -111,8 +111,8 @@ func (f *fixture) signIn(connection uuid.UUID, in SignIn) {
 func (f *fixture) memberships() map[uuid.UUID]uuid.UUID {
 	f.t.Helper()
 	rows, err := dbtest.Pool(f.t).Query(context.Background(), `
-		SELECT group_id, COALESCE(source_connection_id, '00000000-0000-0000-0000-000000000000') FROM tenant.group_members WHERE tenant_id = $1 AND user_id = $2
-	`, f.tenant, f.person.ID)
+		SELECT group_id, COALESCE(source_connection_id, '00000000-0000-0000-0000-000000000000') FROM organization.group_members WHERE organization_id = $1 AND user_id = $2
+	`, f.organization, f.person.ID)
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -128,11 +128,11 @@ func (f *fixture) memberships() map[uuid.UUID]uuid.UUID {
 	return out
 }
 
-// audited counts the organisation's audit events of action on resource by actorType.
-func audited(t *testing.T, tenant uuid.UUID, action string, resource uuid.UUID, actorType string) int {
+// audited counts the organization's audit events of action on resource by actorType.
+func audited(t *testing.T, organization uuid.UUID, action string, resource uuid.UUID, actorType string) int {
 	t.Helper()
-	return dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = $2 AND resource_id = $3 AND actor_type = $4`,
-		tenant, action, resource, actorType)
+	return dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = $2 AND resource_id = $3 AND actor_type = $4`,
+		organization, action, resource, actorType)
 }
 
 // TestSignInSyncsGroups checks that a sign-in puts the person in the groups
@@ -145,20 +145,20 @@ func TestSignInSyncsGroups(t *testing.T) {
 	f := newFixture(t)
 	conn, other := uuid.New(), uuid.New()
 	engineering := f.group("Engineering")
-	directory := makeGroup(t, f.tenant, "Directory", "00g-ext-1")
+	directory := makeGroup(t, f.organization, "Directory", "00g-ext-1")
 	design := f.group("Design")
-	admins := f.group("Admins", dbtest.Role(t, f.tenant, "role.write", "user.read"))
-	owners := f.group("Owners", ownerRole(t, f.tenant))
-	privacy := f.group("Privacy", dbtest.Role(t, f.tenant, "gdpr.write"))
+	admins := f.group("Admins", dbtest.Role(t, f.organization, "role.write", "user.read"))
+	owners := f.group("Owners", ownerRole(t, f.organization))
+	privacy := f.group("Privacy", dbtest.Role(t, f.organization, "gdpr.write"))
 	elsewhere := f.group("Elsewhere")
-	mapGroup(t, f.tenant, conn, "Engineering", engineering)
-	mapGroup(t, f.tenant, conn, "Design", design)
-	mapGroup(t, f.tenant, conn, "Admins", admins)
-	mapGroup(t, f.tenant, conn, "Owners", owners)
-	mapGroup(t, f.tenant, conn, "Privacy", privacy)
-	mapGroup(t, f.tenant, other, "Elsewhere", elsewhere)
+	mapGroup(t, f.organization, conn, "Engineering", engineering)
+	mapGroup(t, f.organization, conn, "Design", design)
+	mapGroup(t, f.organization, conn, "Admins", admins)
+	mapGroup(t, f.organization, conn, "Owners", owners)
+	mapGroup(t, f.organization, conn, "Privacy", privacy)
+	mapGroup(t, f.organization, other, "Elsewhere", elsewhere)
 	// An administrator already put the person in Design.
-	if err := group.NewService(dbtest.Pool(t)).AddMember(context.Background(), design, f.person.ID, f.tenant, audit.Actor{Type: "user"}); err != nil {
+	if err := group.NewService(dbtest.Pool(t)).AddMember(context.Background(), design, f.person.ID, f.organization, audit.Actor{Type: "user"}); err != nil {
 		t.Fatal(err)
 	}
 	f.signIn(other, SignIn{Groups: []string{"Elsewhere"}})
@@ -175,7 +175,7 @@ func TestSignInSyncsGroups(t *testing.T) {
 		}
 	}
 	for _, g := range []uuid.UUID{engineering, directory} {
-		if n := audited(t, f.tenant, "group.member_added", g, "saml"); n != 1 {
+		if n := audited(t, f.organization, "group.member_added", g, "saml"); n != 1 {
 			t.Errorf("%d member_added events for group %s by the sign-in, want 1", n, g)
 		}
 	}
@@ -185,7 +185,7 @@ func TestSignInSyncsGroups(t *testing.T) {
 
 	// Signing in again with the same groups changes nothing.
 	f.signIn(conn, SignIn{Groups: []string{"Engineering", "00g-ext-1"}})
-	if n := audited(t, f.tenant, "group.member_added", engineering, "saml"); n != 1 {
+	if n := audited(t, f.organization, "group.member_added", engineering, "saml"); n != 1 {
 		t.Errorf("%d member_added events for Engineering after a second sign-in, want 1", n)
 	}
 
@@ -207,15 +207,15 @@ func TestSignInSyncsGroups(t *testing.T) {
 	if got[design] != uuid.Nil || got[elsewhere] != other || len(got) != 2 {
 		t.Errorf("memberships %v; want the administrator's Design and the other connection's kept", got)
 	}
-	if n := audited(t, f.tenant, "group.member_removed", engineering, "saml"); n != 1 {
+	if n := audited(t, f.organization, "group.member_removed", engineering, "saml"); n != 1 {
 		t.Errorf("%d member_removed events for Engineering, want 1", n)
 	}
 
 	// A group that comes to grant administrative authority loses the members
 	// sign-in put in it.
 	f.signIn(conn, SignIn{Groups: []string{"Engineering"}})
-	if _, err := dbtest.Pool(t).Exec(context.Background(), `INSERT INTO rbac.group_roles (tenant_id, group_id, role_id) VALUES ($1, $2, $3)`,
-		f.tenant, engineering, dbtest.Role(t, f.tenant, "connection.write")); err != nil {
+	if _, err := dbtest.Pool(t).Exec(context.Background(), `INSERT INTO rbac.group_roles (organization_id, group_id, role_id) VALUES ($1, $2, $3)`,
+		f.organization, engineering, dbtest.Role(t, f.organization, "connection.write")); err != nil {
 		t.Fatal(err)
 	}
 	f.signIn(conn, SignIn{Groups: []string{"Engineering"}})
@@ -230,16 +230,16 @@ func TestSignInSyncsGroups(t *testing.T) {
 func TestMembershipsMadeByOthersStay(t *testing.T) {
 	f := newFixture(t)
 	conn := uuid.New()
-	byAdmin, byDirectory := f.group("Payments"), makeGroup(t, f.tenant, "Support", "00g-support")
-	mapGroup(t, f.tenant, conn, "Payments", byAdmin)
+	byAdmin, byDirectory := f.group("Payments"), makeGroup(t, f.organization, "Support", "00g-support")
+	mapGroup(t, f.organization, conn, "Payments", byAdmin)
 	f.signIn(conn, SignIn{Groups: []string{"Payments", "00g-support"}})
 	if got := f.memberships(); got[byAdmin] != conn || got[byDirectory] != conn {
 		t.Fatalf("memberships %v, want both made by the sign-in", got)
 	}
-	if err := group.NewService(dbtest.Pool(t)).AddMember(context.Background(), byAdmin, f.person.ID, f.tenant, audit.Actor{Type: "user"}); err != nil {
+	if err := group.NewService(dbtest.Pool(t)).AddMember(context.Background(), byAdmin, f.person.ID, f.organization, audit.Actor{Type: "user"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := scimdb.New(dbtest.Pool(t)).AddGroupMember(context.Background(), scimdb.AddGroupMemberParams{GroupID: byDirectory, UserID: f.person.ID, TenantID: f.tenant}); err != nil {
+	if err := scimdb.New(dbtest.Pool(t)).AddGroupMember(context.Background(), scimdb.AddGroupMemberParams{GroupID: byDirectory, UserID: f.person.ID, OrganizationID: f.organization}); err != nil {
 		t.Fatal(err)
 	}
 	f.signIn(conn, SignIn{})
@@ -248,13 +248,13 @@ func TestMembershipsMadeByOthersStay(t *testing.T) {
 	}
 }
 
-// TestSignInSyncStaysInItsOrganisation checks that a sign-in reaches only its
-// own organisation's mappings and SCIM groups, whatever the other
-// organisation names them.
-func TestSignInSyncStaysInItsOrganisation(t *testing.T) {
+// TestSignInSyncStaysInItsOrganization checks that a sign-in reaches only its
+// own organization's mappings and SCIM groups, whatever the other
+// organization names them.
+func TestSignInSyncStaysInItsOrganization(t *testing.T) {
 	f := newFixture(t)
 	conn := uuid.New()
-	theirs := dbtest.Tenant(t)
+	theirs := dbtest.Organization(t)
 	theirGroup := makeGroup(t, theirs, "Engineering", "00g-shared")
 	// Their mapping names this connection, as if it were theirs.
 	mapGroup(t, theirs, conn, "Engineering", theirGroup)
@@ -262,15 +262,15 @@ func TestSignInSyncStaysInItsOrganisation(t *testing.T) {
 	if got := f.memberships(); len(got) != 0 {
 		t.Errorf("memberships %v, want none", got)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.group_members WHERE group_id = $1`, theirGroup); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM organization.group_members WHERE group_id = $1`, theirGroup); n != 0 {
 		t.Errorf("another organisation's group gained %d members", n)
 	}
 }
 
 // TestSignInRefreshesProfile checks that a sign-in sets the asserted display
 // name, and moves the account to the asserted address only on a domain the
-// organisation manages, when no other account holds it and the account doesn't
-// administer the organisation, ending the links sent to the old address.
+// organization manages, when no other account holds it and the account doesn't
+// administer the organization, ending the links sent to the old address.
 func TestSignInRefreshesProfile(t *testing.T) {
 	f := newFixture(t)
 	conn := uuid.New()
@@ -290,33 +290,33 @@ func TestSignInRefreshesProfile(t *testing.T) {
 	if _, name, _ := profile(); name != "Asha Rao" {
 		t.Errorf("display name %q, want the asserted one", name)
 	}
-	if n := audited(t, f.tenant, "user.updated", f.person.ID, "saml"); n != 1 {
+	if n := audited(t, f.organization, "user.updated", f.person.ID, "saml"); n != 1 {
 		t.Errorf("%d user.updated events, want 1", n)
 	}
 	f.signIn(conn, SignIn{DisplayName: "Asha Rao"})
-	if n := audited(t, f.tenant, "user.updated", f.person.ID, "saml"); n != 1 {
+	if n := audited(t, f.organization, "user.updated", f.person.ID, "saml"); n != 1 {
 		t.Errorf("%d user.updated events after an unchanged sign-in, want 1", n)
 	}
 
-	// An address off the organisation's domains is not taken.
+	// An address off the organization's domains is not taken.
 	f.signIn(conn, SignIn{Email: dbtest.Unique("asha") + "@example.test", EmailManaged: false})
 	if email, _, _ := profile(); email != f.person.Email {
 		t.Errorf("address moved to %q off the organisation's domains", email)
 	}
 
 	// Another account's address is not taken, and the sign-in still applies.
-	taken := dbtest.UserAt(t, dbtest.Unique("taken")+"@"+f.domain, f.tenant)
+	taken := dbtest.UserAt(t, dbtest.Unique("taken")+"@"+f.domain, f.organization)
 	f.signIn(conn, SignIn{Email: taken.Email, EmailManaged: true, DisplayName: "Asha R."})
 	if email, name, _ := profile(); email != f.person.Email || name != "Asha R." {
 		t.Errorf("profile %q %q; want the address kept and the name changed", email, name)
 	}
 
-	// A new address on the organisation's domain is taken, verified, and the
+	// A new address on the organization's domain is taken, verified, and the
 	// links sent to the old one stop working.
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.password_resets (user_id, token_hash, expires_at) VALUES ($1, $2, NOW() + INTERVAL '1 hour')`, f.person.ID, uuid.NewString()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO auth.magic_links (tenant_id, email, token_hash, expires_at) VALUES ($1, $2, $3, NOW() + INTERVAL '1 hour')`, f.tenant, f.person.Email, uuid.NewString()); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO auth.magic_links (organization_id, email, token_hash, expires_at) VALUES ($1, $2, $3, NOW() + INTERVAL '1 hour')`, f.organization, f.person.Email, uuid.NewString()); err != nil {
 		t.Fatal(err)
 	}
 	moved := dbtest.Unique("asha.rao") + "@" + f.domain
@@ -331,8 +331,8 @@ func TestSignInRefreshesProfile(t *testing.T) {
 		t.Errorf("%d sign-in links to the old address still open", n)
 	}
 
-	// An account that administers the organisation keeps its address.
-	dbtest.Assign(t, f.person.ID, f.tenant, dbtest.Role(t, f.tenant, "user.write"))
+	// An account that administers the organization keeps its address.
+	dbtest.Assign(t, f.person.ID, f.organization, dbtest.Role(t, f.organization, "user.write"))
 	f.signIn(conn, SignIn{Email: dbtest.Unique("admin") + "@" + f.domain, EmailManaged: true})
 	if email, _, _ := profile(); email != moved {
 		t.Errorf("an administrator's address moved to %q", email)

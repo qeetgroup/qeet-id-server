@@ -13,28 +13,28 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const checkTenantMembership = `-- name: CheckTenantMembership :one
+const checkOrganizationMembership = `-- name: CheckOrganizationMembership :one
 SELECT EXISTS (
     SELECT 1 FROM account.users account
-    JOIN tenant.tenants organization ON organization.id = $1::uuid
+    JOIN organization.organizations organization ON organization.id = $1::uuid
     WHERE account.id = $2
       AND account.status = 'active' AND account.deleted_at IS NULL
       AND organization.status = 'active' AND organization.deleted_at IS NULL
-      AND (account.tenant_id = organization.id
+      AND (account.organization_id = organization.id
            OR EXISTS (SELECT 1 FROM rbac.user_roles membership
-                      WHERE membership.tenant_id = organization.id AND membership.user_id = account.id))
+                      WHERE membership.organization_id = organization.id AND membership.user_id = account.id))
 ) AS is_member
 `
 
-type CheckTenantMembershipParams struct {
-	TenantID uuid.UUID
-	UserID   uuid.UUID
+type CheckOrganizationMembershipParams struct {
+	OrganizationID uuid.UUID
+	UserID         uuid.UUID
 }
 
-// CheckTenantMembership reports whether an active account is a member of an
-// active organisation: the organisation's own account, or holding a role there.
-func (q *Queries) CheckTenantMembership(ctx context.Context, arg CheckTenantMembershipParams) (bool, error) {
-	row := q.db.QueryRow(ctx, checkTenantMembership, arg.TenantID, arg.UserID)
+// CheckOrganizationMembership reports whether an active account is a member of an
+// active organization: the organization's own account, or holding a role there.
+func (q *Queries) CheckOrganizationMembership(ctx context.Context, arg CheckOrganizationMembershipParams) (bool, error) {
+	row := q.db.QueryRow(ctx, checkOrganizationMembership, arg.OrganizationID, arg.UserID)
 	var is_member bool
 	err := row.Scan(&is_member)
 	return is_member, err
@@ -150,14 +150,14 @@ WITH ended AS (
     DELETE FROM auth.login_sessions WHERE token_hash = $1
     RETURNING id, user_id
 )
-SELECT ended.id, ended.user_id, u.tenant_id
+SELECT ended.id, ended.user_id, u.organization_id
 FROM ended LEFT JOIN account.users u ON u.id = ended.user_id
 `
 
 type EndLoginSessionRow struct {
-	ID       uuid.UUID
-	UserID   uuid.UUID
-	TenantID pgtype.UUID
+	ID             uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID pgtype.UUID
 }
 
 // EndLoginSession ends the hosted-login (browser) session behind a cookie —
@@ -167,7 +167,7 @@ type EndLoginSessionRow struct {
 func (q *Queries) EndLoginSession(ctx context.Context, tokenHash string) (EndLoginSessionRow, error) {
 	row := q.db.QueryRow(ctx, endLoginSession, tokenHash)
 	var i EndLoginSessionRow
-	err := row.Scan(&i.ID, &i.UserID, &i.TenantID)
+	err := row.Scan(&i.ID, &i.UserID, &i.OrganizationID)
 	return i, err
 }
 
@@ -234,17 +234,17 @@ func (q *Queries) ForgetSourceFailuresBefore(ctx context.Context, arg ForgetSour
 	return err
 }
 
-const getClientTenant = `-- name: GetClientTenant :one
-SELECT tenant_id FROM auth.oidc_clients WHERE client_id = $1
+const getClientOrganization = `-- name: GetClientOrganization :one
+SELECT organization_id FROM auth.oidc_clients WHERE client_id = $1
 `
 
-// The tenant an OAuth client belongs to (whose policy a hosted sign-in for it
+// The organization an OAuth client belongs to (whose policy a hosted sign-in for it
 // is held to).
-func (q *Queries) GetClientTenant(ctx context.Context, clientID string) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, getClientTenant, clientID)
-	var tenant_id uuid.UUID
-	err := row.Scan(&tenant_id)
-	return tenant_id, err
+func (q *Queries) GetClientOrganization(ctx context.Context, clientID string) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, getClientOrganization, clientID)
+	var organization_id uuid.UUID
+	err := row.Scan(&organization_id)
+	return organization_id, err
 }
 
 const getLoginSession = `-- name: GetLoginSession :one
@@ -277,21 +277,21 @@ func (q *Queries) GetLoginSession(ctx context.Context, tokenHash string) (GetLog
 }
 
 const getLoginSessionUser = `-- name: GetLoginSessionUser :one
-SELECT s.user_id, u.tenant_id, s.created_at, COALESCE(s.second_factor, '')::text AS second_factor
+SELECT s.user_id, u.organization_id, s.created_at, COALESCE(s.second_factor, '')::text AS second_factor
 FROM auth.login_sessions s
 JOIN account.users u ON u.id = s.user_id
-LEFT JOIN tenant.tenants t ON t.id = u.tenant_id
+LEFT JOIN organization.organizations t ON t.id = u.organization_id
 WHERE s.token_hash = $1
   AND s.expires_at > NOW()
   AND u.status = 'active' AND u.deleted_at IS NULL
-  AND (u.tenant_id IS NULL OR (t.status = 'active' AND t.deleted_at IS NULL))
+  AND (u.organization_id IS NULL OR (t.status = 'active' AND t.deleted_at IS NULL))
 `
 
 type GetLoginSessionUserRow struct {
-	UserID       uuid.UUID
-	TenantID     pgtype.UUID
-	CreatedAt    time.Time
-	SecondFactor string
+	UserID         uuid.UUID
+	OrganizationID pgtype.UUID
+	CreatedAt      time.Time
+	SecondFactor   string
 }
 
 // The user behind a live hosted-login session, and their own organization (NULL
@@ -303,7 +303,7 @@ func (q *Queries) GetLoginSessionUser(ctx context.Context, tokenHash string) (Ge
 	var i GetLoginSessionUserRow
 	err := row.Scan(
 		&i.UserID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.CreatedAt,
 		&i.SecondFactor,
 	)
@@ -340,7 +340,7 @@ type GetSignInLocksRow struct {
 // Queries for the authentication domain.
 // Static queries with fully-typed, non-nullable parameters are converted.
 // Queries involving nullable UUID columns passed as Go interface{}/nil
-// (sessions.tenant_id, mfa_login_challenges.tenant_id, trusted_devices.tenant_id)
+// (sessions.organization_id, mfa_login_challenges.organization_id, trusted_devices.organization_id)
 // remain hand-written because they require Go-nil → SQL NULL semantics that
 // sqlc's uuid override cannot express without additional NULLIF wrappers that
 // would silently treat the zero UUID as NULL.
@@ -389,6 +389,77 @@ func (q *Queries) InsertLoginSession(ctx context.Context, arg InsertLoginSession
 	return id, err
 }
 
+const insertOrganizationlessSession = `-- name: InsertOrganizationlessSession :one
+INSERT INTO auth.sessions (id, user_id, organization_id, ip, user_agent, expires_at, idle_timeout, country, city)
+VALUES ($1, $2, NULL, NULLIF($3::text, '')::inet, $4,
+        NOW() + make_interval(secs => $5::float8),
+        make_interval(secs => $6::float8),
+        NULLIF($7::text, ''), NULLIF($8::text, ''))
+RETURNING expires_at, LEAST(last_seen_at + idle_timeout, expires_at)::timestamptz AS idle_expires_at
+`
+
+type InsertOrganizationlessSessionParams struct {
+	ID            uuid.UUID
+	UserID        uuid.UUID
+	Ip            string
+	UserAgent     *string
+	MaxAgeSeconds float64
+	IdleSeconds   float64
+	Country       string
+	City          string
+}
+
+type InsertOrganizationlessSessionRow struct {
+	ExpiresAt     time.Time
+	IdleExpiresAt time.Time
+}
+
+// Organization-less session: organization_id is a literal NULL (not a bind). ip goes through
+// NULLIF so an empty string stores as SQL NULL, matching InsertLoginSession.
+// With no organization, the platform's session bounds apply. Returns when it
+// ends however active, and when it ends unless renewed.
+func (q *Queries) InsertOrganizationlessSession(ctx context.Context, arg InsertOrganizationlessSessionParams) (InsertOrganizationlessSessionRow, error) {
+	row := q.db.QueryRow(ctx, insertOrganizationlessSession,
+		arg.ID,
+		arg.UserID,
+		arg.Ip,
+		arg.UserAgent,
+		arg.MaxAgeSeconds,
+		arg.IdleSeconds,
+		arg.Country,
+		arg.City,
+	)
+	var i InsertOrganizationlessSessionRow
+	err := row.Scan(&i.ExpiresAt, &i.IdleExpiresAt)
+	return i, err
+}
+
+const insertOrganizationlessUser = `-- name: InsertOrganizationlessUser :one
+INSERT INTO account.users (organization_id, email, display_name)
+VALUES (NULL, $1, $2)
+RETURNING id, created_at, updated_at
+`
+
+type InsertOrganizationlessUserParams struct {
+	Email       string
+	DisplayName *string
+}
+
+type InsertOrganizationlessUserRow struct {
+	ID        uuid.UUID
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// Organization-less signup: creates the identity with organization_id NULL (a literal, not a
+// bind — membership lives in rbac.user_roles). display_name is nullable text.
+func (q *Queries) InsertOrganizationlessUser(ctx context.Context, arg InsertOrganizationlessUserParams) (InsertOrganizationlessUserRow, error) {
+	row := q.db.QueryRow(ctx, insertOrganizationlessUser, arg.Email, arg.DisplayName)
+	var i InsertOrganizationlessUserRow
+	err := row.Scan(&i.ID, &i.CreatedAt, &i.UpdatedAt)
+	return i, err
+}
+
 const insertPasswordCredential = `-- name: InsertPasswordCredential :exec
 INSERT INTO auth.password_credentials (user_id, password_hash)
 VALUES ($1, $2)
@@ -422,77 +493,6 @@ func (q *Queries) InsertRefreshToken(ctx context.Context, arg InsertRefreshToken
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
-}
-
-const insertTenantlessSession = `-- name: InsertTenantlessSession :one
-INSERT INTO auth.sessions (id, user_id, tenant_id, ip, user_agent, expires_at, idle_timeout, country, city)
-VALUES ($1, $2, NULL, NULLIF($3::text, '')::inet, $4,
-        NOW() + make_interval(secs => $5::float8),
-        make_interval(secs => $6::float8),
-        NULLIF($7::text, ''), NULLIF($8::text, ''))
-RETURNING expires_at, LEAST(last_seen_at + idle_timeout, expires_at)::timestamptz AS idle_expires_at
-`
-
-type InsertTenantlessSessionParams struct {
-	ID            uuid.UUID
-	UserID        uuid.UUID
-	Ip            string
-	UserAgent     *string
-	MaxAgeSeconds float64
-	IdleSeconds   float64
-	Country       string
-	City          string
-}
-
-type InsertTenantlessSessionRow struct {
-	ExpiresAt     time.Time
-	IdleExpiresAt time.Time
-}
-
-// Tenant-less session: tenant_id is a literal NULL (not a bind). ip goes through
-// NULLIF so an empty string stores as SQL NULL, matching InsertLoginSession.
-// With no organisation, the platform's session bounds apply. Returns when it
-// ends however active, and when it ends unless renewed.
-func (q *Queries) InsertTenantlessSession(ctx context.Context, arg InsertTenantlessSessionParams) (InsertTenantlessSessionRow, error) {
-	row := q.db.QueryRow(ctx, insertTenantlessSession,
-		arg.ID,
-		arg.UserID,
-		arg.Ip,
-		arg.UserAgent,
-		arg.MaxAgeSeconds,
-		arg.IdleSeconds,
-		arg.Country,
-		arg.City,
-	)
-	var i InsertTenantlessSessionRow
-	err := row.Scan(&i.ExpiresAt, &i.IdleExpiresAt)
-	return i, err
-}
-
-const insertTenantlessUser = `-- name: InsertTenantlessUser :one
-INSERT INTO account.users (tenant_id, email, display_name)
-VALUES (NULL, $1, $2)
-RETURNING id, created_at, updated_at
-`
-
-type InsertTenantlessUserParams struct {
-	Email       string
-	DisplayName *string
-}
-
-type InsertTenantlessUserRow struct {
-	ID        uuid.UUID
-	CreatedAt time.Time
-	UpdatedAt time.Time
-}
-
-// Tenant-less signup: creates the identity with tenant_id NULL (a literal, not a
-// bind — membership lives in rbac.user_roles). display_name is nullable text.
-func (q *Queries) InsertTenantlessUser(ctx context.Context, arg InsertTenantlessUserParams) (InsertTenantlessUserRow, error) {
-	row := q.db.QueryRow(ctx, insertTenantlessUser, arg.Email, arg.DisplayName)
-	var i InsertTenantlessUserRow
-	err := row.Scan(&i.ID, &i.CreatedAt, &i.UpdatedAt)
-	return i, err
 }
 
 const isSessionLiveForUser = `-- name: IsSessionLiveForUser :one
@@ -588,9 +588,9 @@ func (q *Queries) LoginSessionSecondFactor(ctx context.Context, arg LoginSession
 
 const mFARequirement = `-- name: MFARequirement :one
 SELECT u.mfa_required,
-       (CASE WHEN u.tenant_id = $1::uuid THEN u.created_at
+       (CASE WHEN u.organization_id = $1::uuid THEN u.created_at
              ELSE COALESCE((SELECT MIN(ur.granted_at) FROM rbac.user_roles ur
-                            WHERE ur.user_id = u.id AND ur.tenant_id = $1::uuid), u.created_at)
+                            WHERE ur.user_id = u.id AND ur.organization_id = $1::uuid), u.created_at)
         END)::timestamptz AS joined_at,
        COALESCE(sp.mfa_enforcement, 'optional')::text AS enforcement,
        COALESCE(sp.mfa_grace_days, 0)::int AS grace_days,
@@ -598,30 +598,30 @@ SELECT u.mfa_required,
        EXISTS (
            SELECT 1
            FROM rbac.user_roles ur
-           JOIN rbac.roles ro ON ro.id = ur.role_id AND ro.tenant_id = ur.tenant_id
+           JOIN rbac.roles ro ON ro.id = ur.role_id AND ro.organization_id = ur.organization_id
            LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
            LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
-           WHERE ur.user_id = u.id AND ur.tenant_id = $1
+           WHERE ur.user_id = u.id AND ur.organization_id = $1
              AND ((ro.is_system AND ro.name = 'owner')
                   OR (p.key IS NOT NULL AND NOT (p.key = ANY(COALESCE($2::text[], '{}')))))
            UNION ALL
            SELECT 1
-           FROM tenant.group_members gm
-           JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
-           JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.tenant_id = gr.tenant_id
+           FROM organization.group_members gm
+           JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.organization_id = gm.organization_id
+           JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.organization_id = gr.organization_id
            LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
            LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
-           WHERE gm.user_id = u.id AND gm.tenant_id = $1
+           WHERE gm.user_id = u.id AND gm.organization_id = $1
              AND ((ro.is_system AND ro.name = 'owner')
                   OR (p.key IS NOT NULL AND NOT (p.key = ANY(COALESCE($2::text[], '{}')))))
        ) AS is_admin
 FROM account.users u
-LEFT JOIN tenant.security_policies sp ON sp.tenant_id = $1
+LEFT JOIN organization.security_policies sp ON sp.organization_id = $1
 WHERE u.id = $3
 `
 
 type MFARequirementParams struct {
-	TenantID          uuid.UUID
+	OrganizationID    uuid.UUID
 	MemberPermissions []string
 	UserID            uuid.UUID
 }
@@ -636,16 +636,16 @@ type MFARequirementRow struct {
 }
 
 // MFARequirement reads what decides whether an account must use a second
-// factor to sign in to an organisation: the account's own flag, the
-// organisation's requirement and grace period, and whether the account is an
+// factor to sign in to an organization: the account's own flag, the
+// organization's requirement and grace period, and whether the account is an
 // administrator there — holds the owner role or a role granting a permission
 // outside member_permissions, directly or through a group (with none listed,
 // any permission does).
-// joined_at is when the account joined the organisation, which the grace
-// period is judged by: its creation for its own organisation, its first role
+// joined_at is when the account joined the organization, which the grace
+// period is judged by: its creation for its own organization, its first role
 // there for any other.
 func (q *Queries) MFARequirement(ctx context.Context, arg MFARequirementParams) (MFARequirementRow, error) {
-	row := q.db.QueryRow(ctx, mFARequirement, arg.TenantID, arg.MemberPermissions, arg.UserID)
+	row := q.db.QueryRow(ctx, mFARequirement, arg.OrganizationID, arg.MemberPermissions, arg.UserID)
 	var i MFARequirementRow
 	err := row.Scan(
 		&i.MfaRequired,
@@ -687,7 +687,7 @@ WHERE s.ctid = ANY(ARRAY(
                   WHERE rt.session_id = e.id AND rt.expires_at >= $1)))
       )
     LIMIT $2))
-RETURNING s.id, s.user_id, s.tenant_id, (s.revoked_at IS NULL)::boolean AS expired
+RETURNING s.id, s.user_id, s.organization_id, (s.revoked_at IS NULL)::boolean AS expired
 `
 
 type PurgeEndedSessionsParams struct {
@@ -696,10 +696,10 @@ type PurgeEndedSessionsParams struct {
 }
 
 type PurgeEndedSessionsRow struct {
-	ID       uuid.UUID
-	UserID   uuid.UUID
-	TenantID pgtype.UUID
-	Expired  bool
+	ID             uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID pgtype.UUID
+	Expired        bool
 }
 
 // PurgeEndedSessions deletes at most @max_rows API and console sessions past
@@ -721,7 +721,7 @@ func (q *Queries) PurgeEndedSessions(ctx context.Context, arg PurgeEndedSessions
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.Expired,
 		); err != nil {
 			return nil, err
@@ -916,12 +916,12 @@ const revokeAllSessionsForUser = `-- name: RevokeAllSessionsForUser :many
 UPDATE auth.sessions SET revoked_at = NOW()
 WHERE user_id = $1 AND revoked_at IS NULL
   AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
-RETURNING id, tenant_id
+RETURNING id, organization_id
 `
 
 type RevokeAllSessionsForUserRow struct {
-	ID       uuid.UUID
-	TenantID pgtype.UUID
+	ID             uuid.UUID
+	OrganizationID pgtype.UUID
 }
 
 // RevokeAllSessionsForUser ends every live session of the user, the caller's
@@ -936,7 +936,7 @@ func (q *Queries) RevokeAllSessionsForUser(ctx context.Context, userID uuid.UUID
 	items := []RevokeAllSessionsForUserRow{}
 	for rows.Next() {
 		var i RevokeAllSessionsForUserRow
-		if err := rows.Scan(&i.ID, &i.TenantID); err != nil {
+		if err := rows.Scan(&i.ID, &i.OrganizationID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1007,7 +1007,7 @@ const revokeOtherSessionsForUser = `-- name: RevokeOtherSessionsForUser :many
 UPDATE auth.sessions SET revoked_at = NOW()
 WHERE user_id = $1 AND id <> $2 AND revoked_at IS NULL
   AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
-RETURNING id, tenant_id
+RETURNING id, organization_id
 `
 
 type RevokeOtherSessionsForUserParams struct {
@@ -1016,8 +1016,8 @@ type RevokeOtherSessionsForUserParams struct {
 }
 
 type RevokeOtherSessionsForUserRow struct {
-	ID       uuid.UUID
-	TenantID pgtype.UUID
+	ID             uuid.UUID
+	OrganizationID pgtype.UUID
 }
 
 // RevokeOtherSessionsForUser revokes all of a user's active sessions except the
@@ -1033,7 +1033,7 @@ func (q *Queries) RevokeOtherSessionsForUser(ctx context.Context, arg RevokeOthe
 	items := []RevokeOtherSessionsForUserRow{}
 	for rows.Next() {
 		var i RevokeOtherSessionsForUserRow
-		if err := rows.Scan(&i.ID, &i.TenantID); err != nil {
+		if err := rows.Scan(&i.ID, &i.OrganizationID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1059,7 +1059,7 @@ const revokeSessionForUser = `-- name: RevokeSessionForUser :one
 UPDATE auth.sessions SET revoked_at = NOW()
 WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
   AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
-RETURNING tenant_id
+RETURNING organization_id
 `
 
 type RevokeSessionForUserParams struct {
@@ -1067,15 +1067,15 @@ type RevokeSessionForUserParams struct {
 	UserID    uuid.UUID
 }
 
-// Revokes a session scoped to its owner and returns the (nullable) tenant for
+// Revokes a session scoped to its owner and returns the (nullable) organization for
 // event emission. No row (pgx.ErrNoRows) means the session isn't the caller's
 // or has already ended (revoked, or past its maximum age or idle timeout) — a
 // safe no-op, never a cross-user takedown.
 func (q *Queries) RevokeSessionForUser(ctx context.Context, arg RevokeSessionForUserParams) (pgtype.UUID, error) {
 	row := q.db.QueryRow(ctx, revokeSessionForUser, arg.SessionID, arg.UserID)
-	var tenant_id pgtype.UUID
-	err := row.Scan(&tenant_id)
-	return tenant_id, err
+	var organization_id pgtype.UUID
+	err := row.Scan(&organization_id)
+	return organization_id, err
 }
 
 const sessionEnd = `-- name: SessionEnd :one
@@ -1104,7 +1104,7 @@ SELECT COALESCE(s.second_factor, '')::text AS second_factor,
              AND v.verified_at > NOW() - COALESCE(sp.step_up_window, INTERVAL '5 minutes')
        ) AS stepped_up
 FROM auth.sessions s
-LEFT JOIN tenant.security_policies sp ON sp.tenant_id = s.tenant_id
+LEFT JOIN organization.security_policies sp ON sp.organization_id = s.organization_id
 WHERE s.id = $1 AND s.user_id = $2 AND s.revoked_at IS NULL
   AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
 `
@@ -1121,7 +1121,7 @@ type SessionSecondFactorRow struct {
 
 // How the sign-in behind a live session of the user's met a second factor
 // (” when it didn't), and whether the session holds a step-up still inside
-// its organisation's window. No row when the session is unknown, someone
+// its organization's window. No row when the session is unknown, someone
 // else's, revoked or expired.
 func (q *Queries) SessionSecondFactor(ctx context.Context, arg SessionSecondFactorParams) (SessionSecondFactorRow, error) {
 	row := q.db.QueryRow(ctx, sessionSecondFactor, arg.SessionID, arg.UserID)
@@ -1163,7 +1163,7 @@ const supersedeSession = `-- name: SupersedeSession :one
 UPDATE auth.sessions SET revoked_at = NOW(), superseded_by = $1
 WHERE id = $2 AND user_id = $3 AND revoked_at IS NULL
   AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
-RETURNING tenant_id
+RETURNING organization_id
 `
 
 type SupersedeSessionParams struct {
@@ -1172,16 +1172,16 @@ type SupersedeSessionParams struct {
 	UserID       uuid.UUID
 }
 
-// SupersedeSession ends the session a switch of organisation was made from —
+// SupersedeSession ends the session a switch of organization was made from —
 // only while it is live (not revoked, not past its maximum age or idle timeout)
 // and the caller's own — and records the session that replaced it. Ending it
 // is what stops its refresh tokens. Returns the organization it belonged to
 // (NULL for none). No row: it had already ended.
 func (q *Queries) SupersedeSession(ctx context.Context, arg SupersedeSessionParams) (pgtype.UUID, error) {
 	row := q.db.QueryRow(ctx, supersedeSession, arg.NewSessionID, arg.SessionID, arg.UserID)
-	var tenant_id pgtype.UUID
-	err := row.Scan(&tenant_id)
-	return tenant_id, err
+	var organization_id pgtype.UUID
+	err := row.Scan(&organization_id)
+	return organization_id, err
 }
 
 const takeSourceAccounts = `-- name: TakeSourceAccounts :many
@@ -1260,20 +1260,20 @@ func (q *Queries) TouchSession(ctx context.Context, sessionID uuid.UUID) error {
 
 const touchTrustedDevice = `-- name: TouchTrustedDevice :one
 UPDATE auth.trusted_devices SET last_used_at = NOW()
-WHERE token_hash = $1 AND user_id = $2 AND tenant_id = $3 AND expires_at > NOW()
+WHERE token_hash = $1 AND user_id = $2 AND organization_id = $3 AND expires_at > NOW()
 RETURNING id
 `
 
 type TouchTrustedDeviceParams struct {
-	TokenHash string
-	UserID    uuid.UUID
-	TenantID  pgtype.UUID
+	TokenHash      string
+	UserID         uuid.UUID
+	OrganizationID pgtype.UUID
 }
 
 // Refreshes last_used_at on the live device the token names for the user in
-// the organisation that remembered it, and returns its id; no row otherwise.
+// the organization that remembered it, and returns its id; no row otherwise.
 func (q *Queries) TouchTrustedDevice(ctx context.Context, arg TouchTrustedDeviceParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, touchTrustedDevice, arg.TokenHash, arg.UserID, arg.TenantID)
+	row := q.db.QueryRow(ctx, touchTrustedDevice, arg.TokenHash, arg.UserID, arg.OrganizationID)
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err

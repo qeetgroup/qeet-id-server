@@ -19,20 +19,20 @@ import (
 
 // otherSessionsEnded turns RevokeOtherSessionsForUser's rows into signals.
 func otherSessionsEnded(userID uuid.UUID, rows []dbgen.RevokeOtherSessionsForUserRow) []sessionsignal.Session {
-	ids, tenants := make([]uuid.UUID, len(rows)), make([]pgtype.UUID, len(rows))
+	ids, organizations := make([]uuid.UUID, len(rows)), make([]pgtype.UUID, len(rows))
 	for i, r := range rows {
-		ids[i], tenants[i] = r.ID, r.TenantID
+		ids[i], organizations[i] = r.ID, r.OrganizationID
 	}
-	return endedSessions(userID, ids, tenants)
+	return endedSessions(userID, ids, organizations)
 }
 
 // endedSessions turns the sessions a revocation query returned into signals.
-func endedSessions(userID uuid.UUID, ids []uuid.UUID, tenants []pgtype.UUID) []sessionsignal.Session {
+func endedSessions(userID uuid.UUID, ids []uuid.UUID, organizations []pgtype.UUID) []sessionsignal.Session {
 	out := make([]sessionsignal.Session, len(ids))
 	for i, id := range ids {
 		out[i] = sessionsignal.Session{ID: id, UserID: userID}
-		if tenants[i].Valid {
-			out[i].TenantID = uuid.UUID(tenants[i].Bytes)
+		if organizations[i].Valid {
+			out[i].OrganizationID = uuid.UUID(organizations[i].Bytes)
 		}
 	}
 	return out
@@ -46,7 +46,7 @@ func (s *Service) Logout(ctx context.Context, sessionID, userID uuid.UUID) error
 		return err
 	}
 	defer tx.Rollback(ctx)
-	tenantID, err := s.q.WithTx(tx).RevokeSessionForUser(ctx, dbgen.RevokeSessionForUserParams{
+	organizationID, err := s.q.WithTx(tx).RevokeSessionForUser(ctx, dbgen.RevokeSessionForUserParams{
 		SessionID: sessionID,
 		UserID:    userID,
 	})
@@ -57,7 +57,7 @@ func (s *Service) Logout(ctx context.Context, sessionID, userID uuid.UUID) error
 		return err
 	}
 	s.signals.Revoked(ctx, tx, sessionsignal.ReasonLogout,
-		endedSessions(userID, []uuid.UUID{sessionID}, []pgtype.UUID{tenantID})...)
+		endedSessions(userID, []uuid.UUID{sessionID}, []pgtype.UUID{organizationID})...)
 	return tx.Commit(ctx)
 }
 
@@ -67,7 +67,7 @@ func (s *Service) Logout(ctx context.Context, sessionID, userID uuid.UUID) error
 type RevokeOtherSessionsInput struct {
 	UserID           uuid.UUID
 	CurrentSessionID uuid.UUID
-	TenantID         *uuid.UUID
+	OrganizationID   *uuid.UUID
 	IP               string
 	UserAgent        string
 	RequestID        string
@@ -110,7 +110,7 @@ func (s *Service) RevokeOtherSessions(ctx context.Context, in RevokeOtherSession
 	revoked := int64(len(rows))
 	s.signals.Revoked(ctx, tx, sessionsignal.ReasonOtherSessionsRevoked, otherSessionsEnded(in.UserID, rows)...)
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID: in.TenantID, ActorUserID: &in.UserID, ActorType: "user",
+		OrganizationID: in.OrganizationID, ActorUserID: &in.UserID, ActorType: "user",
 		Action: "auth.other_sessions_revoked", ResourceType: "user", ResourceID: &in.UserID,
 		IP: in.IP, UserAgent: in.UserAgent, RequestID: in.RequestID,
 		Metadata: map[string]any{"revoked_sessions": revoked, "kept_session_id": in.CurrentSessionID},
@@ -130,12 +130,12 @@ type SignInsEnded = user.SignInsEnded
 // RevokeAllSessionsInput names the caller. SessionID must come from the
 // caller's own access token, never from anything the client supplies.
 type RevokeAllSessionsInput struct {
-	UserID    uuid.UUID
-	SessionID uuid.UUID
-	TenantID  *uuid.UUID
-	IP        string
-	UserAgent string
-	RequestID string
+	UserID         uuid.UUID
+	SessionID      uuid.UUID
+	OrganizationID *uuid.UUID
+	IP             string
+	UserAgent      string
+	RequestID      string
 }
 
 // RevokeAllSessions signs the caller out everywhere: API and console sessions,
@@ -164,7 +164,7 @@ func (s *Service) RevokeAllSessions(ctx context.Context, in RevokeAllSessionsInp
 		return SignInsEnded{}, err
 	}
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID: in.TenantID, ActorUserID: &in.UserID, ActorType: "user",
+		OrganizationID: in.OrganizationID, ActorUserID: &in.UserID, ActorType: "user",
 		Action: "auth.all_sessions_revoked", ResourceType: "user", ResourceID: &in.UserID,
 		IP: in.IP, UserAgent: in.UserAgent, RequestID: in.RequestID,
 		Metadata: map[string]any{
@@ -213,8 +213,8 @@ func EndSignIns(ctx context.Context, tx pgx.Tx, signals *sessionsignal.Signaller
 	sessions := make([]sessionsignal.Session, len(rows))
 	for i, r := range rows {
 		sessions[i] = sessionsignal.Session{ID: r.ID, UserID: userID}
-		if r.TenantID.Valid {
-			sessions[i].TenantID = uuid.UUID(r.TenantID.Bytes)
+		if r.OrganizationID.Valid {
+			sessions[i].OrganizationID = uuid.UUID(r.OrganizationID.Bytes)
 		}
 	}
 	signals.Revoked(ctx, tx, reason, sessions...)
@@ -288,14 +288,14 @@ func (s *Service) SignInMethods(ctx context.Context, userID uuid.UUID) (user.Sig
 
 // Session is one of a person's API or console sessions, as listed to them.
 type Session struct {
-	ID         uuid.UUID  `json:"id"`
-	UserID     uuid.UUID  `json:"user_id"`
-	TenantID   uuid.UUID  `json:"tenant_id"`
-	IP         *string    `json:"ip"`
-	UserAgent  *string    `json:"user_agent"`
-	CreatedAt  time.Time  `json:"created_at"`
-	LastSeenAt time.Time  `json:"last_seen_at"`
-	RevokedAt  *time.Time `json:"revoked_at"`
+	ID             uuid.UUID  `json:"id"`
+	UserID         uuid.UUID  `json:"user_id"`
+	OrganizationID uuid.UUID  `json:"tenant_id"`
+	IP             *string    `json:"ip"`
+	UserAgent      *string    `json:"user_agent"`
+	CreatedAt      time.Time  `json:"created_at"`
+	LastSeenAt     time.Time  `json:"last_seen_at"`
+	RevokedAt      *time.Time `json:"revoked_at"`
 	// ExpiresAt is when the session ends however active it is, and
 	// IdleExpiresAt when it ends unless renewed first. Status is "active",
 	// "revoked" (ended by sign-out or revocation) or "expired" (reached its
@@ -374,7 +374,7 @@ func (s *Service) ListSessionsPageFor(ctx context.Context, userID, current uuid.
 	// at the join rather than relying on the caller to know about
 	// `users.deleted_at`.
 	rows, err := s.pool.Query(ctx, `
-		SELECT sess.id, sess.user_id, sess.tenant_id, host(sess.ip), sess.user_agent,
+		SELECT sess.id, sess.user_id, sess.organization_id, host(sess.ip), sess.user_agent,
 		       sess.created_at, sess.last_seen_at, sess.revoked_at,
 		       sess.expires_at, ends.idle,
 		       CASE WHEN ends.idle <= COALESCE(sess.revoked_at, NOW()) THEN 'expired'
@@ -396,8 +396,8 @@ func (s *Service) ListSessionsPageFor(ctx context.Context, userID, current uuid.
 	out := make([]Session, 0, limit+1)
 	for rows.Next() {
 		var session Session
-		var tenantID pgtype.UUID
-		if err := rows.Scan(&session.ID, &session.UserID, &tenantID, &session.IP, &session.UserAgent, &session.CreatedAt, &session.LastSeenAt, &session.RevokedAt,
+		var organizationID pgtype.UUID
+		if err := rows.Scan(&session.ID, &session.UserID, &organizationID, &session.IP, &session.UserAgent, &session.CreatedAt, &session.LastSeenAt, &session.RevokedAt,
 			&session.ExpiresAt, &session.IdleExpiresAt, &session.Status, &session.Country, &session.City); err != nil {
 			return nil, err
 		}
@@ -408,8 +408,8 @@ func (s *Service) ListSessionsPageFor(ctx context.Context, userID, current uuid.
 		device := useragent.Parse(ua)
 		session.Device, session.DeviceKind = device.Label(), device.Kind
 		session.Current = current != uuid.Nil && session.ID == current
-		if tenantID.Valid {
-			session.TenantID = uuid.UUID(tenantID.Bytes)
+		if organizationID.Valid {
+			session.OrganizationID = uuid.UUID(organizationID.Bytes)
 		}
 		out = append(out, session)
 	}

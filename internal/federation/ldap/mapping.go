@@ -17,9 +17,9 @@ type ProfileMapper interface {
 // SetProfileMapper sets the mapper applied to signed-in directory accounts.
 func (service *Service) SetProfileMapper(mapper ProfileMapper) { service.mapper = mapper }
 
-func (service *Service) storeMappedProfile(ctx context.Context, tx pgx.Tx, tenantID, userID uuid.UUID, user *ldapUser) error {
+func (service *Service) storeMappedProfile(ctx context.Context, tx pgx.Tx, organizationID, userID uuid.UUID, user *ldapUser) error {
 	if service.mapper == nil || len(user.Profile) == 0 {
 		return nil
 	}
-	return service.mapper.StoreProfile(ctx, tx, tenantID, userID, user.ConnectionID, user.Profile)
+	return service.mapper.StoreProfile(ctx, tx, organizationID, userID, user.ConnectionID, user.Profile)
 }

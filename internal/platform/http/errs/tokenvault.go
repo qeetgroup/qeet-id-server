@@ -1,6 +1,6 @@
 package errs
 
-// Token-vault error codes — the per-tenant encrypted store for third-party
+// Token-vault error codes — the per-organization encrypted store for third-party
 // OAuth tokens (Slack, GitHub, Google, …). Stable, namespaced machine
 // identifiers; clients branch and localize on these, never on the message text.
 const (

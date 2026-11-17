@@ -51,10 +51,10 @@ func TestIntrospectionReportsInactiveAfterSignOut(t *testing.T) {
 	ctx := dbtest.Context(t)
 	p := newProvider(t)
 	p.svc.SetSessionLive(p.sessions.SessionLive)
-	tenant := dbtest.Tenant(t)
-	person := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	person := dbtest.User(t, organization, organization)
 	client, secret := registerClientWith(t, p.svc, CreateClientInput{
-		TenantID: tenant, GrantTypes: []string{"authorization_code", "refresh_token", grantTypeDeviceCode},
+		OrganizationID: organization, GrantTypes: []string{"authorization_code", "refresh_token", grantTypeDeviceCode},
 	})
 	active := func(token string) bool {
 		t.Helper()
@@ -132,12 +132,12 @@ func TestRPInitiatedLogout(t *testing.T) {
 		notices <- r.PostForm
 	}))
 	t.Cleanup(rp.Close)
-	tenant := dbtest.Tenant(t)
-	person := dbtest.User(t, tenant, tenant)
-	someone := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	person := dbtest.User(t, organization, organization)
+	someone := dbtest.User(t, organization, organization)
 	const signedOut = "https://app.example.test/signed-out"
 	client, secret := registerClientWith(t, p.svc, CreateClientInput{
-		TenantID: tenant, PostLogoutURIs: []string{signedOut},
+		OrganizationID: organization, PostLogoutURIs: []string{signedOut},
 		BackchannelLogoutURI: rp.URL + "/backchannel", FrontchannelLogoutURI: "https://app.example.test/frontchannel",
 	})
 	cookie, sessionID := p.signIn(t, person.ID)
@@ -213,7 +213,7 @@ func TestRPInitiatedLogout(t *testing.T) {
 		}
 		delete(signedOutOf, sid)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM auth.oidc_logout_deliveries WHERE tenant_id = $1 AND delivered_at IS NOT NULL`, tenant); n != 2 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM auth.oidc_logout_deliveries WHERE organization_id = $1 AND delivered_at IS NOT NULL`, organization); n != 2 {
 		t.Errorf("%d notices marked delivered, want 2", n)
 	}
 }
@@ -225,9 +225,9 @@ func TestRPInitiatedLogout(t *testing.T) {
 func TestLogoutHintMustBeAnIDToken(t *testing.T) {
 	ctx := dbtest.Context(t)
 	p := newProvider(t)
-	tenant := dbtest.Tenant(t)
-	person := dbtest.User(t, tenant, tenant)
-	client, secret := registerClientWith(t, p.svc, CreateClientInput{TenantID: tenant})
+	organization := dbtest.Organization(t)
+	person := dbtest.User(t, organization, organization)
+	client, secret := registerClientWith(t, p.svc, CreateClientInput{OrganizationID: organization})
 	must := func(raw string, err error) string {
 		t.Helper()
 		if err != nil {
@@ -252,10 +252,10 @@ func TestLogoutHintMustBeAnIDToken(t *testing.T) {
 		},
 		"the session's own sign-out confirmation": func(sid uuid.UUID) string { return must(p.svc.logoutConfirmation(sid)) },
 		"the person's access token": func(sid uuid.UUID) string {
-			return issued(p.svc.issuer.IssueAccess(person.ID, tenant, sid, ""))
+			return issued(p.svc.issuer.IssueAccess(person.ID, organization, sid, ""))
 		},
 		"an application's access token": func(sid uuid.UUID) string {
-			return issued(p.svc.issuer.IssueClientAccess(tokens.ClientAccess{UserID: person.ID, TenantID: tenant, SessionID: sid, ClientID: client.ClientID}))
+			return issued(p.svc.issuer.IssueClientAccess(tokens.ClientAccess{UserID: person.ID, OrganizationID: organization, SessionID: sid, ClientID: client.ClientID}))
 		},
 		"a back-channel logout token": func(sid uuid.UUID) string { return must(p.svc.logoutToken(client.ClientID, person.ID, sid)) },
 		"a token with no subject": func(sid uuid.UUID) string {
@@ -291,16 +291,16 @@ func TestLogoutHintMustBeAnIDToken(t *testing.T) {
 	}
 }
 
-// TestSignOutNoticesStayInTheirOrganisation checks that when one hosted-login
-// session signed in to two organisations' applications, the record of telling
-// them of the sign-out is kept by each organisation and names only its own.
-func TestSignOutNoticesStayInTheirOrganisation(t *testing.T) {
+// TestSignOutNoticesStayInTheirOrganization checks that when one hosted-login
+// session signed in to two organizations' applications, the record of telling
+// them of the sign-out is kept by each organization and names only its own.
+func TestSignOutNoticesStayInTheirOrganization(t *testing.T) {
 	ctx := dbtest.Context(t)
 	p := newProvider(t)
-	tenantA, tenantB := dbtest.Tenant(t), dbtest.Tenant(t)
-	person := dbtest.User(t, tenantA, tenantA, tenantB)
-	appA, secretA := registerClientWith(t, p.svc, CreateClientInput{TenantID: tenantA, BackchannelLogoutURI: "http://127.0.0.1:9/a"})
-	appB, secretB := registerClientWith(t, p.svc, CreateClientInput{TenantID: tenantB, BackchannelLogoutURI: "http://127.0.0.1:9/b"})
+	organizationA, organizationB := dbtest.Organization(t), dbtest.Organization(t)
+	person := dbtest.User(t, organizationA, organizationA, organizationB)
+	appA, secretA := registerClientWith(t, p.svc, CreateClientInput{OrganizationID: organizationA, BackchannelLogoutURI: "http://127.0.0.1:9/a"})
+	appB, secretB := registerClientWith(t, p.svc, CreateClientInput{OrganizationID: organizationB, BackchannelLogoutURI: "http://127.0.0.1:9/b"})
 	cookie, sessionID := p.signIn(t, person.ID)
 	signInThrough(t, p, appA, secretA, person.ID, sessionID)
 	signInThrough(t, p, appB, secretB, person.ID, sessionID)
@@ -309,16 +309,16 @@ func TestSignOutNoticesStayInTheirOrganisation(t *testing.T) {
 	}
 
 	for _, tc := range []struct {
-		tenant       uuid.UUID
+		organization uuid.UUID
 		own, foreign string
-	}{{tenantA, appA.ClientID, appB.ClientID}, {tenantB, appB.ClientID, appA.ClientID}} {
-		const naming = `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'oidc.sign_out_notified'
+	}{{organizationA, appA.ClientID, appB.ClientID}, {organizationB, appB.ClientID, appA.ClientID}} {
+		const naming = `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'oidc.sign_out_notified'
 			AND metadata::text LIKE '%' || $2 || '%'`
-		if n := dbtest.Count(t, naming, tc.tenant, tc.foreign); n != 0 {
-			t.Errorf("organisation %s's audit names another organisation's application %d times", tc.tenant, n)
+		if n := dbtest.Count(t, naming, tc.organization, tc.foreign); n != 0 {
+			t.Errorf("organisation %s's audit names another organisation's application %d times", tc.organization, n)
 		}
-		if n := dbtest.Count(t, naming, tc.tenant, tc.own); n != 1 {
-			t.Errorf("organisation %s's audit records the notice to its application %d times, want once", tc.tenant, n)
+		if n := dbtest.Count(t, naming, tc.organization, tc.own); n != 1 {
+			t.Errorf("organisation %s's audit records the notice to its application %d times, want once", tc.organization, n)
 		}
 	}
 }

@@ -22,15 +22,15 @@ import (
 // range, carries each event's metadata, and says how many match.
 func TestTheAuditLogIsFilteredAndCounted(t *testing.T) {
 	ctx := dbtest.Context(t)
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
 	target := uuid.New()
 	now := time.Now().UTC()
 	insert := func(action, resourceType string, resourceID *uuid.UUID, ip string, at time.Time) uuid.UUID {
 		t.Helper()
 		id := uuid.New()
-		if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO audit.events (id, tenant_id, actor_type, action, resource_type, resource_id, ip, created_at, metadata)
-			VALUES ($1, $2, 'system', $3, $4, $5, NULLIF($6, '')::inet, $7, '{"note":"kept"}')`, id, tenant, action, resourceType, resourceID, ip, at); err != nil {
+		if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO audit.events (id, organization_id, actor_type, action, resource_type, resource_id, ip, created_at, metadata)
+			VALUES ($1, $2, 'system', $3, $4, $5, NULLIF($6, '')::inet, $7, '{"note":"kept"}')`, id, organization, action, resourceType, resourceID, ip, at); err != nil {
 			t.Fatal(err)
 		}
 		return id
@@ -39,14 +39,14 @@ func TestTheAuditLogIsFilteredAndCounted(t *testing.T) {
 	group := insert("group.updated", "group", &target, "203.0.113.5", now.Add(-time.Hour))
 	role := insert("role.updated", "role", nil, "203.0.113.5", now.Add(-time.Minute))
 
-	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Reader: NewReader(dbtest.Pool(t))}).Mount)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Reader: NewReader(dbtest.Pool(t))}).Mount)
 	type page struct {
 		Items []Row `json:"items"`
 		Total int   `json:"total"`
 	}
 	get := func(v url.Values) page {
 		t.Helper()
-		rec := dbtest.Do(t, h, http.MethodGet, "/tenants/"+tenant.String()+"/audit?"+v.Encode(), nil)
+		rec := dbtest.Do(t, h, http.MethodGet, "/tenants/"+organization.String()+"/audit?"+v.Encode(), nil)
 		var p page
 		dbtest.Decode(t, rec, &p)
 		if rec.Code != http.StatusOK {
@@ -80,14 +80,14 @@ func TestTheAuditLogIsFilteredAndCounted(t *testing.T) {
 		t.Errorf("first page: %+v of %d, want one row with its metadata of 3", first.Items, first.Total)
 	}
 	for _, bad := range []url.Values{{"ip": {"nope"}}, {"resource_id": {"nope"}}, {"from": {"yesterday"}}} {
-		if rec := dbtest.Do(t, h, http.MethodGet, "/tenants/"+tenant.String()+"/audit?"+bad.Encode(), nil); rec.Code != http.StatusBadRequest {
+		if rec := dbtest.Do(t, h, http.MethodGet, "/tenants/"+organization.String()+"/audit?"+bad.Encode(), nil); rec.Code != http.StatusBadRequest {
 			t.Errorf("audit %v: %d, want 400", bad, rec.Code)
 		}
 	}
 }
 
-// unguarded serves mount as p with no tenant-scope guard or row-level scope in
-// front, so a handler that trusts the path's organisation shows it.
+// unguarded serves mount as p with no organization-scope guard or row-level scope in
+// front, so a handler that trusts the path's organization shows it.
 func unguarded(p *httpx.Principal, mount func(chi.Router)) http.Handler {
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler {
@@ -99,14 +99,14 @@ func unguarded(p *httpx.Principal, mount func(chi.Router)) http.Handler {
 	return r
 }
 
-// TestAuditListTakesTheOrganisationFromTheCaller checks that the audit list and
-// its verification answer only for the caller's own organisation, even without
-// the router's tenant guard in front: another organisation's in the path is
+// TestAuditListTakesTheOrganizationFromTheCaller checks that the audit list and
+// its verification answer only for the caller's own organization, even without
+// the router's organization guard in front: another organization's in the path is
 // refused, not read.
-func TestAuditListTakesTheOrganisationFromTheCaller(t *testing.T) {
+func TestAuditListTakesTheOrganizationFromTheCaller(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	mine, theirs := dbtest.Tenant(t), dbtest.Tenant(t)
+	mine, theirs := dbtest.Organization(t), dbtest.Organization(t)
 	admin := dbtest.User(t, mine, mine)
 	tx, err := pool.Begin(ctx)
 	if err != nil {

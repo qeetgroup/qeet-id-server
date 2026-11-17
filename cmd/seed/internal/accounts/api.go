@@ -49,8 +49,8 @@ func (a *api) do(o *world.Org, actor *world.Person, actorType, method, path stri
 	}
 	req := httptest.NewRequest(method, path, in)
 	req.Header.Set("Content-Type", "application/json")
-	tenant := o.ID
-	p := &httpx.Principal{TenantID: &tenant, ActorType: actorType}
+	organization := o.ID
+	p := &httpx.Principal{OrganizationID: &organization, ActorType: actorType}
 	if actor != nil {
 		id := actor.ID
 		p.UserID, p.ActorType = &id, "user"

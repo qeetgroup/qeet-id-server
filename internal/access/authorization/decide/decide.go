@@ -1,7 +1,7 @@
-// Package decide composes Qeet ID's three authorization engines: the tenant is
+// Package decide composes Qeet ID's three authorization engines: the organization is
 // checked first, then any ABAC deny refuses, then any allow (an RBAC role, a
 // ReBAC tuple or an ABAC allow policy) permits. An engine error refuses. ABAC
-// runs only for a tenant with a policy that could change the answer.
+// runs only for an organization with a policy that could change the answer.
 package decide
 
 import (
@@ -17,28 +17,28 @@ import (
 
 // Roles is the RBAC engine (rbac.Repository).
 type Roles interface {
-	Check(ctx context.Context, userID, tenantID uuid.UUID, permKey string) (bool, error)
+	Check(ctx context.Context, userID, organizationID uuid.UUID, permKey string) (bool, error)
 }
 
 // Relations is the ReBAC engine (rebac.Service).
 type Relations interface {
-	Check(ctx context.Context, tenantID uuid.UUID, object, relation, userID string) (bool, error)
+	Check(ctx context.Context, organizationID uuid.UUID, object, relation, userID string) (bool, error)
 }
 
 // Attributes is the ABAC engine (abac.Service).
 type Attributes interface {
-	Presence(ctx context.Context, tenantID uuid.UUID) (hasDeny, hasAllow bool, err error)
-	Evaluate(ctx context.Context, tenantID uuid.UUID, in abac.EvaluationInput) (*abac.Decision, error)
+	Presence(ctx context.Context, organizationID uuid.UUID) (hasDeny, hasAllow bool, err error)
+	Evaluate(ctx context.Context, organizationID uuid.UUID, in abac.EvaluationInput) (*abac.Decision, error)
 	PlatformAttributes(ctx context.Context, r abac.Request) (subject, ctxAttrs map[string]any, err error)
 }
 
 // The engine that decided.
 const (
-	ModelTenant = "tenant" // refused before any engine ran
-	ModelABAC   = "abac"   // decided by an ABAC policy
-	ModelRBAC   = "rbac"   // decided by a role permission
-	ModelReBAC  = "rebac"  // decided by a relationship tuple
-	ModelNone   = "none"   // nothing allowed it: refused by default
+	ModelOrganization = "tenant" // refused before any engine ran
+	ModelABAC         = "abac"   // decided by an ABAC policy
+	ModelRBAC         = "rbac"   // decided by a role permission
+	ModelReBAC        = "rebac"  // decided by a relationship tuple
+	ModelNone         = "none"   // nothing allowed it: refused by default
 )
 
 // Decision is one composed answer. Model and Rule name what decided it, and
@@ -57,11 +57,11 @@ type Decision struct {
 
 // Decision.ReasonCode values of the composition itself.
 const (
-	ReasonNoTenant      = "authz.no_tenant"      // no organisation to decide in
-	ReasonEngineError   = "authz.engine_error"   // an engine failed, so it refused
-	ReasonRoleGrant     = "authz.role_grant"     // a role grants the permission
-	ReasonRelationGrant = "authz.relation_grant" // a relationship tuple grants it
-	ReasonNothingAllows = "authz.nothing_allows" // nothing allows it: refused by default
+	ReasonNoOrganization = "authz.no_tenant"      // no organization to decide in
+	ReasonEngineError    = "authz.engine_error"   // an engine failed, so it refused
+	ReasonRoleGrant      = "authz.role_grant"     // a role grants the permission
+	ReasonRelationGrant  = "authz.relation_grant" // a relationship tuple grants it
+	ReasonNothingAllows  = "authz.nothing_allows" // nothing allows it: refused by default
 )
 
 // DecidedBy is the part of a decision every check response carries: the model
@@ -97,9 +97,9 @@ func New(roles Roles, relations Relations, attributes Attributes) *Decider {
 
 // question is one decision to compose.
 type question struct {
-	tenantID uuid.UUID // the tenant the decision is for
-	subject  string    // the user's id as the engines name it
-	userID   uuid.UUID // the same, parsed; uuid.Nil when it isn't a user id RBAC knows
+	organizationID uuid.UUID // the organization the decision is for
+	subject        string    // the user's id as the engines name it
+	userID         uuid.UUID // the same, parsed; uuid.Nil when it isn't a user id RBAC knows
 
 	resourceType, resourceID, action string   // what ABAC policies are matched against
 	permissions                      []string // RBAC permission keys, any one of which allows
@@ -116,19 +116,19 @@ type Properties struct {
 	Subject, Resource, Action, Context map[string]any
 }
 
-// Permission decides whether userID may use permission in tenantID: an ABAC
+// Permission decides whether userID may use permission in organizationID: an ABAC
 // deny refuses; a role granting it, or an ABAC allow policy, permits. ABAC
 // sees the permission as resource type and action ("doc:write" is resource
 // doc, action write; "user.read" is user, read).
-func (d *Decider) Permission(ctx context.Context, tenantID, userID uuid.UUID, permission string) (Decision, error) {
-	return d.PermissionWith(ctx, tenantID, userID, permission, Properties{})
+func (d *Decider) Permission(ctx context.Context, organizationID, userID uuid.UUID, permission string) (Decision, error) {
+	return d.PermissionWith(ctx, organizationID, userID, permission, Properties{})
 }
 
 // PermissionWith is Permission with the caller's properties for ABAC.
-func (d *Decider) PermissionWith(ctx context.Context, tenantID, userID uuid.UUID, permission string, props Properties) (Decision, error) {
+func (d *Decider) PermissionWith(ctx context.Context, organizationID, userID uuid.UUID, permission string, props Properties) (Decision, error) {
 	resourceType, action := SplitPermission(permission)
 	return d.decide(ctx, question{
-		tenantID: tenantID, subject: userID.String(), userID: userID,
+		organizationID: organizationID, subject: userID.String(), userID: userID,
 		resourceType: resourceType, action: action,
 		permissions: []string{permission},
 		abacAllows:  true,
@@ -137,18 +137,18 @@ func (d *Decider) PermissionWith(ctx context.Context, tenantID, userID uuid.UUID
 }
 
 // Relation decides whether user (an id) holds relation on object ("type:id")
-// in tenantID. An ABAC deny on that type with relation as action refuses; a
+// in organizationID. An ABAC deny on that type with relation as action refuses; a
 // tuple, a role granting "type:relation" or "type.relation", or an ABAC allow
 // permits. Roles and relationships are a union: a role grant needs no tuple.
-func (d *Decider) Relation(ctx context.Context, tenantID uuid.UUID, user, object, relation string) (Decision, error) {
-	return d.RelationWith(ctx, tenantID, user, object, relation, Properties{})
+func (d *Decider) Relation(ctx context.Context, organizationID uuid.UUID, user, object, relation string) (Decision, error) {
+	return d.RelationWith(ctx, organizationID, user, object, relation, Properties{})
 }
 
 // RelationWith is Relation with the caller's properties for ABAC.
-func (d *Decider) RelationWith(ctx context.Context, tenantID uuid.UUID, user, object, relation string, props Properties) (Decision, error) {
+func (d *Decider) RelationWith(ctx context.Context, organizationID uuid.UUID, user, object, relation string, props Properties) (Decision, error) {
 	objType, objID, _ := strings.Cut(object, ":")
 	q := question{
-		tenantID: tenantID, subject: user,
+		organizationID: organizationID, subject: user,
 		resourceType: objType, resourceID: objID, action: relation,
 		object: object, relation: relation,
 		abacAllows: true,
@@ -164,10 +164,10 @@ func (d *Decider) RelationWith(ctx context.Context, tenantID uuid.UUID, user, ob
 // Check is the platform's route guard (an rbac.Checker): a role must grant the
 // permission and no ABAC deny may refuse it. An ABAC allow does not widen
 // access to Qeet ID's own management API.
-func (d *Decider) Check(ctx context.Context, userID, tenantID uuid.UUID, permission string) (bool, error) {
+func (d *Decider) Check(ctx context.Context, userID, organizationID uuid.UUID, permission string) (bool, error) {
 	resourceType, action := SplitPermission(permission)
 	dec, err := d.decide(ctx, question{
-		tenantID: tenantID, subject: userID.String(), userID: userID,
+		organizationID: organizationID, subject: userID.String(), userID: userID,
 		resourceType: resourceType, action: action,
 		permissions: []string{permission},
 		own:         true,
@@ -176,31 +176,31 @@ func (d *Decider) Check(ctx context.Context, userID, tenantID uuid.UUID, permiss
 }
 
 func (d *Decider) decide(ctx context.Context, q question) (Decision, error) {
-	if q.tenantID == uuid.Nil {
-		return Decision{Model: ModelTenant, Rule: "no organisation", ReasonCode: ReasonNoTenant, Trace: []string{"tenant: no organisation, refused"}}, nil
+	if q.organizationID == uuid.Nil {
+		return Decision{Model: ModelOrganization, Rule: "no organisation", ReasonCode: ReasonNoOrganization, Trace: []string{"tenant: no organisation, refused"}}, nil
 	}
-	trace := []string{"tenant: " + q.tenantID.String()}
+	trace := []string{"tenant: " + q.organizationID.String()}
 	refuse := func(model string, err error) (Decision, error) {
 		trace = append(trace, fmt.Sprintf("%s: error, refused (%v)", model, err))
 		return Decision{Model: model, Rule: "engine error", ReasonCode: ReasonEngineError, Trace: trace}, err
 	}
 
-	// Deny first: ABAC, wherever the tenant has a deny policy.
-	hasDeny, hasAllow, err := d.attributes.Presence(ctx, q.tenantID)
+	// Deny first: ABAC, wherever the organization has a deny policy.
+	hasDeny, hasAllow, err := d.attributes.Presence(ctx, q.organizationID)
 	if err != nil {
 		return refuse(ModelABAC, err)
 	}
 	var abacAllow *abac.Decision
 	if hasDeny || (q.abacAllows && hasAllow) {
-		request := abac.Request{Subject: q.subject, UserID: q.userID, TenantID: q.tenantID}
+		request := abac.Request{Subject: q.subject, UserID: q.userID, OrganizationID: q.organizationID}
 		if q.own {
-			request = abac.OwnRequest(ctx, q.userID, q.tenantID)
+			request = abac.OwnRequest(ctx, q.userID, q.organizationID)
 		}
 		subject, ctxAttrs, err := d.attributes.PlatformAttributes(ctx, request)
 		if err != nil {
 			return refuse(ModelABAC, err)
 		}
-		res, err := d.attributes.Evaluate(ctx, q.tenantID, abac.EvaluationInput{
+		res, err := d.attributes.Evaluate(ctx, q.organizationID, abac.EvaluationInput{
 			Subject:     overlay(q.props.Subject, subject),
 			Resource:    abac.EvaluationResource{Type: q.resourceType, ID: q.resourceID, Attrs: q.props.Resource},
 			Action:      q.action,
@@ -228,7 +228,7 @@ func (d *Decider) decide(ctx context.Context, q question) (Decision, error) {
 	// Then allow: any engine.
 	if q.userID != uuid.Nil {
 		for _, perm := range q.permissions {
-			ok, err := d.roles.Check(ctx, q.userID, q.tenantID, perm)
+			ok, err := d.roles.Check(ctx, q.userID, q.organizationID, perm)
 			if err != nil {
 				return refuse(ModelRBAC, err)
 			}
@@ -241,7 +241,7 @@ func (d *Decider) decide(ctx context.Context, q question) (Decision, error) {
 		}
 	}
 	if q.object != "" {
-		ok, err := d.relations.Check(ctx, q.tenantID, q.object, q.relation, q.subject)
+		ok, err := d.relations.Check(ctx, q.organizationID, q.object, q.relation, q.subject)
 		if err != nil {
 			return refuse(ModelReBAC, err)
 		}
@@ -293,8 +293,8 @@ const policyRead = "policy.read"
 // trace, are shown only to a caller who may read policies (policy.read); anyone
 // else learns that a policy decided, and why, not which. An error checking that
 // hides them.
-func (d *Decider) ForViewer(ctx context.Context, p *httpx.Principal, tenantID uuid.UUID, dec Decision) Decision {
-	if d.mayReadPolicies(ctx, p, tenantID) {
+func (d *Decider) ForViewer(ctx context.Context, p *httpx.Principal, organizationID uuid.UUID, dec Decision) Decision {
+	if d.mayReadPolicies(ctx, p, organizationID) {
 		return dec
 	}
 	out := dec
@@ -316,7 +316,7 @@ func (d *Decider) ForViewer(ctx context.Context, p *httpx.Principal, tenantID uu
 	return out
 }
 
-func (d *Decider) mayReadPolicies(ctx context.Context, p *httpx.Principal, tenantID uuid.UUID) bool {
+func (d *Decider) mayReadPolicies(ctx context.Context, p *httpx.Principal, organizationID uuid.UUID) bool {
 	if p == nil {
 		return false
 	}
@@ -325,7 +325,7 @@ func (d *Decider) mayReadPolicies(ctx context.Context, p *httpx.Principal, tenan
 		if p.UserID == nil || p.ClientID != "" {
 			return false
 		}
-		ok, err := d.roles.Check(ctx, *p.UserID, tenantID, policyRead)
+		ok, err := d.roles.Check(ctx, *p.UserID, organizationID, policyRead)
 		return ok && err == nil
 	default:
 		for _, s := range p.Scopes {

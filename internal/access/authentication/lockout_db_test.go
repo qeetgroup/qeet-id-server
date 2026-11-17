@@ -14,24 +14,24 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// TestAnotherOrganisationsClientCannotLoosenLockout checks that naming the
-// application of an organisation with a lenient lockout doesn't loosen the
-// lockout another organisation's member is held to: the platform's threshold
+// TestAnotherOrganizationsClientCannotLoosenLockout checks that naming the
+// application of an organization with a lenient lockout doesn't loosen the
+// lockout another organization's member is held to: the platform's threshold
 // still locks, for the platform's window and lock time.
-func TestAnotherOrganisationsClientCannotLoosenLockout(t *testing.T) {
+func TestAnotherOrganizationsClientCannotLoosenLockout(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc, seen := newService(t), &anomalies{}
 	svc.SetAnomalyRecorder(seen)
 	platform := DefaultLockoutConfig().Defaults
-	lenient := dbtest.Tenant(t)
-	svc.SetLockoutSource(func(_ context.Context, tenantID uuid.UUID) (Lockout, error) {
-		if tenantID == lenient {
+	lenient := dbtest.Organization(t)
+	svc.SetLockoutSource(func(_ context.Context, organizationID uuid.UUID) (Lockout, error) {
+		if organizationID == lenient {
 			return Lockout{Threshold: 20, Window: time.Minute, Duration: time.Minute}, nil
 		}
 		return platform, nil
 	})
 	client := dbtest.Unique("app")
-	if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO auth.oidc_clients (tenant_id, client_id, name) VALUES ($1, $2, $2)`, lenient, client); err != nil {
+	if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO auth.oidc_clients (organization_id, client_id, name) VALUES ($1, $2, $2)`, lenient, client); err != nil {
 		t.Fatal(err)
 	}
 	victim, _ := member(t)
@@ -55,9 +55,9 @@ func TestAnotherOrganisationsClientCannotLoosenLockout(t *testing.T) {
 	}
 }
 
-// TestStricterLockoutCannotLockAnAccountEverywhere checks that an organisation
+// TestStricterLockoutCannotLockAnAccountEverywhere checks that an organization
 // with a strict lockout can't use its application to lock another
-// organisation's member out on every network: the account-wide lock counts to
+// organization's member out on every network: the account-wide lock counts to
 // the platform's threshold and lasts the platform's time, while the strict
 // lock still holds the networks it was guessed from.
 func TestStricterLockoutCannotLockAnAccountEverywhere(t *testing.T) {
@@ -65,15 +65,15 @@ func TestStricterLockoutCannotLockAnAccountEverywhere(t *testing.T) {
 	svc, seen := newService(t), &anomalies{}
 	svc.SetAnomalyRecorder(seen)
 	platform := DefaultLockoutConfig().Defaults
-	strict := dbtest.Tenant(t)
-	svc.SetLockoutSource(func(_ context.Context, tenantID uuid.UUID) (Lockout, error) {
-		if tenantID == strict {
+	strict := dbtest.Organization(t)
+	svc.SetLockoutSource(func(_ context.Context, organizationID uuid.UUID) (Lockout, error) {
+		if organizationID == strict {
 			return Lockout{Threshold: 3, Window: 24 * time.Hour, Duration: 24 * time.Hour}, nil
 		}
 		return platform, nil
 	})
 	client := dbtest.Unique("app")
-	if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO auth.oidc_clients (tenant_id, client_id, name) VALUES ($1, $2, $2)`, strict, client); err != nil {
+	if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO auth.oidc_clients (organization_id, client_id, name) VALUES ($1, $2, $2)`, strict, client); err != nil {
 		t.Fatal(err)
 	}
 	victim, _ := member(t)
@@ -82,7 +82,7 @@ func TestStricterLockoutCannotLockAnAccountEverywhere(t *testing.T) {
 		return err
 	}
 
-	// The strict organisation's own cap would have been 3 × 4 = 12 failures.
+	// The strict organization's own cap would have been 3 × 4 = 12 failures.
 	accountCap := platform.Threshold * DefaultLockoutConfig().AccountMultiplier
 	for i := range 12 {
 		if err := guess("Wrong-password-1", freshIP(), client); !errors.Is(err, errs.ErrAuthInvalidCredentials) {

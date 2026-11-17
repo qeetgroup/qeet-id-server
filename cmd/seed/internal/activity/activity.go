@@ -1,6 +1,6 @@
 // Package activity seeds months of everyday use: sessions on people's devices,
 // sign-ins and failures, administrators' changes in the audit log, the emails
-// the platform sent, and each organisation's billing history.
+// the platform sent, and each organization's billing history.
 package activity
 
 import (
@@ -14,7 +14,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/cmd/seed/internal/world"
 )
 
-// Seed writes every organisation's history up to today. What goes through the
+// Seed writes every organization's history up to today. What goes through the
 // API's services runs first, since At moves whatever is written while it
 // runs; the bulk of the history is then written directly, in one pass.
 func Seed(w *world.World) {
@@ -81,7 +81,7 @@ func Seed(w *world.World) {
 }
 
 // newHistory reads what the earlier steps set up that sign-ins depend on:
-// each organisation's session policy, linked social accounts and email or
+// each organization's session policy, linked social accounts and email or
 // SMS factors.
 func newHistory(w *world.World) *history {
 	h := &history{
@@ -95,9 +95,9 @@ func newHistory(w *world.World) *history {
 		h.policies[o.ID] = policy{maxAge: w.Cfg.SessionMaxAge, idle: w.Cfg.SessionIdleTimeout}
 	}
 	rows, err := w.Admin.Query(w.Ctx, `
-		SELECT tenant_id, EXTRACT(EPOCH FROM session_max_age)::bigint, EXTRACT(EPOCH FROM session_idle_timeout)::bigint,
+		SELECT organization_id, EXTRACT(EPOCH FROM session_max_age)::bigint, EXTRACT(EPOCH FROM session_idle_timeout)::bigint,
 		       COALESCE(max_sessions, 0)
-		FROM tenant.security_policies WHERE tenant_id = ANY($1)`, ids)
+		FROM organization.security_policies WHERE organization_id = ANY($1)`, ids)
 	w.Check(err, "read session policies")
 	for rows.Next() {
 		var id uuid.UUID
@@ -109,13 +109,13 @@ func newHistory(w *world.World) *history {
 	rows.Close()
 
 	rows, err = w.Admin.Query(w.Ctx, `
-		SELECT tenant_id, user_id FROM account.external_identities
-		WHERE tenant_id = ANY($1) AND provider NOT LIKE 'ldap%'`, ids)
+		SELECT organization_id, user_id FROM account.external_identities
+		WHERE organization_id = ANY($1) AND provider NOT LIKE 'ldap%'`, ids)
 	w.Check(err, "read linked social accounts")
 	for rows.Next() {
-		var tenant, user uuid.UUID
-		w.Check(rows.Scan(&tenant, &user), "scan linked social account")
-		h.social[user], h.socialSeeded[tenant] = true, true
+		var organization, user uuid.UUID
+		w.Check(rows.Scan(&organization, &user), "scan linked social account")
+		h.social[user], h.socialSeeded[organization] = true, true
 	}
 	rows.Close()
 
@@ -134,14 +134,14 @@ func newHistory(w *world.World) *history {
 	return h
 }
 
-// guest is someone who holds a role in an organisation other than their own.
+// guest is someone who holds a role in an organization other than their own.
 type guest struct {
 	p     *world.Person
 	since time.Time
 	rate  float64 // the share of working days they switch to it
 }
 
-// guests are o's members from other organisations, its owner included when
+// guests are o's members from other organizations, its owner included when
 // their home is elsewhere.
 func guests(o *world.Org) []guest {
 	var out []guest
@@ -158,7 +158,7 @@ func guests(o *world.Org) []guest {
 	return out
 }
 
-// touchConnections dates each organisation's SAML and LDAP connections and
+// touchConnections dates each organization's SAML and LDAP connections and
 // each passkey by the last sign-in that used them.
 func (h *history) touchConnections() {
 	w := h.w
@@ -177,10 +177,10 @@ func (h *history) touchConnections() {
 	batch := &pgx.Batch{}
 	for _, o := range w.Orgs {
 		if t, ok := saml[o.ID]; ok {
-			batch.Queue(`UPDATE tenant.saml_connections SET last_login_at = $2 WHERE tenant_id = $1 AND status = 'active'`, o.ID, us(t))
+			batch.Queue(`UPDATE organization.saml_connections SET last_login_at = $2 WHERE organization_id = $1 AND status = 'active'`, o.ID, us(t))
 		}
 		if t, ok := ldap[o.ID]; ok {
-			batch.Queue(`UPDATE tenant.ldap_connections SET last_login_at = $2 WHERE tenant_id = $1 AND status = 'active'`, o.ID, us(t))
+			batch.Queue(`UPDATE organization.ldap_connections SET last_login_at = $2 WHERE organization_id = $1 AND status = 'active'`, o.ID, us(t))
 		}
 	}
 	for user, t := range passkeys {

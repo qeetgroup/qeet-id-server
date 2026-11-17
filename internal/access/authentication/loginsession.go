@@ -26,12 +26,12 @@ import (
 const LoginSessionCookie = "qe_ls"
 
 // loginSessionTTL is the lifetime of a hosted SSO session — shorter when the
-// account's organisation (or, with none, the platform) bounds sessions more
+// account's organization (or, with none, the platform) bounds sessions more
 // tightly; see loginSessionLifetime.
 const loginSessionTTL = 30 * time.Minute
 
 // loginSessionLifetime returns how long a hosted SSO session for userID lasts:
-// loginSessionTTL, capped by the organisation's session idle timeout and
+// loginSessionTTL, capped by the organization's session idle timeout and
 // maximum age.
 func (s *Service) loginSessionLifetime(ctx context.Context, userID uuid.UUID) (time.Duration, error) {
 	maxAge, idle := s.sessionDefaults()
@@ -39,7 +39,7 @@ func (s *Service) loginSessionLifetime(ctx context.Context, userID uuid.UUID) (t
 	err := s.pool.QueryRow(ctx, `
 		SELECT EXTRACT(EPOCH FROM sp.session_max_age)::bigint, EXTRACT(EPOCH FROM sp.session_idle_timeout)::bigint
 		FROM account.users u
-		JOIN tenant.security_policies sp ON sp.tenant_id = u.tenant_id
+		JOIN organization.security_policies sp ON sp.organization_id = u.organization_id
 		WHERE u.id = $1`, userID).Scan(&orgMax, &orgIdle)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return 0, err
@@ -54,7 +54,7 @@ func (s *Service) loginSessionLifetime(ctx context.Context, userID uuid.UUID) (t
 }
 
 // CreateLoginSession mints a hosted SSO session, once the login hook of the
-// user's own organisation allows it, for a password sign-in that met no second
+// user's own organization allows it, for a password sign-in that met no second
 // factor, and returns the raw cookie value. Only the hash is persisted (like
 // refresh tokens).
 func (s *Service) CreateLoginSession(ctx context.Context, userID uuid.UUID, ip, ua string) (string, error) {
@@ -65,8 +65,8 @@ func (s *Service) CreateLoginSession(ctx context.Context, userID uuid.UUID, ip, 
 }
 
 // CreatePasskeyLoginSession is CreateLoginSession for a passkey sign-in: the
-// passkey is its second factor, so an organisation that requires one is
-// satisfied (see tenantFactorShortfall).
+// passkey is its second factor, so an organization that requires one is
+// satisfied (see organizationFactorShortfall).
 func (s *Service) CreatePasskeyLoginSession(ctx context.Context, userID uuid.UUID, ip, ua string) (string, error) {
 	if _, err := s.signInHook(ctx, userID, uuid.Nil); err != nil {
 		return "", err
@@ -75,11 +75,11 @@ func (s *Service) CreatePasskeyLoginSession(ctx context.Context, userID uuid.UUI
 }
 
 // createLoginSession mints the session and records the sign-in by method to
-// tenantID (uuid.Nil: the account's own organisation), with how it met a
+// organizationID (uuid.Nil: the account's own organization), with how it met a
 // second factor ("": it didn't). The session reaches the account's
-// self-service routes, so its own organisation's address rules apply however
-// it signed in, whichever organisation's application asked.
-func (s *Service) createLoginSession(ctx context.Context, userID, tenantID uuid.UUID, ip, ua, method, secondFactor string) (string, error) {
+// self-service routes, so its own organization's address rules apply however
+// it signed in, whichever organization's application asked.
+func (s *Service) createLoginSession(ctx context.Context, userID, organizationID uuid.UUID, ip, ua, method, secondFactor string) (string, error) {
 	// Every hosted sign-in ends here, whatever its method.
 	if err := s.refuseInactiveAccount(ctx, userID, uuid.Nil, "hosted", ip, ua); err != nil {
 		return "", err
@@ -88,7 +88,7 @@ func (s *Service) createLoginSession(ctx context.Context, userID, tenantID uuid.
 	if err != nil {
 		return "", err
 	}
-	if err := s.checkAddress(ctx, u.TenantID, userID, ip, "hosted_"+method); err != nil {
+	if err := s.checkAddress(ctx, u.OrganizationID, userID, ip, "hosted_"+method); err != nil {
 		return "", err
 	}
 	raw, hash, err := tokens.NewRefreshToken()
@@ -99,8 +99,8 @@ func (s *Service) createLoginSession(ctx context.Context, userID, tenantID uuid.
 	if err != nil {
 		return "", err
 	}
-	if tenantID == uuid.Nil {
-		tenantID = u.TenantID
+	if organizationID == uuid.Nil {
+		organizationID = u.OrganizationID
 	}
 	meta := s.signInClientMeta(ctx)
 	tx, err := s.pool.Begin(ctx)
@@ -125,16 +125,16 @@ func (s *Service) createLoginSession(ctx context.Context, userID, tenantID uuid.
 		}
 		meta["second_factor"] = secondFactor
 	}
-	if err := audit.Record(ctx, tx, signInEvent(userID, tenantID, "login_session", sessionID, ip, ua, method, meta)); err != nil {
+	if err := audit.Record(ctx, tx, signInEvent(userID, organizationID, "login_session", sessionID, ip, ua, method, meta)); err != nil {
 		return "", err
 	}
 	return raw, tx.Commit(ctx)
 }
 
 // LoginSessionFactorShortfall reports what stops a code or token being issued
-// for tenantID through the user's hosted-login session: nil, ErrStepUpRequired
+// for organizationID through the user's hosted-login session: nil, ErrStepUpRequired
 // or ErrMFAEnrollmentRequired. An unknown or expired session is ErrUnauthorized.
-func (s *Service) LoginSessionFactorShortfall(ctx context.Context, loginSessionID, userID, tenantID uuid.UUID) error {
+func (s *Service) LoginSessionFactorShortfall(ctx context.Context, loginSessionID, userID, organizationID uuid.UUID) error {
 	factor, err := s.q.LoginSessionSecondFactor(ctx, dbgen.LoginSessionSecondFactorParams{ID: loginSessionID, UserID: userID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return errs.ErrUnauthorized
@@ -142,7 +142,7 @@ func (s *Service) LoginSessionFactorShortfall(ctx context.Context, loginSessionI
 	if err != nil {
 		return err
 	}
-	return s.tenantFactorShortfall(ctx, userID, tenantID, factor)
+	return s.organizationFactorShortfall(ctx, userID, organizationID, factor)
 }
 
 // ResolveLoginSession returns the user id behind a valid, unexpired SSO session
@@ -184,15 +184,15 @@ func (s *Service) ResolveLoginSessionAt(ctx context.Context, raw string) (sessio
 // value and their own organization (uuid.Nil when they have none), or
 // ErrUnauthorized when the session is unknown, expired or ended, or the user or
 // their organization is no longer active.
-func (s *Service) ResolveLoginSessionUser(ctx context.Context, raw string) (userID, tenantID uuid.UUID, err error) {
-	userID, tenantID, _, err = s.resolveLoginSession(ctx, raw)
-	return userID, tenantID, err
+func (s *Service) ResolveLoginSessionUser(ctx context.Context, raw string) (userID, organizationID uuid.UUID, err error) {
+	userID, organizationID, _, err = s.resolveLoginSession(ctx, raw)
+	return userID, organizationID, err
 }
 
 // resolveLoginSession is ResolveLoginSessionUser plus when the sign-in that
 // opened the session happened, if that sign-in proved a second factor (zero
 // otherwise): what a hosted-login principal's step-up is judged by.
-func (s *Service) resolveLoginSession(ctx context.Context, raw string) (userID, tenantID uuid.UUID, signedInAt time.Time, err error) {
+func (s *Service) resolveLoginSession(ctx context.Context, raw string) (userID, organizationID uuid.UUID, signedInAt time.Time, err error) {
 	if raw == "" {
 		return uuid.Nil, uuid.Nil, time.Time{}, errs.ErrUnauthorized
 	}
@@ -203,22 +203,22 @@ func (s *Service) resolveLoginSession(ctx context.Context, raw string) (userID, 
 	if err != nil {
 		return uuid.Nil, uuid.Nil, time.Time{}, err
 	}
-	if row.TenantID.Valid {
-		tenantID = uuid.UUID(row.TenantID.Bytes)
+	if row.OrganizationID.Valid {
+		organizationID = uuid.UUID(row.OrganizationID.Bytes)
 	}
 	// A fresh hosted sign-in counts as a step-up only when it proved a second
 	// factor itself — a met challenge or a passkey — not when a remembered
 	// device stood in for one or none was asked for, as for a social sign-in.
 	if row.SecondFactor != secondFactorMFA && row.SecondFactor != secondFactorPasskey {
-		return row.UserID, tenantID, time.Time{}, nil
+		return row.UserID, organizationID, time.Time{}, nil
 	}
-	return row.UserID, tenantID, row.CreatedAt, nil
+	return row.UserID, organizationID, row.CreatedAt, nil
 }
 
 // LoginSessionAuth lets the hosted login's pages call the listed routes
 // ("METHOD /path", chi syntax) with the SSO session cookie instead of a bearer
 // token; mount it ahead of httpx.RequireAuth. Other requests pass through
-// untouched, and an inactive session, user or organisation gets 401.
+// untouched, and an inactive session, user or organization gets 401.
 func (s *Service) LoginSessionAuth(routes []string) func(http.Handler) http.Handler {
 	listed := chi.NewRouter()
 	for _, route := range routes {
@@ -240,7 +240,7 @@ func (s *Service) LoginSessionAuth(routes []string) func(http.Handler) http.Hand
 				next.ServeHTTP(w, r)
 				return
 			}
-			userID, tenantID, factorAt, err := s.resolveLoginSession(r.Context(), c.Value)
+			userID, organizationID, factorAt, err := s.resolveLoginSession(r.Context(), c.Value)
 			if err != nil {
 				httpx.WriteError(w, r, err)
 				return
@@ -249,8 +249,8 @@ func (s *Service) LoginSessionAuth(routes []string) func(http.Handler) http.Hand
 			if !factorAt.IsZero() {
 				p.SignedInAt = &factorAt
 			}
-			if tenantID != uuid.Nil {
-				p.TenantID = &tenantID
+			if organizationID != uuid.Nil {
+				p.OrganizationID = &organizationID
 			}
 			next.ServeHTTP(w, r.WithContext(httpx.WithPrincipal(r.Context(), p)))
 		})
@@ -354,14 +354,14 @@ func (s *Service) EndLoginSession(ctx context.Context, in EndLoginSessionInput) 
 	if in.ClientID != "" {
 		metadata["client_id"] = in.ClientID
 	}
-	var tenantID *uuid.UUID
-	if row.TenantID.Valid {
-		t := uuid.UUID(row.TenantID.Bytes)
-		tenantID = &t
+	var organizationID *uuid.UUID
+	if row.OrganizationID.Valid {
+		t := uuid.UUID(row.OrganizationID.Bytes)
+		organizationID = &t
 	}
 	userID, sessionID := row.UserID, row.ID
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID: tenantID, ActorUserID: &userID, ActorType: "user",
+		OrganizationID: organizationID, ActorUserID: &userID, ActorType: "user",
 		Action: "auth.signed_out", ResourceType: "login_session", ResourceID: &sessionID,
 		IP: in.IP, UserAgent: in.UserAgent, RequestID: in.RequestID,
 		Metadata: metadata,

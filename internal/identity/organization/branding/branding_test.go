@@ -77,12 +77,12 @@ func TestReplyToValidation(t *testing.T) {
 }
 
 type identityFixture struct {
-	tenant uuid.UUID
-	err    error
+	organization uuid.UUID
+	err          error
 }
 
-func (source *identityFixture) EmailIdentity(_ context.Context, tenant uuid.UUID) (string, string, error) {
-	source.tenant = tenant
+func (source *identityFixture) EmailIdentity(_ context.Context, organization uuid.UUID) (string, string, error) {
+	source.organization = organization
 	return "Tenant name", "support@example.test", source.err
 }
 
@@ -93,28 +93,28 @@ func (sink *notificationFixture) Send(_ context.Context, message notifier.Messag
 	return nil
 }
 
-func TestSenderUsesOnlyExplicitTenant(t *testing.T) {
-	tenant := uuid.New()
+func TestSenderUsesOnlyExplicitOrganization(t *testing.T) {
+	organization := uuid.New()
 	source := &identityFixture{}
 	sink := &notificationFixture{}
 	sender := Sender{Source: source, Next: sink}
-	if err := sender.Send(context.Background(), notifier.Message{TenantID: tenant.String(), Channel: "email"}); err != nil {
+	if err := sender.Send(context.Background(), notifier.Message{OrganizationID: organization.String(), Channel: "email"}); err != nil {
 		t.Fatal(err)
 	}
-	if source.tenant != tenant || sink.message.FromName != "Tenant name" || sink.message.ReplyTo != "support@example.test" {
+	if source.organization != organization || sink.message.FromName != "Tenant name" || sink.message.ReplyTo != "support@example.test" {
 		t.Fatal("tenant identity not applied")
 	}
-	for _, message := range []notifier.Message{{Channel: "email"}, {TenantID: "invalid", Channel: "email"}, {TenantID: tenant.String(), Channel: "sms"}} {
-		source.tenant = uuid.Nil
+	for _, message := range []notifier.Message{{Channel: "email"}, {OrganizationID: "invalid", Channel: "email"}, {OrganizationID: organization.String(), Channel: "sms"}} {
+		source.organization = uuid.Nil
 		if err := sender.Send(context.Background(), message); err != nil {
 			t.Fatal(err)
 		}
-		if source.tenant != uuid.Nil || sink.message.FromName != "" || sink.message.ReplyTo != "" {
+		if source.organization != uuid.Nil || sink.message.FromName != "" || sink.message.ReplyTo != "" {
 			t.Fatal("branding applied outside tenant email")
 		}
 	}
 	source.err = errors.New("unavailable")
-	if err := sender.Send(context.Background(), notifier.Message{TenantID: tenant.String(), Channel: "email"}); err != nil {
+	if err := sender.Send(context.Background(), notifier.Message{OrganizationID: organization.String(), Channel: "email"}); err != nil {
 		t.Fatal(err)
 	}
 	if sink.message.FromName != "" || sink.message.ReplyTo != "" {

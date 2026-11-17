@@ -1,6 +1,6 @@
 // Package ssosync keeps an account in step with what each SAML or LDAP sign-in
 // asserts about it: the profile its connection maps, and its place in the
-// organisation's groups. Sync changes only memberships the same connection's
+// organization's groups. Sync changes only memberships the same connection's
 // sign-ins made, never one an administrator, an import or SCIM made, and never
 // reaches a group holding the owner role or an administrative permission.
 // Every change is audited in the sign-in's transaction.
@@ -31,13 +31,13 @@ const (
 // signs in. GroupsWithheld says the identity provider left the groups out (as
 // Microsoft Entra ID does past its limit), so memberships stay as they are.
 type SignIn struct {
-	TenantID       uuid.UUID
+	OrganizationID uuid.UUID
 	UserID         uuid.UUID
 	ConnectionID   uuid.UUID
 	Provider       string // "saml" or "ldap": who the audit records name
 	DisplayName    string // "" when none was asserted
 	Email          string // the asserted address
-	EmailManaged   bool   // Email is on a domain the organisation manages
+	EmailManaged   bool   // Email is on a domain the organization manages
 	Groups         []string
 	GroupsWithheld bool
 	Actor          audit.Actor
@@ -56,14 +56,14 @@ func Apply(ctx context.Context, tx pgx.Tx, in SignIn) error {
 // refreshEmail allows it, recording what changed.
 func refreshProfile(ctx context.Context, tx pgx.Tx, in SignIn) error {
 	q := dbgen.New(tx)
-	current, err := q.GetAccountProfile(ctx, dbgen.GetAccountProfileParams{ID: in.UserID, TenantID: in.TenantID})
+	current, err := q.GetAccountProfile(ctx, dbgen.GetAccountProfileParams{ID: in.UserID, OrganizationID: in.OrganizationID})
 	if err != nil {
 		return err
 	}
 	changed := map[string]any{}
 	name := strings.TrimSpace(in.DisplayName)
 	if name != "" && utf8.RuneCountInString(name) <= maxDisplayName && (current.DisplayName == nil || *current.DisplayName != name) {
-		if err := q.SetDisplayName(ctx, dbgen.SetDisplayNameParams{DisplayName: &name, ID: in.UserID, TenantID: in.TenantID}); err != nil {
+		if err := q.SetDisplayName(ctx, dbgen.SetDisplayNameParams{DisplayName: &name, ID: in.UserID, OrganizationID: in.OrganizationID}); err != nil {
 			return err
 		}
 		changed["display_name_changed"] = true
@@ -80,12 +80,12 @@ func refreshProfile(ctx context.Context, tx pgx.Tx, in SignIn) error {
 	}
 	changed["connection_id"] = in.ConnectionID
 	changed["source"] = in.Provider
-	return audit.Record(ctx, tx, in.Actor.Event(in.TenantID, "user.updated", "user", in.UserID, changed))
+	return audit.Record(ctx, tx, in.Actor.Event(in.OrganizationID, "user.updated", "user", in.UserID, changed))
 }
 
 // refreshEmail moves the account to the asserted address under the rules an
-// address is adopted by: it must be on a domain the organisation manages, not
-// be another account's, and the account mustn't administer the organisation,
+// address is adopted by: it must be on a domain the organization manages, not
+// be another account's, and the account mustn't administer the organization,
 // or the connection could take over an administrator's recovery. Recovery links
 // sent to the old address stop working.
 func refreshEmail(ctx context.Context, tx pgx.Tx, in SignIn, current string) (bool, error) {
@@ -93,7 +93,7 @@ func refreshEmail(ctx context.Context, tx pgx.Tx, in SignIn, current string) (bo
 	if email == "" || !in.EmailManaged || strings.EqualFold(email, current) {
 		return false, nil
 	}
-	admin, err := identitylink.Administers(ctx, tx, in.UserID, in.TenantID)
+	admin, err := identitylink.Administers(ctx, tx, in.UserID, in.OrganizationID)
 	if err != nil || admin {
 		return false, err
 	}
@@ -107,7 +107,7 @@ func refreshEmail(ctx context.Context, tx pgx.Tx, in SignIn, current string) (bo
 	if err := auth.ExpireRecoveryLinks(ctx, savepoint, in.UserID); err != nil {
 		return false, err
 	}
-	if err := dbgen.New(savepoint).SetEmail(ctx, dbgen.SetEmailParams{Email: email, ID: in.UserID, TenantID: in.TenantID}); err != nil {
+	if err := dbgen.New(savepoint).SetEmail(ctx, dbgen.SetEmailParams{Email: email, ID: in.UserID, OrganizationID: in.OrganizationID}); err != nil {
 		if pgxerr.IsUnique(err) {
 			return false, nil
 		}
@@ -128,14 +128,14 @@ func syncGroups(ctx context.Context, tx pgx.Tx, in SignIn) error {
 	if values := groupValues(in.Groups); len(values) > 0 {
 		var err error
 		targets, err = q.SyncTargets(ctx, dbgen.SyncTargetsParams{
-			TenantID: in.TenantID, ConnectionID: in.ConnectionID,
+			OrganizationID: in.OrganizationID, ConnectionID: in.ConnectionID,
 			MemberPermissions: identitylink.MemberPermissions(), IdpGroups: values,
 		})
 		if err != nil {
 			return err
 		}
 	}
-	current, err := q.SyncedMemberships(ctx, dbgen.SyncedMembershipsParams{TenantID: in.TenantID, UserID: in.UserID, ConnectionID: in.ConnectionID})
+	current, err := q.SyncedMemberships(ctx, dbgen.SyncedMembershipsParams{OrganizationID: in.OrganizationID, UserID: in.UserID, ConnectionID: in.ConnectionID})
 	if err != nil {
 		return err
 	}
@@ -149,12 +149,12 @@ func syncGroups(ctx context.Context, tx pgx.Tx, in SignIn) error {
 		if held[id] {
 			continue
 		}
-		n, err := q.AddSyncedMembership(ctx, dbgen.AddSyncedMembershipParams{GroupID: id, UserID: in.UserID, TenantID: in.TenantID, ConnectionID: in.ConnectionID})
+		n, err := q.AddSyncedMembership(ctx, dbgen.AddSyncedMembershipParams{GroupID: id, UserID: in.UserID, OrganizationID: in.OrganizationID, ConnectionID: in.ConnectionID})
 		if err != nil {
 			return err
 		}
 		if n == 1 {
-			if err := recordMembership(ctx, tx, in.Actor, in.TenantID, id, in.UserID, in.ConnectionID, in.Provider, "group.member_added"); err != nil {
+			if err := recordMembership(ctx, tx, in.Actor, in.OrganizationID, id, in.UserID, in.ConnectionID, in.Provider, "group.member_added"); err != nil {
 				return err
 			}
 		}
@@ -163,12 +163,12 @@ func syncGroups(ctx context.Context, tx pgx.Tx, in SignIn) error {
 		if wanted[id] {
 			continue
 		}
-		n, err := q.RemoveSyncedMembership(ctx, dbgen.RemoveSyncedMembershipParams{TenantID: in.TenantID, GroupID: id, UserID: in.UserID, ConnectionID: in.ConnectionID})
+		n, err := q.RemoveSyncedMembership(ctx, dbgen.RemoveSyncedMembershipParams{OrganizationID: in.OrganizationID, GroupID: id, UserID: in.UserID, ConnectionID: in.ConnectionID})
 		if err != nil {
 			return err
 		}
 		if n == 1 {
-			if err := recordMembership(ctx, tx, in.Actor, in.TenantID, id, in.UserID, in.ConnectionID, in.Provider, "group.member_removed"); err != nil {
+			if err := recordMembership(ctx, tx, in.Actor, in.OrganizationID, id, in.UserID, in.ConnectionID, in.Provider, "group.member_removed"); err != nil {
 				return err
 			}
 		}
@@ -178,13 +178,13 @@ func syncGroups(ctx context.Context, tx pgx.Tx, in SignIn) error {
 
 // recordMembership audits, in tx, a membership change sync made through
 // connectionID, with its group event.
-func recordMembership(ctx context.Context, tx pgx.Tx, actor audit.Actor, tenantID, groupID, userID, connectionID uuid.UUID, source, action string) error {
+func recordMembership(ctx context.Context, tx pgx.Tx, actor audit.Actor, organizationID, groupID, userID, connectionID uuid.UUID, source, action string) error {
 	meta := map[string]any{"user_id": userID, "connection_id": connectionID, "source": source}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, action, "group", groupID, meta)); err != nil {
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, action, "group", groupID, meta)); err != nil {
 		return err
 	}
 	return outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: groupID, Topic: "group.events", EventType: action,
-		Payload: map[string]any{"group_id": groupID, "user_id": userID, "tenant_id": tenantID, "source": source}})
+		Payload: map[string]any{"group_id": groupID, "user_id": userID, "tenant_id": organizationID, "source": source}})
 }
 
 // groupValues returns the asserted groups as they are matched: trimmed, each

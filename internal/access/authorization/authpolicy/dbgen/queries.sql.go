@@ -13,17 +13,17 @@ import (
 
 const getAuthPolicy = `-- name: GetAuthPolicy :one
 
-SELECT tenant_id, password_enabled, password_min_length, password_require_uppercase, password_require_number, password_require_symbol, magic_link_enabled, passkey_enabled, otp_email_enabled, otp_sms_enabled, updated_at, magic_link_ttl_minutes, self_registration_enabled, remember_device_enabled, lockout_threshold, lockout_window_minutes, lockout_duration_minutes, remember_device_days FROM tenant.auth_policy WHERE tenant_id = $1
+SELECT organization_id, password_enabled, password_min_length, password_require_uppercase, password_require_number, password_require_symbol, magic_link_enabled, passkey_enabled, otp_email_enabled, otp_sms_enabled, updated_at, magic_link_ttl_minutes, self_registration_enabled, remember_device_enabled, lockout_threshold, lockout_window_minutes, lockout_duration_minutes, remember_device_days FROM organization.auth_policy WHERE organization_id = $1
 `
 
 // Queries for the authpolicy domain.
 // Both GET and UPSERT are fully static; converted to sqlc.
 // Dynamic partial-update (future) would remain hand-written.
-func (q *Queries) GetAuthPolicy(ctx context.Context, tenantID uuid.UUID) (TenantAuthPolicy, error) {
-	row := q.db.QueryRow(ctx, getAuthPolicy, tenantID)
-	var i TenantAuthPolicy
+func (q *Queries) GetAuthPolicy(ctx context.Context, organizationID uuid.UUID) (OrganizationAuthPolicy, error) {
+	row := q.db.QueryRow(ctx, getAuthPolicy, organizationID)
+	var i OrganizationAuthPolicy
 	err := row.Scan(
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.PasswordEnabled,
 		&i.PasswordMinLength,
 		&i.PasswordRequireUppercase,
@@ -47,16 +47,16 @@ func (q *Queries) GetAuthPolicy(ctx context.Context, tenantID uuid.UUID) (Tenant
 
 const hasActiveSSOConnection = `-- name: HasActiveSSOConnection :one
 SELECT (
-    EXISTS (SELECT 1 FROM tenant.saml_connections s WHERE s.tenant_id = $1::uuid AND s.status = 'active')
-    OR EXISTS (SELECT 1 FROM tenant.ldap_connections l WHERE l.tenant_id = $1::uuid AND l.status = 'active')
-    OR EXISTS (SELECT 1 FROM tenant.oidc_connections o WHERE o.tenant_id = $1::uuid AND o.status = 'active')
+    EXISTS (SELECT 1 FROM organization.saml_connections s WHERE s.organization_id = $1::uuid AND s.status = 'active')
+    OR EXISTS (SELECT 1 FROM organization.ldap_connections l WHERE l.organization_id = $1::uuid AND l.status = 'active')
+    OR EXISTS (SELECT 1 FROM organization.oidc_connections o WHERE o.organization_id = $1::uuid AND o.status = 'active')
 )::boolean
 `
 
-// Whether the tenant has an active SAML, LDAP or OpenID Connect connection to
+// Whether the organization has an active SAML, LDAP or OpenID Connect connection to
 // sign in through.
-func (q *Queries) HasActiveSSOConnection(ctx context.Context, tenantID uuid.UUID) (bool, error) {
-	row := q.db.QueryRow(ctx, hasActiveSSOConnection, tenantID)
+func (q *Queries) HasActiveSSOConnection(ctx context.Context, organizationID uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, hasActiveSSOConnection, organizationID)
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -69,7 +69,7 @@ WITH people AS (
            EXISTS (SELECT 1 FROM account.external_identities ei WHERE ei.user_id = u.id)
              OR EXISTS (SELECT 1 FROM auth.platform_social_identities ps WHERE ps.user_id = u.id) AS linked
     FROM account.users u
-    WHERE u.tenant_id = $1::uuid AND u.deleted_at IS NULL
+    WHERE u.organization_id = $1::uuid AND u.deleted_at IS NULL
 )
 SELECT count(*)::int AS people,
        count(*) FILTER (WHERE password)::int AS with_password,
@@ -87,11 +87,11 @@ type SignInMethodUsageRow struct {
 	OnlyPasskey  int32
 }
 
-// The organisation's live accounts, those with a password and with a passkey,
+// The organization's live accounts, those with a password and with a passkey,
 // and of each those with no other way in: no other credential and no linked
 // identity.
-func (q *Queries) SignInMethodUsage(ctx context.Context, tenantID uuid.UUID) (SignInMethodUsageRow, error) {
-	row := q.db.QueryRow(ctx, signInMethodUsage, tenantID)
+func (q *Queries) SignInMethodUsage(ctx context.Context, organizationID uuid.UUID) (SignInMethodUsageRow, error) {
+	row := q.db.QueryRow(ctx, signInMethodUsage, organizationID)
 	var i SignInMethodUsageRow
 	err := row.Scan(
 		&i.People,
@@ -111,12 +111,12 @@ SELECT sp.provider,
        AND NOT EXISTS (SELECT 1 FROM auth.passkey_credentials pk WHERE pk.user_id = ei.user_id)
        AND NOT EXISTS (SELECT 1 FROM account.external_identities other
                         WHERE other.user_id = ei.user_id AND other.id <> ei.id
-                          AND NOT (other.tenant_id = ei.tenant_id AND other.provider = ei.provider))
+                          AND NOT (other.organization_id = ei.organization_id AND other.provider = ei.provider))
        AND NOT EXISTS (SELECT 1 FROM auth.platform_social_identities ps WHERE ps.user_id = ei.user_id))::int AS only
-FROM tenant.social_providers sp
-LEFT JOIN account.external_identities ei ON ei.tenant_id = sp.tenant_id AND ei.provider = sp.provider
+FROM organization.social_providers sp
+LEFT JOIN account.external_identities ei ON ei.organization_id = sp.organization_id AND ei.provider = sp.provider
      AND EXISTS (SELECT 1 FROM account.users u WHERE u.id = ei.user_id AND u.deleted_at IS NULL)
-WHERE sp.tenant_id = $1
+WHERE sp.organization_id = $1
 GROUP BY sp.provider
 ORDER BY sp.provider
 `
@@ -127,10 +127,10 @@ type SocialProviderUsageRow struct {
 	Only     int32
 }
 
-// Per social provider the organisation set up: the live accounts linked to it,
+// Per social provider the organization set up: the live accounts linked to it,
 // and those who can sign in only through it.
-func (q *Queries) SocialProviderUsage(ctx context.Context, tenantID uuid.UUID) ([]SocialProviderUsageRow, error) {
-	rows, err := q.db.Query(ctx, socialProviderUsage, tenantID)
+func (q *Queries) SocialProviderUsage(ctx context.Context, organizationID uuid.UUID) ([]SocialProviderUsageRow, error) {
+	rows, err := q.db.Query(ctx, socialProviderUsage, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -150,8 +150,8 @@ func (q *Queries) SocialProviderUsage(ctx context.Context, tenantID uuid.UUID) (
 }
 
 const upsertAuthPolicy = `-- name: UpsertAuthPolicy :one
-INSERT INTO tenant.auth_policy
-    (tenant_id, password_enabled, password_min_length, password_require_uppercase,
+INSERT INTO organization.auth_policy
+    (organization_id, password_enabled, password_min_length, password_require_uppercase,
      password_require_number, password_require_symbol, magic_link_enabled,
      magic_link_ttl_minutes, passkey_enabled, otp_email_enabled, otp_sms_enabled,
      self_registration_enabled, remember_device_enabled, remember_device_days,
@@ -161,7 +161,7 @@ VALUES ($1, $2, $3, $4,
         $8, $9, $10, $11,
         $12, $13, $14,
         $15, $16, $17, NOW())
-ON CONFLICT (tenant_id) DO UPDATE SET
+ON CONFLICT (organization_id) DO UPDATE SET
     password_enabled          = EXCLUDED.password_enabled,
     password_min_length       = EXCLUDED.password_min_length,
     password_require_uppercase= EXCLUDED.password_require_uppercase,
@@ -179,11 +179,11 @@ ON CONFLICT (tenant_id) DO UPDATE SET
     lockout_window_minutes    = EXCLUDED.lockout_window_minutes,
     lockout_duration_minutes  = EXCLUDED.lockout_duration_minutes,
     updated_at                = NOW()
-RETURNING tenant_id, password_enabled, password_min_length, password_require_uppercase, password_require_number, password_require_symbol, magic_link_enabled, passkey_enabled, otp_email_enabled, otp_sms_enabled, updated_at, magic_link_ttl_minutes, self_registration_enabled, remember_device_enabled, lockout_threshold, lockout_window_minutes, lockout_duration_minutes, remember_device_days
+RETURNING organization_id, password_enabled, password_min_length, password_require_uppercase, password_require_number, password_require_symbol, magic_link_enabled, passkey_enabled, otp_email_enabled, otp_sms_enabled, updated_at, magic_link_ttl_minutes, self_registration_enabled, remember_device_enabled, lockout_threshold, lockout_window_minutes, lockout_duration_minutes, remember_device_days
 `
 
 type UpsertAuthPolicyParams struct {
-	TenantID                 uuid.UUID
+	OrganizationID           uuid.UUID
 	PasswordEnabled          bool
 	PasswordMinLength        int32
 	PasswordRequireUppercase bool
@@ -202,9 +202,9 @@ type UpsertAuthPolicyParams struct {
 	LockoutDurationMinutes   *int32
 }
 
-func (q *Queries) UpsertAuthPolicy(ctx context.Context, arg UpsertAuthPolicyParams) (TenantAuthPolicy, error) {
+func (q *Queries) UpsertAuthPolicy(ctx context.Context, arg UpsertAuthPolicyParams) (OrganizationAuthPolicy, error) {
 	row := q.db.QueryRow(ctx, upsertAuthPolicy,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.PasswordEnabled,
 		arg.PasswordMinLength,
 		arg.PasswordRequireUppercase,
@@ -222,9 +222,9 @@ func (q *Queries) UpsertAuthPolicy(ctx context.Context, arg UpsertAuthPolicyPara
 		arg.LockoutWindowMinutes,
 		arg.LockoutDurationMinutes,
 	)
-	var i TenantAuthPolicy
+	var i OrganizationAuthPolicy
 	err := row.Scan(
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.PasswordEnabled,
 		&i.PasswordMinLength,
 		&i.PasswordRequireUppercase,

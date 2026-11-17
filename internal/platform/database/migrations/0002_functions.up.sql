@@ -1,13 +1,13 @@
 -- 0002_functions — the functions the tables are built on.
 --
--- platform.current_tenant is the organisation a connection is scoped to, which
+-- platform.current_organization is the organization a connection is scoped to, which
 -- the row-security policies (0011) compare each row with. The audit functions
 -- are IMMUTABLE so the audit trail's generated search column and its indexes
 -- can use them.
 
-CREATE FUNCTION platform.current_tenant() RETURNS uuid
+CREATE FUNCTION platform.current_organization() RETURNS uuid
     LANGUAGE sql STABLE PARALLEL SAFE
-    AS $$ SELECT NULLIF(current_setting('qeet.tenant_id', true), '')::uuid $$;
+    AS $$ SELECT NULLIF(current_setting('qeet.organization_id', true), '')::uuid $$;
 
 CREATE FUNCTION audit.activity_category(action text) RETURNS text
     LANGUAGE sql IMMUTABLE PARALLEL SAFE

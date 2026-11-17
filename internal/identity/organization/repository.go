@@ -1,4 +1,4 @@
-package tenant
+package organization
 
 import (
 	"context"
@@ -13,29 +13,29 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/organization/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/dbutil"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
-// Repository reads and writes organisations.
+// Repository reads and writes organizations.
 type Repository struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
-	// hostingRegion is the region every organisation is created in.
+	// hostingRegion is the region every organization is created in.
 	hostingRegion string
 }
 
 // defaultRegion is the hosting region when none is configured.
 const defaultRegion = "us-east-1"
 
-// SetHostingRegion sets the region organisations are created in; empty keeps
+// SetHostingRegion sets the region organizations are created in; empty keeps
 // defaultRegion.
 func (r *Repository) SetHostingRegion(region string) { r.hostingRegion = region }
 
-// HostingRegion is the region every organisation is created in.
+// HostingRegion is the region every organization is created in.
 func (r *Repository) HostingRegion() string {
 	if r.hostingRegion == "" {
 		return defaultRegion
@@ -51,10 +51,10 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 // Pool returns the connection pool, for handlers that run their own transaction.
 func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
-// toDomain maps a persistence row to the domain Tenant, decoding JSONB metadata
+// toDomain maps a persistence row to the domain Organization, decoding JSONB metadata
 // ([]byte) via the dbutil helper.
-func toDomain(row dbgen.TenantTenant) *Tenant {
-	return &Tenant{
+func toDomain(row dbgen.OrganizationOrganization) *Organization {
+	return &Organization{
 		ID:            row.ID,
 		Slug:          row.Slug,
 		Name:          row.Name,
@@ -78,12 +78,12 @@ func timeOrNil(t pgtype.Timestamptz) *time.Time {
 	return &v
 }
 
-// listRowToTenant maps an enriched list row (tenant columns + the two per-org
-// counts) to the domain Tenant. The two ListTenantsForUser* variants generate
+// listRowToOrganization maps an enriched list row (organization columns + the two per-org
+// counts) to the domain Organization. The two ListOrganizationsForUser* variants generate
 // distinct-but-identical row structs, so callers pass the fields positionally.
-func listRowToTenant(id uuid.UUID, slug, name, status, plan, region, logoURL string, metadata []byte, createdAt, updatedAt time.Time, deletionDueAt pgtype.Timestamptz, memberCount, mfaCount int64) Tenant {
+func listRowToOrganization(id uuid.UUID, slug, name, status, plan, region, logoURL string, metadata []byte, createdAt, updatedAt time.Time, deletionDueAt pgtype.Timestamptz, memberCount, mfaCount int64) Organization {
 	mc, mfa := memberCount, mfaCount
-	return Tenant{
+	return Organization{
 		ID:              id,
 		Slug:            slug,
 		Name:            name,
@@ -100,26 +100,26 @@ func listRowToTenant(id uuid.UUID, slug, name, status, plan, region, logoURL str
 	}
 }
 
-// CreateWithOwner creates a tenant and, in one tx, makes ownerID its owner (owner role + permissions + membership + home tenant).
-func (r *Repository) CreateWithOwner(ctx context.Context, in CreateInput, ownerID uuid.UUID) (*Tenant, error) {
+// CreateWithOwner creates an organization and, in one tx, makes ownerID its owner (owner role + permissions + membership + home organization).
+func (r *Repository) CreateWithOwner(ctx context.Context, in CreateInput, ownerID uuid.UUID) (*Organization, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	tenant, err := r.CreateWithOwnerTx(ctx, tx, in, ownerID)
+	organization, err := r.CreateWithOwnerTx(ctx, tx, in, ownerID)
 	if err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-	return tenant, nil
+	return organization, nil
 }
 
-// CreateWithOwnerTx creates the tenant, owner role, permission grants,
-// membership, and home-tenant assignment in the caller's transaction.
-func (r *Repository) CreateWithOwnerTx(ctx context.Context, tx pgx.Tx, in CreateInput, ownerID uuid.UUID) (*Tenant, error) {
+// CreateWithOwnerTx creates the organization, owner role, permission grants,
+// membership, and home-organization assignment in the caller's transaction.
+func (r *Repository) CreateWithOwnerTx(ctx context.Context, tx pgx.Tx, in CreateInput, ownerID uuid.UUID) (*Organization, error) {
 	plan := in.Plan
 	if plan == "" {
 		plan = "free"
@@ -136,11 +136,11 @@ func (r *Repository) CreateWithOwnerTx(ctx context.Context, tx pgx.Tx, in Create
 	if err != nil {
 		return nil, err
 	}
-	// InsertTenant and the cross-context writes below are all static SQL, so they run
+	// InsertOrganization and the cross-context writes below are all static SQL, so they run
 	// as sqlc queries on the same pgx.Tx via WithTx — one transaction spanning the
-	// tenant, rbac, and user bounded contexts.
+	// organization, rbac, and user bounded contexts.
 	q := r.q.WithTx(tx)
-	row, err := q.InsertTenant(ctx, dbgen.InsertTenantParams{
+	row, err := q.InsertOrganization(ctx, dbgen.InsertOrganizationParams{
 		Slug:     strings.TrimSpace(in.Slug),
 		Name:     in.Name,
 		Plan:     plan,
@@ -156,7 +156,7 @@ func (r *Repository) CreateWithOwnerTx(ctx context.Context, tx pgx.Tx, in Create
 	}
 	t := toDomain(row)
 
-	// Owner role for the tenant, granted every platform permission, then assigned to
+	// Owner role for the organization, granted every platform permission, then assigned to
 	// the owner. These write into other bounded contexts (rbac, user).
 	roleID, err := q.InsertOwnerRole(ctx, t.ID)
 	if err != nil {
@@ -169,16 +169,16 @@ func (r *Repository) CreateWithOwnerTx(ctx context.Context, tx pgx.Tx, in Create
 		return nil, err
 	}
 	if err := q.GrantRoleToUser(ctx, dbgen.GrantRoleToUserParams{
-		UserID:   ownerID,
-		TenantID: t.ID,
-		RoleID:   roleID,
+		UserID:         ownerID,
+		OrganizationID: t.ID,
+		RoleID:         roleID,
 	}); err != nil {
 		return nil, err
 	}
-	// Adopt as home tenant only if they have none yet.
-	if err := q.AdoptHomeTenant(ctx, dbgen.AdoptHomeTenantParams{
-		TenantID: t.ID,
-		ID:       ownerID,
+	// Adopt as home organization only if they have none yet.
+	if err := q.AdoptHomeOrganization(ctx, dbgen.AdoptHomeOrganizationParams{
+		OrganizationID: t.ID,
+		ID:             ownerID,
 	}); err != nil {
 		return nil, err
 	}
@@ -186,9 +186,9 @@ func (r *Repository) CreateWithOwnerTx(ctx context.Context, tx pgx.Tx, in Create
 	return t, nil
 }
 
-// Get returns an organisation by id.
-func (r *Repository) Get(ctx context.Context, id uuid.UUID) (*Tenant, error) {
-	row, err := r.q.GetTenant(ctx, id)
+// Get returns an organization by id.
+func (r *Repository) Get(ctx context.Context, id uuid.UUID) (*Organization, error) {
+	row, err := r.q.GetOrganization(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errs.ErrNotFound
@@ -198,9 +198,9 @@ func (r *Repository) Get(ctx context.Context, id uuid.UUID) (*Tenant, error) {
 	return toDomain(row), nil
 }
 
-// GetBySlug returns an organisation by its slug.
-func (r *Repository) GetBySlug(ctx context.Context, slug string) (*Tenant, error) {
-	row, err := r.q.GetTenantBySlug(ctx, slug)
+// GetBySlug returns an organization by its slug.
+func (r *Repository) GetBySlug(ctx context.Context, slug string) (*Organization, error) {
+	row, err := r.q.GetOrganizationBySlug(ctx, slug)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errs.ErrNotFound
@@ -210,14 +210,14 @@ func (r *Repository) GetBySlug(ctx context.Context, slug string) (*Tenant, error
 	return toDomain(row), nil
 }
 
-// List returns the tenants the user is a member of (scoped to the caller), newest first.
-func (r *Repository) List(ctx context.Context, userID uuid.UUID, limit int, cursor string) ([]Tenant, string, error) {
+// List returns the organizations the user is a member of (scoped to the caller), newest first.
+func (r *Repository) List(ctx context.Context, userID uuid.UUID, limit int, cursor string) ([]Organization, string, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	out := make([]Tenant, 0, limit+1)
+	out := make([]Organization, 0, limit+1)
 	if cursor == "" {
-		rows, err := r.q.ListTenantsForUser(ctx, dbgen.ListTenantsForUserParams{
+		rows, err := r.q.ListOrganizationsForUser(ctx, dbgen.ListOrganizationsForUserParams{
 			UserID: userID,
 			Limit:  int32(limit + 1),
 		})
@@ -225,7 +225,7 @@ func (r *Repository) List(ctx context.Context, userID uuid.UUID, limit int, curs
 			return nil, "", err
 		}
 		for _, row := range rows {
-			out = append(out, listRowToTenant(row.ID, row.Slug, row.Name, row.Status, row.Plan,
+			out = append(out, listRowToOrganization(row.ID, row.Slug, row.Name, row.Status, row.Plan,
 				row.Region, row.LogoUrl, row.Metadata, row.CreatedAt, row.UpdatedAt,
 				row.DeletionDueAt, row.MemberCount, row.MfaEnabledCount))
 		}
@@ -234,7 +234,7 @@ func (r *Repository) List(ctx context.Context, userID uuid.UUID, limit int, curs
 		if perr != nil {
 			return nil, "", errs.ErrBadRequest.WithDetail("invalid cursor")
 		}
-		rows, err := r.q.ListTenantsForUserAfter(ctx, dbgen.ListTenantsForUserAfterParams{
+		rows, err := r.q.ListOrganizationsForUserAfter(ctx, dbgen.ListOrganizationsForUserAfterParams{
 			UserID:          userID,
 			BeforeCreatedAt: curT,
 			BeforeID:        curID,
@@ -244,7 +244,7 @@ func (r *Repository) List(ctx context.Context, userID uuid.UUID, limit int, curs
 			return nil, "", err
 		}
 		for _, row := range rows {
-			out = append(out, listRowToTenant(row.ID, row.Slug, row.Name, row.Status, row.Plan,
+			out = append(out, listRowToOrganization(row.ID, row.Slug, row.Name, row.Status, row.Plan,
 				row.Region, row.LogoUrl, row.Metadata, row.CreatedAt, row.UpdatedAt,
 				row.DeletionDueAt, row.MemberCount, row.MfaEnabledCount))
 		}
@@ -258,20 +258,20 @@ func (r *Repository) List(ctx context.Context, userID uuid.UUID, limit int, curs
 	return out, next, nil
 }
 
-// StatusChange runs inside the transaction that changes an organisation's
+// StatusChange runs inside the transaction that changes an organization's
 // status, so the change and what follows from it — its sessions ended, the
 // audit row, the event — commit together or not at all.
 type StatusChange func(ctx context.Context, tx pgx.Tx, from, to string) error
 
-// Changed runs inside the transaction that updates an organisation, given it
+// Changed runs inside the transaction that updates an organization, given it
 // before and after the update, so what records the change commits with it.
-type Changed func(ctx context.Context, tx pgx.Tx, before, after *Tenant) error
+type Changed func(ctx context.Context, tx pgx.Tx, before, after *Organization) error
 
-// Update applies the non-nil fields of in to tenant id. The SET clause is built
+// Update applies the non-nil fields of in to organization id. The SET clause is built
 // at run time, so this is hand-written rather than sqlc. In the same
 // transaction onChange (if non-nil) runs after any update, and onStatus (if
 // non-nil) when the status changes.
-func (r *Repository) Update(ctx context.Context, id uuid.UUID, in UpdateInput, onStatus StatusChange, onChange Changed) (*Tenant, error) {
+func (r *Repository) Update(ctx context.Context, id uuid.UUID, in UpdateInput, onStatus StatusChange, onChange Changed) (*Organization, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -290,11 +290,11 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, in UpdateInput, o
 	// form sends every field back.
 	if in.Region != nil {
 		var current string
-		if err := tx.QueryRow(ctx, `SELECT region FROM tenant.tenants WHERE id = $1 AND deleted_at IS NULL`, id).Scan(&current); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		if err := tx.QueryRow(ctx, `SELECT region FROM organization.organizations WHERE id = $1 AND deleted_at IS NULL`, id).Scan(&current); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return nil, err
 		}
 		if *in.Region != current {
-			return nil, errs.ErrTenantRegionReadOnly
+			return nil, errs.ErrOrganizationRegionReadOnly
 		}
 	}
 	if in.LogoURL != nil {
@@ -313,16 +313,16 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, in UpdateInput, o
 		}
 		return r.Get(ctx, id)
 	}
-	old, err := scanTenant(tx.QueryRow(ctx, `SELECT `+tenantCols+` FROM tenant.tenants WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, id))
+	old, err := scanOrganization(tx.QueryRow(ctx, `SELECT `+organizationCols+` FROM organization.organizations WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, id))
 	if err != nil {
 		return nil, err
 	}
 	ub.SetRaw("updated_at = NOW()")
 	idAt := ub.NextPlaceholder()
 	args := append(ub.Args(), id)
-	q := `UPDATE tenant.tenants SET ` + ub.Assignments() +
-		` WHERE id = $` + strconv.Itoa(idAt) + ` AND deleted_at IS NULL RETURNING ` + tenantCols
-	rec, err := scanTenant(tx.QueryRow(ctx, q, args...))
+	q := `UPDATE organization.organizations SET ` + ub.Assignments() +
+		` WHERE id = $` + strconv.Itoa(idAt) + ` AND deleted_at IS NULL RETURNING ` + organizationCols
+	rec, err := scanOrganization(tx.QueryRow(ctx, q, args...))
 	if err != nil {
 		return nil, err
 	}
@@ -343,13 +343,13 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, in UpdateInput, o
 	return after, nil
 }
 
-// tenantCols is the column list of the hand-written queries Update runs, in
-// the order scanTenant reads it (dbgen.TenantTenant without deleted_at).
-const tenantCols = `id, slug, name, status, plan, region, logo_url, metadata, created_at, updated_at, deletion_due_at`
+// organizationCols is the column list of the hand-written queries Update runs, in
+// the order scanOrganization reads it (dbgen.OrganizationOrganization without deleted_at).
+const organizationCols = `id, slug, name, status, plan, region, logo_url, metadata, created_at, updated_at, deletion_due_at`
 
-// scanTenant reads a row of tenantCols; ErrNotFound for none.
-func scanTenant(row pgx.Row) (dbgen.TenantTenant, error) {
-	var rec dbgen.TenantTenant
+// scanOrganization reads a row of organizationCols; ErrNotFound for none.
+func scanOrganization(row pgx.Row) (dbgen.OrganizationOrganization, error) {
+	var rec dbgen.OrganizationOrganization
 	err := row.Scan(&rec.ID, &rec.Slug, &rec.Name, &rec.Status, &rec.Plan,
 		&rec.Region, &rec.LogoUrl, &rec.Metadata, &rec.CreatedAt, &rec.UpdatedAt, &rec.DeletionDueAt)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -358,7 +358,7 @@ func scanTenant(row pgx.Row) (dbgen.TenantTenant, error) {
 	return rec, err
 }
 
-// SoftDelete deletes the organisation (its rows stay, marked deleted).
+// SoftDelete deletes the organization (its rows stay, marked deleted).
 // onDeleted (nil: none) runs in the same transaction, given the status it had.
 func (r *Repository) SoftDelete(ctx context.Context, id uuid.UUID, onDeleted StatusChange) error {
 	tx, err := r.pool.Begin(ctx)
@@ -367,14 +367,14 @@ func (r *Repository) SoftDelete(ctx context.Context, id uuid.UUID, onDeleted Sta
 	}
 	defer tx.Rollback(ctx)
 	var from string
-	if err := tx.QueryRow(ctx, `SELECT status FROM tenant.tenants WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, id).
+	if err := tx.QueryRow(ctx, `SELECT status FROM organization.organizations WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, id).
 		Scan(&from); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errs.ErrNotFound
 		}
 		return err
 	}
-	if _, err := r.q.WithTx(tx).SoftDeleteTenant(ctx, id); err != nil {
+	if _, err := r.q.WithTx(tx).SoftDeleteOrganization(ctx, id); err != nil {
 		return err
 	}
 	if onDeleted != nil {
@@ -389,22 +389,22 @@ func (r *Repository) SoftDelete(ctx context.Context, id uuid.UUID, onDeleted Sta
 // can call it off.
 const DeletionGrace = 7 * 24 * time.Hour
 
-// ScheduleDeletion schedules tenant id's deletion DeletionGrace from now and
+// ScheduleDeletion schedules organization id's deletion DeletionGrace from now and
 // runs onScheduled in the same transaction; it returns when the deletion is
-// due. ErrTenantDeletionScheduled when one already is; ErrNotFound when the
-// tenant is gone.
+// due. ErrOrganizationDeletionScheduled when one already is; ErrNotFound when the
+// organization is gone.
 func (r *Repository) ScheduleDeletion(ctx context.Context, id uuid.UUID, onScheduled func(ctx context.Context, tx pgx.Tx, due time.Time) error) (time.Time, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return time.Time{}, err
 	}
 	defer tx.Rollback(ctx)
-	due, err := r.q.WithTx(tx).ScheduleTenantDeletion(ctx, dbgen.ScheduleTenantDeletionParams{ID: id, DueAt: time.Now().UTC().Add(DeletionGrace)})
+	due, err := r.q.WithTx(tx).ScheduleOrganizationDeletion(ctx, dbgen.ScheduleOrganizationDeletionParams{ID: id, DueAt: time.Now().UTC().Add(DeletionGrace)})
 	if errors.Is(err, pgx.ErrNoRows) {
-		if _, gerr := r.q.WithTx(tx).GetTenant(ctx, id); errors.Is(gerr, pgx.ErrNoRows) {
+		if _, gerr := r.q.WithTx(tx).GetOrganization(ctx, id); errors.Is(gerr, pgx.ErrNoRows) {
 			return time.Time{}, errs.ErrNotFound
 		}
-		return time.Time{}, errs.ErrTenantDeletionScheduled
+		return time.Time{}, errs.ErrOrganizationDeletionScheduled
 	}
 	if err != nil {
 		return time.Time{}, err
@@ -417,8 +417,8 @@ func (r *Repository) ScheduleDeletion(ctx context.Context, id uuid.UUID, onSched
 	return due.Time, tx.Commit(ctx)
 }
 
-// CancelDeletion calls off tenant id's scheduled deletion and runs
-// onCancelled in the same transaction. ErrTenantDeletionNotScheduled when
+// CancelDeletion calls off organization id's scheduled deletion and runs
+// onCancelled in the same transaction. ErrOrganizationDeletionNotScheduled when
 // none is.
 func (r *Repository) CancelDeletion(ctx context.Context, id uuid.UUID, onCancelled func(ctx context.Context, tx pgx.Tx) error) error {
 	tx, err := r.pool.Begin(ctx)
@@ -426,12 +426,12 @@ func (r *Repository) CancelDeletion(ctx context.Context, id uuid.UUID, onCancell
 		return err
 	}
 	defer tx.Rollback(ctx)
-	n, err := r.q.WithTx(tx).CancelTenantDeletion(ctx, id)
+	n, err := r.q.WithTx(tx).CancelOrganizationDeletion(ctx, id)
 	if err != nil {
 		return err
 	}
 	if n == 0 {
-		return errs.ErrTenantDeletionNotScheduled
+		return errs.ErrOrganizationDeletionNotScheduled
 	}
 	if onCancelled != nil {
 		if err := onCancelled(ctx, tx); err != nil {
@@ -441,10 +441,10 @@ func (r *Repository) CancelDeletion(ctx context.Context, id uuid.UUID, onCancell
 	return tx.Commit(ctx)
 }
 
-// DueForDeletion lists up to maxRows organisations whose scheduled deletion
-// is due. It reads every organisation, for the background job.
+// DueForDeletion lists up to maxRows organizations whose scheduled deletion
+// is due. It reads every organization, for the background job.
 func (r *Repository) DueForDeletion(ctx context.Context, maxRows int32) ([]uuid.UUID, error) {
-	return r.q.ListTenantsDueForDeletion(ctx, maxRows)
+	return r.q.ListOrganizationsDueForDeletion(ctx, maxRows)
 }
 
 // IsEmailVerified reports whether the user has a verified email — the gate for

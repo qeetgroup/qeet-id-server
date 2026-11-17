@@ -9,8 +9,8 @@ import (
 
 func sampleEvents() []AuditEvent {
 	return []AuditEvent{
-		{ID: "e1", TenantID: "t1", Action: "auth.login", ActorType: "user", CreatedAt: time.Unix(1700000000, 0)},
-		{ID: "e2", TenantID: "t1", Action: "user.created", ActorType: "user", CreatedAt: time.Unix(1700000050, 0)},
+		{ID: "e1", OrganizationID: "t1", Action: "auth.login", ActorType: "user", CreatedAt: time.Unix(1700000000, 0)},
+		{ID: "e2", OrganizationID: "t1", Action: "user.created", ActorType: "user", CreatedAt: time.Unix(1700000050, 0)},
 	}
 }
 

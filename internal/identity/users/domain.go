@@ -1,4 +1,4 @@
-// Package user manages user accounts and their membership of tenants: the
+// Package user manages user accounts and their membership of organizations: the
 // /users admin API and /me, bulk and vendor imports, suspension, and the User
 // 360 views.
 package user
@@ -12,14 +12,14 @@ import (
 // User is a user account.
 type User struct {
 	ID              uuid.UUID  `json:"id"`
-	TenantID        uuid.UUID  `json:"tenant_id"`
+	OrganizationID  uuid.UUID  `json:"tenant_id"`
 	Email           string     `json:"email"`
 	EmailVerifiedAt *time.Time `json:"email_verified_at"`
 	Phone           *string    `json:"phone"`
 	PhoneVerifiedAt *time.Time `json:"phone_verified_at"`
 	DisplayName     *string    `json:"display_name"`
 	AvatarURL       *string    `json:"avatar_url"`
-	// Roles holds the user's role names in the organisation reading them, and
+	// Roles holds the user's role names in the organization reading them, and
 	// AssignedRoles the same roles with their IDs. Set on the members list and
 	// a member's own record, not on account-level reads.
 	Roles         []string       `json:"roles,omitempty"`
@@ -28,23 +28,23 @@ type User struct {
 	Metadata      map[string]any `json:"metadata"`
 	CreatedAt     time.Time      `json:"created_at"`
 	UpdatedAt     time.Time      `json:"updated_at"`
-	// A member's standing in the organisation reading them, set where the
+	// A member's standing in the organization reading them, set where the
 	// roles are: a confirmed second factor, its groups they're in, when and
-	// from where they were last seen there, the name of the organisation that
+	// from where they were last seen there, the name of the organization that
 	// manages their account, and, for its own suspended people, why and by whom.
-	MfaEnabled     *bool       `json:"mfa_enabled,omitempty"`
-	GroupsCount    *int        `json:"groups_count,omitempty"`
-	LastSeenAt     *time.Time  `json:"last_seen_at,omitempty"`
-	LastSeenIP     *string     `json:"last_seen_ip,omitempty"`
-	HomeTenantName *string     `json:"home_tenant_name,omitempty"`
-	Suspension     *Suspension `json:"suspension,omitempty"`
+	MfaEnabled           *bool       `json:"mfa_enabled,omitempty"`
+	GroupsCount          *int        `json:"groups_count,omitempty"`
+	LastSeenAt           *time.Time  `json:"last_seen_at,omitempty"`
+	LastSeenIP           *string     `json:"last_seen_ip,omitempty"`
+	HomeOrganizationName *string     `json:"home_tenant_name,omitempty"`
+	Suspension           *Suspension `json:"suspension,omitempty"`
 }
 
-// SeenBy is u as organisation tenantID sees it: a person whose home is
-// another organisation keeps their metadata from it, as that organisation
+// SeenBy is u as organization organizationID sees it: a person whose home is
+// another organization keeps their metadata from it, as that organization
 // keeps it about them. It returns u, changed in place.
-func (u *User) SeenBy(tenantID uuid.UUID) *User {
-	if u.TenantID != tenantID {
+func (u *User) SeenBy(organizationID uuid.UUID) *User {
+	if u.OrganizationID != organizationID {
 		u.Metadata = map[string]any{}
 	}
 	return u
@@ -72,12 +72,12 @@ type Deletion struct {
 
 // CreateInput is what CreateWithCredential takes: a new user's profile.
 type CreateInput struct {
-	TenantID    uuid.UUID      `json:"tenant_id" validate:"required"`
-	Email       string         `json:"email" validate:"required,email"`
-	Password    string         `json:"password" validate:"omitempty,max=256"`
-	DisplayName string         `json:"display_name" validate:"omitempty,max=200"`
-	Phone       string         `json:"phone" validate:"omitempty,e164"`
-	Metadata    map[string]any `json:"metadata"`
+	OrganizationID uuid.UUID      `json:"tenant_id" validate:"required"`
+	Email          string         `json:"email" validate:"required,email"`
+	Password       string         `json:"password" validate:"omitempty,max=256"`
+	DisplayName    string         `json:"display_name" validate:"omitempty,max=200"`
+	Phone          string         `json:"phone" validate:"omitempty,e164"`
+	Metadata       map[string]any `json:"metadata"`
 }
 
 // BulkUserInput is one row of a bulk user import (POST /v1/users/bulk). line
@@ -90,11 +90,11 @@ type BulkUserInput struct {
 	line        int
 }
 
-// BulkCreateInput is the POST /v1/users/bulk request body. TenantID is optional;
-// when present it must match the caller's tenant (enforced in the handler).
+// BulkCreateInput is the POST /v1/users/bulk request body. OrganizationID is optional;
+// when present it must match the caller's organization (enforced in the handler).
 type BulkCreateInput struct {
-	TenantID uuid.UUID       `json:"tenant_id"`
-	Users    []BulkUserInput `json:"users" validate:"required,min=1,max=1000"`
+	OrganizationID uuid.UUID       `json:"tenant_id"`
+	Users          []BulkUserInput `json:"users" validate:"required,min=1,max=1000"`
 	// RoleID, when set, is given to every user the import makes.
 	RoleID *uuid.UUID `json:"role_id"`
 }

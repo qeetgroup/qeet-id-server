@@ -27,13 +27,13 @@ func TestMain(m *testing.M) { dbtest.Main(m) }
 func TestClientCredentialsErrorsUseTheOAuthShape(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	tx, err := dbtest.Pool(t).Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	p, secret, err := svc.Create(ctx, tx, CreateInput{TenantID: tenant, Name: "Reporting", Scopes: []string{}})
+	p, secret, err := svc.Create(ctx, tx, CreateInput{OrganizationID: organization, Name: "Reporting", Scopes: []string{}})
 	if err != nil {
 		t.Fatalf("create principal: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestClientCredentialsErrorsUseTheOAuthShape(t *testing.T) {
 	if live, err := svc.PrincipalLive(ctx, uuid.New()); err != nil || live {
 		t.Errorf("an unknown principal: live %v, %v; want not live", live, err)
 	}
-	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE auth.service_principals SET disabled_at = NOW() WHERE id = $1 AND tenant_id = $2`, p.ID, tenant); err != nil {
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE auth.service_principals SET disabled_at = NOW() WHERE id = $1 AND organization_id = $2`, p.ID, organization); err != nil {
 		t.Fatal(err)
 	}
 	wantTokenError(t, tokenRequest(t, router, cc, id, secret), http.StatusBadRequest, "unauthorized_client", "")
@@ -83,13 +83,13 @@ func TestRotatedSecretsOverlapAndPrincipalsEnable(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	svc := NewService(pool, dbtest.Issuer(t))
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	p, oldSecret, err := svc.Create(ctx, tx, CreateInput{TenantID: tenant, Name: "Reporting", Description: "Nightly export", Scopes: []string{}})
+	p, oldSecret, err := svc.Create(ctx, tx, CreateInput{OrganizationID: organization, Name: "Reporting", Description: "Nightly export", Scopes: []string{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestRotatedSecretsOverlapAndPrincipalsEnable(t *testing.T) {
 		t.Errorf("created description = %q", p.Description)
 	}
 	system := audit.Actor{Type: "system"}
-	newSecret, until, err := svc.RotateSecret(ctx, tenant, p.ID, time.Hour, system)
+	newSecret, until, err := svc.RotateSecret(ctx, organization, p.ID, time.Hour, system)
 	if err != nil {
 		t.Fatalf("rotate: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestRotatedSecretsOverlapAndPrincipalsEnable(t *testing.T) {
 			t.Errorf("the %s secret during the overlap: %v", name, err)
 		}
 	}
-	list, err := svc.List(ctx, tenant)
+	list, err := svc.List(ctx, organization)
 	if err != nil || len(list) != 1 {
 		t.Fatalf("list: %v, %v", list, err)
 	}
@@ -117,13 +117,13 @@ func TestRotatedSecretsOverlapAndPrincipalsEnable(t *testing.T) {
 		got.PreviousSecretExpiresAt == nil || !got.PreviousSecretExpiresAt.Equal(until.Truncate(time.Microsecond)) {
 		t.Errorf("listed principal %+v: want its description, a last use and the overlap's end %s", got, until)
 	}
-	if _, _, err := svc.RotateSecret(ctx, tenant, p.ID, 0, system); err != nil {
+	if _, _, err := svc.RotateSecret(ctx, organization, p.ID, 0, system); err != nil {
 		t.Fatalf("rotate with no overlap: %v", err)
 	}
 	if _, err := svc.IssueClientCredentials(ctx, p.ID.String(), newSecret); !errors.Is(err, errs.ErrPrincipalInvalidCredentials) {
 		t.Errorf("a secret rotated with no overlap: %v, want %v", err, errs.ErrPrincipalInvalidCredentials)
 	}
-	if _, _, err := svc.RotateSecret(ctx, dbtest.Tenant(t), p.ID, time.Hour, system); !errors.Is(err, errs.ErrPrincipalNotFound) {
+	if _, _, err := svc.RotateSecret(ctx, dbtest.Organization(t), p.ID, time.Hour, system); !errors.Is(err, errs.ErrPrincipalNotFound) {
 		t.Errorf("rotate from another tenant: %v, want %v", err, errs.ErrPrincipalNotFound)
 	}
 
@@ -132,16 +132,16 @@ func TestRotatedSecretsOverlapAndPrincipalsEnable(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	if _, _, err := svc.Disable(ctx, tx, tenant, p.ID); err != nil {
+	if _, _, err := svc.Disable(ctx, tx, organization, p.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.Enable(ctx, dbtest.Tenant(t), p.ID, system); !errors.Is(err, errs.ErrPrincipalNotFound) {
+	if err := svc.Enable(ctx, dbtest.Organization(t), p.ID, system); !errors.Is(err, errs.ErrPrincipalNotFound) {
 		t.Errorf("enable from another tenant: %v, want %v", err, errs.ErrPrincipalNotFound)
 	}
-	if err := svc.Enable(ctx, tenant, p.ID, system); err != nil {
+	if err := svc.Enable(ctx, organization, p.ID, system); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
 	if live, err := svc.PrincipalLive(ctx, p.ID); err != nil || !live {
@@ -149,21 +149,21 @@ func TestRotatedSecretsOverlapAndPrincipalsEnable(t *testing.T) {
 	}
 }
 
-// TestClientCredentialsRefusedForDeletedOrganisation checks that a service
-// principal of a suspended or deleted organisation gets no token, its right
+// TestClientCredentialsRefusedForDeletedOrganization checks that a service
+// principal of a suspended or deleted organization gets no token, its right
 // secret included, and that the tokens it was already issued stop: it is no
-// longer live. Reactivating the organisation restores both.
-func TestClientCredentialsRefusedForDeletedOrganisation(t *testing.T) {
+// longer live. Reactivating the organization restores both.
+func TestClientCredentialsRefusedForDeletedOrganization(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	svc := NewService(pool, dbtest.Issuer(t))
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	p, secret, err := svc.Create(ctx, tx, CreateInput{TenantID: tenant, Name: "Reporting", Scopes: []string{}})
+	p, secret, err := svc.Create(ctx, tx, CreateInput{OrganizationID: organization, Name: "Reporting", Scopes: []string{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,11 +174,11 @@ func TestClientCredentialsRefusedForDeletedOrganisation(t *testing.T) {
 		name, change string
 		works        bool
 	}{
-		{"suspended", `UPDATE tenant.tenants SET status = 'suspended' WHERE id = $1`, false},
-		{"reactivated", `UPDATE tenant.tenants SET status = 'active' WHERE id = $1`, true},
-		{"deleted", `UPDATE tenant.tenants SET deleted_at = NOW() WHERE id = $1`, false},
+		{"suspended", `UPDATE organization.organizations SET status = 'suspended' WHERE id = $1`, false},
+		{"reactivated", `UPDATE organization.organizations SET status = 'active' WHERE id = $1`, true},
+		{"deleted", `UPDATE organization.organizations SET deleted_at = NOW() WHERE id = $1`, false},
 	} {
-		if _, err := pool.Exec(ctx, step.change, tenant); err != nil {
+		if _, err := pool.Exec(ctx, step.change, organization); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := svc.IssueClientCredentials(ctx, p.ID.String(), secret); (err == nil) != step.works {

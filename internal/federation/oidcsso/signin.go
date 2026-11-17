@@ -56,7 +56,7 @@ func (s *Service) BeginSignIn(ctx context.Context, id uuid.UUID, redirectURI, re
 		return "", "", err
 	}
 	// Every sign-in needs a plan with SSO, not only setting the connection up.
-	if err := s.RequireSSO(ctx, c.TenantID); err != nil {
+	if err := s.RequireSSO(ctx, c.OrganizationID); err != nil {
 		return "", "", err
 	}
 	doc, _, err := s.providerFor(ctx, c)
@@ -77,14 +77,14 @@ func (s *Service) BeginSignIn(ctx context.Context, id uuid.UUID, redirectURI, re
 		return "", "", err
 	}
 	if err := s.q.InsertOidcConnectionState(ctx, dbgen.InsertOidcConnectionStateParams{
-		StateHash:    stateHash,
-		TenantID:     c.TenantID,
-		ConnectionID: c.ID,
-		CodeVerifier: verifier,
-		NonceHash:    nonceHash,
-		RedirectUri:  redirectURI,
-		ExpiresAt:    time.Now().UTC().Add(stateTTL),
-		ReturnTo:     nonEmpty(returnTo),
+		StateHash:      stateHash,
+		OrganizationID: c.OrganizationID,
+		ConnectionID:   c.ID,
+		CodeVerifier:   verifier,
+		NonceHash:      nonceHash,
+		RedirectUri:    redirectURI,
+		ExpiresAt:      time.Now().UTC().Add(stateTTL),
+		ReturnTo:       nonEmpty(returnTo),
 	}); err != nil {
 		return "", "", err
 	}
@@ -139,7 +139,7 @@ func (s *Service) CompleteSignIn(ctx context.Context, cb Callback) (loginCode, r
 		return "", "", errs.ErrOIDCSSOCallbackInvalid
 	}
 	st, err := s.q.ConsumeOidcConnectionState(ctx, dbgen.ConsumeOidcConnectionStateParams{
-		StateHash: codes.Hash(cb.State), TenantID: c.TenantID, ConnectionID: c.ID,
+		StateHash: codes.Hash(cb.State), OrganizationID: c.OrganizationID, ConnectionID: c.ID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", errs.ErrOIDCSSOStateInvalid
@@ -166,7 +166,7 @@ func (s *Service) CompleteSignIn(ctx context.Context, cb Callback) (loginCode, r
 	}
 	// Checked again as the answer arrives, so a plan that has since lapsed
 	// signs no one in.
-	if err := s.RequireSSO(ctx, c.TenantID); err != nil {
+	if err := s.RequireSSO(ctx, c.OrganizationID); err != nil {
 		return "", back, err
 	}
 	doc, rules, err := s.providerFor(ctx, c)
@@ -187,7 +187,7 @@ func (s *Service) CompleteSignIn(ctx context.Context, cb Callback) (loginCode, r
 	}
 	if s.auth != nil {
 		// A suspended or deleted account gets no code to sign in with.
-		if err := s.auth.CheckSignInAccount(ctx, userID, c.TenantID, provider, cb.IP, cb.UserAgent); err != nil {
+		if err := s.auth.CheckSignInAccount(ctx, userID, c.OrganizationID, provider, cb.IP, cb.UserAgent); err != nil {
 			return "", back, err
 		}
 	}
@@ -196,11 +196,11 @@ func (s *Service) CompleteSignIn(ctx context.Context, cb Callback) (loginCode, r
 		return "", back, err
 	}
 	if err := s.q.InsertOidcConnectionLoginCode(ctx, dbgen.InsertOidcConnectionLoginCodeParams{
-		CodeHash:     codeHash,
-		TenantID:     c.TenantID,
-		ConnectionID: c.ID,
-		UserID:       userID,
-		ExpiresAt:    time.Now().UTC().Add(loginCodeTTL),
+		CodeHash:       codeHash,
+		OrganizationID: c.OrganizationID,
+		ConnectionID:   c.ID,
+		UserID:         userID,
+		ExpiresAt:      time.Now().UTC().Add(loginCodeTTL),
 	}); err != nil {
 		return "", back, err
 	}
@@ -208,7 +208,7 @@ func (s *Service) CompleteSignIn(ctx context.Context, cb Callback) (loginCode, r
 	return rawCode, back, nil
 }
 
-// recordFailure records a refused sign-in through c in the organisation's
+// recordFailure records a refused sign-in through c in the organization's
 // audit trail, with the error code as its reason.
 func (s *Service) recordFailure(ctx context.Context, c *signInConnection, userID uuid.UUID, cb Callback, err error) {
 	if s.auth == nil {
@@ -223,13 +223,13 @@ func (s *Service) recordFailure(ctx context.Context, c *signInConnection, userID
 		meta["provider_error"] = code
 	}
 	s.auth.RecordSignInFailure(ctx, auth.SignInFailure{
-		TenantID:  c.TenantID,
-		UserID:    userID,
-		Method:    provider,
-		Reason:    reason,
-		IP:        cb.IP,
-		UserAgent: cb.UserAgent,
-		Metadata:  meta,
+		OrganizationID: c.OrganizationID,
+		UserID:         userID,
+		Method:         provider,
+		Reason:         reason,
+		IP:             cb.IP,
+		UserAgent:      cb.UserAgent,
+		Metadata:       meta,
 	})
 }
 
@@ -249,16 +249,16 @@ func linkMetadata(p profile) ([]byte, error) {
 
 // findOrCreateUser returns the person c linked to the token's subject, else
 // the one with its email address, else a new one, and links the subject to c.
-// An address is adopted or given an account only on a domain the organisation
+// An address is adopted or given an account only on a domain the organization
 // manages, and only while the provider hasn't said it is unverified; a new
 // account only where that domain has just-in-time provisioning on; an adopted
-// account must have the organisation as its home, a verified address, and not
-// administer the organisation. One transaction, so concurrent sign-ins can't
+// account must have the organization as its home, a verified address, and not
+// administer the organization. One transaction, so concurrent sign-ins can't
 // duplicate rows.
 func (s *Service) findOrCreateUser(ctx context.Context, c *signInConnection, p profile) (uuid.UUID, error) {
-	tenantID := c.TenantID
-	// Read before the transaction: it reads every organisation's domains.
-	domain, managed, err := domainverify.ManagingDomain(postgres.AcrossTenants(ctx), s.pool, p.email)
+	organizationID := c.OrganizationID
+	// Read before the transaction: it reads every organization's domains.
+	domain, managed, err := domainverify.ManagingDomain(postgres.AcrossOrganizations(ctx), s.pool, p.email)
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -277,29 +277,29 @@ func (s *Service) findOrCreateUser(ctx context.Context, c *signInConnection, p p
 		email = &p.email
 	}
 	link := dbgen.LinkExternalIdentityParams{
-		TenantID:     tenantID,
-		Provider:     provider,
-		ConnectionID: c.ID,
-		Subject:      p.subject,
-		Email:        email,
-		Metadata:     meta,
+		OrganizationID: organizationID,
+		Provider:       provider,
+		ConnectionID:   c.ID,
+		Subject:        p.subject,
+		Email:          email,
+		Metadata:       meta,
 	}
 
 	userID, err := q.GetExternalIdentityUser(ctx, dbgen.GetExternalIdentityUserParams{
-		TenantID:     tenantID,
-		Provider:     provider,
-		ConnectionID: c.ID,
-		Subject:      p.subject,
+		OrganizationID: organizationID,
+		Provider:       provider,
+		ConnectionID:   c.ID,
+		Subject:        p.subject,
 	})
 	if err == nil {
-		// A linked subject signs in only while this organisation is still the
+		// A linked subject signs in only while this organization is still the
 		// account's home.
-		home, herr := identitylink.HomeIn(ctx, tx, userID, tenantID)
+		home, herr := identitylink.HomeIn(ctx, tx, userID, organizationID)
 		if herr != nil {
 			return uuid.Nil, herr
 		}
 		if !home {
-			return uuid.Nil, errs.ErrOIDCSSOUserTenantMismatch
+			return uuid.Nil, errs.ErrOIDCSSOUserOrganizationMismatch
 		}
 		link.UserID = userID
 		if err := q.LinkExternalIdentity(ctx, link); err != nil {
@@ -315,10 +315,10 @@ func (s *Service) findOrCreateUser(ctx context.Context, c *signInConnection, p p
 	}
 	// The token proves only that this connection's provider vouched for the
 	// address. Anyone who can configure a connection runs one, so it speaks
-	// only for the organisation's own domains; and an address the provider
+	// only for the organization's own domains; and an address the provider
 	// itself calls unverified isn't vouched for at all. A provider that doesn't
 	// say (Microsoft Entra ID) is trusted for those domains, as SAML is.
-	if !managed || domain.TenantID != tenantID {
+	if !managed || domain.OrganizationID != organizationID {
 		return uuid.Nil, errs.ErrOIDCSSOEmailDomainUnverified
 	}
 	if p.verified != nil && !*p.verified {
@@ -335,9 +335,9 @@ func (s *Service) findOrCreateUser(ctx context.Context, c *signInConnection, p p
 			displayName = &p.name
 		}
 		userID, err = q.InsertUserWithEmail(ctx, dbgen.InsertUserWithEmailParams{
-			TenantID:    pgUUID(tenantID),
-			Email:       p.email,
-			DisplayName: displayName,
+			OrganizationID: pgUUID(organizationID),
+			Email:          p.email,
+			DisplayName:    displayName,
 		})
 		if err != nil {
 			return uuid.Nil, err
@@ -345,15 +345,15 @@ func (s *Service) findOrCreateUser(ctx context.Context, c *signInConnection, p p
 	} else if err != nil {
 		return uuid.Nil, err
 	} else {
-		// Emails are unique across organisations, so the address may be another
-		// organisation's account; and an administrator keeps the credentials
+		// Emails are unique across organizations, so the address may be another
+		// organization's account; and an administrator keeps the credentials
 		// they have, or the connection's provider could take over an owner.
-		home, herr := identitylink.HomeIn(ctx, tx, userID, tenantID)
+		home, herr := identitylink.HomeIn(ctx, tx, userID, organizationID)
 		if herr != nil {
 			return uuid.Nil, herr
 		}
 		if !home {
-			return uuid.Nil, errs.ErrOIDCSSOUserTenantMismatch
+			return uuid.Nil, errs.ErrOIDCSSOUserOrganizationMismatch
 		}
 		verified, verr := identitylink.AddressVerified(ctx, tx, userID)
 		if verr != nil {
@@ -362,7 +362,7 @@ func (s *Service) findOrCreateUser(ctx context.Context, c *signInConnection, p p
 		if !verified {
 			return uuid.Nil, errs.ErrOIDCSSOAccountUnverified
 		}
-		admin, aerr := identitylink.Administers(ctx, tx, userID, tenantID)
+		admin, aerr := identitylink.Administers(ctx, tx, userID, organizationID)
 		if aerr != nil {
 			return uuid.Nil, aerr
 		}
@@ -383,11 +383,11 @@ func (s *Service) findOrCreateUser(ctx context.Context, c *signInConnection, p p
 // ExchangeLogin trades a one-time login code for a token pair, while the
 // connection that issued it is still active.
 func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*auth.TokenPair, error) {
-	userID, tenantID, err := s.consumeLoginCode(ctx, rawCode)
+	userID, organizationID, err := s.consumeLoginCode(ctx, rawCode)
 	if err != nil {
 		return nil, err
 	}
-	return s.auth.IssuePair(ctx, userID, tenantID, ip, ua, provider)
+	return s.auth.IssuePair(ctx, userID, organizationID, ip, ua, provider)
 }
 
 // consumeLoginCode spends a one-time code the callback issued, once, and returns whom it signs in.
@@ -418,13 +418,13 @@ func (s *Service) consumeLoginCode(ctx context.Context, rawCode string) (uuid.UU
 	if err := signInStatus(row.Status); err != nil {
 		return uuid.Nil, uuid.Nil, err
 	}
-	if err := q.MarkOidcConnectionLoginCodeUsed(ctx, dbgen.MarkOidcConnectionLoginCodeUsedParams{CodeHash: codeHash, TenantID: row.TenantID}); err != nil {
+	if err := q.MarkOidcConnectionLoginCodeUsed(ctx, dbgen.MarkOidcConnectionLoginCodeUsedParams{CodeHash: codeHash, OrganizationID: row.OrganizationID}); err != nil {
 		return uuid.Nil, uuid.Nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return uuid.Nil, uuid.Nil, err
 	}
-	return row.UserID, row.TenantID, nil
+	return row.UserID, row.OrganizationID, nil
 }
 
 func nonEmpty(v string) *string {

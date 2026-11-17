@@ -17,13 +17,13 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
-// magicLinksFor sets whether tenant allows magic links, and for how long.
-func magicLinksFor(t *testing.T, tenant uuid.UUID, enabled bool, minutes int) {
+// magicLinksFor sets whether organization allows magic links, and for how long.
+func magicLinksFor(t *testing.T, organization uuid.UUID, enabled bool, minutes int) {
 	t.Helper()
 	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `
-		INSERT INTO tenant.auth_policy (tenant_id, magic_link_enabled, magic_link_ttl_minutes) VALUES ($1, $2, $3)
-		ON CONFLICT (tenant_id) DO UPDATE SET magic_link_enabled = EXCLUDED.magic_link_enabled, magic_link_ttl_minutes = EXCLUDED.magic_link_ttl_minutes
-	`, tenant, enabled, minutes); err != nil {
+		INSERT INTO organization.auth_policy (organization_id, magic_link_enabled, magic_link_ttl_minutes) VALUES ($1, $2, $3)
+		ON CONFLICT (organization_id) DO UPDATE SET magic_link_enabled = EXCLUDED.magic_link_enabled, magic_link_ttl_minutes = EXCLUDED.magic_link_ttl_minutes
+	`, organization, enabled, minutes); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -39,28 +39,28 @@ func tokenIn(t *testing.T, m notifier.Message) string {
 	return u.Query().Get("token")
 }
 
-// TestMagicLinkNamingAnotherOrganisation checks that naming an organisation the
+// TestMagicLinkNamingAnotherOrganization checks that naming an organization the
 // account doesn't belong to changes nothing about its link: the account's own
-// organisation decides whether one is sent, how long it lasts and whether it
-// still works, and the named organisation neither brands the message nor sees
-// the request or its use. A member of the named organisation still gets its
-// branding, and both of its organisations see the request.
-func TestMagicLinkNamingAnotherOrganisation(t *testing.T) {
+// organization decides whether one is sent, how long it lasts and whether it
+// still works, and the named organization neither brands the message nor sees
+// the request or its use. A member of the named organization still gets its
+// branding, and both of its organizations see the request.
+func TestMagicLinkNamingAnotherOrganization(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	mail := &dbtest.Mailbox{}
 	svc := NewService(pool, mail, time.Hour, "https://console.example.test")
 	svc.SetMagicLinkPolicy(authpolicy.NewService(pool))
-	home, named := dbtest.Tenant(t), dbtest.Tenant(t)
+	home, named := dbtest.Organization(t), dbtest.Organization(t)
 	magicLinksFor(t, home, true, 10)
 	magicLinksFor(t, named, true, 1440)
 	victim := dbtest.User(t, home, home)
-	recorded := func(action string, tenant uuid.UUID, a dbtest.Account) int {
-		return dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = $1 AND tenant_id = $2 AND resource_id = $3`, action, tenant, a.ID)
+	recorded := func(action string, organization uuid.UUID, a dbtest.Account) int {
+		return dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = $1 AND organization_id = $2 AND resource_id = $3`, action, organization, a.ID)
 	}
 	ask := func(a dbtest.Account) {
 		t.Helper()
-		if err := svc.RequestMagicLink(ctx, MagicLinkRequest{Email: a.Email, TenantID: named}); err != nil {
+		if err := svc.RequestMagicLink(ctx, MagicLinkRequest{Email: a.Email, OrganizationID: named}); err != nil {
 			t.Fatalf("ask for a link naming the other organisation: %v", err)
 		}
 		svc.deliveries.Wait()
@@ -68,10 +68,10 @@ func TestMagicLinkNamingAnotherOrganisation(t *testing.T) {
 
 	ask(victim)
 	msg := mail.Last(t)
-	if msg.TenantID == named.String() {
+	if msg.OrganizationID == named.String() {
 		t.Error("the message is branded as an organisation the account doesn't belong to")
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM auth.magic_links WHERE email = $1 AND tenant_id IS NULL
+	if n := dbtest.Count(t, `SELECT count(*) FROM auth.magic_links WHERE email = $1 AND organization_id IS NULL
 		AND expires_at < NOW() + INTERVAL '11 minutes'`, victim.Email); n != 1 {
 		t.Error("the link isn't held to the account's own organisation's 10-minute lifetime")
 	}
@@ -96,11 +96,11 @@ func TestMagicLinkNamingAnotherOrganisation(t *testing.T) {
 		t.Error("a link was sent though the account's own organisation has magic links off")
 	}
 
-	guestHome := dbtest.Tenant(t)
+	guestHome := dbtest.Organization(t)
 	guest := dbtest.User(t, guestHome, guestHome, named)
 	ask(guest)
-	if msg := mail.Last(t); msg.To != guest.Email || msg.TenantID != named.String() {
-		t.Errorf("a member's message went to %s branded %q; want %s branded as the named organisation", msg.To, msg.TenantID, guest.Email)
+	if msg := mail.Last(t); msg.To != guest.Email || msg.OrganizationID != named.String() {
+		t.Errorf("a member's message went to %s branded %q; want %s branded as the named organisation", msg.To, msg.OrganizationID, guest.Email)
 	}
 	if n, own := recorded("auth.magic_link_requested", named, guest), recorded("auth.magic_link_requested", guestHome, guest); n != 1 || own != 1 {
 		t.Errorf("a member's request recorded %d times by the named organisation and %d by their own; want once each", n, own)
@@ -116,10 +116,10 @@ func TestMagicLinkIntoUnprovedAccountEndsItsPassword(t *testing.T) {
 	pool := dbtest.Pool(t)
 	mail := &dbtest.Mailbox{}
 	svc := NewService(pool, mail, time.Hour, "https://console.example.test")
-	tenant := dbtest.Tenant(t)
-	squatted := dbtest.User(t, tenant, tenant)
-	giveCredentials(t, squatted, tenant)
-	if _, err := pool.Exec(ctx, `INSERT INTO auth.sessions (user_id, tenant_id) VALUES ($1, $2)`, squatted.ID, tenant); err != nil {
+	organization := dbtest.Organization(t)
+	squatted := dbtest.User(t, organization, organization)
+	giveCredentials(t, squatted, organization)
+	if _, err := pool.Exec(ctx, `INSERT INTO auth.sessions (user_id, organization_id) VALUES ($1, $2)`, squatted.ID, organization); err != nil {
 		t.Fatal(err)
 	}
 
@@ -140,7 +140,7 @@ func TestMagicLinkIntoUnprovedAccountEndsItsPassword(t *testing.T) {
 		t.Error("the address isn't marked verified after the link proved it")
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'auth.credentials_removed' AND resource_id = $1
-		AND tenant_id = $2 AND metadata->>'proof' = 'magic_link'`, squatted.ID, tenant); n != 1 {
+		AND organization_id = $2 AND metadata->>'proof' = 'magic_link'`, squatted.ID, organization); n != 1 {
 		t.Errorf("the removal was recorded %d times, want once", n)
 	}
 

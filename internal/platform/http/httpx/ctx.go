@@ -28,12 +28,12 @@ type principalSlot struct{ p atomic.Pointer[Principal] }
 
 // Principal is the authenticated caller of a request.
 type Principal struct {
-	UserID    *uuid.UUID
-	TenantID  *uuid.UUID
-	ActorType string
-	Scopes    []string
-	Subject   string
-	SessionID *uuid.UUID
+	UserID         *uuid.UUID
+	OrganizationID *uuid.UUID
+	ActorType      string
+	Scopes         []string
+	Subject        string
+	SessionID      *uuid.UUID
 	// AgentID is set when the token is an AI-agent token (ActorType == "agent").
 	AgentID *uuid.UUID
 	// ClientID is set when the token was issued to an application through the

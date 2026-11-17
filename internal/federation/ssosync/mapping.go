@@ -24,7 +24,7 @@ import (
 const maxMappings = 1000 // group mappings one connection holds
 
 // Mapping maps a group an identity provider asserts through a connection to
-// one of the organisation's groups.
+// one of the organization's groups.
 type Mapping struct {
 	ID        uuid.UUID `json:"id"`
 	IdPGroup  string    `json:"idp_group"`
@@ -39,7 +39,7 @@ type MappingInput struct {
 	GroupID  uuid.UUID `json:"group_id"`
 }
 
-// Service manages the group mappings of an organisation's SAML and LDAP
+// Service manages the group mappings of an organization's SAML and LDAP
 // connections.
 type Service struct {
 	pool *pgxpool.Pool
@@ -52,14 +52,14 @@ func NewService(pool *pgxpool.Pool) *Service {
 }
 
 // connection refuses a connection of kind ("saml" or "ldap") that isn't
-// tenantID's with errs.ErrNotFound.
-func (s *Service) connection(ctx context.Context, kind string, tenantID, id uuid.UUID) error {
+// organizationID's with errs.ErrNotFound.
+func (s *Service) connection(ctx context.Context, kind string, organizationID, id uuid.UUID) error {
 	var found bool
 	var err error
 	if kind == "saml" {
-		found, err = s.q.SAMLConnectionExists(ctx, dbgen.SAMLConnectionExistsParams{ID: id, TenantID: tenantID})
+		found, err = s.q.SAMLConnectionExists(ctx, dbgen.SAMLConnectionExistsParams{ID: id, OrganizationID: organizationID})
 	} else {
-		found, err = s.q.LDAPConnectionExists(ctx, dbgen.LDAPConnectionExistsParams{ID: id, TenantID: tenantID})
+		found, err = s.q.LDAPConnectionExists(ctx, dbgen.LDAPConnectionExistsParams{ID: id, OrganizationID: organizationID})
 	}
 	if err != nil {
 		return err
@@ -70,12 +70,12 @@ func (s *Service) connection(ctx context.Context, kind string, tenantID, id uuid
 	return nil
 }
 
-// Mappings returns the group mappings of tenantID's connection.
-func (s *Service) Mappings(ctx context.Context, kind string, tenantID, connectionID uuid.UUID) ([]Mapping, error) {
-	if err := s.connection(ctx, kind, tenantID, connectionID); err != nil {
+// Mappings returns the group mappings of organizationID's connection.
+func (s *Service) Mappings(ctx context.Context, kind string, organizationID, connectionID uuid.UUID) ([]Mapping, error) {
+	if err := s.connection(ctx, kind, organizationID, connectionID); err != nil {
 		return nil, err
 	}
-	rows, err := s.q.ListGroupMappings(ctx, dbgen.ListGroupMappingsParams{TenantID: tenantID, ConnectionID: connectionID})
+	rows, err := s.q.ListGroupMappings(ctx, dbgen.ListGroupMappingsParams{OrganizationID: organizationID, ConnectionID: connectionID})
 	if err != nil {
 		return nil, err
 	}
@@ -92,13 +92,13 @@ var errIdPGroupInvalid = errs.ErrValidationFailed.WithFields([]errs.FieldError{{
 	Field: "idp_group", Code: "invalid", Message: "Give the identity provider's group, in up to 1024 characters.",
 }})
 
-// checkGroup returns the name of tenantID's group groupID, refusing one that
-// isn't the tenant's with errs.ErrGroupNotFound, and one whose roles carry the
+// checkGroup returns the name of organizationID's group groupID, refusing one that
+// isn't the organization's with errs.ErrGroupNotFound, and one whose roles carry the
 // owner role or an administrative permission with
 // errs.ErrGroupMappingPrivileged: sign-in never puts anyone in such a group.
-func (s *Service) checkGroup(ctx context.Context, tenantID, groupID uuid.UUID) (string, error) {
+func (s *Service) checkGroup(ctx context.Context, organizationID, groupID uuid.UUID) (string, error) {
 	g, err := s.q.GroupPrivileged(ctx, dbgen.GroupPrivilegedParams{
-		TenantID: tenantID, GroupID: groupID, MemberPermissions: identitylink.MemberPermissions(),
+		OrganizationID: organizationID, GroupID: groupID, MemberPermissions: identitylink.MemberPermissions(),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", errs.ErrGroupNotFound
@@ -112,11 +112,11 @@ func (s *Service) checkGroup(ctx context.Context, tenantID, groupID uuid.UUID) (
 	return g.Name, nil
 }
 
-// CreateMapping maps in.IdPGroup to in.GroupID for tenantID's connection, in
+// CreateMapping maps in.IdPGroup to in.GroupID for organizationID's connection, in
 // tx. The caller has checked the group with checkGroup and the grant check.
-func (s *Service) CreateMapping(ctx context.Context, tx pgx.Tx, tenantID, connectionID uuid.UUID, in MappingInput, groupName string) (*Mapping, error) {
+func (s *Service) CreateMapping(ctx context.Context, tx pgx.Tx, organizationID, connectionID uuid.UUID, in MappingInput, groupName string) (*Mapping, error) {
 	q := s.q.WithTx(tx)
-	n, err := q.CountGroupMappings(ctx, dbgen.CountGroupMappingsParams{TenantID: tenantID, ConnectionID: connectionID})
+	n, err := q.CountGroupMappings(ctx, dbgen.CountGroupMappingsParams{OrganizationID: organizationID, ConnectionID: connectionID})
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +124,7 @@ func (s *Service) CreateMapping(ctx context.Context, tx pgx.Tx, tenantID, connec
 		return nil, errs.ErrGroupMappingTooMany
 	}
 	row, err := q.InsertGroupMapping(ctx, dbgen.InsertGroupMappingParams{
-		TenantID: tenantID, ConnectionID: connectionID, IdpGroup: in.IdPGroup, GroupID: in.GroupID,
+		OrganizationID: organizationID, ConnectionID: connectionID, IdpGroup: in.IdPGroup, GroupID: in.GroupID,
 	})
 	if pgxerr.IsUnique(err) {
 		return nil, errs.ErrGroupMappingExists
@@ -138,38 +138,38 @@ func (s *Service) CreateMapping(ctx context.Context, tx pgx.Tx, tenantID, connec
 	return &Mapping{ID: row.ID, IdPGroup: in.IdPGroup, GroupID: in.GroupID, GroupName: groupName, CreatedAt: row.CreatedAt}, nil
 }
 
-// DeleteMapping removes a mapping of tenantID's connection in tx. Once no
+// DeleteMapping removes a mapping of organizationID's connection in tx. Once no
 // mapping of the connection reaches its group, the memberships of that group
 // the connection's sign-ins made end too, each recorded as actor's.
-func (s *Service) DeleteMapping(ctx context.Context, tx pgx.Tx, kind string, tenantID, connectionID, mappingID uuid.UUID, actor audit.Actor) (*dbgen.DeleteGroupMappingRow, error) {
+func (s *Service) DeleteMapping(ctx context.Context, tx pgx.Tx, kind string, organizationID, connectionID, mappingID uuid.UUID, actor audit.Actor) (*dbgen.DeleteGroupMappingRow, error) {
 	q := s.q.WithTx(tx)
-	row, err := q.DeleteGroupMapping(ctx, dbgen.DeleteGroupMappingParams{ID: mappingID, TenantID: tenantID, ConnectionID: connectionID})
+	row, err := q.DeleteGroupMapping(ctx, dbgen.DeleteGroupMappingParams{ID: mappingID, OrganizationID: organizationID, ConnectionID: connectionID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	removed, err := q.RemoveUnmappedMemberships(ctx, dbgen.RemoveUnmappedMembershipsParams{TenantID: tenantID, GroupID: row.GroupID, ConnectionID: connectionID})
+	removed, err := q.RemoveUnmappedMemberships(ctx, dbgen.RemoveUnmappedMembershipsParams{OrganizationID: organizationID, GroupID: row.GroupID, ConnectionID: connectionID})
 	if err != nil {
 		return nil, err
 	}
 	for _, userID := range removed {
-		if err := recordMembership(ctx, tx, actor, tenantID, row.GroupID, userID, connectionID, kind, "group.member_removed"); err != nil {
+		if err := recordMembership(ctx, tx, actor, organizationID, row.GroupID, userID, connectionID, kind, "group.member_removed"); err != nil {
 			return nil, err
 		}
 	}
 	return &row, nil
 }
 
-// Handler serves the group mappings of the organisation's SAML and LDAP
+// Handler serves the group mappings of the organization's SAML and LDAP
 // connections.
 type Handler struct {
 	Service *Service
 	// GrantCheck refuses mapping to a group whose roles carry authority the
 	// caller doesn't hold (rbac.Repository.CheckGrantGroup): whoever maps a
 	// group hands out what it grants. Without it creating a mapping is refused.
-	GrantCheck func(ctx context.Context, caller *httpx.Principal, tenantID, groupID uuid.UUID) error
+	GrantCheck func(ctx context.Context, caller *httpx.Principal, organizationID, groupID uuid.UUID) error
 }
 
 // Mount registers the group-mapping routes of both connection kinds on r.
@@ -182,10 +182,10 @@ func (h *Handler) Mount(r chi.Router) {
 	}
 }
 
-// scope returns the tenant in the path, which must be the caller's, and the
+// scope returns the organization in the path, which must be the caller's, and the
 // connection's ID.
 func scope(r *http.Request) (uuid.UUID, uuid.UUID, error) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		return uuid.Nil, uuid.Nil, err
 	}
@@ -193,22 +193,22 @@ func scope(r *http.Request) (uuid.UUID, uuid.UUID, error) {
 	if err != nil {
 		return uuid.Nil, uuid.Nil, errs.ErrBadRequest.WithDetail("invalid id")
 	}
-	return tenantID, connectionID, nil
+	return organizationID, connectionID, nil
 }
 
 // recordMappingChange audits, in tx, a change to a connection's mappings.
-func recordMappingChange(ctx context.Context, tx pgx.Tx, r *http.Request, kind string, tenantID, connectionID uuid.UUID, action string, meta map[string]any) error {
-	return audit.Record(ctx, tx, audit.ActorOf(r).Event(tenantID, kind+"."+action, kind+"_connection", connectionID, meta))
+func recordMappingChange(ctx context.Context, tx pgx.Tx, r *http.Request, kind string, organizationID, connectionID uuid.UUID, action string, meta map[string]any) error {
+	return audit.Record(ctx, tx, audit.ActorOf(r).Event(organizationID, kind+"."+action, kind+"_connection", connectionID, meta))
 }
 
 func (h *Handler) list(kind string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tenantID, connectionID, err := scope(r)
+		organizationID, connectionID, err := scope(r)
 		if err != nil {
 			httpx.WriteError(w, r, err)
 			return
 		}
-		items, err := h.Service.Mappings(r.Context(), kind, tenantID, connectionID)
+		items, err := h.Service.Mappings(r.Context(), kind, organizationID, connectionID)
 		if err != nil {
 			httpx.WriteError(w, r, err)
 			return
@@ -219,7 +219,7 @@ func (h *Handler) list(kind string) http.HandlerFunc {
 
 func (h *Handler) create(kind string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tenantID, connectionID, err := scope(r)
+		organizationID, connectionID, err := scope(r)
 		if err != nil {
 			httpx.WriteError(w, r, err)
 			return
@@ -235,11 +235,11 @@ func (h *Handler) create(kind string) http.HandlerFunc {
 			return
 		}
 		ctx := r.Context()
-		if err := h.Service.connection(ctx, kind, tenantID, connectionID); err != nil {
+		if err := h.Service.connection(ctx, kind, organizationID, connectionID); err != nil {
 			httpx.WriteError(w, r, err)
 			return
 		}
-		groupName, err := h.Service.checkGroup(ctx, tenantID, in.GroupID)
+		groupName, err := h.Service.checkGroup(ctx, organizationID, in.GroupID)
 		if err != nil {
 			httpx.WriteError(w, r, err)
 			return
@@ -248,7 +248,7 @@ func (h *Handler) create(kind string) http.HandlerFunc {
 			httpx.WriteError(w, r, errs.ErrNotImplemented)
 			return
 		}
-		if err := h.GrantCheck(ctx, httpx.PrincipalFromCtx(ctx), tenantID, in.GroupID); err != nil {
+		if err := h.GrantCheck(ctx, httpx.PrincipalFromCtx(ctx), organizationID, in.GroupID); err != nil {
 			httpx.WriteError(w, r, err)
 			return
 		}
@@ -258,12 +258,12 @@ func (h *Handler) create(kind string) http.HandlerFunc {
 			return
 		}
 		defer tx.Rollback(ctx)
-		m, err := h.Service.CreateMapping(ctx, tx, tenantID, connectionID, in, groupName)
+		m, err := h.Service.CreateMapping(ctx, tx, organizationID, connectionID, in, groupName)
 		if err != nil {
 			httpx.WriteError(w, r, err)
 			return
 		}
-		if err := recordMappingChange(ctx, tx, r, kind, tenantID, connectionID, "group_mapping_created",
+		if err := recordMappingChange(ctx, tx, r, kind, organizationID, connectionID, "group_mapping_created",
 			map[string]any{"mapping_id": m.ID, "idp_group": m.IdPGroup, "group_id": m.GroupID}); err != nil {
 			httpx.WriteError(w, r, err)
 			return
@@ -278,7 +278,7 @@ func (h *Handler) create(kind string) http.HandlerFunc {
 
 func (h *Handler) del(kind string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tenantID, connectionID, err := scope(r)
+		organizationID, connectionID, err := scope(r)
 		if err != nil {
 			httpx.WriteError(w, r, err)
 			return
@@ -289,7 +289,7 @@ func (h *Handler) del(kind string) http.HandlerFunc {
 			return
 		}
 		ctx := r.Context()
-		if err := h.Service.connection(ctx, kind, tenantID, connectionID); err != nil {
+		if err := h.Service.connection(ctx, kind, organizationID, connectionID); err != nil {
 			httpx.WriteError(w, r, err)
 			return
 		}
@@ -299,12 +299,12 @@ func (h *Handler) del(kind string) http.HandlerFunc {
 			return
 		}
 		defer tx.Rollback(ctx)
-		row, err := h.Service.DeleteMapping(ctx, tx, kind, tenantID, connectionID, mappingID, audit.ActorOf(r))
+		row, err := h.Service.DeleteMapping(ctx, tx, kind, organizationID, connectionID, mappingID, audit.ActorOf(r))
 		if err != nil {
 			httpx.WriteError(w, r, err)
 			return
 		}
-		if err := recordMappingChange(ctx, tx, r, kind, tenantID, connectionID, "group_mapping_deleted",
+		if err := recordMappingChange(ctx, tx, r, kind, organizationID, connectionID, "group_mapping_deleted",
 			map[string]any{"mapping_id": mappingID, "idp_group": row.IdpGroup, "group_id": row.GroupID}); err != nil {
 			httpx.WriteError(w, r, err)
 			return

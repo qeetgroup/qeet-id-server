@@ -116,7 +116,7 @@ func (h *history) scimSyncs(o *world.Org) {
 			return
 		}
 		at := w.Between(maxTime(p.Joined.Add(24*time.Hour), w.Days(60)), w.Days(0.5))
-		h.audit(at, audit.Event{TenantID: ptr(o.ID), ActorType: "scim", Action: "user.updated", ResourceType: "user",
+		h.audit(at, audit.Event{OrganizationID: ptr(o.ID), ActorType: "scim", Action: "user.updated", ResourceType: "user",
 			ResourceID: ptr(p.ID), IP: ip, UserAgent: ua, RequestID: h.requestID(), Metadata: map[string]any{"status": "active"}})
 	}
 }
@@ -127,14 +127,14 @@ func (h *history) scimSyncs(o *world.Org) {
 func groupProvisioning(w *world.World) {
 	w.Exec("group provisioning requests", `
 		WITH created AS (
-			SELECT tenant_id, resource_id AS user_id, created_at, row_number() OVER (ORDER BY created_at, id) AS n
+			SELECT organization_id, resource_id AS user_id, created_at, row_number() OVER (ORDER BY created_at, id) AS n
 			FROM audit.events
-			WHERE action = 'user.created' AND COALESCE(request_id, '') = '' AND tenant_id IS NOT NULL
+			WHERE action = 'user.created' AND COALESCE(request_id, '') = '' AND organization_id IS NOT NULL
 		)
 		UPDATE audit.events e
 		SET request_id = 'qeet-id-api-6f9d8c7b5-q4hfj/Tg2sR6yP0m-' || lpad((200000 + c.n)::text, 6, '0')
 		FROM created c
-		WHERE e.tenant_id = c.tenant_id AND COALESCE(e.request_id, '') = ''
+		WHERE e.organization_id = c.organization_id AND COALESCE(e.request_id, '') = ''
 		  AND e.created_at BETWEEN c.created_at AND c.created_at + interval '2 seconds'
 		  AND ((e.action IN ('user.created', 'role.assigned') AND e.resource_id = c.user_id)
 		       OR (e.action = 'group.member_added' AND e.metadata->>'user_id' = c.user_id::text))`)

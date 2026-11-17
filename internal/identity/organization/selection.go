@@ -1,4 +1,4 @@
-package tenant
+package organization
 
 import (
 	"context"
@@ -8,13 +8,13 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/organization/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// EligibleOrganization is an organisation a person may switch to.
+// EligibleOrganization is an organization a person may switch to.
 type EligibleOrganization struct {
 	ID         uuid.UUID  `json:"id"`
 	Name       string     `json:"name"`
@@ -27,13 +27,13 @@ type EligibleOrganization struct {
 	LastUsedAt *time.Time `json:"last_used_at"`
 }
 
-// OrganizationSelectionPage is one page of eligible organisations.
+// OrganizationSelectionPage is one page of eligible organizations.
 type OrganizationSelectionPage struct {
 	Items      []EligibleOrganization `json:"items"`
 	NextCursor string                 `json:"next_cursor"`
 }
 
-// EligibleOrganizations returns one page of the organisations the user may
+// EligibleOrganizations returns one page of the organizations the user may
 // switch to from the current session.
 func (r *Repository) EligibleOrganizations(ctx context.Context, userID, currentSessionID uuid.UUID, limit int, cursor string) (OrganizationSelectionPage, error) {
 	page := OrganizationSelectionPage{Items: []EligibleOrganization{}}
@@ -61,7 +61,7 @@ func (r *Repository) EligibleOrganizations(ctx context.Context, userID, currentS
 	for _, row := range rows {
 		roles := row.Roles
 		if roles == nil {
-			roles = []string{} // an organisation's own account may hold no role there
+			roles = []string{} // an organization's own account may hold no role there
 		}
 		organization := EligibleOrganization{
 			ID: row.ID, Name: row.Name, Slug: row.Slug, Plan: row.Plan, Region: row.Region,
@@ -95,9 +95,9 @@ func (h *Handler) eligibleOrganizations(w http.ResponseWriter, r *http.Request) 
 	if principal.SessionID != nil {
 		currentSession = *principal.SessionID
 	}
-	// The picker lists every organisation the person belongs to, not only the
+	// The picker lists every organization the person belongs to, not only the
 	// one they're signed in to.
-	page, err := h.Repo.EligibleOrganizations(postgres.AcrossTenants(r.Context()), *principal.UserID, currentSession, limit, r.URL.Query().Get("cursor"))
+	page, err := h.Repo.EligibleOrganizations(postgres.AcrossOrganizations(r.Context()), *principal.UserID, currentSession, limit, r.URL.Query().Get("cursor"))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

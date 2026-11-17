@@ -20,10 +20,10 @@ func TestMain(m *testing.M) { dbtest.Main(m) }
 func TestVerifyChecksTheRegistry(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	issue := func() *IssueResult {
 		t.Helper()
-		res, err := svc.Issue(ctx, tenant, IssueInput{Subject: "did:example:holder", Type: "EmployeeBadge", TTLSeconds: 3600}, audit.Actor{Type: "system"})
+		res, err := svc.Issue(ctx, organization, IssueInput{Subject: "did:example:holder", Type: "EmployeeBadge", TTLSeconds: 3600}, audit.Actor{Type: "system"})
 		if err != nil {
 			t.Fatalf("issue: %v", err)
 		}
@@ -42,7 +42,7 @@ func TestVerifyChecksTheRegistry(t *testing.T) {
 	if res := verify(revoked.JWT); !res.Valid {
 		t.Fatalf("a standing credential is refused: %+v", res)
 	}
-	if err := svc.Revoke(ctx, revoked.CredentialID, tenant, audit.Actor{Type: "system"}); err != nil {
+	if err := svc.Revoke(ctx, revoked.CredentialID, organization, audit.Actor{Type: "system"}); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
 	if res := verify(revoked.JWT); res.Valid || res.Reason != "credential revoked" || res.ReasonCode != ReasonRevoked {
@@ -57,16 +57,16 @@ func TestVerifyChecksTheRegistry(t *testing.T) {
 }
 
 // TestCredentialsNameTheirHolder checks that a credential issued to a member
-// of the organisation is listed with that person, that one issued to someone
-// from another organisation is refused, and that the person is optional.
+// of the organization is listed with that person, that one issued to someone
+// from another organization is refused, and that the person is optional.
 func TestCredentialsNameTheirHolder(t *testing.T) {
 	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	member := dbtest.User(t, tenant, tenant)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	member := dbtest.User(t, organization, organization)
 	outsider := dbtest.User(t, other, other)
-	api := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: svc}).Mount)
-	base := "/tenants/" + tenant.String() + "/credentials"
+	api := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: svc}).Mount)
+	base := "/tenants/" + organization.String() + "/credentials"
 
 	issue := func(userID any) *httptest.ResponseRecorder {
 		return dbtest.Do(t, api, http.MethodPost, base, map[string]any{

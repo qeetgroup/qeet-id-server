@@ -30,7 +30,7 @@ func TestDirectoryGroupMembershipTakesSeats(t *testing.T) {
 	seats := invite.NewService(pool, &dbtest.Mailbox{}, time.Hour, "https://app.example.test")
 	seats.SetPlanLimiter(seatPlan(1))
 	f.svc.SetSeatGuard(seats)
-	dbtest.User(t, f.tenantID, f.tenantID) // holds the one seat
+	dbtest.User(t, f.organizationID, f.organizationID) // holds the one seat
 	member := f.seedUser(t, ctx, dbtest.Unique("member")+"@acme.test")
 
 	rec := f.do(t, http.MethodPost, "/scim/v2/Groups", map[string]any{"schemas": []string{schemaGroup}, "displayName": "Support"})
@@ -38,8 +38,8 @@ func TestDirectoryGroupMembershipTakesSeats(t *testing.T) {
 		t.Fatalf("create: status %d body %s", rec.Code, rec.Body.String())
 	}
 	gid, _ := decodeBody(t, rec)["id"].(string)
-	if _, err := pool.Exec(ctx, `INSERT INTO rbac.group_roles (tenant_id, group_id, role_id) VALUES ($1, $2, $3)`,
-		f.tenantID, gid, dbtest.Role(t, f.tenantID)); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO rbac.group_roles (organization_id, group_id, role_id) VALUES ($1, $2, $3)`,
+		f.organizationID, gid, dbtest.Role(t, f.organizationID)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -61,7 +61,7 @@ func TestDirectoryGroupMembershipTakesSeats(t *testing.T) {
 			t.Errorf("%s with no seat left: status %d %s, want a SCIM 403", name, rec.Code, rec.Body.String())
 		}
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.group_members WHERE group_id = $1`, gid); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM organization.group_members WHERE group_id = $1`, gid); n != 0 {
 		t.Errorf("%d members added past the seat limit, want none", n)
 	}
 

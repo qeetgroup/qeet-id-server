@@ -58,7 +58,7 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The application's organisation may require a second factor this sign-in
+	// The application's organization may require a second factor this sign-in
 	// didn't meet. The hosted sign-in asks for the requirement of the
 	// application it serves, so the browser signs in again for this request,
 	// once; a fresh sign-in that still hasn't met one is refused.
@@ -143,7 +143,7 @@ func (h *Handler) authorizeError(w http.ResponseWriter, r *http.Request, clientI
 	switch {
 	case errors.As(err, &oe):
 		oauthCode = oe.Code
-	case errors.Is(err, errs.ErrOIDCUserTenantMismatch),
+	case errors.Is(err, errs.ErrOIDCUserOrganizationMismatch),
 		errors.Is(err, errs.ErrAuthAddressNotAllowed):
 		oauthCode = "access_denied"
 	case errors.Is(err, errs.ErrOIDCScopeNotPermitted):
@@ -278,14 +278,14 @@ func (h *Handler) consentRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 // factorShortfall is what stops a code or token being issued for clientID's
-// organisation through the hosted-login session: nil, or the second factor
-// the organisation still requires (see auth.Service.LoginSessionFactorShortfall).
+// organization through the hosted-login session: nil, or the second factor
+// the organization still requires (see auth.Service.LoginSessionFactorShortfall).
 func (h *Handler) factorShortfall(ctx context.Context, loginSessionID, userID uuid.UUID, clientID string) error {
-	tenantID, err := h.Service.ClientTenant(ctx, clientID)
+	organizationID, err := h.Service.ClientOrganization(ctx, clientID)
 	if err != nil {
 		return err
 	}
-	return h.Sessions.LoginSessionFactorShortfall(ctx, loginSessionID, userID, tenantID)
+	return h.Sessions.LoginSessionFactorShortfall(ctx, loginSessionID, userID, organizationID)
 }
 
 // isFactorShortfall reports whether err is a second factor still required.

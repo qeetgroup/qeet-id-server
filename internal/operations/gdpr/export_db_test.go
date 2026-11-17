@@ -12,11 +12,11 @@ import (
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
 
-// TestExportSelfCoversEveryOrganisation checks that a person's own export,
-// asked for while signed in to one organisation and so scoped to it by
-// row-level security, still lists their roles in every organisation.
-func TestExportSelfCoversEveryOrganisation(t *testing.T) {
-	home, other := dbtest.Tenant(t), dbtest.Tenant(t)
+// TestExportSelfCoversEveryOrganization checks that a person's own export,
+// asked for while signed in to one organization and so scoped to it by
+// row-level security, still lists their roles in every organization.
+func TestExportSelfCoversEveryOrganization(t *testing.T) {
+	home, other := dbtest.Organization(t), dbtest.Organization(t)
 	a := dbtest.User(t, home, home, other)
 	h := &Handler{Service: NewService(dbtest.Pool(t), 30*24*time.Hour)}
 	rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(a.ID, home), h.Mount), http.MethodPost, "/account/export", nil)

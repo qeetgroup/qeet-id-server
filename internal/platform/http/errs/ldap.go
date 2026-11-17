@@ -13,7 +13,7 @@ const (
 	CodeLDAPConnectionFieldsRequired = "ldap.connection_fields_required"
 	CodeLDAPServerURLInvalid         = "ldap.server_url_invalid"
 	CodeLDAPStatusInvalid            = "ldap.status_invalid"
-	CodeLDAPAccountNotInTenant       = "ldap.account_not_in_tenant"
+	CodeLDAPAccountNotInOrganization = "ldap.account_not_in_tenant"
 	CodeLDAPAccountUnverified        = "ldap.account_unverified"
 	CodeLDAPTLSVerifyRequired        = "ldap.tls_verify_required"
 	CodeLDAPEmailDomainUnverified    = "ldap.email_domain_unverified"
@@ -35,8 +35,8 @@ var (
 	ErrLDAPConnectionFieldsRequired = New(CodeLDAPConnectionFieldsRequired, "Name, server URL, bind DN, bind password and base DN are required.")
 	ErrLDAPServerURLInvalid         = New(CodeLDAPServerURLInvalid, "The server URL must start with ldap:// or ldaps://.")
 	ErrLDAPStatusInvalid            = New(CodeLDAPStatusInvalid, "Status must be draft, active or disabled.")
-	ErrLDAPAccountNotInTenant       = New(CodeLDAPAccountNotInTenant,
-		"That directory account belongs to a different organization.") // a directory never adopts another tenant's account
+	ErrLDAPAccountNotInOrganization = New(CodeLDAPAccountNotInOrganization,
+		"That directory account belongs to a different organization.") // a directory never adopts another organization's account
 	ErrLDAPAccountUnverified = New(CodeLDAPAccountUnverified,
 		"An account already uses this email address, but the address hasn't been verified. Verify it, or reset the password from the link we email you, then sign in with your directory account.")
 	ErrLDAPTLSVerifyRequired = New(CodeLDAPTLSVerifyRequired,

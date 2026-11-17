@@ -64,14 +64,14 @@ func exec(t *testing.T, sql string, args ...any) {
 	}
 }
 
-// session gives the user a live session in tenant (nil: none) from ip ("":
+// session gives the user a live session in organization (nil: none) from ip ("":
 // unknown) and returns its id.
-func session(t *testing.T, userID uuid.UUID, tenant any, ip string) uuid.UUID {
+func session(t *testing.T, userID uuid.UUID, organization any, ip string) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID
 	if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `
-		INSERT INTO auth.sessions (user_id, tenant_id, ip) VALUES ($1, $2, NULLIF($3, '')::inet) RETURNING id
-	`, userID, tenant, ip).Scan(&id); err != nil {
+		INSERT INTO auth.sessions (user_id, organization_id, ip) VALUES ($1, $2, NULLIF($3, '')::inet) RETURNING id
+	`, userID, organization, ip).Scan(&id); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
 	return id
@@ -83,20 +83,20 @@ func liveSessions(t *testing.T, userID uuid.UUID) int {
 	return dbtest.Count(t, `SELECT count(*) FROM auth.sessions WHERE user_id = $1 AND revoked_at IS NULL`, userID)
 }
 
-// audited counts the organisation's audit events of action about resource.
-func audited(t *testing.T, tenant uuid.UUID, action string, resource uuid.UUID) int {
+// audited counts the organization's audit events of action about resource.
+func audited(t *testing.T, organization uuid.UUID, action string, resource uuid.UUID) int {
 	t.Helper()
-	return dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = $2 AND resource_id = $3`, tenant, action, resource)
+	return dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = $2 AND resource_id = $3`, organization, action, resource)
 }
 
-// TestCreateUserInTheCallersOrganisation checks that an administrator creates
-// a person at home in their own organisation whatever the body names, with the
+// TestCreateUserInTheCallersOrganization checks that an administrator creates
+// a person at home in their own organization whatever the body names, with the
 // password hashed and the creation audited, and that a taken email, a refused
 // password or a bad address leaves no account behind.
-func TestCreateUserInTheCallersOrganisation(t *testing.T) {
+func TestCreateUserInTheCallersOrganization(t *testing.T) {
 	ctx := dbtest.Context(t)
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
 	otherAdmin := dbtest.User(t, other, other)
 	h := testHandler(t, nil)
 	h.PasswordPolicy = func(_ context.Context, _ uuid.UUID, _, plain string) error {
@@ -105,7 +105,7 @@ func TestCreateUserInTheCallersOrganisation(t *testing.T) {
 		}
 		return nil
 	}
-	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), h.Mount)
+	as := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)
 	email := dbtest.Unique("new") + "@example.test"
 	const plain = "Kx7mQ2vLp9Wz-new"
 
@@ -115,14 +115,14 @@ func TestCreateUserInTheCallersOrganisation(t *testing.T) {
 	}
 	var created User
 	dbtest.Decode(t, rec, &created)
-	if created.TenantID != tenant || created.Email != email || created.DisplayName == nil || *created.DisplayName != "New Person" || created.Status != "active" {
+	if created.OrganizationID != organization || created.Email != email || created.DisplayName == nil || *created.DisplayName != "New Person" || created.Status != "active" {
 		t.Errorf("created %+v, want an active %s at home in the caller's organisation", created, email)
 	}
 	var hash string
 	if err := dbtest.Pool(t).QueryRow(ctx, `SELECT password_hash FROM auth.password_credentials WHERE user_id = $1`, created.ID).Scan(&hash); err != nil || !password.Verify(hash, plain) {
 		t.Errorf("the new user's password isn't stored as a hash of the one given (%v)", err)
 	}
-	if n := audited(t, tenant, "user.created", created.ID); n != 1 {
+	if n := audited(t, organization, "user.created", created.ID); n != 1 {
 		t.Errorf("%d user.created audit events, want 1", n)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM platform.outbox WHERE aggregate_id = $1 AND event_type = 'user.created'`, created.ID); n != 1 {
@@ -164,12 +164,12 @@ func TestCreateUserInTheCallersOrganisation(t *testing.T) {
 	}
 }
 
-// TestCreatedUserIsListed checks that a person created in an organisation
+// TestCreatedUserIsListed checks that a person created in an organization
 // appears in its user list and member counts, as they do in its other views.
 func TestCreatedUserIsListed(t *testing.T) {
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), testHandler(t, nil).Mount)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	as := dbtest.Serve(dbtest.Principal(admin.ID, organization), testHandler(t, nil).Mount)
 	rec := dbtest.Do(t, as, http.MethodPost, "/users", map[string]any{"email": dbtest.Unique("listed") + "@example.test"})
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create a user: status %d (%s)", rec.Code, rec.Body.String())
@@ -189,30 +189,30 @@ func TestCreatedUserIsListed(t *testing.T) {
 	}
 }
 
-// TestListPagesThroughTheOrganisationsMembers checks that the user list walks
-// every live member of the caller's organisation exactly once by cursor or by
-// offset, leaves out other organisations' people and deleted accounts, and
-// shows a member's roles and groups in this organisation only.
-func TestListPagesThroughTheOrganisationsMembers(t *testing.T) {
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
+// TestListPagesThroughTheOrganizationsMembers checks that the user list walks
+// every live member of the caller's organization exactly once by cursor or by
+// offset, leaves out other organizations' people and deleted accounts, and
+// shows a member's roles and groups in this organization only.
+func TestListPagesThroughTheOrganizationsMembers(t *testing.T) {
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
 	want := []uuid.UUID{admin.ID}
 	for range 4 {
-		want = append(want, dbtest.User(t, tenant, tenant).ID)
+		want = append(want, dbtest.User(t, organization, organization).ID)
 	}
-	guest := dbtest.User(t, other, other, tenant)
+	guest := dbtest.User(t, other, other, organization)
 	want = append(want, guest.ID)
 	outsider := dbtest.User(t, other, other)
-	gone := dbtest.User(t, tenant, tenant)
+	gone := dbtest.User(t, organization, organization)
 	exec(t, `UPDATE account.users SET deleted_at = NOW(), status = 'deleted' WHERE id = $1`, gone.ID)
-	for _, in := range []uuid.UUID{tenant, other} {
+	for _, in := range []uuid.UUID{organization, other} {
 		exec(t, `
-			WITH g AS (INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, $2) RETURNING id)
-			INSERT INTO tenant.group_members (group_id, user_id, tenant_id) SELECT id, $3, $1 FROM g
+			WITH g AS (INSERT INTO organization.groups (organization_id, name) VALUES ($1, $2) RETURNING id)
+			INSERT INTO organization.group_members (group_id, user_id, organization_id) SELECT id, $3, $1 FROM g
 		`, in, dbtest.Unique("group"), guest.ID)
 	}
 	exec(t, `INSERT INTO auth.mfa_totp (user_id, secret_ct, secret_nonce, confirmed_at) VALUES ($1, '\x00', '\x00', NOW())`, admin.ID)
-	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), testHandler(t, nil).Mount)
+	as := dbtest.Serve(dbtest.Principal(admin.ID, organization), testHandler(t, nil).Mount)
 
 	var walked []User
 	cursor := ""
@@ -260,8 +260,8 @@ func TestListPagesThroughTheOrganisationsMembers(t *testing.T) {
 	var roleHere string
 	if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `
 		SELECT r.name FROM rbac.user_roles ur JOIN rbac.roles r ON r.id = ur.role_id
-		WHERE ur.user_id = $1 AND ur.tenant_id = $2
-	`, guest.ID, tenant).Scan(&roleHere); err != nil {
+		WHERE ur.user_id = $1 AND ur.organization_id = $2
+	`, guest.ID, organization).Scan(&roleHere); err != nil {
 		t.Fatal(err)
 	}
 	for _, u := range walked {
@@ -288,14 +288,14 @@ func TestListPagesThroughTheOrganisationsMembers(t *testing.T) {
 	}
 }
 
-// TestListShowsOnlyTheOrganisationsLastSignIn checks that the user list shows
-// when and from where a member last used this organisation, not another one.
-func TestListShowsOnlyTheOrganisationsLastSignIn(t *testing.T) {
-	tenant, home := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	guest := dbtest.User(t, home, home, tenant)
+// TestListShowsOnlyTheOrganizationsLastSignIn checks that the user list shows
+// when and from where a member last used this organization, not another one.
+func TestListShowsOnlyTheOrganizationsLastSignIn(t *testing.T) {
+	organization, home := dbtest.Organization(t), dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	guest := dbtest.User(t, home, home, organization)
 	session(t, guest.ID, home, "198.51.100.7")
-	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), testHandler(t, nil).Mount)
+	as := dbtest.Serve(dbtest.Principal(admin.ID, organization), testHandler(t, nil).Mount)
 	var page struct {
 		Items []User `json:"items"`
 	}
@@ -317,10 +317,10 @@ func TestListShowsOnlyTheOrganisationsLastSignIn(t *testing.T) {
 // ignores fields that would change the person's standing.
 func TestPeopleEditOnlyTheirOwnProfile(t *testing.T) {
 	ctx := dbtest.Context(t)
-	tenant := dbtest.Tenant(t)
-	me := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	me := dbtest.User(t, organization, organization)
 	exec(t, `UPDATE account.users SET metadata = '{"team":"blue"}' WHERE id = $1`, me.ID)
-	as := dbtest.Serve(dbtest.Principal(me.ID, tenant), testHandler(t, nil).Mount)
+	as := dbtest.Serve(dbtest.Principal(me.ID, organization), testHandler(t, nil).Mount)
 
 	var got User
 	dbtest.Decode(t, dbtest.Do(t, as, http.MethodGet, "/me", nil), &got)
@@ -362,17 +362,17 @@ func TestPeopleEditOnlyTheirOwnProfile(t *testing.T) {
 // a suspension made in the same edit keeps its own record.
 func TestAdminProfileEditsAreAudited(t *testing.T) {
 	ctx := dbtest.Context(t)
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	target := dbtest.User(t, tenant, tenant)
-	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), testHandler(t, nil).Mount)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	target := dbtest.User(t, organization, organization)
+	as := dbtest.Serve(dbtest.Principal(admin.ID, organization), testHandler(t, nil).Mount)
 	path := "/users/" + target.ID.String()
 	edits := func() [][]string {
 		t.Helper()
 		rows, err := dbtest.Pool(t).Query(ctx, `
 			SELECT metadata->'changed' FROM audit.events
-			WHERE tenant_id = $1 AND action = 'user.updated' AND resource_id = $2 AND actor_user_id = $3
-			ORDER BY created_at`, tenant, target.ID, admin.ID)
+			WHERE organization_id = $1 AND action = 'user.updated' AND resource_id = $2 AND actor_user_id = $3
+			ORDER BY created_at`, organization, target.ID, admin.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -406,7 +406,7 @@ func TestAdminProfileEditsAreAudited(t *testing.T) {
 	if got := edits(); len(got) != 2 || !slices.Equal(got[1], []string{"display_name"}) {
 		t.Errorf("recorded %v, want a second naming only the display name", got)
 	}
-	if n := audited(t, tenant, "user.suspended", target.ID); n != 1 {
+	if n := audited(t, organization, "user.suspended", target.ID); n != 1 {
 		t.Errorf("%d user.suspended records, want 1", n)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE resource_id = $1 AND strpos(metadata::text, '4155550177') > 0`, target.ID); n != 0 {
@@ -417,9 +417,9 @@ func TestAdminProfileEditsAreAudited(t *testing.T) {
 // TestAvatarCanBeCleared checks that an empty avatar_url removes the avatar, as
 // UpdateInput documents.
 func TestAvatarCanBeCleared(t *testing.T) {
-	tenant := dbtest.Tenant(t)
-	me := dbtest.User(t, tenant, tenant)
-	as := dbtest.Serve(dbtest.Principal(me.ID, tenant), testHandler(t, nil).Mount)
+	organization := dbtest.Organization(t)
+	me := dbtest.User(t, organization, organization)
+	as := dbtest.Serve(dbtest.Principal(me.ID, organization), testHandler(t, nil).Mount)
 	if rec := dbtest.Do(t, as, http.MethodPatch, "/me", map[string]any{"avatar_url": "data:image/png;base64,AAAA"}); rec.Code != http.StatusOK {
 		t.Fatalf("set an avatar: status %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -431,13 +431,13 @@ func TestAvatarCanBeCleared(t *testing.T) {
 	}
 }
 
-// TestBulkImportStaysInTheCallersOrganisation checks that a bulk import naming
-// another organisation is refused before any row is created, and that an
+// TestBulkImportStaysInTheCallersOrganization checks that a bulk import naming
+// another organization is refused before any row is created, and that an
 // unknown source or an empty export is refused as a whole.
-func TestBulkImportStaysInTheCallersOrganisation(t *testing.T) {
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), testHandler(t, nil).Mount)
+func TestBulkImportStaysInTheCallersOrganization(t *testing.T) {
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	as := dbtest.Serve(dbtest.Principal(admin.ID, organization), testHandler(t, nil).Mount)
 	smuggled := dbtest.Unique("smuggled") + "@example.test"
 
 	rec := dbtest.Do(t, as, http.MethodPost, "/users/bulk", map[string]any{"tenant_id": other, "users": []map[string]any{{"email": smuggled}}})
@@ -447,16 +447,16 @@ func TestBulkImportStaysInTheCallersOrganisation(t *testing.T) {
 	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, smuggled); n != 0 {
 		t.Errorf("the refused bulk import created %d users", n)
 	}
-	rec = dbtest.Do(t, as, http.MethodPost, "/users/bulk", map[string]any{"tenant_id": tenant, "users": []map[string]any{{"email": smuggled}}})
+	rec = dbtest.Do(t, as, http.MethodPost, "/users/bulk", map[string]any{"tenant_id": organization, "users": []map[string]any{{"email": smuggled}}})
 	var res BulkImportResult
 	dbtest.Decode(t, rec, &res)
 	if rec.Code != http.StatusOK || res.Succeeded != 1 {
 		t.Errorf("bulk import naming the caller's organisation: %d %+v, want 1 created", rec.Code, res)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1 AND tenant_id = $2`, smuggled, tenant); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1 AND organization_id = $2`, smuggled, organization); n != 1 {
 		t.Errorf("the bulk import created %d users in the caller's organisation, want 1", n)
 	}
-	if n := audited(t, tenant, "user.bulk_imported", tenant); n != 1 {
+	if n := audited(t, organization, "user.bulk_imported", organization); n != 1 {
 		t.Errorf("%d user.bulk_imported audit events, want 1", n)
 	}
 
@@ -477,26 +477,26 @@ func TestBulkImportStaysInTheCallersOrganisation(t *testing.T) {
 
 // TestLastSignInOutlastsTheSessions checks that the user list and the
 // suspended list still show when and from where someone last signed in to the
-// organisation once their sessions are gone, from the sign-in log, and never a
-// sign-in to another organisation.
+// organization once their sessions are gone, from the sign-in log, and never a
+// sign-in to another organization.
 func TestLastSignInOutlastsTheSessions(t *testing.T) {
 	ctx := dbtest.Context(t)
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	member := dbtest.User(t, tenant, tenant, other)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	member := dbtest.User(t, organization, organization, other)
 	signIn := func(org uuid.UUID, ago time.Duration, ip string) {
 		t.Helper()
 		if _, err := dbtest.Pool(t).Exec(ctx, `
-			INSERT INTO audit.events (tenant_id, actor_user_id, actor_type, action, resource_type, ip, created_at)
+			INSERT INTO audit.events (organization_id, actor_user_id, actor_type, action, resource_type, ip, created_at)
 			VALUES ($1, $2, 'user', 'auth.login_succeeded', 'session', $3::inet, NOW() - $4::interval)`,
 			org, member.ID, ip, ago.String()); err != nil {
 			t.Fatal(err)
 		}
 	}
-	signIn(tenant, 20*24*time.Hour, "203.0.113.9")
+	signIn(organization, 20*24*time.Hour, "203.0.113.9")
 	signIn(other, 2*24*time.Hour, "198.51.100.40")
 
-	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), testHandler(t, nil).Mount)
+	as := dbtest.Serve(dbtest.Principal(admin.ID, organization), testHandler(t, nil).Mount)
 	var page struct {
 		Items []User `json:"items"`
 	}
@@ -511,10 +511,10 @@ func TestLastSignInOutlastsTheSessions(t *testing.T) {
 		t.Errorf("last seen %v from %v, want the sign-in here 20 days ago from 203.0.113.9", got.LastSeenAt, got.LastSeenIP)
 	}
 
-	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE account.users SET status = 'suspended' WHERE id = $1 AND tenant_id = $2`, member.ID, tenant); err != nil {
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE account.users SET status = 'suspended' WHERE id = $1 AND organization_id = $2`, member.ID, organization); err != nil {
 		t.Fatal(err)
 	}
-	suspended, err := testHandler(t, nil).Repo.ListSuspended(ctx, tenant, SuspensionFilters{Limit: 10})
+	suspended, err := testHandler(t, nil).Repo.ListSuspended(ctx, organization, SuspensionFilters{Limit: 10})
 	if err != nil || len(suspended.Items) != 1 || suspended.Items[0].LastSignIn == nil ||
 		time.Since(*suspended.Items[0].LastSignIn) < 19*24*time.Hour {
 		t.Errorf("suspended list %+v, %v; want the member, last signed in here 20 days ago", suspended.Items, err)

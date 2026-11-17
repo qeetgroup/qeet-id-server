@@ -15,7 +15,7 @@ import (
 // account that is deleted or neither active nor invited, and audits it. Every
 // sign-in path calls it before issuing a session, so suspending an account
 // closes every way in.
-func (s *Service) refuseInactiveAccount(ctx context.Context, userID, tenantID uuid.UUID, method, ip, ua string) error {
+func (s *Service) refuseInactiveAccount(ctx context.Context, userID, organizationID uuid.UUID, method, ip, ua string) error {
 	var status string
 	var deleted bool
 	err := s.pool.QueryRow(ctx, `SELECT status, deleted_at IS NOT NULL FROM account.users WHERE id = $1`, userID).
@@ -29,49 +29,49 @@ func (s *Service) refuseInactiveAccount(ctx context.Context, userID, tenantID uu
 	if !deleted && (status == "active" || status == "invited") {
 		return nil
 	}
-	var tenantPtr *uuid.UUID
-	if tenantID != uuid.Nil {
-		tenantPtr = &tenantID
+	var organizationPtr *uuid.UUID
+	if organizationID != uuid.Nil {
+		organizationPtr = &organizationID
 	}
-	_ = s.auditTx(ctx, audit.Event{TenantID: tenantPtr, ActorUserID: &userID, ActorType: "user",
+	_ = s.auditTx(ctx, audit.Event{OrganizationID: organizationPtr, ActorUserID: &userID, ActorType: "user",
 		Action: "auth.sign_in_refused", ResourceType: "user", ResourceID: &userID, IP: ip, UserAgent: ua,
 		Metadata: map[string]any{"reason": "account_inactive", "status": status, "deleted": deleted, "method": method}})
 	return errs.ErrAuthAccountInactive
 }
 
-// refuseInactiveTenant refuses, with ErrAuthTenantInactive, a session for an
-// organisation that is suspended or deleted (uuid.Nil: tenant-less, nothing
+// refuseInactiveOrganization refuses, with ErrAuthOrganizationInactive, a session for an
+// organization that is suspended or deleted (uuid.Nil: organization-less, nothing
 // to check). Every sign-in and switch ends in the issuing step that asks it.
-func (s *Service) refuseInactiveTenant(ctx context.Context, tenantID uuid.UUID) error {
-	if tenantID == uuid.Nil {
+func (s *Service) refuseInactiveOrganization(ctx context.Context, organizationID uuid.UUID) error {
+	if organizationID == uuid.Nil {
 		return nil
 	}
 	var active bool
-	err := s.pool.QueryRow(ctx, `SELECT status = 'active' AND deleted_at IS NULL FROM tenant.tenants WHERE id = $1`, tenantID).Scan(&active)
+	err := s.pool.QueryRow(ctx, `SELECT status = 'active' AND deleted_at IS NULL FROM organization.organizations WHERE id = $1`, organizationID).Scan(&active)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !active) {
-		return errs.ErrAuthTenantInactive
+		return errs.ErrAuthOrganizationInactive
 	}
 	return err
 }
 
-// refuseSignIn refuses a session for an inactive account or organisation, or
-// from an address the organisation's rules refuse. Every caller of issuePairTx
+// refuseSignIn refuses a session for an inactive account or organization, or
+// from an address the organization's rules refuse. Every caller of issuePairTx
 // runs it before beginning the transaction: each check reads, and records a
 // refusal, on the pool.
-func (s *Service) refuseSignIn(ctx context.Context, userID, tenantID uuid.UUID, method, ip, ua string) error {
-	if err := s.refuseInactiveAccount(ctx, userID, tenantID, method, ip, ua); err != nil {
+func (s *Service) refuseSignIn(ctx context.Context, userID, organizationID uuid.UUID, method, ip, ua string) error {
+	if err := s.refuseInactiveAccount(ctx, userID, organizationID, method, ip, ua); err != nil {
 		return err
 	}
-	if err := s.refuseInactiveTenant(ctx, tenantID); err != nil {
+	if err := s.refuseInactiveOrganization(ctx, organizationID); err != nil {
 		return err
 	}
-	return s.checkAddress(ctx, tenantID, userID, ip, method)
+	return s.checkAddress(ctx, organizationID, userID, ip, method)
 }
 
 // CheckSignInAccount is refuseInactiveAccount for a sign-in that hands out
 // something before the session — a social provider's one-time code, which
 // would otherwise be issued to a suspended account and refused only at the
 // exchange.
-func (s *Service) CheckSignInAccount(ctx context.Context, userID, tenantID uuid.UUID, method, ip, ua string) error {
-	return s.refuseInactiveAccount(ctx, userID, tenantID, method, ip, ua)
+func (s *Service) CheckSignInAccount(ctx context.Context, userID, organizationID uuid.UUID, method, ip, ua string) error {
+	return s.refuseInactiveAccount(ctx, userID, organizationID, method, ip, ua)
 }

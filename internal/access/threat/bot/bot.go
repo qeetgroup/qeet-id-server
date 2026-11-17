@@ -30,7 +30,7 @@ import (
 const recordFloor = 0.30
 
 // challengeFloor is the score at/above which a verdict is "challenged" (below
-// the tenant's block threshold). Below it the verdict is "allowed".
+// the organization's block threshold). Below it the verdict is "allowed".
 const challengeFloor = 0.50
 
 // botSignatures are case-insensitive User-Agent substrings typical of scripts,
@@ -63,7 +63,7 @@ func Score(ua string) float64 {
 	return 0
 }
 
-// Settings is a tenant's bot-detection config. Only UACheck and ScoreThreshold
+// Settings is an organization's bot-detection config. Only UACheck and ScoreThreshold
 // affect Evaluate; Honeypot, Captcha and Signature are stored but not enforced.
 type Settings struct {
 	UACheck        bool    `json:"ua_check"`
@@ -73,7 +73,7 @@ type Settings struct {
 	ScoreThreshold float64 `json:"score_threshold"`
 }
 
-// DefaultSettings mirrors the column defaults — used when a tenant has no row.
+// DefaultSettings mirrors the column defaults — used when an organization has no row.
 func DefaultSettings() Settings {
 	return Settings{UACheck: true, Honeypot: true, Captcha: false, Signature: false, ScoreThreshold: 0.70}
 }
@@ -105,7 +105,7 @@ type Page struct {
 	Total      int     `json:"total"`
 }
 
-// Stats counts the tenant's blocked and challenged requests over the last
+// Stats counts the organization's blocked and challenged requests over the last
 // day.
 type Stats struct {
 	Blocked24h    int     `json:"blocked_24h"`
@@ -125,24 +125,24 @@ func NewService(pool *pgxpool.Pool) *Service {
 }
 
 // Evaluate scores a sign-in's User-Agent and, when it looks suspicious, records
-// a verdict in the tenant the email belongs to. Best effort: it never blocks or
+// a verdict in the organization the email belongs to. Best effort: it never blocks or
 // fails the sign-in.
 func (s *Service) Evaluate(ctx context.Context, email, ip, ua string) {
 	score := Score(ua)
 	if score < recordFloor {
 		return // clearly human — don't log
 	}
-	row, err := s.q.GetUserTenantByEmail(ctx, email)
+	row, err := s.q.GetUserOrganizationByEmail(ctx, email)
 	if err != nil {
-		return // no tenant to scope the verdict to
+		return // no organization to scope the verdict to
 	}
-	if !row.TenantID.Valid {
+	if !row.OrganizationID.Valid {
 		return
 	}
-	tenantID, userID := uuid.UUID(row.TenantID.Bytes), row.ID
-	settings, err := s.GetSettings(ctx, tenantID)
+	organizationID, userID := uuid.UUID(row.OrganizationID.Bytes), row.ID
+	settings, err := s.GetSettings(ctx, organizationID)
 	if err != nil || !settings.UACheck {
-		return // UA scoring disabled for this tenant
+		return // UA scoring disabled for this organization
 	}
 	verdict := "allowed"
 	switch {
@@ -154,23 +154,23 @@ func (s *Service) Evaluate(ctx context.Context, email, ip, ua string) {
 	// InsertBotEvent left raw: NULLIF($2,'')::inet causes sqlc parameter-type
 	// ambiguity for the inet cast.
 	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.bot_events (tenant_id, ip, user_agent, score, verdict, user_id)
+		INSERT INTO auth.bot_events (organization_id, ip, user_agent, score, verdict, user_id)
 		VALUES ($1, NULLIF($2,'')::inet, $3, $4, $5, $6)
-	`, tenantID, ip, ua, score, verdict, userID); err != nil {
+	`, organizationID, ip, ua, score, verdict, userID); err != nil {
 		slog.Warn("record bot event", "err", err)
 	}
 }
 
-// List returns a page of up to limit of the tenant's detections (50 when not
+// List returns a page of up to limit of the organization's detections (50 when not
 // in 1..200), newest first, after cursor, of verdict when given, and how many
 // there are.
-func (s *Service) List(ctx context.Context, tenantID uuid.UUID, limit int, cursor, verdict string) (*Page, error) {
+func (s *Service) List(ctx context.Context, organizationID uuid.UUID, limit int, cursor, verdict string) (*Page, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
 	page := &Page{Items: []Event{}}
-	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM auth.bot_events WHERE tenant_id = $1 AND ($2 = '' OR verdict = $2)`,
-		tenantID, verdict).Scan(&page.Total); err != nil {
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM auth.bot_events WHERE organization_id = $1 AND ($2 = '' OR verdict = $2)`,
+		organizationID, verdict).Scan(&page.Total); err != nil {
 		return nil, err
 	}
 	afterTs, afterID := time.Now().Add(time.Hour), uuid.Max
@@ -185,16 +185,16 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, limit int, curso
 		       COALESCE((
 				SELECT CASE e.action WHEN 'auth.login_succeeded' THEN 'signed_in' ELSE 'failed' END
 				FROM audit.events e
-				WHERE e.tenant_id = b.tenant_id AND e.actor_user_id = b.user_id
+				WHERE e.organization_id = b.organization_id AND e.actor_user_id = b.user_id
 				  AND e.action IN ('auth.login_succeeded', 'auth.sign_in_failed')
 				  AND e.ip IS NOT DISTINCT FROM b.ip
 				  AND e.created_at >= b.created_at AND e.created_at < b.created_at + $5::interval
 				ORDER BY e.created_at LIMIT 1), 'unknown') AS outcome
 		FROM auth.bot_events b
 		LEFT JOIN account.users u ON u.id = b.user_id
-		WHERE b.tenant_id = $1 AND ($2 = '' OR b.verdict = $2) AND (b.created_at, b.id) < ($3, $4)
+		WHERE b.organization_id = $1 AND ($2 = '' OR b.verdict = $2) AND (b.created_at, b.id) < ($3, $4)
 		ORDER BY b.created_at DESC, b.id DESC LIMIT $6
-	`, tenantID, verdict, afterTs, afterID, outcomeWindow.String(), limit+1)
+	`, organizationID, verdict, afterTs, afterID, outcomeWindow.String(), limit+1)
 	if err != nil {
 		return nil, err
 	}
@@ -217,13 +217,13 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, limit int, curso
 	return page, nil
 }
 
-// Stats returns the tenant's bot-detection counts.
-func (s *Service) Stats(ctx context.Context, tenantID uuid.UUID) (*Stats, error) {
-	row, err := s.q.GetBotEventStats(ctx, tenantID)
+// Stats returns the organization's bot-detection counts.
+func (s *Service) Stats(ctx context.Context, organizationID uuid.UUID) (*Stats, error) {
+	row, err := s.q.GetBotEventStats(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
-	settings, err := s.GetSettings(ctx, tenantID)
+	settings, err := s.GetSettings(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -234,9 +234,9 @@ func (s *Service) Stats(ctx context.Context, tenantID uuid.UUID) (*Stats, error)
 	}, nil
 }
 
-// GetSettings returns the tenant's bot-detection settings.
-func (s *Service) GetSettings(ctx context.Context, tenantID uuid.UUID) (Settings, error) {
-	row, err := s.q.GetBotSettings(ctx, tenantID)
+// GetSettings returns the organization's bot-detection settings.
+func (s *Service) GetSettings(ctx context.Context, organizationID uuid.UUID) (Settings, error) {
+	row, err := s.q.GetBotSettings(ctx, organizationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DefaultSettings(), nil
 	}
@@ -252,9 +252,9 @@ func (s *Service) GetSettings(ctx context.Context, tenantID uuid.UUID) (Settings
 	}, nil
 }
 
-// UpdateSettings stores the tenant's bot-detection settings, recorded as
+// UpdateSettings stores the organization's bot-detection settings, recorded as
 // actor's with each setting it changed.
-func (s *Service) UpdateSettings(ctx context.Context, tenantID uuid.UUID, in Settings, actor audit.Actor) (Settings, error) {
+func (s *Service) UpdateSettings(ctx context.Context, organizationID uuid.UUID, in Settings, actor audit.Actor) (Settings, error) {
 	if in.ScoreThreshold < 0.1 {
 		in.ScoreThreshold = 0.1
 	}
@@ -268,7 +268,7 @@ func (s *Service) UpdateSettings(ctx context.Context, tenantID uuid.UUID, in Set
 	defer tx.Rollback(ctx)
 	q := s.q.WithTx(tx)
 	before := DefaultSettings()
-	row, err := q.LockBotSettings(ctx, tenantID)
+	row, err := q.LockBotSettings(ctx, organizationID)
 	switch {
 	case err == nil:
 		before = Settings{UACheck: row.UaCheck, Honeypot: row.Honeypot, Captcha: row.Captcha,
@@ -277,7 +277,7 @@ func (s *Service) UpdateSettings(ctx context.Context, tenantID uuid.UUID, in Set
 		return Settings{}, err
 	}
 	if err := q.UpsertBotSettings(ctx, dbgen.UpsertBotSettingsParams{
-		TenantID:       tenantID,
+		OrganizationID: organizationID,
 		UaCheck:        in.UACheck,
 		Honeypot:       in.Honeypot,
 		Captcha:        in.Captcha,
@@ -286,7 +286,7 @@ func (s *Service) UpdateSettings(ctx context.Context, tenantID uuid.UUID, in Set
 	}); err != nil {
 		return Settings{}, err
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "bot.settings_updated", "tenant", tenantID,
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "bot.settings_updated", "tenant", organizationID,
 		map[string]any{"changes": audit.Changes(before.audited(), in.audited()), "settings": in.audited()})); err != nil {
 		return Settings{}, err
 	}
@@ -318,7 +318,7 @@ func (h *Handler) Mount(r chi.Router) {
 }
 
 func (h *Handler) overview(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -330,12 +330,12 @@ func (h *Handler) overview(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid verdict"))
 		return
 	}
-	page, err := h.Service.List(r.Context(), tenantID, limit, query.Get("cursor"), verdict)
+	page, err := h.Service.List(r.Context(), organizationID, limit, query.Get("cursor"), verdict)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	stats, err := h.Service.Stats(r.Context(), tenantID)
+	stats, err := h.Service.Stats(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -346,12 +346,12 @@ func (h *Handler) overview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	st, err := h.Service.GetSettings(r.Context(), tenantID)
+	st, err := h.Service.GetSettings(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -360,7 +360,7 @@ func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) putSettings(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -370,7 +370,7 @@ func (h *Handler) putSettings(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	st, err := h.Service.UpdateSettings(r.Context(), tenantID, in, audit.ActorOf(r))
+	st, err := h.Service.UpdateSettings(r.Context(), organizationID, in, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

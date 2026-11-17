@@ -2,11 +2,11 @@ package errs
 
 // Data retention error codes.
 const (
-	CodeRetentionTenantInvalid  = "retention.tenant_invalid"
-	CodeRetentionTenantMismatch = "retention.tenant_mismatch"
+	CodeRetentionOrganizationInvalid  = "retention.tenant_invalid"
+	CodeRetentionOrganizationMismatch = "retention.tenant_mismatch"
 )
 
 var (
-	ErrRetentionTenantInvalid  = New(CodeRetentionTenantInvalid, "That tenant reference is invalid.")
-	ErrRetentionTenantMismatch = New(CodeRetentionTenantMismatch, "You can't access another tenant's retention settings.")
+	ErrRetentionOrganizationInvalid  = New(CodeRetentionOrganizationInvalid, "That tenant reference is invalid.")
+	ErrRetentionOrganizationMismatch = New(CodeRetentionOrganizationMismatch, "You can't access another tenant's retention settings.")
 )

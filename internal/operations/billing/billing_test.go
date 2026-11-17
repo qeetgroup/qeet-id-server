@@ -74,7 +74,7 @@ func TestPeriodEnd(t *testing.T) {
 }
 
 func TestBuiltinPlansArePricedConsistently(t *testing.T) {
-	// Every builtin plan must price every currency the others do, so a tenant
+	// Every builtin plan must price every currency the others do, so an organization
 	// can pick any seeded currency on any plan.
 	var currencies map[string]bool
 	for _, b := range builtins {
@@ -126,7 +126,7 @@ func TestCostsNoMore(t *testing.T) {
 // TestBuiltinPlansPromiseOnlyWhatShips keeps the catalogue the console and the
 // website show to what the product actually does. Each phrase below names
 // something that isn't built or committed to: an uptime figure or SLA, keys
-// the customer brings, data residency, a dedicated tenant, a certification,
+// the customer brings, data residency, a dedicated organization, a certification,
 // a custom sign-in domain, or usage metering.
 func TestBuiltinPlansPromiseOnlyWhatShips(t *testing.T) {
 	unsupported := []string{"uptime", "SLA", "BYOK", "residency", "Dedicated tenant", "HIPAA", "& domain", "metered"}

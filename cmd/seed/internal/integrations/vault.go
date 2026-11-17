@@ -42,7 +42,7 @@ func pem(w *world.World) string {
 	return base64.StdEncoding.EncodeToString([]byte(key))
 }
 
-// secretSpecs are each organisation's vault secrets.
+// secretSpecs are each organization's vault secrets.
 var secretSpecs = map[string][]secretSpec{
 	"qeet": {
 		{name: "RAZORPAY_KEY_SECRET", scope: "payments", value: prefixed("", 24), by: []who{email("diego@qeet.in")}, created: 300, rotated: []float64{120}, rotateEvery: 90},
@@ -86,7 +86,7 @@ var secretSpecs = map[string][]secretSpec{
 	},
 }
 
-// secrets stores the organisation's vault secrets through the secrets
+// secrets stores the organization's vault secrets through the secrets
 // service, audited as the console does, and rotates and reveals some later.
 func (d *dev) secrets(o *world.Org) {
 	w := d.w
@@ -150,9 +150,9 @@ type vaultProvider struct {
 	account  func(w *world.World, p *world.Person) string
 }
 
-// vaultProviders are each organisation's token-vault providers. Browsers are
+// vaultProviders are each organization's token-vault providers. Browsers are
 // sent to the vendor's real authorize page; the API exchanges codes through
-// the organisation's own egress gateway, a host that does not resolve.
+// the organization's own egress gateway, a host that does not resolve.
 var vaultProviders = map[string][]vaultProvider{
 	"qeet": {
 		{name: "slack", clientID: "5512398172.7829104456213", authorize: "https://slack.com/oauth/v2/authorize", tokenPath: "/slack/api/oauth.v2.access",
@@ -207,10 +207,10 @@ func slackUser(w *world.World, _ *world.Person) string {
 	return "U0" + chars(w, "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", 9)
 }
 
-// egress is the organisation's outbound OAuth gateway, which never resolves.
+// egress is the organization's outbound OAuth gateway, which never resolves.
 func egress(o *world.Org) string { return "https://oauth-egress." + o.Spec.Domain }
 
-// tokenVault registers the organisation's OAuth providers through the token
+// tokenVault registers the organization's OAuth providers through the token
 // vault service, then the accounts its people connected. A connection is only
 // ever written by the OAuth callback, so those are written here, sealed the
 // way the vault seals them.
@@ -261,8 +261,8 @@ func (d *dev) grant(o *world.Org, p *world.Person, v vaultProvider, connected ti
 		expires = &e
 	}
 	w.Exec("token vault connection", `
-		INSERT INTO tenant.token_vault_grants
-		    (tenant_id, user_id, provider, external_account_id, access_token_ct, access_token_nonce,
+		INSERT INTO organization.token_vault_grants
+		    (organization_id, user_id, provider, external_account_id, access_token_ct, access_token_nonce,
 		     refresh_token_ct, refresh_token_nonce, token_type, scope, expires_at, created_at, updated_at, encryption_version)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Bearer', $9, $10, $11, $12, 1)`,
 		o.ID, p.ID, v.name, v.account(w, p), accessCT, accessNonce, refreshCT, refreshNonce, v.scopes, expires, connected, updated)

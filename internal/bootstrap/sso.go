@@ -9,10 +9,10 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
 )
 
-// setPlatformSocialProviders enables the platform-level (tenant-less) social
+// setPlatformSocialProviders enables the platform-level (organization-less) social
 // sign-ins whose credentials cfg sets.
 func setPlatformSocialProviders(socialService *social.Service, cfg *config.Config) {
-	// Platform-level (tenant-less) social login for the console's own accounts.
+	// Platform-level (organization-less) social login for the console's own accounts.
 	// Off until credentials are set; Google only for now.
 	if cfg.GoogleClientID != "" && cfg.GoogleClientSecret != "" {
 		socialService.SetPlatformProvider("google", cfg.GoogleClientID, cfg.GoogleClientSecret,

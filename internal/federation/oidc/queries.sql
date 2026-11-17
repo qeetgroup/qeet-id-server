@@ -7,35 +7,35 @@
 
 -- name: InsertOIDCClient :one
 INSERT INTO auth.oidc_clients (
-    tenant_id, client_id, client_secret_hash, type, name,
+    organization_id, client_id, client_secret_hash, type, name,
     redirect_uris, post_logout_uris, grant_types, scopes, backchannel_logout_uri, frontchannel_logout_uri,
     logo_uri, client_uri, created_by
-) VALUES (@tenant_id, @client_id, sqlc.narg('client_secret_hash'), @type, @name,
+) VALUES (@organization_id, @client_id, sqlc.narg('client_secret_hash'), @type, @name,
           @redirect_uris, @post_logout_uris, @grant_types, @scopes,
           NULLIF(@backchannel_logout_uri::text, ''), NULLIF(@frontchannel_logout_uri::text, ''),
           NULLIF(@logo_uri::text, ''), NULLIF(@client_uri::text, ''),
           NULLIF(@created_by::uuid, '00000000-0000-0000-0000-000000000000'))
-RETURNING id, tenant_id, client_id, type, name, redirect_uris,
+RETURNING id, organization_id, client_id, type, name, redirect_uris,
           post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until, backchannel_logout_uri, frontchannel_logout_uri, logo_uri, client_uri;
 
 -- pkce_exempt is whether the client's PKCE exemption is in force now.
 -- name: GetClientForAuth :one
-SELECT id, tenant_id, client_secret_hash, type, grant_types, scopes,
+SELECT id, organization_id, client_secret_hash, type, grant_types, scopes,
        (pkce_exempt_until IS NOT NULL AND pkce_exempt_until > NOW())::bool AS pkce_exempt
 FROM auth.oidc_clients WHERE client_id = @client_id;
 
--- name: GetClientTenantAndScopes :one
-SELECT tenant_id, scopes, grant_types FROM auth.oidc_clients WHERE client_id = @client_id;
+-- name: GetClientOrganizationAndScopes :one
+SELECT organization_id, scopes, grant_types FROM auth.oidc_clients WHERE client_id = @client_id;
 
 -- name: GetClientName :one
--- The application's presentation, and the name of the organisation it belongs to.
-SELECT c.name, c.tenant_id, c.logo_uri, c.client_uri, t.name AS tenant_name
+-- The application's presentation, and the name of the organization it belongs to.
+SELECT c.name, c.organization_id, c.logo_uri, c.client_uri, t.name AS organization_name
 FROM auth.oidc_clients c
-LEFT JOIN tenant.tenants t ON t.id = c.tenant_id
+LEFT JOIN organization.organizations t ON t.id = c.organization_id
 WHERE c.client_id = @client_id;
 
 -- name: GetClientRedirectInfo :one
-SELECT tenant_id, type, scopes, redirect_uris, grant_types,
+SELECT organization_id, type, scopes, redirect_uris, grant_types,
        (pkce_exempt_until IS NOT NULL AND pkce_exempt_until > NOW())::bool AS pkce_exempt
 FROM auth.oidc_clients WHERE client_id = @client_id;
 
@@ -53,7 +53,7 @@ LEFT JOIN (
     WHERE revoked_at IS NULL AND expires_at > NOW()
     GROUP BY client_id
 ) g ON g.client_id = c.client_id
-WHERE c.tenant_id = @tenant_id
+WHERE c.organization_id = @organization_id
   AND c.reviewed_at IS NULL
   AND c.grant_types && @machine_grant_types::text[]
 ORDER BY live_grants DESC, c.created_at DESC
@@ -61,24 +61,24 @@ LIMIT 1001;
 
 -- name: ReviewOIDCClient :execrows
 UPDATE auth.oidc_clients SET reviewed_at = NOW(), reviewed_by = @reviewed_by
-WHERE id = @id AND tenant_id = @tenant_id;
+WHERE id = @id AND organization_id = @organization_id;
 
 -- name: ListOIDCClients :many
 -- At most paging.MaxListItems+1 rows: the API truncates the rest.
-SELECT id, tenant_id, client_id, type, name, redirect_uris,
+SELECT id, organization_id, client_id, type, name, redirect_uris,
        post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until, backchannel_logout_uri, frontchannel_logout_uri, logo_uri, client_uri
-FROM auth.oidc_clients WHERE tenant_id = @tenant_id ORDER BY created_at DESC
+FROM auth.oidc_clients WHERE organization_id = @organization_id ORDER BY created_at DESC
 LIMIT 1001;
 
--- CountOIDCClientsByTenant counts a tenant's registered applications (relying
+-- CountOIDCClientsByOrganization counts an organization's registered applications (relying
 -- parties) — the plan "apps" limit check.
--- name: CountOIDCClientsByTenant :one
-SELECT COUNT(*) FROM auth.oidc_clients WHERE tenant_id = @tenant_id;
+-- name: CountOIDCClientsByOrganization :one
+SELECT COUNT(*) FROM auth.oidc_clients WHERE organization_id = @organization_id;
 
 -- name: GetOIDCClient :one
-SELECT id, tenant_id, client_id, type, name, redirect_uris,
+SELECT id, organization_id, client_id, type, name, redirect_uris,
        post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until, backchannel_logout_uri, frontchannel_logout_uri, logo_uri, client_uri
-FROM auth.oidc_clients WHERE id = @id AND tenant_id = @tenant_id;
+FROM auth.oidc_clients WHERE id = @id AND organization_id = @organization_id;
 
 -- name: UpdateOIDCClient :one
 UPDATE auth.oidc_clients SET
@@ -96,21 +96,21 @@ UPDATE auth.oidc_clients SET
                                    THEN NULLIF(@frontchannel_logout_uri::text, '') ELSE frontchannel_logout_uri END,
     logo_uri   = CASE WHEN @set_logo_uri::bool THEN NULLIF(@logo_uri::text, '') ELSE logo_uri END,
     client_uri = CASE WHEN @set_client_uri::bool THEN NULLIF(@client_uri::text, '') ELSE client_uri END
-WHERE id = @id AND tenant_id = @tenant_id
-RETURNING id, tenant_id, client_id, type, name, redirect_uris,
+WHERE id = @id AND organization_id = @organization_id
+RETURNING id, organization_id, client_id, type, name, redirect_uris,
           post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until, backchannel_logout_uri, frontchannel_logout_uri, logo_uri, client_uri;
 
 -- name: DeleteOIDCClient :one
-DELETE FROM auth.oidc_clients WHERE id = @id AND tenant_id = @tenant_id RETURNING client_id;
+DELETE FROM auth.oidc_clients WHERE id = @id AND organization_id = @organization_id RETURNING client_id;
 
 -- name: LockOIDCClientForUpdate :one
-SELECT id, tenant_id, client_id, type, name, redirect_uris,
+SELECT id, organization_id, client_id, type, name, redirect_uris,
        post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until, backchannel_logout_uri, frontchannel_logout_uri, logo_uri, client_uri
-FROM auth.oidc_clients WHERE id = @id AND tenant_id = @tenant_id FOR UPDATE;
+FROM auth.oidc_clients WHERE id = @id AND organization_id = @organization_id FOR UPDATE;
 
 -- name: UpdateOIDCClientSecret :exec
 UPDATE auth.oidc_clients SET client_secret_hash = @client_secret_hash
-WHERE id = @id AND tenant_id = @tenant_id;
+WHERE id = @id AND organization_id = @organization_id;
 
 -- ==========================================================================
 -- Authorization codes
@@ -120,15 +120,15 @@ WHERE id = @id AND tenant_id = @tenant_id;
 -- (NULL when there was none), so signing out of it can spend the code.
 -- name: InsertAuthorizationCode :exec
 INSERT INTO auth.oidc_authorization_codes (
-    code_hash, client_id, user_id, tenant_id, redirect_uri,
+    code_hash, client_id, user_id, organization_id, redirect_uri,
     scopes, nonce, code_challenge, code_challenge_method, expires_at, login_session_id, resource, auth_time
-) VALUES (@code_hash, @client_id, @user_id, @tenant_id, @redirect_uri,
+) VALUES (@code_hash, @client_id, @user_id, @organization_id, @redirect_uri,
           @scopes, NULLIF(@nonce,''), NULLIF(@code_challenge,''), NULLIF(@code_challenge_method,''),
           NOW() + INTERVAL '10 minutes', sqlc.narg('login_session_id'), NULLIF(@resource::text,''),
           sqlc.narg('auth_time'));
 
 -- name: ConsumeAuthorizationCode :one
-SELECT user_id, tenant_id, redirect_uri, scopes,
+SELECT user_id, organization_id, redirect_uri, scopes,
        nonce, code_challenge, code_challenge_method, expires_at, used_at, login_session_id, resource, auth_time
 FROM auth.oidc_authorization_codes
 WHERE code_hash = @code_hash AND client_id = @client_id
@@ -157,24 +157,24 @@ ON CONFLICT (user_id, client_id) DO UPDATE SET scopes = EXCLUDED.scopes, granted
 -- and auth_time when the person signed in there (NULL when there was none);
 -- renewals carry both forward.
 -- InsertRefreshToken starts a grant. However often it is renewed, it ends at
--- grant_expires_at: the organisation's maximum session age from now, or the
--- platform's when the organisation sets none. No token outlives the grant.
+-- grant_expires_at: the organization's maximum session age from now, or the
+-- platform's when the organization sets none. No token outlives the grant.
 -- A new grant's first token: its id names the grant (grant_id).
 -- name: InsertRefreshToken :exec
 INSERT INTO auth.oidc_refresh_tokens
-    (id, grant_id, token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource, login_session_id,
+    (id, grant_id, token_hash, client_id, user_id, organization_id, scopes, expires_at, resource, login_session_id,
      grant_expires_at, authorization_code_hash, auth_time)
-SELECT @id, @id, @token_hash, @client_id, @user_id, @tenant_id, @scopes, LEAST(@expires_at::timestamptz, g.ends),
+SELECT @id, @id, @token_hash, @client_id, @user_id, @organization_id, @scopes, LEAST(@expires_at::timestamptz, g.ends),
        sqlc.narg('resource'), sqlc.narg('login_session_id'), g.ends, sqlc.narg('authorization_code_hash'),
        sqlc.narg('auth_time')
 FROM (
     SELECT NOW() + COALESCE(
-        (SELECT sp.session_max_age FROM tenant.security_policies sp WHERE sp.tenant_id = @tenant_id),
+        (SELECT sp.session_max_age FROM organization.security_policies sp WHERE sp.organization_id = @organization_id),
         make_interval(secs => @default_max_age_seconds::float8)) AS ends
 ) g;
 
 -- name: LockRefreshToken :one
-SELECT id, client_id, user_id, tenant_id, scopes, expires_at,
+SELECT id, client_id, user_id, organization_id, scopes, expires_at,
        used_at, revoked_at, resource, login_session_id, grant_expires_at, authorization_code_hash, grant_id,
        auth_time
 FROM auth.oidc_refresh_tokens WHERE token_hash = @token_hash FOR UPDATE;
@@ -183,9 +183,9 @@ FROM auth.oidc_refresh_tokens WHERE token_hash = @token_hash FOR UPDATE;
 -- the new token expires no later than it.
 -- name: InsertRotatedRefreshToken :one
 INSERT INTO auth.oidc_refresh_tokens
-    (token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource, login_session_id, grant_expires_at,
+    (token_hash, client_id, user_id, organization_id, scopes, expires_at, resource, login_session_id, grant_expires_at,
      authorization_code_hash, grant_id, auth_time)
-VALUES (@token_hash, @client_id, @user_id, @tenant_id, @scopes,
+VALUES (@token_hash, @client_id, @user_id, @organization_id, @scopes,
         LEAST(@expires_at::timestamptz, @grant_expires_at::timestamptz),
         sqlc.narg('resource'), sqlc.narg('login_session_id'), @grant_expires_at::timestamptz,
         sqlc.narg('authorization_code_hash'), sqlc.narg('grant_id'), sqlc.narg('auth_time'))
@@ -212,13 +212,13 @@ UPDATE auth.oidc_refresh_tokens t SET revoked_at = NOW()
 FROM (SELECT p.grant_id FROM auth.oidc_refresh_tokens p
       WHERE p.token_hash = @token_hash AND p.client_id = @client_id) g
 WHERE t.grant_id = g.grant_id AND t.client_id = @client_id AND t.revoked_at IS NULL
-RETURNING t.id, t.user_id, t.tenant_id, t.grant_id;
+RETURNING t.id, t.user_id, t.organization_id, t.grant_id;
 
 -- name: GetRefreshTokenForIntrospect :one
-SELECT client_id, user_id, tenant_id, scopes, issued_at, expires_at, used_at, revoked_at
+SELECT client_id, user_id, organization_id, scopes, issued_at, expires_at, used_at, revoked_at
 FROM auth.oidc_refresh_tokens WHERE token_hash = @token_hash;
 
--- ListGrants returns a page of the tenant's live grants (each the current
+-- ListGrants returns a page of the organization's live grants (each the current
 -- token of its chain), latest issued first, before the cursor, of one
 -- application when given: with its application's and person's names, when the
 -- grant began and when the person last consented to the application.
@@ -227,13 +227,13 @@ SELECT t.id, t.client_id, COALESCE(c.name, '') AS client_name, t.user_id,
        COALESCE(u.email, '') AS user_email, u.display_name AS user_name,
        t.scopes, t.issued_at, t.expires_at,
        COALESCE((SELECT r.issued_at FROM auth.oidc_refresh_tokens r
-                 WHERE r.id = t.grant_id AND r.tenant_id = t.tenant_id), t.issued_at)::timestamptz AS authorized_at,
+                 WHERE r.id = t.grant_id AND r.organization_id = t.organization_id), t.issued_at)::timestamptz AS authorized_at,
        k.granted_at AS consented_at
 FROM auth.oidc_refresh_tokens t
 LEFT JOIN auth.oidc_consents k ON k.user_id = t.user_id AND k.client_id = t.client_id
 LEFT JOIN auth.oidc_clients c ON c.client_id = t.client_id
 LEFT JOIN account.users u ON u.id = t.user_id
-WHERE t.tenant_id = @tenant_id
+WHERE t.organization_id = @organization_id
   AND t.revoked_at IS NULL AND t.replaced_by IS NULL AND t.expires_at > NOW()
   AND (sqlc.narg('client_id')::text IS NULL OR t.client_id = sqlc.narg('client_id'))
   AND (t.issued_at, t.id) < (@before_ts::timestamptz, @before_id::uuid)
@@ -242,27 +242,27 @@ LIMIT @row_limit;
 
 -- name: CountGrants :one
 SELECT count(*)::int FROM auth.oidc_refresh_tokens t
-WHERE t.tenant_id = @tenant_id
+WHERE t.organization_id = @organization_id
   AND t.revoked_at IS NULL AND t.replaced_by IS NULL AND t.expires_at > NOW()
   AND (sqlc.narg('client_id')::text IS NULL OR t.client_id = sqlc.narg('client_id'));
 
--- RevokeClientGrants ends every grant the tenant's people gave client_id and
+-- RevokeClientGrants ends every grant the organization's people gave client_id and
 -- returns the people they were for, once each.
 -- name: RevokeClientGrants :many
 WITH ended AS (
     UPDATE auth.oidc_refresh_tokens SET revoked_at = NOW()
-    WHERE tenant_id = @tenant_id AND client_id = @client_id AND revoked_at IS NULL
+    WHERE organization_id = @organization_id AND client_id = @client_id AND revoked_at IS NULL
     RETURNING user_id
 )
 SELECT DISTINCT user_id FROM ended;
 
 -- name: GetGrantForRevoke :one
 SELECT client_id, user_id FROM auth.oidc_refresh_tokens
-WHERE id = @id AND tenant_id = @tenant_id;
+WHERE id = @id AND organization_id = @organization_id;
 
 -- name: RevokeGrantChain :exec
 UPDATE auth.oidc_refresh_tokens SET revoked_at = NOW()
-WHERE client_id = @client_id AND user_id = @user_id AND tenant_id = @tenant_id
+WHERE client_id = @client_id AND user_id = @user_id AND organization_id = @organization_id
   AND revoked_at IS NULL;
 
 -- ==========================================================================
@@ -271,17 +271,17 @@ WHERE client_id = @client_id AND user_id = @user_id AND tenant_id = @tenant_id
 
 -- name: InsertDeviceCode :exec
 INSERT INTO auth.oidc_device_codes (
-    device_code_hash, user_code, client_id, tenant_id, scopes,
+    device_code_hash, user_code, client_id, organization_id, scopes,
     interval_seconds, expires_at
-) VALUES (@device_code_hash, @user_code, @client_id, @tenant_id, @scopes,
+) VALUES (@device_code_hash, @user_code, @client_id, @organization_id, @scopes,
           @interval_seconds, NOW() + INTERVAL '10 minutes');
 
 -- name: GetDeviceByUserCode :one
-SELECT client_id, scopes, status, expires_at, tenant_id
+SELECT client_id, scopes, status, expires_at, organization_id
 FROM auth.oidc_device_codes WHERE user_code = @user_code;
 
 -- name: LockDeviceByUserCode :one
-SELECT id, client_id, tenant_id, scopes, status, expires_at
+SELECT id, client_id, organization_id, scopes, status, expires_at
 FROM auth.oidc_device_codes WHERE user_code = @user_code FOR UPDATE;
 
 -- name: DenyDevice :exec
@@ -292,7 +292,7 @@ UPDATE auth.oidc_device_codes SET status = 'authorized', user_id = @user_id, app
 WHERE id = @id;
 
 -- name: LockDeviceByCode :one
-SELECT id, client_id, tenant_id, user_id, scopes, status,
+SELECT id, client_id, organization_id, user_id, scopes, status,
        interval_seconds, last_polled_at, expires_at, consumed_at
 FROM auth.oidc_device_codes WHERE device_code_hash = @device_code_hash FOR UPDATE;
 
@@ -309,40 +309,40 @@ SELECT d.id, d.client_id, COALESCE(c.name, '') AS client_name, d.user_code, d.st
        d.created_at, d.expires_at, d.last_polled_at, d.consumed_at
 FROM auth.oidc_device_codes d
 LEFT JOIN account.users u ON u.id = d.user_id
-LEFT JOIN auth.oidc_clients c ON c.client_id = d.client_id AND c.tenant_id = d.tenant_id
-WHERE d.tenant_id = @tenant_id
+LEFT JOIN auth.oidc_clients c ON c.client_id = d.client_id AND c.organization_id = d.organization_id
+WHERE d.organization_id = @organization_id
 ORDER BY d.created_at DESC
 LIMIT 1001;
 
 -- name: RevokeDevice :one
 UPDATE auth.oidc_device_codes SET status = 'denied'
-WHERE id = @id AND tenant_id = @tenant_id
+WHERE id = @id AND organization_id = @organization_id
 RETURNING client_id, user_code, device_code_hash;
 
 -- RevokeDeviceGrant ends the grant a device code was redeemed for, every
 -- rotation of it included.
 -- name: RevokeDeviceGrant :execrows
 UPDATE auth.oidc_refresh_tokens SET revoked_at = NOW()
-WHERE tenant_id = @tenant_id AND client_id = @client_id
+WHERE organization_id = @organization_id AND client_id = @client_id
   AND authorization_code_hash = @device_code_hash AND revoked_at IS NULL;
 
 -- ==========================================================================
 -- CIBA (OpenID Connect Client-Initiated Backchannel Authentication)
 -- ==========================================================================
 
--- GetUserByEmailInTenant finds the member of the tenant with the address (its
+-- GetUserByEmailInOrganization finds the member of the organization with the address (its
 -- own account, or one holding a role there), as a browser sign-in would.
--- name: GetUserByEmailInTenant :one
+-- name: GetUserByEmailInOrganization :one
 SELECT u.id FROM account.users u
 WHERE LOWER(u.email) = LOWER(@email) AND u.deleted_at IS NULL
-  AND (u.tenant_id = @tenant_id::uuid
-       OR EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.tenant_id = @tenant_id::uuid AND ur.user_id = u.id));
+  AND (u.organization_id = @organization_id::uuid
+       OR EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.organization_id = @organization_id::uuid AND ur.user_id = u.id));
 
 -- name: InsertCIBARequest :exec
 INSERT INTO auth.oidc_ciba_requests (
-    auth_req_id_hash, client_id, tenant_id, user_id, scopes,
+    auth_req_id_hash, client_id, organization_id, user_id, scopes,
     binding_message, interval_seconds, expires_at
-) VALUES (@auth_req_id_hash, @client_id, @tenant_id, @user_id, @scopes,
+) VALUES (@auth_req_id_hash, @client_id, @organization_id, @user_id, @scopes,
           sqlc.narg('binding_message'), @interval_seconds, NOW() + INTERVAL '10 minutes');
 
 -- name: ListPendingCIBA :many
@@ -352,13 +352,13 @@ WHERE user_id = @user_id AND status = 'pending' AND expires_at > NOW()
 ORDER BY created_at DESC;
 
 -- name: LockCIBARequest :one
-SELECT user_id, tenant_id, status, expires_at
+SELECT user_id, organization_id, status, expires_at
 FROM auth.oidc_ciba_requests WHERE id = @id FOR UPDATE;
 
--- CIBARequestTenant is the organisation of one of the user's backchannel
+-- CIBARequestOrganization is the organization of one of the user's backchannel
 -- requests, for the checks its approval makes before locking it.
--- name: CIBARequestTenant :one
-SELECT tenant_id FROM auth.oidc_ciba_requests WHERE id = @id AND user_id = @user_id;
+-- name: CIBARequestOrganization :one
+SELECT organization_id FROM auth.oidc_ciba_requests WHERE id = @id AND user_id = @user_id;
 
 -- name: DenyCIBARequest :exec
 UPDATE auth.oidc_ciba_requests SET status = 'denied' WHERE id = @id;
@@ -367,7 +367,7 @@ UPDATE auth.oidc_ciba_requests SET status = 'denied' WHERE id = @id;
 UPDATE auth.oidc_ciba_requests SET status = 'authorized', approved_at = NOW() WHERE id = @id;
 
 -- name: LockCIBARequestByHash :one
-SELECT id, client_id, tenant_id, user_id, scopes, status,
+SELECT id, client_id, organization_id, user_id, scopes, status,
        interval_seconds, last_polled_at, expires_at, consumed_at
 FROM auth.oidc_ciba_requests WHERE auth_req_id_hash = @auth_req_id_hash FOR UPDATE;
 
@@ -408,30 +408,30 @@ RETURNING id, user_id, client_id, redirect_uri, scopes, state, nonce, code_chall
 -- name: GetAccountStanding :one
 SELECT status, (deleted_at IS NOT NULL)::boolean AS deleted FROM account.users WHERE id = @id;
 
--- IsActiveTenantMember reports whether an active account is a member of an
--- active tenant: the tenant's own account, or holding a role there.
--- name: IsActiveTenantMember :one
+-- IsActiveOrganizationMember reports whether an active account is a member of an
+-- active organization: the organization's own account, or holding a role there.
+-- name: IsActiveOrganizationMember :one
 SELECT EXISTS (
     SELECT 1 FROM account.users u
-    JOIN tenant.tenants t ON t.id = @tenant_id::uuid
+    JOIN organization.organizations t ON t.id = @organization_id::uuid
     WHERE u.id = @user_id
       AND u.status = 'active' AND u.deleted_at IS NULL
       AND t.status = 'active' AND t.deleted_at IS NULL
-      AND (u.tenant_id = t.id
-           OR EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.tenant_id = t.id AND ur.user_id = u.id))
+      AND (u.organization_id = t.id
+           OR EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.organization_id = t.id AND ur.user_id = u.id))
 ) AS member;
 
--- IsActiveClientMember is IsActiveTenantMember for the tenant of the client.
+-- IsActiveClientMember is IsActiveOrganizationMember for the organization of the client.
 -- name: IsActiveClientMember :one
 SELECT EXISTS (
     SELECT 1 FROM auth.oidc_clients c
-    JOIN tenant.tenants t ON t.id = c.tenant_id
+    JOIN organization.organizations t ON t.id = c.organization_id
     JOIN account.users u ON u.id = @user_id
     WHERE c.client_id = @client_id
       AND u.status = 'active' AND u.deleted_at IS NULL
       AND t.status = 'active' AND t.deleted_at IS NULL
-      AND (u.tenant_id = t.id
-           OR EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.tenant_id = t.id AND ur.user_id = u.id))
+      AND (u.organization_id = t.id
+           OR EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.organization_id = t.id AND ur.user_id = u.id))
 ) AS member;
 
 -- ==========================================================================
@@ -486,7 +486,7 @@ DELETE FROM auth.oidc_client_auth_lockouts WHERE client_row_id = @client_row_id 
 -- name: ListClientAuthFailures :many
 SELECT created_at, COALESCE(host(ip), '')::text AS ip, COALESCE(metadata->>'reason', '')::text AS reason
 FROM audit.events
-WHERE tenant_id = @tenant_id AND action = 'oidc.client_auth_failed' AND resource_id = @client_row_id
+WHERE organization_id = @organization_id AND action = 'oidc.client_auth_failed' AND resource_id = @client_row_id
 ORDER BY created_at DESC
 LIMIT @max_rows;
 
@@ -496,46 +496,46 @@ LIMIT @max_rows;
 
 -- name: ResourceRegistered :one
 SELECT EXISTS (
-    SELECT 1 FROM auth.oidc_resources WHERE tenant_id = @tenant_id AND identifier = @identifier
+    SELECT 1 FROM auth.oidc_resources WHERE organization_id = @organization_id AND identifier = @identifier
 )::bool;
 
 -- name: ListResources :many
-SELECT id, tenant_id, identifier, name, server_client_id, created_at
-FROM auth.oidc_resources WHERE tenant_id = @tenant_id ORDER BY identifier;
+SELECT id, organization_id, identifier, name, server_client_id, created_at
+FROM auth.oidc_resources WHERE organization_id = @organization_id ORDER BY identifier;
 
--- ResourceHostClaimedElsewhere reports whether another organisation has
+-- ResourceHostClaimedElsewhere reports whether another organization has
 -- verified the host of a resource identifier, or a domain above it: only that
--- organisation may name a service there.
+-- organization may name a service there.
 -- name: ResourceHostClaimedElsewhere :one
 SELECT EXISTS (
-    SELECT 1 FROM tenant.domains d
-    WHERE d.tenant_id <> @tenant_id AND d.verified_at IS NOT NULL
+    SELECT 1 FROM organization.domains d
+    WHERE d.organization_id <> @organization_id AND d.verified_at IS NOT NULL
       AND (lower(@host::text) = lower(d.domain) OR lower(@host::text) LIKE '%.' || lower(d.domain))
 )::bool;
 
--- ResourceHostVerifiedHere reports whether the organisation has verified the
+-- ResourceHostVerifiedHere reports whether the organization has verified the
 -- host of a resource identifier, or a domain above it.
 -- name: ResourceHostVerifiedHere :one
 SELECT EXISTS (
-    SELECT 1 FROM tenant.domains d
-    WHERE d.tenant_id = @tenant_id AND d.verified_at IS NOT NULL
+    SELECT 1 FROM organization.domains d
+    WHERE d.organization_id = @organization_id AND d.verified_at IS NOT NULL
       AND (lower(@host::text) = lower(d.domain) OR lower(@host::text) LIKE '%.' || lower(d.domain))
 )::bool;
 
 -- name: InsertResource :one
-INSERT INTO auth.oidc_resources (tenant_id, identifier, name, server_client_id)
-VALUES (@tenant_id, @identifier, @name, sqlc.narg('server_client_id'))
-RETURNING id, tenant_id, identifier, name, server_client_id, created_at;
+INSERT INTO auth.oidc_resources (organization_id, identifier, name, server_client_id)
+VALUES (@organization_id, @identifier, @name, sqlc.narg('server_client_id'))
+RETURNING id, organization_id, identifier, name, server_client_id, created_at;
 
 -- name: DeleteResource :one
-DELETE FROM auth.oidc_resources WHERE id = @id AND tenant_id = @tenant_id RETURNING identifier;
+DELETE FROM auth.oidc_resources WHERE id = @id AND organization_id = @organization_id RETURNING identifier;
 
 -- ResourceServedBy reports whether a client serves one of the given resources
--- of its tenant, so it may introspect tokens issued for them.
+-- of its organization, so it may introspect tokens issued for them.
 -- name: ResourceServedBy :one
 SELECT EXISTS (
     SELECT 1 FROM auth.oidc_resources
-    WHERE tenant_id = @tenant_id AND server_client_id = @client_id AND identifier = ANY(@identifiers::text[])
+    WHERE organization_id = @organization_id AND server_client_id = @client_id AND identifier = ANY(@identifiers::text[])
 )::bool;
 
 -- GetUserinfo is what userinfo and the ID token may say about a live account.
@@ -552,7 +552,7 @@ FROM account.users WHERE id = @id AND deleted_at IS NULL AND status = 'active';
 -- SessionClients is every application that holds a code or a grant from a
 -- hosted-login session, with where it hears of a sign-out.
 -- name: SessionClients :many
-SELECT c.client_id, c.tenant_id, COALESCE(c.backchannel_logout_uri, '')::text AS backchannel_logout_uri,
+SELECT c.client_id, c.organization_id, COALESCE(c.backchannel_logout_uri, '')::text AS backchannel_logout_uri,
        COALESCE(c.frontchannel_logout_uri, '')::text AS frontchannel_logout_uri
 FROM auth.oidc_clients c
 WHERE c.client_id IN (
@@ -563,8 +563,8 @@ WHERE c.client_id IN (
 ORDER BY c.client_id;
 
 -- name: InsertLogoutDelivery :exec
-INSERT INTO auth.oidc_logout_deliveries (tenant_id, client_id, uri, logout_token)
-VALUES (@tenant_id, @client_id, @uri, @logout_token);
+INSERT INTO auth.oidc_logout_deliveries (organization_id, client_id, uri, logout_token)
+VALUES (@organization_id, @client_id, @uri, @logout_token);
 
 -- ClaimLogoutDeliveries takes due notices for one delivery pass, pushing them
 -- back so a crashed pass's are retried, not lost.
@@ -575,7 +575,7 @@ WHERE d.id IN (
     WHERE delivered_at IS NULL AND failed_at IS NULL AND next_attempt_at <= NOW()
     ORDER BY next_attempt_at LIMIT @max_rows FOR UPDATE SKIP LOCKED
 )
-RETURNING d.id, d.tenant_id, d.client_id, d.uri, d.logout_token, d.attempts;
+RETURNING d.id, d.organization_id, d.client_id, d.uri, d.logout_token, d.attempts;
 
 -- name: MarkLogoutDelivered :exec
 UPDATE auth.oidc_logout_deliveries SET delivered_at = NOW(), attempts = attempts + 1, last_error = ''
@@ -592,18 +592,18 @@ WHERE id = @id;
 -- its SHA-256 form, once the secret has verified.
 -- name: UpgradeOIDCClientSecretHash :exec
 UPDATE auth.oidc_clients SET client_secret_hash = @new_hash
-WHERE id = @id AND tenant_id = @tenant_id AND client_secret_hash = @old_hash;
+WHERE id = @id AND organization_id = @organization_id AND client_secret_hash = @old_hash;
 
 -- name: GetClientWebOrigins :one
 -- The web origins an application set; NULL: its redirect URIs' origins.
-SELECT web_origins FROM auth.oidc_clients WHERE id = @id AND tenant_id = @tenant_id;
+SELECT web_origins FROM auth.oidc_clients WHERE id = @id AND organization_id = @organization_id;
 
 -- name: ListClientWebOrigins :many
-SELECT id, web_origins FROM auth.oidc_clients WHERE tenant_id = @tenant_id;
+SELECT id, web_origins FROM auth.oidc_clients WHERE organization_id = @organization_id;
 
 -- name: SetClientWebOrigins :exec
 UPDATE auth.oidc_clients SET web_origins = sqlc.narg('web_origins')
-WHERE id = @id AND tenant_id = @tenant_id;
+WHERE id = @id AND organization_id = @organization_id;
 
 -- name: ListAllWebOrigins :many
 -- Every application's redirect URIs and web origins, for the CORS check of
@@ -619,6 +619,6 @@ SELECT (EXISTS (
             WHERE ls.id = @session_id AND ls.user_id = @user_id AND ls.expires_at > NOW())
         OR EXISTS (
             SELECT 1 FROM auth.oidc_refresh_tokens rt
-            WHERE rt.login_session_id = @session_id AND rt.tenant_id = @tenant_id AND rt.client_id = @client_id
+            WHERE rt.login_session_id = @session_id AND rt.organization_id = @organization_id AND rt.client_id = @client_id
               AND rt.user_id = @user_id AND rt.revoked_at IS NULL AND rt.expires_at > NOW()
               AND (rt.grant_expires_at IS NULL OR rt.grant_expires_at > NOW())))::boolean AS live;

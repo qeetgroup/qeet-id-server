@@ -13,15 +13,15 @@ import (
 
 // TestControlsSayWhenTheyStartedFailingAndWhoOwnsThem checks that a failing
 // control carries a detail code, its parameters and a remedy, keeps the time
-// it started failing across runs, and names the owner the organisation gave
+// it started failing across runs, and names the owner the organization gave
 // it, and that external audits are recorded, listed and removed.
 func TestControlsSayWhenTheyStartedFailingAndWhoOwnsThem(t *testing.T) {
 	pool := dbtest.Pool(t)
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin, stranger := dbtest.User(t, tenant, tenant), dbtest.User(t, other, other)
-	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant),
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	admin, stranger := dbtest.User(t, organization, organization), dbtest.User(t, other, other)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization),
 		(&Handler{Service: NewService(pool, 0), Evidence: NewEvidenceService(pool, audit.NewVerifier(pool, nil), false)}).Mount)
-	base := "/tenants/" + tenant.String() + "/compliance"
+	base := "/tenants/" + organization.String() + "/compliance"
 	run := func() EvidenceRun {
 		t.Helper()
 		var r EvidenceRun
@@ -90,7 +90,7 @@ func TestControlsSayWhenTheyStartedFailingAndWhoOwnsThem(t *testing.T) {
 	if rec := dbtest.Do(t, h, http.MethodDelete, base+"/audits/"+recorded.ID.String(), nil); rec.Code != http.StatusNoContent {
 		t.Errorf("delete the certificate: %d", rec.Code)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action IN ('compliance.audit_recorded', 'compliance.audit_deleted', 'compliance.control_owner_set')`, tenant); n != 3 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action IN ('compliance.audit_recorded', 'compliance.audit_deleted', 'compliance.control_owner_set')`, organization); n != 3 {
 		t.Errorf("%d compliance changes audited, want 3", n)
 	}
 }

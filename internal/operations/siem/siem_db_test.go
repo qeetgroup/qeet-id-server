@@ -57,11 +57,11 @@ func (c *collector) received(path string) []string {
 	return out
 }
 
-// TestSinksForwardTheOrganisationsEvents checks that each kind of log sink
-// receives its organisation's new audit events, with its credential, once,
-// and no other organisation's; that a failing endpoint is recorded; that a
-// disabled sink receives nothing; and that sinks are managed per organisation.
-func TestSinksForwardTheOrganisationsEvents(t *testing.T) {
+// TestSinksForwardTheOrganizationsEvents checks that each kind of log sink
+// receives its organization's new audit events, with its credential, once,
+// and no other organization's; that a failing endpoint is recorded; that a
+// disabled sink receives nothing; and that sinks are managed per organization.
+func TestSinksForwardTheOrganizationsEvents(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	box, err := envelope.New([]byte("0123456789abcdef0123456789abcdef"))
@@ -70,11 +70,11 @@ func TestSinksForwardTheOrganisationsEvents(t *testing.T) {
 	}
 	svc := NewService(pool, egress.DevelopmentPolicy())
 	svc.SetCipher(box)
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
 	sink := newCollector(t)
-	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: svc}).Mount)
-	base := "/tenants/" + tenant.String() + "/log-sinks"
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: svc}).Mount)
+	base := "/tenants/" + organization.String() + "/log-sinks"
 
 	ids := map[string]string{}
 	for typ, path := range map[string]string{"http": "/http", "splunk_hec": "/splunk", "datadog": "/dd"} {
@@ -90,20 +90,20 @@ func TestSinksForwardTheOrganisationsEvents(t *testing.T) {
 		t.Errorf("an unknown sink type: %d, want refused", rec.Code)
 	}
 
-	record := func(tenantID uuid.UUID, action string) {
+	record := func(organizationID uuid.UUID, action string) {
 		t.Helper()
 		tx, err := pool.Begin(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := audit.Record(ctx, tx, audit.Actor{Type: "system"}.Event(tenantID, action, "user", uuid.New(), nil)); err != nil {
+		if err := audit.Record(ctx, tx, audit.Actor{Type: "system"}.Event(organizationID, action, "user", uuid.New(), nil)); err != nil {
 			t.Fatal(err)
 		}
 		if err := tx.Commit(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
-	record(tenant, "user.created")
+	record(organization, "user.created")
 	record(other, "user.deleted")
 	if err := svc.forwardDue(ctx); err != nil {
 		t.Fatalf("forward: %v", err)
@@ -124,7 +124,7 @@ func TestSinksForwardTheOrganisationsEvents(t *testing.T) {
 	sink.mu.Lock()
 	sink.status = http.StatusInternalServerError
 	sink.mu.Unlock()
-	record(tenant, "user.updated")
+	record(organization, "user.updated")
 	if err := svc.forwardDue(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestSinksForwardTheOrganisationsEvents(t *testing.T) {
 		t.Errorf("another organisation deleting the sink: %d, want 404", rec.Code)
 	}
 
-	if _, err := NewService(pool).Create(ctx, tenant, "http", "http://127.0.0.1:9/collect", "", audit.Actor{Type: "user"}); err == nil {
+	if _, err := NewService(pool).Create(ctx, organization, "http", "http://127.0.0.1:9/collect", "", audit.Actor{Type: "user"}); err == nil {
 		t.Error("a sink to a private address was accepted")
 	}
 }
@@ -176,11 +176,11 @@ func TestForwardingKeepsUpOnceAndBacksOff(t *testing.T) {
 	}
 	svc := NewService(pool, egress.DevelopmentPolicy())
 	svc.SetCipher(box)
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
 	sink := newCollector(t)
-	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: svc}).Mount)
-	rec := dbtest.Do(t, h, http.MethodPost, "/tenants/"+tenant.String()+"/log-sinks", map[string]string{"type": "http", "endpoint": sink.URL + "/http", "token": "tok"})
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: svc}).Mount)
+	rec := dbtest.Do(t, h, http.MethodPost, "/tenants/"+organization.String()+"/log-sinks", map[string]string{"type": "http", "endpoint": sink.URL + "/http", "token": "tok"})
 	var created Sink
 	dbtest.Decode(t, rec, &created)
 	if rec.Code != http.StatusCreated {
@@ -193,7 +193,7 @@ func TestForwardingKeepsUpOnceAndBacksOff(t *testing.T) {
 			t.Fatal(err)
 		}
 		for range n {
-			e := audit.Actor{Type: "user", UserAgent: "Mozilla/5.0 test"}.Event(tenant, "user.updated", "user", uuid.New(), map[string]any{"field": "name"})
+			e := audit.Actor{Type: "user", UserAgent: "Mozilla/5.0 test"}.Event(organization, "user.updated", "user", uuid.New(), map[string]any{"field": "name"})
 			if err := audit.Record(ctx, tx, e); err != nil {
 				t.Fatal(err)
 			}
@@ -222,14 +222,14 @@ func TestForwardingKeepsUpOnceAndBacksOff(t *testing.T) {
 	}
 
 	record(1)
-	if _, err := pool.Exec(ctx, `UPDATE tenant.log_sinks SET leased_until = NOW() + INTERVAL '1 minute' WHERE id = $1`, created.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE organization.log_sinks SET leased_until = NOW() + INTERVAL '1 minute' WHERE id = $1`, created.ID); err != nil {
 		t.Fatal(err)
 	}
 	before := events()
 	if err := svc.forwardDue(ctx); err != nil || events() != before {
 		t.Errorf("a sink another instance holds was forwarded to (%v)", err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE tenant.log_sinks SET leased_until = NULL WHERE id = $1`, created.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE organization.log_sinks SET leased_until = NULL WHERE id = $1`, created.ID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -246,7 +246,7 @@ func TestForwardingKeepsUpOnceAndBacksOff(t *testing.T) {
 	if err := svc.forwardDue(ctx); err != nil || len(sink.received("/http")) != attempts {
 		t.Errorf("a failing sink was tried again before its back-off passed (%v)", err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE tenant.log_sinks SET next_attempt_at = NOW() - INTERVAL '1 second' WHERE id = $1`, created.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE organization.log_sinks SET next_attempt_at = NOW() - INTERVAL '1 second' WHERE id = $1`, created.ID); err != nil {
 		t.Fatal(err)
 	}
 	// The collector keeps the refused request too: the held event, twice.
@@ -257,7 +257,7 @@ func TestForwardingKeepsUpOnceAndBacksOff(t *testing.T) {
 
 // TestDestinationsCanBeTested checks that a test event reaches a saved or an
 // unsaved destination with its credential, reports a refusal without marking
-// the destination failing, stays in the organisation, and is audited.
+// the destination failing, stays in the organization, and is audited.
 func TestDestinationsCanBeTested(t *testing.T) {
 	pool := dbtest.Pool(t)
 	box, err := envelope.New([]byte("0123456789abcdef0123456789abcdef"))
@@ -266,11 +266,11 @@ func TestDestinationsCanBeTested(t *testing.T) {
 	}
 	svc := NewService(pool, egress.DevelopmentPolicy())
 	svc.SetCipher(box)
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
 	sink := newCollector(t)
-	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: svc}).Mount)
-	base := "/tenants/" + tenant.String() + "/log-sinks"
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: svc}).Mount)
+	base := "/tenants/" + organization.String() + "/log-sinks"
 	var saved Sink
 	dbtest.Decode(t, dbtest.Do(t, h, http.MethodPost, base, map[string]string{"type": "http", "endpoint": sink.URL + "/saved", "token": "tok-saved"}), &saved)
 	var result TestResult
@@ -286,7 +286,7 @@ func TestDestinationsCanBeTested(t *testing.T) {
 	if result.Delivered || result.Status != http.StatusServiceUnavailable || result.Error == "" {
 		t.Errorf("a refusing destination: %+v, want not delivered with its status", result)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.log_sinks WHERE id = $1 AND last_error = '' AND failures = 0`, saved.ID); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM organization.log_sinks WHERE id = $1 AND last_error = '' AND failures = 0`, saved.ID); n != 1 {
 		t.Error("a test marked the destination failing")
 	}
 	sink.mu.Lock()
@@ -305,7 +305,7 @@ func TestDestinationsCanBeTested(t *testing.T) {
 	if rec := dbtest.Do(t, asOther, http.MethodPost, "/tenants/"+other.String()+"/log-sinks/"+saved.ID.String()+"/test", nil); rec.Code != http.StatusNotFound {
 		t.Errorf("another organisation testing this destination: %d, want 404", rec.Code)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'siem.sink_tested'`, tenant); n != 3 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'siem.sink_tested'`, organization); n != 3 {
 		t.Errorf("%d tests audited, want 3", n)
 	}
 }

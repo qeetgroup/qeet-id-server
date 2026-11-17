@@ -1,7 +1,7 @@
 -- Queries for the authentication domain.
 -- Static queries with fully-typed, non-nullable parameters are converted.
 -- Queries involving nullable UUID columns passed as Go interface{}/nil
--- (sessions.tenant_id, mfa_login_challenges.tenant_id, trusted_devices.tenant_id)
+-- (sessions.organization_id, mfa_login_challenges.organization_id, trusted_devices.organization_id)
 -- remain hand-written because they require Go-nil → SQL NULL semantics that
 -- sqlc's uuid override cannot express without additional NULLIF wrappers that
 -- would silently treat the zero UUID as NULL.
@@ -111,10 +111,10 @@ WITH by_network AS (
 )
 DELETE FROM auth.login_attempts a WHERE a.email = @email;
 
--- name: GetClientTenant :one
--- The tenant an OAuth client belongs to (whose policy a hosted sign-in for it
+-- name: GetClientOrganization :one
+-- The organization an OAuth client belongs to (whose policy a hosted sign-in for it
 -- is held to).
-SELECT tenant_id FROM auth.oidc_clients WHERE client_id = @client_id;
+SELECT organization_id FROM auth.oidc_clients WHERE client_id = @client_id;
 
 -- name: InsertLoginSession :one
 -- second_factor: how the sign-in met a second factor (NULL: it didn't); see
@@ -135,7 +135,7 @@ WHERE id = @id AND user_id = @user_id AND expires_at > NOW();
 -- name: SessionSecondFactor :one
 -- How the sign-in behind a live session of the user's met a second factor
 -- ('' when it didn't), and whether the session holds a step-up still inside
--- its organisation's window. No row when the session is unknown, someone
+-- its organization's window. No row when the session is unknown, someone
 -- else's, revoked or expired.
 SELECT COALESCE(s.second_factor, '')::text AS second_factor,
        EXISTS (
@@ -144,7 +144,7 @@ SELECT COALESCE(s.second_factor, '')::text AS second_factor,
              AND v.verified_at > NOW() - COALESCE(sp.step_up_window, INTERVAL '5 minutes')
        ) AS stepped_up
 FROM auth.sessions s
-LEFT JOIN tenant.security_policies sp ON sp.tenant_id = s.tenant_id
+LEFT JOIN organization.security_policies sp ON sp.organization_id = s.organization_id
 WHERE s.id = @session_id AND s.user_id = @user_id AND s.revoked_at IS NULL
   AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW();
 
@@ -162,14 +162,14 @@ WHERE s.token_hash = @token_hash AND u.status = 'active' AND u.deleted_at IS NUL
 -- for a user without one), when the sign-in happened, and how it met a second
 -- factor ('' when it didn't). No row when the session is unknown or expired,
 -- or the user or their organization is no longer active.
-SELECT s.user_id, u.tenant_id, s.created_at, COALESCE(s.second_factor, '')::text AS second_factor
+SELECT s.user_id, u.organization_id, s.created_at, COALESCE(s.second_factor, '')::text AS second_factor
 FROM auth.login_sessions s
 JOIN account.users u ON u.id = s.user_id
-LEFT JOIN tenant.tenants t ON t.id = u.tenant_id
+LEFT JOIN organization.organizations t ON t.id = u.organization_id
 WHERE s.token_hash = @token_hash
   AND s.expires_at > NOW()
   AND u.status = 'active' AND u.deleted_at IS NULL
-  AND (u.tenant_id IS NULL OR (t.status = 'active' AND t.deleted_at IS NULL));
+  AND (u.organization_id IS NULL OR (t.status = 'active' AND t.deleted_at IS NULL));
 
 -- EndLoginSession ends the hosted-login (browser) session behind a cookie —
 -- expired or not, since what it started can outlive it — and returns its id,
@@ -180,7 +180,7 @@ WITH ended AS (
     DELETE FROM auth.login_sessions WHERE token_hash = @token_hash
     RETURNING id, user_id
 )
-SELECT ended.id, ended.user_id, u.tenant_id
+SELECT ended.id, ended.user_id, u.organization_id
 FROM ended LEFT JOIN account.users u ON u.id = ended.user_id;
 
 -- ExpireAuthorizationCodesForLoginSession spends every code minted through
@@ -209,9 +209,9 @@ FROM ended;
 
 -- name: TouchTrustedDevice :one
 -- Refreshes last_used_at on the live device the token names for the user in
--- the organisation that remembered it, and returns its id; no row otherwise.
+-- the organization that remembered it, and returns its id; no row otherwise.
 UPDATE auth.trusted_devices SET last_used_at = NOW()
-WHERE token_hash = @token_hash AND user_id = @user_id AND tenant_id = @tenant_id AND expires_at > NOW()
+WHERE token_hash = @token_hash AND user_id = @user_id AND organization_id = @organization_id AND expires_at > NOW()
 RETURNING id;
 
 -- PurgeExpiredTrustedDevices deletes at most @max_rows remembered devices that
@@ -220,18 +220,18 @@ RETURNING id;
 DELETE FROM auth.trusted_devices WHERE ctid = ANY(ARRAY(
     SELECT d.ctid FROM auth.trusted_devices d WHERE d.expires_at < @cutoff LIMIT @max_rows));
 
--- CheckTenantMembership reports whether an active account is a member of an
--- active organisation: the organisation's own account, or holding a role there.
--- name: CheckTenantMembership :one
+-- CheckOrganizationMembership reports whether an active account is a member of an
+-- active organization: the organization's own account, or holding a role there.
+-- name: CheckOrganizationMembership :one
 SELECT EXISTS (
     SELECT 1 FROM account.users account
-    JOIN tenant.tenants organization ON organization.id = @tenant_id::uuid
+    JOIN organization.organizations organization ON organization.id = @organization_id::uuid
     WHERE account.id = @user_id
       AND account.status = 'active' AND account.deleted_at IS NULL
       AND organization.status = 'active' AND organization.deleted_at IS NULL
-      AND (account.tenant_id = organization.id
+      AND (account.organization_id = organization.id
            OR EXISTS (SELECT 1 FROM rbac.user_roles membership
-                      WHERE membership.tenant_id = organization.id AND membership.user_id = account.id))
+                      WHERE membership.organization_id = organization.id AND membership.user_id = account.id))
 ) AS is_member;
 
 -- name: UpdatePasswordCredentialHash :exec
@@ -246,9 +246,9 @@ WHERE user_id = @user_id;
 UPDATE auth.sessions SET revoked_at = NOW()
 WHERE user_id = @user_id AND id <> @keep_session_id AND revoked_at IS NULL
   AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
-RETURNING id, tenant_id;
+RETURNING id, organization_id;
 
--- SupersedeSession ends the session a switch of organisation was made from —
+-- SupersedeSession ends the session a switch of organization was made from —
 -- only while it is live (not revoked, not past its maximum age or idle timeout)
 -- and the caller's own — and records the session that replaced it. Ending it
 -- is what stops its refresh tokens. Returns the organization it belonged to
@@ -257,7 +257,7 @@ RETURNING id, tenant_id;
 UPDATE auth.sessions SET revoked_at = NOW(), superseded_by = @new_session_id
 WHERE id = @session_id AND user_id = @user_id AND revoked_at IS NULL
   AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
-RETURNING tenant_id;
+RETURNING organization_id;
 
 -- SessionEnd is when one of the user's sessions ends however active it is.
 -- No row: not theirs.
@@ -296,7 +296,7 @@ SELECT EXISTS (
 UPDATE auth.sessions SET revoked_at = NOW()
 WHERE user_id = @user_id AND revoked_at IS NULL
   AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
-RETURNING id, tenant_id;
+RETURNING id, organization_id;
 
 
 -- RevokeAppGrantsForUser ends every application grant (OIDC refresh-token
@@ -335,33 +335,33 @@ UPDATE auth.sessions SET revoked_at = NOW()
 WHERE id = @session_id AND revoked_at IS NULL;
 
 -- name: RevokeSessionForUser :one
--- Revokes a session scoped to its owner and returns the (nullable) tenant for
+-- Revokes a session scoped to its owner and returns the (nullable) organization for
 -- event emission. No row (pgx.ErrNoRows) means the session isn't the caller's
 -- or has already ended (revoked, or past its maximum age or idle timeout) — a
 -- safe no-op, never a cross-user takedown.
 UPDATE auth.sessions SET revoked_at = NOW()
 WHERE id = @session_id AND user_id = @user_id AND revoked_at IS NULL
   AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
-RETURNING tenant_id;
+RETURNING organization_id;
 
 -- name: InsertPasswordCredential :exec
 -- Stores the Argon2id hash for a newly created identity (signup / hosted register).
 INSERT INTO auth.password_credentials (user_id, password_hash)
 VALUES (@user_id, @password_hash);
 
--- name: InsertTenantlessUser :one
--- Tenant-less signup: creates the identity with tenant_id NULL (a literal, not a
+-- name: InsertOrganizationlessUser :one
+-- Organization-less signup: creates the identity with organization_id NULL (a literal, not a
 -- bind — membership lives in rbac.user_roles). display_name is nullable text.
-INSERT INTO account.users (tenant_id, email, display_name)
+INSERT INTO account.users (organization_id, email, display_name)
 VALUES (NULL, @email, @display_name)
 RETURNING id, created_at, updated_at;
 
--- name: InsertTenantlessSession :one
--- Tenant-less session: tenant_id is a literal NULL (not a bind). ip goes through
+-- name: InsertOrganizationlessSession :one
+-- Organization-less session: organization_id is a literal NULL (not a bind). ip goes through
 -- NULLIF so an empty string stores as SQL NULL, matching InsertLoginSession.
--- With no organisation, the platform's session bounds apply. Returns when it
+-- With no organization, the platform's session bounds apply. Returns when it
 -- ends however active, and when it ends unless renewed.
-INSERT INTO auth.sessions (id, user_id, tenant_id, ip, user_agent, expires_at, idle_timeout, country, city)
+INSERT INTO auth.sessions (id, user_id, organization_id, ip, user_agent, expires_at, idle_timeout, country, city)
 VALUES (@id, @user_id, NULL, NULLIF(@ip::text, '')::inet, @user_agent,
         NOW() + make_interval(secs => @max_age_seconds::float8),
         make_interval(secs => @idle_seconds::float8),
@@ -393,7 +393,7 @@ WHERE s.ctid = ANY(ARRAY(
                   WHERE rt.session_id = e.id AND rt.expires_at >= @cutoff)))
       )
     LIMIT @max_rows))
-RETURNING s.id, s.user_id, s.tenant_id, (s.revoked_at IS NULL)::boolean AS expired;
+RETURNING s.id, s.user_id, s.organization_id, (s.revoked_at IS NULL)::boolean AS expired;
 
 -- PurgeExpiredCeremonies deletes passkey ceremony state that has expired
 -- unfinished — every sign-in page now starts one in the background, and most
@@ -445,19 +445,19 @@ WHERE id = @session_id AND revoked_at IS NULL
   AND last_seen_at < NOW() - INTERVAL '1 minute';
 
 -- MFARequirement reads what decides whether an account must use a second
--- factor to sign in to an organisation: the account's own flag, the
--- organisation's requirement and grace period, and whether the account is an
+-- factor to sign in to an organization: the account's own flag, the
+-- organization's requirement and grace period, and whether the account is an
 -- administrator there — holds the owner role or a role granting a permission
 -- outside member_permissions, directly or through a group (with none listed,
 -- any permission does).
 -- name: MFARequirement :one
--- joined_at is when the account joined the organisation, which the grace
--- period is judged by: its creation for its own organisation, its first role
+-- joined_at is when the account joined the organization, which the grace
+-- period is judged by: its creation for its own organization, its first role
 -- there for any other.
 SELECT u.mfa_required,
-       (CASE WHEN u.tenant_id = @tenant_id::uuid THEN u.created_at
+       (CASE WHEN u.organization_id = @organization_id::uuid THEN u.created_at
              ELSE COALESCE((SELECT MIN(ur.granted_at) FROM rbac.user_roles ur
-                            WHERE ur.user_id = u.id AND ur.tenant_id = @tenant_id::uuid), u.created_at)
+                            WHERE ur.user_id = u.id AND ur.organization_id = @organization_id::uuid), u.created_at)
         END)::timestamptz AS joined_at,
        COALESCE(sp.mfa_enforcement, 'optional')::text AS enforcement,
        COALESCE(sp.mfa_grace_days, 0)::int AS grace_days,
@@ -465,25 +465,25 @@ SELECT u.mfa_required,
        EXISTS (
            SELECT 1
            FROM rbac.user_roles ur
-           JOIN rbac.roles ro ON ro.id = ur.role_id AND ro.tenant_id = ur.tenant_id
+           JOIN rbac.roles ro ON ro.id = ur.role_id AND ro.organization_id = ur.organization_id
            LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
            LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
-           WHERE ur.user_id = u.id AND ur.tenant_id = @tenant_id
+           WHERE ur.user_id = u.id AND ur.organization_id = @organization_id
              AND ((ro.is_system AND ro.name = 'owner')
                   OR (p.key IS NOT NULL AND NOT (p.key = ANY(COALESCE(@member_permissions::text[], '{}')))))
            UNION ALL
            SELECT 1
-           FROM tenant.group_members gm
-           JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
-           JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.tenant_id = gr.tenant_id
+           FROM organization.group_members gm
+           JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.organization_id = gm.organization_id
+           JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.organization_id = gr.organization_id
            LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
            LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
-           WHERE gm.user_id = u.id AND gm.tenant_id = @tenant_id
+           WHERE gm.user_id = u.id AND gm.organization_id = @organization_id
              AND ((ro.is_system AND ro.name = 'owner')
                   OR (p.key IS NOT NULL AND NOT (p.key = ANY(COALESCE(@member_permissions::text[], '{}')))))
        ) AS is_admin
 FROM account.users u
-LEFT JOIN tenant.security_policies sp ON sp.tenant_id = @tenant_id
+LEFT JOIN organization.security_policies sp ON sp.organization_id = @organization_id
 WHERE u.id = @user_id;
 
 -- ExpireRecoveryLinksForUser ends the user's unused password-reset links and

@@ -3,7 +3,7 @@
 **Level:** L2 — repository · **Status:** active · **Evidence state:** verified
 **Last verified:** 2026-11-15
 **Verification scope:** package structure, dependency rules, router and route-policy wiring,
-authentication and authorization enforcement, tenant row security, migrations, configuration,
+authentication and authorization enforcement, organization row security, migrations, configuration,
 workers, OpenAPI coverage and test layout were checked against `c2454fec`. Focused bootstrap,
 HTTP-security, token and authorization tests passed. Live providers, deployed infrastructure and
 production state were not checked. Claims about the *product* are inherited from L1.
@@ -60,7 +60,7 @@ This repository owns:
 
 - **The HTTP API** — every endpoint Qeet ID exposes
 - **All business logic** across five bounded contexts
-- **All enforcement** — authentication, authorization, tenant isolation, rate limiting
+- **All enforcement** — authentication, authorization, organization isolation, rate limiting
 - **Token issuance and verification** — JWT signing, JWKS, key rotation
 - **Identity persistence** — the schema, the migrations, the queries
 - **Federation protocol implementation** — OIDC provider, SAML SP and IdP, SCIM, LDAP, social
@@ -104,8 +104,8 @@ HTTP request
                ↓  API-key middleware
                ↓  LoginSessionAuth       qe_ls cookie, on LoginSessionRoutes() only (no Authorization header)
                ↓  RequireAuth            verify JWT: kid, signature, expiry; the session not ended → principal
-               ↓  EnforceTenantScope     {tenantID} must equal the caller's tenant
-               ↓  rate limiters          per tenant · per user · per API key
+               ↓  EnforceOrganizationScope     {tenantID} must equal the caller's organization
+               ↓  rate limiters          per organization · per user · per API key
                ↓  rbac.Enforce           route permission from permissions.go
                ↓
             handler  →  domain logic  →  sqlc query  →  PostgreSQL
@@ -118,8 +118,8 @@ HTTP request
 
 **Status:** verified · **Evidence:** `internal/bootstrap/router.go`
 
-**Ordering is load-bearing.** CORS runs before CSRF. Tenant scope is checked *before* permissions, so
-a caller can never reach a permission check for another tenant's resource.
+**Ordering is load-bearing.** CORS runs before CSRF. Organization scope is checked *before* permissions, so
+a caller can never reach a permission check for another organization's resource.
 
 ## HTTP architecture
 
@@ -132,13 +132,13 @@ a caller can never reach a permission check for another tenant's resource.
 | Root routes | `/healthz` · `/readyz` · `/metrics` |
 | Protocol mounts | `MountPublic` for OIDC, SCIM, SAML, LDAP — fixed spec locations at the root |
 | `/v1` public group | rate-limited, no session — invites, social, billing webhooks, agent token, passkey login, admin portal, OAuth authorize/token-code |
-| `/v1` authenticated group | API key → hosted-login session (only the few `LoginSessionRoutes()` the hosted login calls) → `RequireAuth` → `EnforceTenantScope` → rate limits → `rbac.Enforce` |
+| `/v1` authenticated group | API key → hosted-login session (only the few `LoginSessionRoutes()` the hosted login calls) → `RequireAuth` → `EnforceOrganizationScope` → rate limits → `rbac.Enforce` |
 | Error taxonomy | `internal/platform/http/errs/` — ~50 domain files, stable machine codes |
 | Status mapping | `internal/platform/http/httpx/error_status_*.go` — 1:1 mirror of `errs/` |
 | Cursor pagination | `internal/platform/http/paging/` |
 | Request helpers, principal, guards | `internal/platform/http/httpx/` |
 
-**Adding a route means choosing a group.** The public group opts out of authentication, tenant scope,
+**Adding a route means choosing a group.** The public group opts out of authentication, organization scope,
 rate limiting and RBAC entirely. Use it only for genuinely unauthenticated endpoints.
 
 **A new error domain needs a file in both** `errs/` and `httpx/error_status_*.go` — the pairing is
@@ -159,7 +159,7 @@ internal/platform      shared kernel — pure infrastructure
 | Package | Responsibility |
 |---|---|
 | `internal/access` | Authentication, authorization (RBAC/ABAC/ReBAC/AuthZEN), MFA, passkeys, recovery, risk, threat |
-| `internal/identity` | Tenants, users, groups, invitations, verification, domain verification, branding |
+| `internal/identity` | Organizations, users, groups, invitations, verification, domain verification, branding |
 | `internal/federation` | OIDC provider, SAML (SP + IdP), SCIM, LDAP, social, admin portal |
 | `internal/developer` | API keys, service principals, agents, auth hooks, webhooks, secrets vault, token vault, VCs |
 | `internal/operations` | Audit, analytics, billing, GDPR, retention, SIEM, notifications, entitlements, search, AI assistant |
@@ -290,7 +290,7 @@ Four variables are security-critical: `CSRF_COOKIE_DOMAIN` (must be the product 
 
 ## Database
 
-One PostgreSQL database, **seven schemas**: `auth`, `tenant`, `account`, `rbac`, `audit`, `platform`,
+One PostgreSQL database, **seven schemas**: `auth`, `organization`, `account`, `rbac`, `audit`, `platform`,
 `qeetai`.
 
 - **Driver:** pgx v5. **Queries:** hand-written SQL in `queries.sql`, compiled by **sqlc** into
@@ -314,62 +314,62 @@ NNNN_description.down.sql
 **Never edit an applied migration.** Add a new pair. Expand → migrate → contract across releases; a
 migration that drops or renames ships at least one release after the code that stopped using it.
 
-## Tenant isolation
+## Organization isolation
 
 **The most security-critical mechanism in this repository. Read all of it.**
 
 ```text
 authenticated principal        (JWT or API key)
         ↓
-httpx.RequireTenant(r)         the ONLY trustworthy source of tenant scope
+httpx.RequireOrganization(r)         the ONLY trustworthy source of organization scope
         ↓
-httpx.EnforceTenantScope       {tenantID} path param must equal the caller's tenant → else 403
+httpx.EnforceOrganizationScope       {tenantID} path param must equal the caller's organization → else 403
         ↓
 service
         ↓
-repository query               WHERE tenant_id = $1
+repository query               WHERE organization_id = $1
 ```
 
 **Evidence:** `internal/platform/http/httpx/auth.go`, `internal/bootstrap/router.go`
 
 The source states the rule directly:
 
-> *"RequireTenant returns the principal's tenant id — the only trustworthy source of tenant scope.
-> Handlers must never take tenant id from URL/body."*
+> *"RequireOrganization returns the principal's organization id — the only trustworthy source of organization scope.
+> Handlers must never take organization id from URL/body."*
 
 ### Membership
 
-A person belongs to an organisation when it is their account's home (`account.users.tenant_id`) or
+A person belongs to an organization when it is their account's home (`account.users.organization_id`) or
 they hold one of its roles (`rbac.user_roles`). Every membership check — signing in to its
-applications, renewing, switching organisation, the member list — uses this rule; permissions still
+applications, renewing, switching organization, the member list — uses this rule; permissions still
 come only from roles, so a home account with none has no access. A guest leaves when their roles are
 removed; a home account is suspended or deleted instead.
 
 ### Row-level security is the second layer
 
-Migration 0160 puts a `tenant_isolation` policy on each organisation-owned table: a connection sees
-and writes only the rows of the organisation set on it (`qeet.tenant_id`), and every row when none
+Migration 0011 puts an `organization_isolation` policy on each organization-owned table: a connection sees
+and writes only the rows of the organization set on it (`qeet.organization_id`), and every row when none
 is set. Connections run as `qeet_app` (`postgres.NewPool`); `httpx.ScopeDatabase` sets the caller's
-organisation through the context, applied each time a connection leaves the pool. The router
-applies it to the organisation-administration routes — those whose policy needs a permission or a
-machine scope (`scopeOrganisationRoutes`); a person's own routes act across their organisations.
+organization through the context, applied each time a connection leaves the pool. The router
+applies it to the organization-administration routes — those whose policy needs a permission or a
+machine scope (`scopeOrganizationRoutes`); a person's own routes act across their organizations.
 
-| Where | A missing `tenant_id` predicate causes |
+| Where | A missing `organization_id` predicate causes |
 |---|---|
-| Organisation-administration request, organisation-owned table | nothing — the database hides the other organisations' rows |
-| A person's own route, background job, sign-in, public flow, account-level table | **cross-tenant data exposure** |
+| Organization-administration request, organization-owned table | nothing — the database hides the other organizations' rows |
+| A person's own route, background job, sign-in, public flow, account-level table | **cross-organization data exposure** |
 
 The account-level tables (`accountLevelTables` in `migrations/schema_db_test.go`: a person's
 sessions, memberships, invitations inbox and such) have no policy. Requests that act across
-organisations by design — switching organisation, creating one, a person's own invitations, export
-and account deletion — call `postgres.AcrossTenants`. The owner-guard trigger functions run as their
-owner, so they always see every organisation.
+organizations by design — switching organization, creating one, a person's own invitations, export
+and account deletion — call `postgres.AcrossOrganizations`. The owner-guard trigger functions run as their
+owner, so they always see every organization.
 
 ### Restructuring routes is a security change
 
 `internal/bootstrap/router.go` warns that the guard depends on chi's nested-route matching:
 flattening the routes onto the top mux makes it **silently fail open**. `rbac` and `users` also
-self-scope in-handler; other tenant-scoped resources rely entirely on the middleware.
+self-scope in-handler; other organization-scoped resources rely entirely on the middleware.
 
 ## Authentication
 
@@ -387,19 +387,19 @@ push approval · social login · adaptive risk (**off by default**) · sign-in l
 breached-password check (env-gated).
 
 Password sign-in lockout (`authentication/lockout.go`) counts failures per account + source network
-(the client IP from `httpx.ClientIP`; IPv4 address or IPv6 /64) — the lock a tenant configures in its
+(the client IP from `httpx.ClientIP`; IPv4 address or IPv6 /64) — the lock an organization configures in its
 authentication policy within the `LOGIN_LOCKOUT_*` bounds — plus a looser per-account cap and a
 per-source counter across accounts (spraying). Unknown addresses are counted and timed like real
-ones. Whose settings apply: the tenant of the OAuth client a hosted sign-in names
-(`auth.Service.SignInTenant`), else the platform defaults — never the account's own tenant before the
+ones. Whose settings apply: the organization of the OAuth client a hosted sign-in names
+(`auth.Service.SignInOrganization`), else the platform defaults — never the account's own organization before the
 password is verified. If its counters cannot be read or written the sign-in **fails closed** (503
 `auth.sign_in_unavailable`, counted in `sign_in_lockout_unavailable_total`). Locks and throttled
 sources reach the Threats → Anomalies store (`credential_stuffing`, `password_spraying`).
 
 Every path that sets or replaces a password (sign-up, hosted registration, self-service change,
 reset, invite accept, admin create / set-password, bulk import) runs one check,
-`authpolicy.Service.ValidateForTenant`: the rules of the organisation the account belongs to (the
-platform baseline `DefaultPolicy`, 8 characters, for a tenant-less account), the offline strength
+`authpolicy.Service.ValidateForOrganization`: the rules of the organization the account belongs to (the
+platform baseline `DefaultPolicy`, 8 characters, for an organization-less account), the offline strength
 baseline, then the breach check — fail-open, each allowed-on-error counted in
 `breached_password_check_allowed_on_error_total`. Services reach it through consumer-declared
 interfaces and refuse (501) to set a password when it is not wired.
@@ -416,7 +416,7 @@ For the product-level flow narrative, read `qeet-id-context/FLOWS/`.
 | ReBAC — Zanzibar relation tuples | `internal/access/authorization/rebac/` |
 | AuthZEN PDP/PEP | `internal/access/authorization/authzen/` |
 | Composed decision — every check and the route guard ask it | `internal/access/authorization/decide/` |
-| Tenant policy / password rules | `internal/access/authorization/{policy,authpolicy}/` |
+| Organization policy / password rules | `internal/access/authorization/{policy,authpolicy}/` |
 
 The **route → permission map** lives in `internal/bootstrap/permissions.go` and is consumed by
 `rbac.Enforce` as router middleware.
@@ -437,7 +437,7 @@ OAuth scope. ABAC denies are evaluated by the composed checker and override a ro
 | Rotation | Shared encrypted registry: candidate staging, explicit activation, replica refresh, timed public-key retirement |
 | Password hash | Argon2id |
 | CSRF token | HMAC-keyed, constant-time comparison |
-| Vault | AES-256-GCM, per-tenant HKDF-derived key, static or AWS KMS provider |
+| Vault | AES-256-GCM, per-organization HKDF-derived key, static or AWS KMS provider |
 | Randomness | `crypto/rand` only |
 
 **Evidence:** `internal/platform/crypto/tokens/{jwt,registry}.go`, `internal/platform/crypto/envelope/`
@@ -469,12 +469,12 @@ discovery.
 **Status:** verified · **Evidence:** `internal/developer/`
 
 Three non-human identity forms: **API keys** (`qk_`, `<prefix>.<secret>`, the secret stored as its
-SHA-256), **service principals** (`client_credentials`, short-lived service JWT scoped to one tenant),
+SHA-256), **service principals** (`client_credentials`, short-lived service JWT scoped to one organization),
 and **AI agents** (`actor_type="agent"`, tokens **re-minted rather than refreshed**, with a sponsor
 and a kill switch).
 
 Also here: auth hooks (**default fail-open**, ADR-0011), webhooks with dead-letter, the AES-256-GCM
-secrets vault with per-tenant HKDF keys, the third-party token vault, and W3C JWT-VCs.
+secrets vault with per-organization HKDF keys, the third-party token vault, and W3C JWT-VCs.
 
 **No bounded context imports `developer`** — it is a leaf.
 
@@ -494,8 +494,8 @@ dead-letter
 
 The dispatcher hands every committed event to `webhook.Relay`, which queues the events named in
 the catalogue (`webhook.Events`, `internal/developer/webhooks/events.go`) for the subscriptions of
-the organisation the payload's `tenant_id` names, then publishes it to NATS. A subscription may name
-only catalogue events, so an outbox event a customer should receive needs a catalogue entry and a
+the organization the payload's `tenant_id` names, then publishes it to NATS. A subscription may name
+only catalogue events, so an outbox event a customer should receive needs a catalogue entry and an
 `tenant_id` in its payload. An event's name is its version: change a payload incompatibly under a new name.
 
 **Evidence:** `internal/platform/events/outbox/`, `internal/platform/worker/worker.go`
@@ -506,7 +506,7 @@ owner-conditional finalization; retries retain stable event/delivery IDs. Regist
 list in `bootstrap/dependencies.go` that both binaries run: signing-key refresh, outbox dispatch,
 OIDC back-channel logout, webhooks, GDPR, retention, SIEM, audit anomaly, scheduler.
 
-Scheduled maintenance (audit-chain verification of every organisation, session, MFA, sign-in
+Scheduled maintenance (audit-chain verification of every organization, session, MFA, sign-in
 history, published-outbox and dead-letter cleanup) is `bootstrap.MaintenanceJobs`, run by `worker.RunScheduled`: the
 API runs it as its embedded `scheduler` worker, and `cmd/scheduler` or `cmd/worker` can run it
 standalone. Each job is claimed in `platform.scheduled_job_runs` before it runs, so it runs once per
@@ -529,7 +529,7 @@ caller needs the result or the operation must be atomic with the response.
 | Correlation | `X-Request-Id` via chi `RequestID` middleware, echoed into errors |
 | Audit | Hash-chained — `internal/operations/audit/` |
 
-**Never log** credentials, tokens, personal data, or another tenant's identifiers.
+**Never log** credentials, tokens, personal data, or another organization's identifiers.
 
 ## API contracts
 
@@ -624,8 +624,8 @@ Then `make test`, `make lint`, `make build`.
 
 | Area | Source path | Risk | Review expectation |
 |---|---|---|---|
-| **Tenant isolation** | `internal/platform/http/httpx/auth.go` | **Critical** | Security review, mandatory |
-| **Route tree / middleware order** | `internal/bootstrap/router.go` | **Critical** | Security review — the tenant guard depends on nesting |
+| **Organization isolation** | `internal/platform/http/httpx/auth.go` | **Critical** | Security review, mandatory |
+| **Route tree / middleware order** | `internal/bootstrap/router.go` | **Critical** | Security review — the organization guard depends on nesting |
 | **Route permissions** | `internal/bootstrap/permissions.go` | **Critical** | Security review · executable route-policy coverage |
 | **Authorization** | `internal/access/authorization/` | **Critical** | Security review |
 | **Authentication, sessions** | `internal/access/authentication/` | **Critical** | Security review |
@@ -656,7 +656,7 @@ What review a change needs. Cross-repository impact is expanded in
 | New permission | **yes** | yes | no | **yes** |
 | Authentication change | **yes** | yes | maybe | **yes** |
 | Authorization change | **yes** | yes | maybe | **yes** |
-| **Tenant isolation change** | **mandatory** | maybe | maybe | **yes** |
+| **Organization isolation change** | **mandatory** | maybe | maybe | **yes** |
 | **Route tree restructure** | **mandatory** | no | no | no |
 | Schema change | yes | maybe | **yes** | **yes** |
 | **JWT claims / signing** | **mandatory** | yes | no | **yes — every Qeet product** |
@@ -668,8 +668,8 @@ What review a change needs. Cross-repository impact is expanded in
 ## Known constraints
 
 - **Product is pre-1.0.** The API contract is not frozen.
-- **Tenant isolation is layered.** Principal/path checks and explicit query predicates are the first
-  layer; PostgreSQL row-level security protects organisation-owned tables on organisation-admin
+- **Organization isolation is layered.** Principal/path checks and explicit query predicates are the first
+  layer; PostgreSQL row-level security protects organization-owned tables on organization-admin
   requests. Account-level flows and workers still depend on correct predicates.
 - **First-party session access tokens are checked against live session state on each request.** OAuth
   application tokens follow their grant/introspection rules; relying parties must still consume

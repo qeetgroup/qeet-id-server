@@ -18,10 +18,10 @@ import (
 
 const testReturnURL = "https://login.example.test/enterprise-setup" // where a test's answer returns the browser
 
-// draftConnection has tenant's admin create a draft connection to idp over HTTP.
-func (s *spSide) draftConnection(t *testing.T, tenant uuid.UUID, idp *upstreamIdP) Connection {
+// draftConnection has organization's admin create a draft connection to idp over HTTP.
+func (s *spSide) draftConnection(t *testing.T, organization uuid.UUID, idp *upstreamIdP) Connection {
 	t.Helper()
-	rec := dbtest.Do(t, s.asAdmin(t, tenant), http.MethodPost, "/tenants/"+tenant.String()+"/saml", map[string]any{
+	rec := dbtest.Do(t, s.asAdmin(t, organization), http.MethodPost, "/tenants/"+organization.String()+"/saml", map[string]any{
 		"name": "Okta", "idp_entity_id": idp.entityID, "idp_sso_url": upstreamSSO, "idp_certificate": idp.certPEM,
 		"email_attribute": "email", "name_attribute": "name",
 	})
@@ -33,11 +33,11 @@ func (s *spSide) draftConnection(t *testing.T, tenant uuid.UUID, idp *upstreamId
 	return conn
 }
 
-// beginTest starts a test sign-in of tenant's connID in the browser and
+// beginTest starts a test sign-in of organization's connID in the browser and
 // returns it with the ID of the AuthnRequest sent to the IdP.
-func (s *spSide) beginTest(t *testing.T, tenant, connID uuid.UUID) (*TestSignIn, string) {
+func (s *spSide) beginTest(t *testing.T, organization, connID uuid.UUID) (*TestSignIn, string) {
 	t.Helper()
-	test, err := s.tryTest(t, tenant, connID)
+	test, err := s.tryTest(t, organization, connID)
 	if err != nil {
 		t.Fatalf("begin a test sign-in: %v", err)
 	}
@@ -55,9 +55,9 @@ func (s *spSide) beginTest(t *testing.T, tenant, connID uuid.UUID) (*TestSignIn,
 	return test, ar.ID
 }
 
-// tryTest begins a test sign-in of tenant's connID in the browser, as the
+// tryTest begins a test sign-in of organization's connID in the browser, as the
 // admin portal does.
-func (s *spSide) tryTest(t *testing.T, tenant, connID uuid.UUID) (*TestSignIn, error) {
+func (s *spSide) tryTest(t *testing.T, organization, connID uuid.UUID) (*TestSignIn, error) {
 	t.Helper()
 	ctx := dbtest.Context(t)
 	tx, err := dbtest.Pool(t).Begin(ctx)
@@ -70,7 +70,7 @@ func (s *spSide) tryTest(t *testing.T, tenant, connID uuid.UUID) (*TestSignIn, e
 		req.AddCookie(c)
 	}
 	rec := httptest.NewRecorder()
-	test, err := s.handler.BeginTestSignIn(rec, req, tx, tenant, connID, testReturnURL)
+	test, err := s.handler.BeginTestSignIn(rec, req, tx, organization, connID, testReturnURL)
 	if err != nil {
 		return nil, err
 	}
@@ -89,11 +89,11 @@ func TestSAMLTestSignIn(t *testing.T) {
 	ctx := dbtest.Context(t)
 	sp := newSPSide(t)
 	idp := newUpstreamIdP(t)
-	tenant := dbtest.Tenant(t)
-	conn := sp.draftConnection(t, tenant, idp)
-	tester := dbtest.Unique("tester") + "@" + dbtest.Domain(t, tenant)
+	organization := dbtest.Organization(t)
+	conn := sp.draftConnection(t, organization, idp)
+	tester := dbtest.Unique("tester") + "@" + dbtest.Domain(t, organization)
 
-	test, requestID := sp.beginTest(t, tenant, conn.ID)
+	test, requestID := sp.beginTest(t, organization, conn.ID)
 	if n := dbtest.Count(t, `SELECT count(*) FROM auth.saml_authn_requests WHERE request_id = $1`, requestID); n != 0 {
 		t.Error("a test's AuthnRequest is open to sign-in")
 	}
@@ -103,7 +103,7 @@ func TestSAMLTestSignIn(t *testing.T) {
 	if rec.Code != http.StatusFound || rec.Header().Get("Location") != back {
 		t.Fatalf("ACS: %d %s %s; want the portal page with the test", rec.Code, rec.Header().Get("Location"), rec.Body.String())
 	}
-	got, err := sp.handler.Service.TestSignIn(ctx, test.ID, conn.ID, tenant)
+	got, err := sp.handler.Service.TestSignIn(ctx, test.ID, conn.ID, organization)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,9 +118,9 @@ func TestSAMLTestSignIn(t *testing.T) {
 	for what, n := range map[string]int{
 		"accounts":          dbtest.Count(t, `SELECT count(*) FROM account.users WHERE lower(email) = $1`, tester),
 		"linked identities": dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE connection_id = $1`, conn.ID),
-		"login codes":       dbtest.Count(t, `SELECT count(*) FROM auth.login_codes WHERE tenant_id = $1`, tenant),
-		"sessions":          dbtest.Count(t, `SELECT count(*) FROM auth.sessions WHERE tenant_id = $1`, tenant),
-		"sign-ins recorded": dbtest.Count(t, `SELECT count(*) FROM tenant.saml_connections WHERE id = $1 AND last_login_at IS NOT NULL`, conn.ID),
+		"login codes":       dbtest.Count(t, `SELECT count(*) FROM auth.login_codes WHERE organization_id = $1`, organization),
+		"sessions":          dbtest.Count(t, `SELECT count(*) FROM auth.sessions WHERE organization_id = $1`, organization),
+		"sign-ins recorded": dbtest.Count(t, `SELECT count(*) FROM organization.saml_connections WHERE id = $1 AND last_login_at IS NOT NULL`, conn.ID),
 	} {
 		if n != 0 {
 			t.Errorf("the test left %d %s, want none", n, what)
@@ -131,19 +131,19 @@ func TestSAMLTestSignIn(t *testing.T) {
 	}
 
 	// Another browser can't complete a test it didn't begin.
-	pending, pendingRequest := sp.beginTest(t, tenant, conn.ID)
+	pending, pendingRequest := sp.beginTest(t, organization, conn.ID)
 	mine := sp.browser
 	sp.browser = nil
 	if rec := sp.post(t, conn.ID, idp.respond(t, conn.ID, answer{inResponseTo: pendingRequest, email: tester})); !strings.Contains(rec.Body.String(), errs.CodeSAMLOtherBrowser) {
 		t.Errorf("a test answered in another browser: %d %s, want %s", rec.Code, rec.Body.String(), errs.CodeSAMLOtherBrowser)
 	}
 	sp.browser = mine
-	if got, err := sp.handler.Service.TestSignIn(ctx, pending.ID, conn.ID, tenant); err != nil || got.Status != testPending {
+	if got, err := sp.handler.Service.TestSignIn(ctx, pending.ID, conn.ID, organization); err != nil || got.Status != testPending {
 		t.Errorf("a test answered in another browser: %+v %v, want it still pending", got, err)
 	}
 
 	// What a sign-in would refuse, the test reports.
-	other := dbtest.Tenant(t)
+	other := dbtest.Organization(t)
 	for name, c := range map[string]struct {
 		a        answer
 		code     string
@@ -155,34 +155,34 @@ func TestSAMLTestSignIn(t *testing.T) {
 		"an address on a domain nobody verified":      {answer{email: dbtest.Unique("x") + "@example.test"}, errs.CodeSAMLEmailDomainUnverified, true},
 		"an address on another organisation's domain": {answer{email: "x@" + dbtest.Domain(t, other)}, errs.CodeSAMLEmailDomainUnverified, true},
 	} {
-		test, requestID := sp.beginTest(t, tenant, conn.ID)
+		test, requestID := sp.beginTest(t, organization, conn.ID)
 		c.a.inResponseTo = requestID
 		if rec := sp.post(t, conn.ID, idp.respond(t, conn.ID, c.a)); rec.Code != http.StatusFound {
 			t.Errorf("%s: ACS %d %s, want the portal page", name, rec.Code, rec.Body.String())
 			continue
 		}
-		got, err := sp.handler.Service.TestSignIn(ctx, test.ID, conn.ID, tenant)
+		got, err := sp.handler.Service.TestSignIn(ctx, test.ID, conn.ID, organization)
 		if err != nil || got.Status != testFailed || got.ErrorCode != c.code || got.ErrorMessage == "" || (got.NameID != "") != c.asserted {
 			t.Errorf("%s: %+v %v; want it failed with %s", name, got, err, c.code)
 		}
 	}
 
 	// A test no answer reached in time has expired, and an answer can't revive it.
-	late, lateRequest := sp.beginTest(t, tenant, conn.ID)
+	late, lateRequest := sp.beginTest(t, organization, conn.ID)
 	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE auth.saml_test_sign_ins SET expires_at = NOW() - INTERVAL '1 second' WHERE id = $1`, late.ID); err != nil {
 		t.Fatal(err)
 	}
 	sp.post(t, conn.ID, idp.respond(t, conn.ID, answer{inResponseTo: lateRequest, email: tester}))
-	if got, err := sp.handler.Service.TestSignIn(ctx, late.ID, conn.ID, tenant); err != nil || got.Status != testExpired || got.CompletedAt != nil {
+	if got, err := sp.handler.Service.TestSignIn(ctx, late.ID, conn.ID, organization); err != nil || got.Status != testExpired || got.CompletedAt != nil {
 		t.Errorf("a late test: %+v %v, want it expired", got, err)
 	}
 
-	// Another organisation can neither read the test nor test its connection.
+	// Another organization can neither read the test nor test its connection.
 	if _, err := sp.handler.Service.TestSignIn(ctx, test.ID, conn.ID, other); !errors.Is(err, errs.ErrSAMLTestSignInNotFound) {
 		t.Errorf("another organisation reads the test: %v, want %s", err, errs.CodeSAMLTestSignInNotFound)
 	}
 	theirs := sp.draftConnection(t, other, idp)
-	if _, err := sp.tryTest(t, tenant, theirs.ID); !errors.Is(err, errs.ErrNotFound) {
+	if _, err := sp.tryTest(t, organization, theirs.ID); !errors.Is(err, errs.ErrNotFound) {
 		t.Errorf("testing another organisation's connection: %v, want not found", err)
 	}
 
@@ -193,10 +193,10 @@ func TestSAMLTestSignIn(t *testing.T) {
 	if n, err := PurgeTestSignIns(ctx, dbtest.Pool(t), TestSignInRetention); err != nil || n != 1 {
 		t.Fatalf("purge: %d %v, want the one old test", n, err)
 	}
-	if _, err := sp.handler.Service.TestSignIn(ctx, test.ID, conn.ID, tenant); !errors.Is(err, errs.ErrSAMLTestSignInNotFound) {
+	if _, err := sp.handler.Service.TestSignIn(ctx, test.ID, conn.ID, organization); !errors.Is(err, errs.ErrSAMLTestSignInNotFound) {
 		t.Errorf("a purged test: %v, want %s", err, errs.CodeSAMLTestSignInNotFound)
 	}
-	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE tenant.saml_connections SET status = 'active' WHERE id = $1 AND tenant_id = $2`, conn.ID, tenant); err != nil {
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE organization.saml_connections SET status = 'active' WHERE id = $1 AND organization_id = $2`, conn.ID, organization); err != nil {
 		t.Fatal(err)
 	}
 	if rec := sp.post(t, conn.ID, response); rec.Code == http.StatusFound || !strings.Contains(rec.Body.String(), errs.CodeSAMLReplayDetected) {

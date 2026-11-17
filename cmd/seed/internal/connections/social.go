@@ -25,12 +25,12 @@ var discovery = map[string]string{
 	"microsoft": "https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration",
 }
 
-// linkShare is the share of an organisation's people who linked each provider.
+// linkShare is the share of an organization's people who linked each provider.
 var linkShare = map[string]float64{
 	"google": 0.35, "microsoft": 0.12, "github": 0.3, "apple": 0.08, "discord": 0.05, "facebook": 0.15, "x": 0.1,
 }
 
-// social adds the organisation's social sign-in providers, with client IDs in
+// social adds the organization's social sign-in providers, with client IDs in
 // each vendor's format, and links the accounts of people who signed in with
 // them.
 func (f *fed) social(o *world.Org) {
@@ -42,7 +42,7 @@ func (f *fed) social(o *world.Org) {
 		}
 		by := adminAt(o, at)
 		in := f.socialClient(o, name)
-		in.TenantID, in.Provider, in.DiscoveryURL = o.ID, name, discovery[name]
+		in.OrganizationID, in.Provider, in.DiscoveryURL = o.ID, name, discovery[name]
 		in.ChangedBy = social.ChangedBy{UserID: &by.ID, ActorType: "user", IP: by.Device.IP,
 			UserAgent: by.Device.UserAgent, RequestID: f.requestID()}
 		w.At(at, func() {
@@ -109,7 +109,7 @@ func (f *fed) linkSocial(o *world.Org, provider string, since time.Time) {
 		}
 		linked := f.workTime(from, w.Now.Add(-2*time.Hour), p.Loc)
 		subject, meta := f.socialSubject(provider, o)
-		batch.Queue(`INSERT INTO account.external_identities (id, user_id, tenant_id, provider, subject, email, metadata, linked_at)
+		batch.Queue(`INSERT INTO account.external_identities (id, user_id, organization_id, provider, subject, email, metadata, linked_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, uuid.New(), p.ID, o.ID, provider, subject, p.Email, meta, linked)
 	}
 	w.Check(w.Admin.SendBatch(w.Ctx, batch).Close(), "link "+provider+" identities in "+o.Spec.Slug)

@@ -18,8 +18,8 @@ import (
 // tokenIssuer is the part of auth.Service this handler needs. A consumed magic
 // link signs in through the same second-factor decision as a password.
 type tokenIssuer interface {
-	BeginMagicLinkSignIn(ctx context.Context, userID, tenantID uuid.UUID, ip, ua string) (*auth.LoginResult, error)
-	BeginMagicLinkSession(ctx context.Context, userID, tenantID uuid.UUID, ip, ua, trustedToken, country string) (*auth.LoginSessionResult, error)
+	BeginMagicLinkSignIn(ctx context.Context, userID, organizationID uuid.UUID, ip, ua string) (*auth.LoginResult, error)
+	BeginMagicLinkSession(ctx context.Context, userID, organizationID uuid.UUID, ip, ua, trustedToken, country string) (*auth.LoginSessionResult, error)
 }
 
 // Handler serves the password-reset and magic-link routes. DevMode, for local
@@ -44,15 +44,15 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/auth/magic-link/resend", h.magicResend)
 }
 
-// forgotInput is the forgot-password body. TenantID is accepted, because hosted
+// forgotInput is the forgot-password body. OrganizationID is accepted, because hosted
 // login and the React SDK send it, but unused: email is globally unique. App
 // "hosted_login" sends the link to hosted login's reset page, continuing at
 // ReturnTo if authorizeReturnTo keeps it.
 type forgotInput struct {
-	Email    string `json:"email"`
-	TenantID string `json:"tenant_id,omitempty"`
-	App      string `json:"app,omitempty"`
-	ReturnTo string `json:"return_to,omitempty"`
+	Email          string `json:"email"`
+	OrganizationID string `json:"tenant_id,omitempty"`
+	App            string `json:"app,omitempty"`
+	ReturnTo       string `json:"return_to,omitempty"`
 }
 
 // authorizeReturnTo returns raw if it is this service's own OAuth authorize
@@ -119,14 +119,14 @@ func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// magicStartInput is the magic-link request body. TenantID is the organisation
+// magicStartInput is the magic-link request body. OrganizationID is the organization
 // whose sign-in page asks, omitted from the console's. App "hosted_login" opens
 // the link in hosted login, continuing at ReturnTo if authorizeReturnTo keeps it.
 type magicStartInput struct {
-	TenantID uuid.UUID `json:"tenant_id"`
-	Email    string    `json:"email"`
-	App      string    `json:"app,omitempty"`
-	ReturnTo string    `json:"return_to,omitempty"`
+	OrganizationID uuid.UUID `json:"tenant_id"`
+	Email          string    `json:"email"`
+	App            string    `json:"app,omitempty"`
+	ReturnTo       string    `json:"return_to,omitempty"`
 }
 
 // requestFloor is how long a forgot-password or magic-link request takes at
@@ -141,12 +141,12 @@ func (h *Handler) magicStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Service.RequestMagicLink(r.Context(), MagicLinkRequest{
-		Email:     in.Email,
-		TenantID:  in.TenantID,
-		App:       in.App,
-		ReturnTo:  h.authorizeReturnTo(r, in.ReturnTo),
-		Caller:    httpx.ClientIP(r),
-		UserAgent: r.UserAgent(),
+		Email:          in.Email,
+		OrganizationID: in.OrganizationID,
+		App:            in.App,
+		ReturnTo:       h.authorizeReturnTo(r, in.ReturnTo),
+		Caller:         httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
 	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -173,7 +173,7 @@ func (h *Handler) magicConsume(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	signIn, err := h.AuthService.BeginMagicLinkSignIn(r.Context(), res.UserID, res.TenantID, httpx.ClientIP(r), r.UserAgent())
+	signIn, err := h.AuthService.BeginMagicLinkSignIn(r.Context(), res.UserID, res.OrganizationID, httpx.ClientIP(r), r.UserAgent())
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -210,7 +210,7 @@ func (h *Handler) magicSession(w http.ResponseWriter, r *http.Request) {
 	if c, cerr := r.Cookie(auth.TrustedDeviceCookie); cerr == nil {
 		trusted = c.Value
 	}
-	session, err := h.AuthService.BeginMagicLinkSession(r.Context(), res.UserID, res.TenantID, httpx.ClientIP(r), r.UserAgent(),
+	session, err := h.AuthService.BeginMagicLinkSession(r.Context(), res.UserID, res.OrganizationID, httpx.ClientIP(r), r.UserAgent(),
 		trusted, httpx.GeoCountry(r.Context()))
 	if err != nil {
 		httpx.WriteError(w, r, err)

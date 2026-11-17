@@ -76,7 +76,7 @@ func TestIsSymbol(t *testing.T) {
 }
 
 // TestValidatePassword_TooShortNamesTheMinimum checks that a length refusal
-// names the organisation's actual minimum.
+// names the organization's actual minimum.
 func TestValidatePassword_TooShortNamesTheMinimum(t *testing.T) {
 	err := ValidatePassword(Policy{PasswordMinLength: 14}, "Short-Pass-9!")
 	e := errs.As(err)
@@ -91,10 +91,10 @@ func TestValidatePassword_TooShortNamesTheMinimum(t *testing.T) {
 	}
 }
 
-// TestValidateForTenant_NoOrganisationUsesThePlatformBaseline checks that with
-// no organisation the platform baseline applies without a database read, then
+// TestValidateForOrganization_NoOrganizationUsesThePlatformBaseline checks that with
+// no organization the platform baseline applies without a database read, then
 // the offline strength baseline, then the breach check.
-func TestValidateForTenant_NoOrganisationUsesThePlatformBaseline(t *testing.T) {
+func TestValidateForOrganization_NoOrganizationUsesThePlatformBaseline(t *testing.T) {
 	breached := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sum := sha1.Sum([]byte("Zq7#xLm2-breached")) // #nosec G401 -- HIBP protocol.
 		digest := strings.ToUpper(hex.EncodeToString(sum[:]))
@@ -113,7 +113,7 @@ func TestValidateForTenant_NoOrganisationUsesThePlatformBaseline(t *testing.T) {
 		{"Zq7#xLm2-breached", errs.CodeAuthPolicyPasswordBreached},
 		{"Zq7#xLm2", ""},
 	} {
-		err := s.ValidateForTenant(context.Background(), uuid.Nil, "ada@example.com", c.pw)
+		err := s.ValidateForOrganization(context.Background(), uuid.Nil, "ada@example.com", c.pw)
 		got := ""
 		if e := errs.As(err); e != nil {
 			got = e.Code
@@ -149,7 +149,7 @@ func TestCheckLockout_BoundsAreInclusiveAndUnsetIsTheDefault(t *testing.T) {
 	}
 }
 
-func TestSignInLockout_NoTenantGetsThePlatformDefaults(t *testing.T) {
+func TestSignInLockout_NoOrganizationGetsThePlatformDefaults(t *testing.T) {
 	s := &Service{lockout: DefaultLockoutLimits()} // no database: uuid.Nil must not read one
 	got, err := s.SignInLockout(context.Background(), uuid.Nil)
 	if err != nil || got != DefaultLockoutLimits().Defaults {

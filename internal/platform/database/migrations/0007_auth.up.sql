@@ -6,44 +6,44 @@
 
 -- internal/access/authorization/abac
 CREATE TABLE auth.abac_policies (
-    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id     UUID NOT NULL, -- tenant.tenants (0010)
-    name          TEXT NOT NULL,
-    description   TEXT NOT NULL DEFAULT '',
-    effect        TEXT NOT NULL,
-    resource_type TEXT NOT NULL,
-    action        TEXT NOT NULL,
-    condition     JSONB NOT NULL DEFAULT '{}'::jsonb,
-    priority      INTEGER NOT NULL DEFAULT 0,
-    enabled       BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    version       INTEGER NOT NULL DEFAULT 1,
-    updated_by    UUID,
-    UNIQUE (tenant_id, name),
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID NOT NULL, -- organization.organizations (0010)
+    name            TEXT NOT NULL,
+    description     TEXT NOT NULL DEFAULT '',
+    effect          TEXT NOT NULL,
+    resource_type   TEXT NOT NULL,
+    action          TEXT NOT NULL,
+    condition       JSONB NOT NULL DEFAULT '{}'::jsonb,
+    priority        INTEGER NOT NULL DEFAULT 0,
+    enabled         BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    version         INTEGER NOT NULL DEFAULT 1,
+    updated_by      UUID,
+    UNIQUE (organization_id, name),
     CONSTRAINT abac_policies_effect_check CHECK (effect IN ('allow', 'deny'))
 );
-CREATE UNIQUE INDEX abac_policies_tenant_id_id_key ON auth.abac_policies (tenant_id, id);
-CREATE INDEX idx_abac_policies_lookup ON auth.abac_policies (tenant_id, resource_type, action);
+CREATE UNIQUE INDEX abac_policies_organization_id_id_key ON auth.abac_policies (organization_id, id);
+CREATE INDEX idx_abac_policies_lookup ON auth.abac_policies (organization_id, resource_type, action);
 
 -- internal/access/authorization/abac
 CREATE TABLE auth.abac_policy_versions (
-    tenant_id     UUID NOT NULL, -- tenant.tenants (0010)
-    policy_id     UUID NOT NULL,
-    version       INTEGER NOT NULL,
-    name          TEXT NOT NULL,
-    description   TEXT NOT NULL,
-    effect        TEXT NOT NULL,
-    resource_type TEXT NOT NULL,
-    action        TEXT NOT NULL,
-    condition     JSONB NOT NULL,
-    priority      INTEGER NOT NULL,
-    enabled       BOOLEAN NOT NULL,
-    saved_by      UUID,
-    saved_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (tenant_id, policy_id, version),
-    CONSTRAINT abac_policy_versions_tenant_id_policy_id_fkey FOREIGN KEY (tenant_id, policy_id)
-        REFERENCES auth.abac_policies (tenant_id, id) ON DELETE CASCADE,
+    organization_id UUID NOT NULL, -- organization.organizations (0010)
+    policy_id       UUID NOT NULL,
+    version         INTEGER NOT NULL,
+    name            TEXT NOT NULL,
+    description     TEXT NOT NULL,
+    effect          TEXT NOT NULL,
+    resource_type   TEXT NOT NULL,
+    action          TEXT NOT NULL,
+    condition       JSONB NOT NULL,
+    priority        INTEGER NOT NULL,
+    enabled         BOOLEAN NOT NULL,
+    saved_by        UUID,
+    saved_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (organization_id, policy_id, version),
+    CONSTRAINT abac_policy_versions_organization_id_policy_id_fkey FOREIGN KEY (organization_id, policy_id)
+        REFERENCES auth.abac_policies (organization_id, id) ON DELETE CASCADE,
     CONSTRAINT abac_policy_versions_version_check CHECK (version >= 1),
     CONSTRAINT abac_policy_versions_effect_check CHECK (effect IN ('allow', 'deny'))
 );
@@ -51,7 +51,7 @@ CREATE TABLE auth.abac_policy_versions (
 -- internal/federation/adminportal
 CREATE TABLE auth.admin_portal_sessions (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    link_id      UUID NOT NULL, -- tenant.admin_portal_links (0010)
+    link_id      UUID NOT NULL, -- organization.admin_portal_links (0010)
     token_hash   TEXT NOT NULL UNIQUE,
     expires_at   TIMESTAMPTZ NOT NULL,
     revoked_at   TIMESTAMPTZ,
@@ -64,7 +64,7 @@ CREATE INDEX admin_portal_sessions_link ON auth.admin_portal_sessions (link_id);
 -- internal/developer/agents
 CREATE TABLE auth.agents (
     id                         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id                  UUID NOT NULL, -- tenant.tenants (0010)
+    organization_id            UUID NOT NULL, -- organization.organizations (0010)
     name                       TEXT NOT NULL,
     secret_hash                TEXT NOT NULL,
     scopes                     TEXT[] NOT NULL DEFAULT '{}'::text[],
@@ -77,68 +77,68 @@ CREATE TABLE auth.agents (
     previous_secret_expires_at TIMESTAMPTZ,
     CONSTRAINT agents_status_check CHECK (status IN ('active', 'suspended', 'decommissioned'))
 );
-CREATE INDEX idx_agents_sponsor ON auth.agents (tenant_id, sponsor_user_id);
-CREATE INDEX idx_agents_tenant_status ON auth.agents (tenant_id, status);
+CREATE INDEX idx_agents_sponsor ON auth.agents (organization_id, sponsor_user_id);
+CREATE INDEX idx_agents_organization_status ON auth.agents (organization_id, status);
 
 -- internal/developer/api-keys
 CREATE TABLE auth.api_keys (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id    UUID NOT NULL, -- tenant.tenants (0010)
-    user_id      UUID, -- account.users (0010)
-    name         TEXT NOT NULL,
-    prefix       TEXT NOT NULL,
-    key_hash     TEXT NOT NULL,
-    scopes       TEXT[] NOT NULL DEFAULT '{}'::text[],
-    expires_at   TIMESTAMPTZ,
-    last_used_at TIMESTAMPTZ,
-    revoked_at   TIMESTAMPTZ,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    created_by   UUID,
-    rotated_from UUID
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID NOT NULL, -- organization.organizations (0010)
+    user_id         UUID, -- account.users (0010)
+    name            TEXT NOT NULL,
+    prefix          TEXT NOT NULL,
+    key_hash        TEXT NOT NULL,
+    scopes          TEXT[] NOT NULL DEFAULT '{}'::text[],
+    expires_at      TIMESTAMPTZ,
+    last_used_at    TIMESTAMPTZ,
+    revoked_at      TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_by      UUID,
+    rotated_from    UUID
 );
 CREATE INDEX idx_api_keys_prefix ON auth.api_keys (prefix) WHERE revoked_at IS NULL;
-CREATE INDEX idx_api_keys_tenant ON auth.api_keys (tenant_id);
+CREATE INDEX idx_api_keys_organization ON auth.api_keys (organization_id);
 
 -- internal/access/authorization/decisionlog
 CREATE TABLE auth.authz_decisions (
-    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id     UUID NOT NULL, -- tenant.tenants (0010)
-    decided_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    source        TEXT NOT NULL,
-    caller_type   TEXT NOT NULL DEFAULT '',
-    caller_id     UUID,
-    caller_client TEXT NOT NULL DEFAULT '',
-    subject       TEXT NOT NULL,
-    resource      TEXT NOT NULL DEFAULT '',
-    action        TEXT NOT NULL DEFAULT '',
-    allowed       BOOLEAN NOT NULL,
-    model         TEXT NOT NULL DEFAULT '',
-    rule          TEXT NOT NULL DEFAULT '',
-    reason_code   TEXT NOT NULL DEFAULT '',
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID NOT NULL, -- organization.organizations (0010)
+    decided_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    source          TEXT NOT NULL,
+    caller_type     TEXT NOT NULL DEFAULT '',
+    caller_id       UUID,
+    caller_client   TEXT NOT NULL DEFAULT '',
+    subject         TEXT NOT NULL,
+    resource        TEXT NOT NULL DEFAULT '',
+    action          TEXT NOT NULL DEFAULT '',
+    allowed         BOOLEAN NOT NULL,
+    model           TEXT NOT NULL DEFAULT '',
+    rule            TEXT NOT NULL DEFAULT '',
+    reason_code     TEXT NOT NULL DEFAULT '',
     CONSTRAINT authz_decisions_source_check CHECK (source IN (
             'check', 'relation_check', 'authzen', 'abac_evaluate', 'abac_draft'))
 );
 CREATE INDEX authz_decisions_decided_idx ON auth.authz_decisions (decided_at);
-CREATE INDEX authz_decisions_tenant_idx ON auth.authz_decisions (tenant_id, decided_at DESC, id DESC);
+CREATE INDEX authz_decisions_organization_idx ON auth.authz_decisions (organization_id, decided_at DESC, id DESC);
 
 -- internal/access/threat/bot
--- An append-only log: tenant_id has no foreign key, so recording never locks
--- the organisation's row. The organisation purge deletes its rows in batches.
+-- An append-only log: organization_id has no foreign key, so recording never locks
+-- the organization's row. The organization purge deletes its rows in batches.
 CREATE TABLE auth.bot_events (
-    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id  UUID NOT NULL,
-    ip         INET,
-    user_agent TEXT NOT NULL DEFAULT '',
-    score      REAL NOT NULL,
-    verdict    TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    user_id    UUID
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID NOT NULL,
+    ip              INET,
+    user_agent      TEXT NOT NULL DEFAULT '',
+    score           REAL NOT NULL,
+    verdict         TEXT NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    user_id         UUID
 );
-CREATE INDEX idx_bot_events_tenant_created ON auth.bot_events (tenant_id, created_at DESC);
+CREATE INDEX idx_bot_events_organization_created ON auth.bot_events (organization_id, created_at DESC);
 
 -- internal/access/threat/bot
 CREATE TABLE auth.bot_settings (
-    tenant_id       UUID PRIMARY KEY, -- tenant.tenants (0010)
+    organization_id UUID PRIMARY KEY, -- organization.organizations (0010)
     ua_check        BOOLEAN NOT NULL DEFAULT TRUE,
     honeypot        BOOLEAN NOT NULL DEFAULT TRUE,
     captcha         BOOLEAN NOT NULL DEFAULT FALSE,
@@ -149,17 +149,17 @@ CREATE TABLE auth.bot_settings (
 
 -- internal/developer/credentials/vc
 CREATE TABLE auth.credentials (
-    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id  UUID NOT NULL, -- tenant.tenants (0010)
-    subject    TEXT NOT NULL,
-    type       TEXT NOT NULL,
-    claims     JSONB NOT NULL DEFAULT '{}'::jsonb,
-    issued_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    expires_at TIMESTAMPTZ,
-    revoked_at TIMESTAMPTZ,
-    user_id    UUID -- account.users (0010)
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID NOT NULL, -- organization.organizations (0010)
+    subject         TEXT NOT NULL,
+    type            TEXT NOT NULL,
+    claims          JSONB NOT NULL DEFAULT '{}'::jsonb,
+    issued_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at      TIMESTAMPTZ,
+    revoked_at      TIMESTAMPTZ,
+    user_id         UUID -- account.users (0010)
 );
-CREATE INDEX idx_credentials_tenant ON auth.credentials (tenant_id, issued_at DESC);
+CREATE INDEX idx_credentials_organization ON auth.credentials (organization_id, issued_at DESC);
 
 -- internal/access/authentication
 CREATE TABLE auth.login_attempts (
@@ -188,36 +188,36 @@ CREATE INDEX login_attempts_by_network_last_failed_at_idx ON auth.login_attempts
 -- it for a session. kind names the flow that issued it, and only that flow's
 -- exchange accepts it.
 CREATE TABLE auth.login_codes (
-    code_hash     TEXT PRIMARY KEY,
-    kind          TEXT NOT NULL,
-    user_id       UUID NOT NULL, -- account.users (0010)
-    tenant_id     UUID, -- tenant.tenants (0010)
-    connection_id UUID,
-    provider      TEXT,
-    expires_at    TIMESTAMPTZ NOT NULL,
-    used_at       TIMESTAMPTZ,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    code_hash       TEXT PRIMARY KEY,
+    kind            TEXT NOT NULL,
+    user_id         UUID NOT NULL, -- account.users (0010)
+    organization_id UUID, -- organization.organizations (0010)
+    connection_id   UUID,
+    provider        TEXT,
+    expires_at      TIMESTAMPTZ NOT NULL,
+    used_at         TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT login_codes_kind_check CHECK (
-        (kind = 'saml' AND tenant_id IS NOT NULL AND connection_id IS NOT NULL AND provider IS NULL)
-        OR (kind = 'oidc_connection' AND tenant_id IS NOT NULL AND connection_id IS NOT NULL AND provider IS NULL)
-        OR (kind = 'social' AND tenant_id IS NOT NULL AND connection_id IS NULL AND provider IS NOT NULL)
-        OR (kind = 'platform_social' AND tenant_id IS NULL AND connection_id IS NULL AND provider IS NULL))
+        (kind = 'saml' AND organization_id IS NOT NULL AND connection_id IS NOT NULL AND provider IS NULL)
+        OR (kind = 'oidc_connection' AND organization_id IS NOT NULL AND connection_id IS NOT NULL AND provider IS NULL)
+        OR (kind = 'social' AND organization_id IS NOT NULL AND connection_id IS NULL AND provider IS NOT NULL)
+        OR (kind = 'platform_social' AND organization_id IS NULL AND connection_id IS NULL AND provider IS NULL))
 );
 CREATE INDEX login_codes_expires_at_idx ON auth.login_codes (expires_at);
-CREATE INDEX login_codes_tenant_id_idx ON auth.login_codes (tenant_id);
+CREATE INDEX login_codes_organization_id_idx ON auth.login_codes (organization_id);
 
 -- internal/access/threat/risk
 CREATE TABLE auth.login_context_history (
-    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id  UUID NOT NULL, -- tenant.tenants (0010)
-    user_id    UUID NOT NULL, -- account.users (0010)
-    device_key TEXT NOT NULL,
-    country    TEXT,
-    seen_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID NOT NULL, -- organization.organizations (0010)
+    user_id         UUID NOT NULL, -- account.users (0010)
+    device_key      TEXT NOT NULL,
+    country         TEXT,
+    seen_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX idx_login_context_user_device ON auth.login_context_history (user_id, device_key);
 CREATE INDEX idx_login_context_user_seen ON auth.login_context_history (user_id, seen_at DESC);
-CREATE INDEX login_context_history_tenant_id_idx ON auth.login_context_history (tenant_id);
+CREATE INDEX login_context_history_organization_id_idx ON auth.login_context_history (organization_id);
 
 -- internal/access/authentication
 CREATE TABLE auth.login_sessions (
@@ -254,18 +254,18 @@ CREATE TABLE auth.login_source_throttles (
 
 -- internal/access/recovery
 CREATE TABLE auth.magic_links (
-    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id  UUID, -- tenant.tenants (0010)
-    email      TEXT NOT NULL,
-    token_hash TEXT NOT NULL UNIQUE,
-    expires_at TIMESTAMPTZ NOT NULL,
-    used_at    TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    app        TEXT NOT NULL DEFAULT 'console',
-    return_to  TEXT,
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID, -- organization.organizations (0010)
+    email           TEXT NOT NULL,
+    token_hash      TEXT NOT NULL UNIQUE,
+    expires_at      TIMESTAMPTZ NOT NULL,
+    used_at         TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    app             TEXT NOT NULL DEFAULT 'console',
+    return_to       TEXT,
     CONSTRAINT magic_links_app_check CHECK (app IN ('console', 'hosted_login'))
 );
-CREATE INDEX idx_magic_email ON auth.magic_links (tenant_id, lower(email));
+CREATE INDEX idx_magic_email ON auth.magic_links (organization_id, lower(email));
 CREATE INDEX idx_magic_links_expires ON auth.magic_links (expires_at) WHERE used_at IS NULL;
 
 -- internal/access/mfa
@@ -294,7 +294,7 @@ CREATE TABLE auth.mfa_failure_streaks (
 CREATE TABLE auth.mfa_login_challenges (
     id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id               UUID NOT NULL, -- account.users (0010)
-    tenant_id             UUID, -- tenant.tenants (0010)
+    organization_id       UUID, -- organization.organizations (0010)
     expires_at            TIMESTAMPTZ NOT NULL,
     created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     claims                JSONB,
@@ -316,7 +316,7 @@ CREATE TABLE auth.mfa_login_challenges (
             'password', 'magic_link', 'social', 'ldap'))
 );
 CREATE INDEX idx_mfa_login_chal_user ON auth.mfa_login_challenges (user_id);
-CREATE INDEX mfa_login_challenges_tenant_id_idx ON auth.mfa_login_challenges (tenant_id);
+CREATE INDEX mfa_login_challenges_organization_id_idx ON auth.mfa_login_challenges (organization_id);
 
 -- internal/access/mfa
 CREATE TABLE auth.mfa_otp_factors (
@@ -380,18 +380,18 @@ CREATE UNIQUE INDEX mfa_push_devices_user_token_hash ON auth.mfa_push_devices (u
 
 -- internal/access/mfa
 CREATE TABLE auth.mfa_push_pairings (
-    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id    UUID NOT NULL, -- account.users (0010)
-    tenant_id  UUID, -- tenant.tenants (0010)
-    code_hash  TEXT NOT NULL UNIQUE,
-    expires_at TIMESTAMPTZ NOT NULL,
-    used_at    TIMESTAMPTZ,
-    device_id  UUID REFERENCES auth.mfa_push_devices (id) ON DELETE SET NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id         UUID NOT NULL, -- account.users (0010)
+    organization_id UUID, -- organization.organizations (0010)
+    code_hash       TEXT NOT NULL UNIQUE,
+    expires_at      TIMESTAMPTZ NOT NULL,
+    used_at         TIMESTAMPTZ,
+    device_id       UUID REFERENCES auth.mfa_push_devices (id) ON DELETE SET NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX mfa_push_pairings_expires ON auth.mfa_push_pairings (expires_at);
 CREATE INDEX mfa_push_pairings_user ON auth.mfa_push_pairings (user_id, created_at);
-CREATE INDEX mfa_push_pairings_tenant_id_idx ON auth.mfa_push_pairings (tenant_id);
+CREATE INDEX mfa_push_pairings_organization_id_idx ON auth.mfa_push_pairings (organization_id);
 
 -- internal/access/mfa
 CREATE TABLE auth.mfa_recovery_codes (
@@ -423,54 +423,54 @@ CREATE TABLE auth.mfa_totp (
 
 -- internal/operations/notifications
 CREATE TABLE auth.notifications (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id     UUID NOT NULL, -- account.users (0010)
-    tenant_id   UUID, -- tenant.tenants (0010)
-    kind        TEXT NOT NULL DEFAULT 'info',
-    title       TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    href        TEXT NOT NULL DEFAULT '',
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    read_at     TIMESTAMPTZ
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id         UUID NOT NULL, -- account.users (0010)
+    organization_id UUID, -- organization.organizations (0010)
+    kind            TEXT NOT NULL DEFAULT 'info',
+    title           TEXT NOT NULL,
+    description     TEXT NOT NULL DEFAULT '',
+    href            TEXT NOT NULL DEFAULT '',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    read_at         TIMESTAMPTZ
 );
 CREATE INDEX idx_notifications_user_created ON auth.notifications (user_id, created_at DESC);
-CREATE INDEX notifications_tenant_id_idx ON auth.notifications (tenant_id);
+CREATE INDEX notifications_organization_id_idx ON auth.notifications (organization_id);
 
 -- internal/federation/oidcsso, internal/federation/social
 -- What a sign-in through an identity provider keeps between sending the
 -- browser there and its return, read and deleted in one step by the state's
 -- hash. kind names the flow that started it.
 CREATE TABLE auth.oauth_states (
-    state_hash    TEXT PRIMARY KEY,
-    kind          TEXT NOT NULL,
-    tenant_id     UUID, -- tenant.tenants (0010)
-    connection_id UUID,
-    provider      TEXT,
-    code_verifier TEXT NOT NULL,
-    nonce_hash    TEXT,
-    redirect_uri  TEXT NOT NULL,
-    return_to     TEXT,
-    link_user_id  UUID,
-    allow_create  BOOLEAN NOT NULL DEFAULT FALSE,
-    expires_at    TIMESTAMPTZ NOT NULL,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    state_hash      TEXT PRIMARY KEY,
+    kind            TEXT NOT NULL,
+    organization_id UUID, -- organization.organizations (0010)
+    connection_id   UUID,
+    provider        TEXT,
+    code_verifier   TEXT NOT NULL,
+    nonce_hash      TEXT,
+    redirect_uri    TEXT NOT NULL,
+    return_to       TEXT,
+    link_user_id    UUID,
+    allow_create    BOOLEAN NOT NULL DEFAULT FALSE,
+    expires_at      TIMESTAMPTZ NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT oauth_states_kind_check CHECK (
-        (kind = 'social' AND tenant_id IS NOT NULL AND provider IS NOT NULL AND connection_id IS NULL
+        (kind = 'social' AND organization_id IS NOT NULL AND provider IS NOT NULL AND connection_id IS NULL
             AND link_user_id IS NULL AND NOT allow_create)
-        OR (kind = 'oidc_connection' AND tenant_id IS NOT NULL AND connection_id IS NOT NULL AND provider IS NULL
+        OR (kind = 'oidc_connection' AND organization_id IS NOT NULL AND connection_id IS NOT NULL AND provider IS NULL
             AND nonce_hash IS NOT NULL AND link_user_id IS NULL AND NOT allow_create)
-        OR (kind = 'platform_social' AND tenant_id IS NULL AND provider IS NOT NULL AND connection_id IS NULL
+        OR (kind = 'platform_social' AND organization_id IS NULL AND provider IS NOT NULL AND connection_id IS NULL
             AND return_to IS NULL))
 );
 CREATE INDEX oauth_states_expires_at_idx ON auth.oauth_states (expires_at);
-CREATE INDEX oauth_states_tenant_id_idx ON auth.oauth_states (tenant_id);
+CREATE INDEX oauth_states_organization_id_idx ON auth.oauth_states (organization_id);
 
 -- internal/federation/oidc
 CREATE TABLE auth.oidc_authorization_codes (
     code_hash             TEXT PRIMARY KEY,
     client_id             TEXT NOT NULL,
     user_id               UUID NOT NULL,
-    tenant_id             UUID NOT NULL, -- tenant.tenants (0010)
+    organization_id       UUID NOT NULL, -- organization.organizations (0010)
     redirect_uri          TEXT NOT NULL,
     scopes                TEXT[] NOT NULL,
     nonce                 TEXT,
@@ -486,14 +486,14 @@ CREATE TABLE auth.oidc_authorization_codes (
 );
 CREATE INDEX idx_oidc_codes_login_session_unused ON auth.oidc_authorization_codes (login_session_id)
     WHERE login_session_id IS NOT NULL AND used_at IS NULL;
-CREATE INDEX oidc_authorization_codes_tenant_id_idx ON auth.oidc_authorization_codes (tenant_id);
+CREATE INDEX oidc_authorization_codes_organization_id_idx ON auth.oidc_authorization_codes (organization_id);
 
 -- internal/federation/oidc
 CREATE TABLE auth.oidc_ciba_requests (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     auth_req_id_hash TEXT NOT NULL UNIQUE,
     client_id        TEXT NOT NULL,
-    tenant_id        UUID NOT NULL, -- tenant.tenants (0010)
+    organization_id  UUID NOT NULL, -- organization.organizations (0010)
     user_id          UUID NOT NULL, -- account.users (0010)
     scopes           TEXT[] NOT NULL DEFAULT '{}'::text[],
     binding_message  TEXT,
@@ -506,13 +506,13 @@ CREATE TABLE auth.oidc_ciba_requests (
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT oidc_ciba_requests_status_check CHECK (status IN ('pending', 'authorized', 'denied'))
 );
-CREATE INDEX idx_ciba_tenant ON auth.oidc_ciba_requests (tenant_id);
+CREATE INDEX idx_ciba_organization ON auth.oidc_ciba_requests (organization_id);
 CREATE INDEX idx_ciba_user_pending ON auth.oidc_ciba_requests (user_id) WHERE status = 'pending';
 
 -- internal/federation/oidc
 CREATE TABLE auth.oidc_clients (
     id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id               UUID NOT NULL, -- tenant.tenants (0010)
+    organization_id         UUID NOT NULL, -- organization.organizations (0010)
     client_id               TEXT NOT NULL UNIQUE,
     client_secret_hash      TEXT,
     type                    TEXT NOT NULL DEFAULT 'confidential',
@@ -539,7 +539,7 @@ CREATE TABLE auth.oidc_clients (
         OR (logo_uri ~~ 'https://%' AND length(logo_uri) <= 2048)),
     CONSTRAINT oidc_clients_type_check CHECK (type IN ('confidential', 'public'))
 );
-CREATE INDEX oidc_clients_tenant_id_idx ON auth.oidc_clients (tenant_id);
+CREATE INDEX oidc_clients_organization_id_idx ON auth.oidc_clients (organization_id);
 
 -- internal/federation/oidc
 CREATE TABLE auth.oidc_client_auth_lockouts (
@@ -588,7 +588,7 @@ CREATE TABLE auth.oidc_device_codes (
     device_code_hash TEXT NOT NULL UNIQUE,
     user_code        TEXT NOT NULL UNIQUE,
     client_id        TEXT NOT NULL,
-    tenant_id        UUID NOT NULL, -- tenant.tenants (0010)
+    organization_id  UUID NOT NULL, -- organization.organizations (0010)
     user_id          UUID, -- account.users (0010)
     scopes           TEXT[] NOT NULL DEFAULT '{}'::text[],
     status           TEXT NOT NULL DEFAULT 'pending',
@@ -601,12 +601,12 @@ CREATE TABLE auth.oidc_device_codes (
     CONSTRAINT oidc_device_codes_status_check CHECK (status IN ('pending', 'authorized', 'denied'))
 );
 CREATE INDEX oidc_device_codes_expires_at_idx ON auth.oidc_device_codes (expires_at);
-CREATE INDEX oidc_device_codes_tenant_id_idx ON auth.oidc_device_codes (tenant_id);
+CREATE INDEX oidc_device_codes_organization_id_idx ON auth.oidc_device_codes (organization_id);
 
 -- internal/federation/oidc
 CREATE TABLE auth.oidc_logout_deliveries (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id       UUID NOT NULL, -- tenant.tenants (0010)
+    organization_id UUID NOT NULL, -- organization.organizations (0010)
     client_id       TEXT NOT NULL,
     uri             TEXT NOT NULL,
     logout_token    TEXT NOT NULL,
@@ -619,7 +619,7 @@ CREATE TABLE auth.oidc_logout_deliveries (
 );
 CREATE INDEX idx_oidc_logout_deliveries_due ON auth.oidc_logout_deliveries (next_attempt_at)
     WHERE delivered_at IS NULL AND failed_at IS NULL;
-CREATE INDEX oidc_logout_deliveries_tenant_id_idx ON auth.oidc_logout_deliveries (tenant_id);
+CREATE INDEX oidc_logout_deliveries_organization_id_idx ON auth.oidc_logout_deliveries (organization_id);
 
 -- internal/federation/oidc
 CREATE TABLE auth.oidc_refresh_tokens (
@@ -627,7 +627,7 @@ CREATE TABLE auth.oidc_refresh_tokens (
     token_hash              TEXT NOT NULL UNIQUE,
     client_id               TEXT NOT NULL,
     user_id                 UUID NOT NULL, -- account.users (0010)
-    tenant_id               UUID NOT NULL, -- tenant.tenants (0010)
+    organization_id         UUID NOT NULL, -- organization.organizations (0010)
     scopes                  TEXT[] NOT NULL DEFAULT '{}'::text[],
     issued_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     expires_at              TIMESTAMPTZ NOT NULL,
@@ -640,9 +640,9 @@ CREATE TABLE auth.oidc_refresh_tokens (
     authorization_code_hash TEXT,
     grant_id                UUID,
     auth_time               TIMESTAMPTZ,
-    UNIQUE (tenant_id, id),
-    CONSTRAINT oidc_refresh_tokens_replaced_by_fkey FOREIGN KEY (tenant_id, replaced_by)
-        REFERENCES auth.oidc_refresh_tokens (tenant_id, id)
+    UNIQUE (organization_id, id),
+    CONSTRAINT oidc_refresh_tokens_replaced_by_fkey FOREIGN KEY (organization_id, replaced_by)
+        REFERENCES auth.oidc_refresh_tokens (organization_id, id)
 );
 CREATE INDEX idx_oidc_refresh_client_user ON auth.oidc_refresh_tokens (client_id, user_id);
 CREATE INDEX idx_oidc_refresh_login_session_unrevoked ON auth.oidc_refresh_tokens (login_session_id)
@@ -655,12 +655,12 @@ CREATE INDEX idx_oidc_refresh_user_unrevoked ON auth.oidc_refresh_tokens (user_i
 -- internal/federation/oidc
 CREATE TABLE auth.oidc_resources (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id        UUID NOT NULL, -- tenant.tenants (0010)
+    organization_id  UUID NOT NULL, -- organization.organizations (0010)
     identifier       TEXT NOT NULL,
     name             TEXT NOT NULL DEFAULT '',
     server_client_id TEXT,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (tenant_id, identifier)
+    UNIQUE (organization_id, identifier)
 );
 CREATE UNIQUE INDEX uq_oidc_resources_identifier ON auth.oidc_resources (identifier);
 
@@ -725,11 +725,11 @@ CREATE TABLE auth.platform_social_link_codes (
 );
 
 -- internal/access/authorization/rebac
--- tenant_id's key doesn't cascade: the organisation purge deletes the tuples
+-- organization_id's key doesn't cascade: the organization purge deletes the tuples
 -- in batches first.
 CREATE TABLE auth.relation_tuples (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id        UUID NOT NULL, -- tenant.tenants (0010)
+    organization_id  UUID NOT NULL, -- organization.organizations (0010)
     object_type      TEXT NOT NULL,
     object_id        TEXT NOT NULL,
     relation         TEXT NOT NULL,
@@ -738,13 +738,13 @@ CREATE TABLE auth.relation_tuples (
     subject_relation TEXT NOT NULL DEFAULT '',
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX idx_relation_tuple_subject ON auth.relation_tuples (tenant_id, subject_type, subject_id);
+CREATE INDEX idx_relation_tuple_subject ON auth.relation_tuples (organization_id, subject_type, subject_id);
 CREATE UNIQUE INDEX uq_relation_tuple
-    ON auth.relation_tuples (tenant_id, object_type, object_id, relation, subject_type, subject_id, subject_relation);
+    ON auth.relation_tuples (organization_id, object_type, object_id, relation, subject_type, subject_id, subject_relation);
 
 -- internal/access/threat/risk
 CREATE TABLE auth.risk_settings (
-    tenant_id                 UUID PRIMARY KEY, -- tenant.tenants (0010)
+    organization_id           UUID PRIMARY KEY, -- organization.organizations (0010)
     medium_threshold          DOUBLE PRECISION NOT NULL DEFAULT 0.50,
     high_threshold            DOUBLE PRECISION NOT NULL DEFAULT 0.80,
     force_mfa_at_level        TEXT NOT NULL DEFAULT 'high',
@@ -764,7 +764,7 @@ CREATE TABLE auth.risk_settings (
 -- internal/federation/saml
 CREATE TABLE auth.saml_authn_requests (
     request_id    TEXT PRIMARY KEY,
-    connection_id UUID NOT NULL, -- tenant.saml_connections (0010)
+    connection_id UUID NOT NULL, -- organization.saml_connections (0010)
     expires_at    TIMESTAMPTZ NOT NULL,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     return_to     TEXT
@@ -773,7 +773,7 @@ CREATE INDEX saml_authn_requests_expiry ON auth.saml_authn_requests (expires_at)
 
 -- internal/federation/saml
 CREATE TABLE auth.saml_replay_ids (
-    connection_id UUID NOT NULL, -- tenant.saml_connections (0010)
+    connection_id UUID NOT NULL, -- organization.saml_connections (0010)
     kind          TEXT NOT NULL,
     saml_id       TEXT NOT NULL,
     expires_at    TIMESTAMPTZ NOT NULL,
@@ -786,7 +786,7 @@ CREATE INDEX saml_replay_ids_expiry ON auth.saml_replay_ids (expires_at);
 -- internal/federation/saml
 CREATE TABLE auth.saml_test_sign_ins (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    connection_id UUID NOT NULL, -- tenant.saml_connections (0010)
+    connection_id UUID NOT NULL, -- organization.saml_connections (0010)
     request_id    TEXT NOT NULL UNIQUE,
     return_url    TEXT NOT NULL,
     status        TEXT NOT NULL DEFAULT 'pending',
@@ -800,29 +800,29 @@ CREATE INDEX saml_test_sign_ins_connection ON auth.saml_test_sign_ins (connectio
 CREATE INDEX saml_test_sign_ins_created ON auth.saml_test_sign_ins (created_at);
 
 -- internal/access/threat/threat
--- An append-only log: tenant_id has no foreign key, so recording never locks
--- the organisation's row. The organisation purge deletes its rows in batches.
+-- An append-only log: organization_id has no foreign key, so recording never locks
+-- the organization's row. The organization purge deletes its rows in batches.
 CREATE TABLE auth.security_events (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id   UUID NOT NULL,
-    user_id     UUID,
-    type        TEXT NOT NULL,
-    severity    TEXT NOT NULL DEFAULT 'low',
-    detail      TEXT NOT NULL DEFAULT '',
-    status      TEXT NOT NULL DEFAULT 'open',
-    ip          INET,
-    user_agent  TEXT,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    resolved_at TIMESTAMPTZ,
-    metadata    JSONB NOT NULL DEFAULT '{}'::jsonb,
-    resolved_by UUID
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID NOT NULL,
+    user_id         UUID,
+    type            TEXT NOT NULL,
+    severity        TEXT NOT NULL DEFAULT 'low',
+    detail          TEXT NOT NULL DEFAULT '',
+    status          TEXT NOT NULL DEFAULT 'open',
+    ip              INET,
+    user_agent      TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    resolved_at     TIMESTAMPTZ,
+    metadata        JSONB NOT NULL DEFAULT '{}'::jsonb,
+    resolved_by     UUID
 );
-CREATE INDEX idx_security_events_tenant_created ON auth.security_events (tenant_id, created_at DESC);
+CREATE INDEX idx_security_events_organization_created ON auth.security_events (organization_id, created_at DESC);
 
 -- internal/developer/principal
 CREATE TABLE auth.service_principals (
     id                         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id                  UUID NOT NULL, -- tenant.tenants (0010)
+    organization_id            UUID NOT NULL, -- organization.organizations (0010)
     name                       TEXT NOT NULL,
     description                TEXT NOT NULL DEFAULT '',
     secret_hash                TEXT NOT NULL,
@@ -834,35 +834,35 @@ CREATE TABLE auth.service_principals (
     previous_secret_expires_at TIMESTAMPTZ,
     created_by                 UUID
 );
-CREATE UNIQUE INDEX uq_service_principals_tenant_name ON auth.service_principals (tenant_id, lower(name));
+CREATE UNIQUE INDEX uq_service_principals_organization_name ON auth.service_principals (organization_id, lower(name));
 
 -- internal/access/authentication
--- tenant_id's key doesn't cascade: the organisation purge deletes the
+-- organization_id's key doesn't cascade: the organization purge deletes the
 -- sessions in batches first.
 CREATE TABLE auth.sessions (
-    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id       UUID NOT NULL, -- account.users (0010)
-    tenant_id     UUID, -- tenant.tenants (0010)
-    ip            INET,
-    user_agent    TEXT,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    last_seen_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    revoked_at    TIMESTAMPTZ,
-    superseded_by UUID REFERENCES auth.sessions (id) ON DELETE SET NULL,
-    hook_claims   JSONB,
-    expires_at    TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '30 days',
-    idle_timeout  INTERVAL NOT NULL DEFAULT INTERVAL '24 hours',
-    country       TEXT,
-    second_factor TEXT,
-    signed_in_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    city          TEXT,
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id         UUID NOT NULL, -- account.users (0010)
+    organization_id UUID, -- organization.organizations (0010)
+    ip              INET,
+    user_agent      TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_seen_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    revoked_at      TIMESTAMPTZ,
+    superseded_by   UUID REFERENCES auth.sessions (id) ON DELETE SET NULL,
+    hook_claims     JSONB,
+    expires_at      TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '30 days',
+    idle_timeout    INTERVAL NOT NULL DEFAULT INTERVAL '24 hours',
+    country         TEXT,
+    second_factor   TEXT,
+    signed_in_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    city            TEXT,
     CONSTRAINT sessions_city_check CHECK (char_length(city) >= 1 AND char_length(city) <= 100),
     CONSTRAINT sessions_country_check CHECK (country ~ '^[A-Z]{2}$'),
     CONSTRAINT sessions_second_factor_check CHECK (second_factor IN (
             'mfa', 'passkey', 'trusted_device', 'step_up'))
 );
 CREATE INDEX idx_sessions_active ON auth.sessions (user_id) WHERE revoked_at IS NULL;
-CREATE INDEX idx_sessions_tenant_active ON auth.sessions (tenant_id) WHERE revoked_at IS NULL;
+CREATE INDEX idx_sessions_organization_active ON auth.sessions (organization_id) WHERE revoked_at IS NULL;
 CREATE INDEX idx_sessions_user ON auth.sessions (user_id);
 
 -- internal/access/mfa
@@ -892,29 +892,29 @@ CREATE INDEX idx_refresh_tokens_replacement ON auth.refresh_tokens (used_at)
 
 -- internal/access/authentication
 CREATE TABLE auth.trusted_devices (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id      UUID NOT NULL, -- account.users (0010)
-    tenant_id    UUID, -- tenant.tenants (0010)
-    token_hash   TEXT NOT NULL UNIQUE,
-    label        TEXT NOT NULL DEFAULT '',
-    expires_at   TIMESTAMPTZ NOT NULL,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    last_used_at TIMESTAMPTZ
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id         UUID NOT NULL, -- account.users (0010)
+    organization_id UUID, -- organization.organizations (0010)
+    token_hash      TEXT NOT NULL UNIQUE,
+    label           TEXT NOT NULL DEFAULT '',
+    expires_at      TIMESTAMPTZ NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_used_at    TIMESTAMPTZ
 );
-CREATE INDEX idx_trusted_devices_tenant ON auth.trusted_devices (tenant_id, expires_at);
+CREATE INDEX idx_trusted_devices_organization ON auth.trusted_devices (organization_id, expires_at);
 CREATE INDEX idx_trusted_devices_user ON auth.trusted_devices (user_id);
 
 -- internal/access/passkeys
 CREATE TABLE auth.webauthn_sessions (
-    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id              UUID, -- account.users (0010)
-    kind                 TEXT NOT NULL,
-    data                 JSONB NOT NULL,
-    expires_at           TIMESTAMPTZ NOT NULL,
-    created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    subject_id           UUID,
-    pending_email        TEXT,
-    pending_display_name TEXT,
-    pending_tenant_id    UUID, -- tenant.tenants (0010)
-    pending_invite_id    UUID -- tenant.invites (0010)
+    id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id                 UUID, -- account.users (0010)
+    kind                    TEXT NOT NULL,
+    data                    JSONB NOT NULL,
+    expires_at              TIMESTAMPTZ NOT NULL,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    subject_id              UUID,
+    pending_email           TEXT,
+    pending_display_name    TEXT,
+    pending_organization_id UUID, -- organization.organizations (0010)
+    pending_invite_id       UUID -- organization.invites (0010)
 );

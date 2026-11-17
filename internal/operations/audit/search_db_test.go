@@ -20,16 +20,16 @@ import (
 func TestAuditSearchFindsWords(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	tenant := dbtest.Tenant(t)
-	priya := dbtest.UserAt(t, dbtest.Unique("priya")+"@qeet.example", tenant, tenant)
+	organization := dbtest.Organization(t)
+	priya := dbtest.UserAt(t, dbtest.Unique("priya")+"@qeet.example", organization, organization)
 	if _, err := pool.Exec(ctx, `UPDATE account.users SET display_name = 'Priya Rao' WHERE id = $1`, priya.ID); err != nil {
 		t.Fatal(err)
 	}
 	insert := func(action, ua, ip, meta string, actor *uuid.UUID) uuid.UUID {
 		t.Helper()
 		id := uuid.New()
-		if _, err := pool.Exec(ctx, `INSERT INTO audit.events (id, tenant_id, actor_type, actor_user_id, action, resource_type, user_agent, ip, metadata)
-			VALUES ($1, $2, 'user', $3, $4, 'session', $5, NULLIF($6, '')::inet, $7::jsonb)`, id, tenant, actor, action, ua, ip, meta); err != nil {
+		if _, err := pool.Exec(ctx, `INSERT INTO audit.events (id, organization_id, actor_type, actor_user_id, action, resource_type, user_agent, ip, metadata)
+			VALUES ($1, $2, 'user', $3, $4, 'session', $5, NULLIF($6, '')::inet, $7::jsonb)`, id, organization, actor, action, ua, ip, meta); err != nil {
 			t.Fatal(err)
 		}
 		return id
@@ -38,10 +38,10 @@ func TestAuditSearchFindsWords(t *testing.T) {
 	challenged := insert("auth.mfa_challenged", "curl/8.4.0", "198.51.100.2", `{"method":"totp"}`, nil)
 	saml := insert("saml.login_succeeded", "", "", `{"risk":"low"}`, nil)
 
-	h := dbtest.Serve(dbtest.Principal(priya.ID, tenant), (&Handler{Reader: NewReader(pool)}).Mount)
+	h := dbtest.Serve(dbtest.Principal(priya.ID, organization), (&Handler{Reader: NewReader(pool)}).Mount)
 	search := func(q string) []uuid.UUID {
 		t.Helper()
-		rec := dbtest.Do(t, h, http.MethodGet, "/tenants/"+tenant.String()+"/audit?q="+url.QueryEscape(q), nil)
+		rec := dbtest.Do(t, h, http.MethodGet, "/tenants/"+organization.String()+"/audit?q="+url.QueryEscape(q), nil)
 		var page struct {
 			Items []Row `json:"items"`
 		}

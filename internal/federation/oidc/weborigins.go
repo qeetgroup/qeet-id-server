@@ -97,10 +97,10 @@ func effectiveWebOrigins(redirectURIs, set []string) []string {
 	return out
 }
 
-// clientWebOrigins fills each client's WebOrigins, read for the whole tenant
+// clientWebOrigins fills each client's WebOrigins, read for the whole organization
 // at once.
-func (s *Service) clientWebOrigins(ctx context.Context, tenantID uuid.UUID, clients []Client) error {
-	rows, err := s.q.ListClientWebOrigins(ctx, tenantID)
+func (s *Service) clientWebOrigins(ctx context.Context, organizationID uuid.UUID, clients []Client) error {
+	rows, err := s.q.ListClientWebOrigins(ctx, organizationID)
 	if err != nil {
 		return err
 	}
@@ -116,14 +116,14 @@ func (s *Service) clientWebOrigins(ctx context.Context, tenantID uuid.UUID, clie
 
 // setWebOrigins stores, in tx, the web origins an application sets; nil keeps
 // none of its own, so its redirect URIs' origins apply.
-func (s *Service) setWebOrigins(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, origins []string) error {
+func (s *Service) setWebOrigins(ctx context.Context, tx pgx.Tx, organizationID, id uuid.UUID, origins []string) error {
 	if origins != nil {
 		var err error
 		if origins, err = checkWebOrigins(origins); err != nil {
 			return err
 		}
 	}
-	err := s.q.WithTx(tx).SetClientWebOrigins(ctx, dbgen.SetClientWebOriginsParams{ID: id, TenantID: tenantID, WebOrigins: origins})
+	err := s.q.WithTx(tx).SetClientWebOrigins(ctx, dbgen.SetClientWebOriginsParams{ID: id, OrganizationID: organizationID, WebOrigins: origins})
 	s.webOrigins.forget()
 	return err
 }

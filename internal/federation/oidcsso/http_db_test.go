@@ -24,24 +24,24 @@ func TestOIDCTrustChangeMustOutrankLinkedAdministrators(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
 	s.handler.ActOnCheck = rbac.NewRepository(pool).CheckActOn
 	idp, other := newFakeIdP(t), newFakeIdP(t)
-	tenant := dbtest.Tenant(t)
-	conn := s.connect(t, tenant, idp, nil)
+	organization := dbtest.Organization(t)
+	conn := s.connect(t, organization, idp, nil)
 	var ownerRole uuid.UUID
-	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, tenant).Scan(&ownerRole); err != nil {
+	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (organization_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, organization).Scan(&ownerRole); err != nil {
 		t.Fatal(err)
 	}
-	linked, owner := dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant)
+	linked, owner := dbtest.User(t, organization, organization), dbtest.User(t, organization, organization)
 	for _, a := range []dbtest.Account{linked, owner} {
-		dbtest.Assign(t, a.ID, tenant, ownerRole)
+		dbtest.Assign(t, a.ID, organization, ownerRole)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO account.external_identities (user_id, tenant_id, provider, connection_id, subject) VALUES ($1, $2, 'oidc', $3, 'entra|owner')`,
-		linked.ID, tenant, conn.ID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO account.external_identities (user_id, organization_id, provider, connection_id, subject) VALUES ($1, $2, 'oidc', $3, 'entra|owner')`,
+		linked.ID, organization, conn.ID); err != nil {
 		t.Fatal(err)
 	}
-	editor := dbtest.User(t, tenant, tenant)
-	dbtest.Assign(t, editor.ID, tenant, dbtest.Role(t, tenant, "connection.write", "connection.read"))
+	editor := dbtest.User(t, organization, organization)
+	dbtest.Assign(t, editor.ID, organization, dbtest.Role(t, organization, "connection.write", "connection.read"))
 	patch := func(a dbtest.Account, body map[string]any) (int, string) {
-		rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(a.ID, tenant), s.handler.Mount), http.MethodPatch, "/tenants/"+tenant.String()+"/oidc-connections/"+conn.ID.String(), body)
+		rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(a.ID, organization), s.handler.Mount), http.MethodPatch, "/tenants/"+organization.String()+"/oidc-connections/"+conn.ID.String(), body)
 		return rec.Code, rec.Body.String()
 	}
 

@@ -17,30 +17,30 @@ var (
 	keyB = []byte("abcdefghijklmnopqrstuvwxyz012345")
 )
 
-func TestCipherBindsTenantPurposeAndResource(t *testing.T) {
+func TestCipherBindsOrganizationPurposeAndResource(t *testing.T) {
 	box, err := New(keyA)
 	if err != nil {
 		t.Fatalf("new cipher: %v", err)
 	}
-	tenantA, tenantB := uuid.New(), uuid.New()
-	ciphertext, nonce, err := box.Seal(tenantA, "secret", "api-key", []byte("value"))
+	organizationA, organizationB := uuid.New(), uuid.New()
+	ciphertext, nonce, err := box.Seal(organizationA, "secret", "api-key", []byte("value"))
 	if err != nil {
 		t.Fatalf("seal: %v", err)
 	}
-	plain, err := box.Open(tenantA, "secret", "api-key", ciphertext, nonce)
+	plain, err := box.Open(organizationA, "secret", "api-key", ciphertext, nonce)
 	if err != nil || string(plain) != "value" {
 		t.Fatalf("open = %q, %v", plain, err)
 	}
 	for _, tc := range []struct {
-		tenant   uuid.UUID
-		purpose  string
-		resource string
+		organization uuid.UUID
+		purpose      string
+		resource     string
 	}{
-		{tenantB, "secret", "api-key"},
-		{tenantA, "token", "api-key"},
-		{tenantA, "secret", "other"},
+		{organizationB, "secret", "api-key"},
+		{organizationA, "token", "api-key"},
+		{organizationA, "secret", "other"},
 	} {
-		if _, err := box.Open(tc.tenant, tc.purpose, tc.resource, ciphertext, nonce); err == nil {
+		if _, err := box.Open(tc.organization, tc.purpose, tc.resource, ciphertext, nonce); err == nil {
 			t.Fatalf("ciphertext opened under wrong context: %+v", tc)
 		}
 	}
@@ -62,7 +62,7 @@ func TestCipherReadsLegacyAESGCM(t *testing.T) {
 // key (captured from that code), both while its key is current and after a
 // rotation made it a previous key.
 func TestCipherReadsVersion1(t *testing.T) {
-	tenant := uuid.MustParse("6f1c1f2e-3b4a-4c5d-8e9f-0a1b2c3d4e5f")
+	organization := uuid.MustParse("6f1c1f2e-3b4a-4c5d-8e9f-0a1b2c3d4e5f")
 	ciphertext := mustHex(t, "5145560128b35f55982a0c18dde54ccb2ad303810ca96ab6bb7a4a83a202b04a34bff505fa186b0a54")
 	nonce := mustHex(t, "e1b0eb3f352668ffdf9ffd11")
 	current, err := New(keyA)
@@ -74,7 +74,7 @@ func TestCipherReadsVersion1(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, box := range map[string]*Cipher{"current": current, "previous": rotated} {
-		plain, err := box.Open(tenant, "secret", "api-key", ciphertext, nonce)
+		plain, err := box.Open(organization, "secret", "api-key", ciphertext, nonce)
 		if err != nil || string(plain) != "sealed before key ids" {
 			t.Errorf("%s: open = %q, %v", name, plain, err)
 		}
@@ -82,7 +82,7 @@ func TestCipherReadsVersion1(t *testing.T) {
 			t.Errorf("%s: a version 1 ciphertext reports current", name)
 		}
 	}
-	if _, err := current.Open(tenant, "secret", "other", ciphertext, nonce); err == nil {
+	if _, err := current.Open(organization, "secret", "other", ciphertext, nonce); err == nil {
 		t.Error("version 1 ciphertext opened under the wrong context")
 	}
 }
@@ -122,12 +122,12 @@ func TestSealNamesTheCurrentKey(t *testing.T) {
 // another, and checks the value opens while the old key is configured, is
 // reported as not current, and fails clearly once the old key is gone.
 func TestRotationKeepsPreviousKeysReadable(t *testing.T) {
-	tenant := uuid.New()
+	organization := uuid.New()
 	before, err := New(keyA)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ciphertext, nonce, err := before.Seal(tenant, "secret", "api-key", []byte("value"))
+	ciphertext, nonce, err := before.Seal(organization, "secret", "api-key", []byte("value"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,10 +137,10 @@ func TestRotationKeepsPreviousKeysReadable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plain, err := after.Open(tenant, "secret", "api-key", ciphertext, nonce); err != nil || string(plain) != "value" {
+	if plain, err := after.Open(organization, "secret", "api-key", ciphertext, nonce); err != nil || string(plain) != "value" {
 		t.Fatalf("open under a previous key = %q, %v", plain, err)
 	}
-	if plain, err := after.Open(tenant, "secret", "api-key", legacy, legacyNonce); err != nil || string(plain) != "legacy" {
+	if plain, err := after.Open(organization, "secret", "api-key", legacy, legacyNonce); err != nil || string(plain) != "legacy" {
 		t.Fatalf("legacy open under a previous key = %q, %v", plain, err)
 	}
 	if after.IsCurrent(ciphertext) {
@@ -151,11 +151,11 @@ func TestRotationKeepsPreviousKeysReadable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = removed.Open(tenant, "secret", "api-key", ciphertext, nonce)
+	_, err = removed.Open(organization, "secret", "api-key", ciphertext, nonce)
 	if !errors.Is(err, ErrUnknownKey) || !strings.Contains(err.Error(), before.KeyIDs()[0]) {
 		t.Errorf("open after removing its key = %v, want ErrUnknownKey naming %s", err, before.KeyIDs()[0])
 	}
-	if _, err := removed.Open(tenant, "secret", "api-key", legacy, legacyNonce); err == nil {
+	if _, err := removed.Open(organization, "secret", "api-key", legacy, legacyNonce); err == nil {
 		t.Error("legacy value opened after its key was removed")
 	}
 }
@@ -167,17 +167,17 @@ func TestCipherRefusesAMangledKeyID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tenant := uuid.New()
-	ciphertext, nonce, err := box.Seal(tenant, "secret", "api-key", []byte("value"))
+	organization := uuid.New()
+	ciphertext, nonce, err := box.Seal(organization, "secret", "api-key", []byte("value"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := box.Open(tenant, "secret", "api-key", ciphertext[:6], nonce); err == nil {
+	if _, err := box.Open(organization, "secret", "api-key", ciphertext[:6], nonce); err == nil {
 		t.Error("a ciphertext cut off in its key id opened")
 	}
 	relabelled := append([]byte{'Q', 'E', 'V', 2}, mustHex(t, box.KeyIDs()[1])...)
 	relabelled = append(relabelled, ciphertext[4+KeyIDSize:]...)
-	if _, err := box.Open(tenant, "secret", "api-key", relabelled, nonce); err == nil {
+	if _, err := box.Open(organization, "secret", "api-key", relabelled, nonce); err == nil {
 		t.Error("a ciphertext relabelled with another key's id opened")
 	}
 }
@@ -208,20 +208,20 @@ func TestCipherRefusesANonceOfTheWrongLength(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new cipher: %v", err)
 	}
-	tenant := uuid.New()
-	ciphertext, nonce, err := box.Seal(tenant, "secret", "api-key", []byte("value"))
+	organization := uuid.New()
+	ciphertext, nonce, err := box.Seal(organization, "secret", "api-key", []byte("value"))
 	if err != nil {
 		t.Fatalf("seal: %v", err)
 	}
 	version1 := mustHex(t, "5145560128b35f55982a0c18dde54ccb2ad303810ca96ab6bb7a4a83a202b04a34bff505fa186b0a54")
 	for _, bad := range [][]byte{nil, nonce[:4], append(append([]byte(nil), nonce...), 0)} {
-		if _, err := box.Open(tenant, "secret", "api-key", ciphertext, bad); err == nil {
+		if _, err := box.Open(organization, "secret", "api-key", ciphertext, bad); err == nil {
 			t.Errorf("open with a %d-byte nonce succeeded", len(bad))
 		}
-		if _, err := box.Open(tenant, "secret", "api-key", version1, bad); err == nil {
+		if _, err := box.Open(organization, "secret", "api-key", version1, bad); err == nil {
 			t.Errorf("version 1 open with a %d-byte nonce succeeded", len(bad))
 		}
-		if _, err := box.Open(tenant, "secret", "api-key", []byte("legacy-ciphertext"), bad); err == nil {
+		if _, err := box.Open(organization, "secret", "api-key", []byte("legacy-ciphertext"), bad); err == nil {
 			t.Errorf("legacy open with a %d-byte nonce succeeded", len(bad))
 		}
 	}

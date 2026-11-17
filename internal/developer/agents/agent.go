@@ -91,7 +91,7 @@ func validateTransition(cur, target string) error {
 // Transition moves an agent to target (active, suspended or decommissioned)
 // after enforcing the allowed source states, recorded as actor's. Returns the
 // previous status. Emits a webhook event (best-effort) on a real change.
-func (s *Service) Transition(ctx context.Context, id, tenantID uuid.UUID, target string, actor audit.Actor) (string, error) {
+func (s *Service) Transition(ctx context.Context, id, organizationID uuid.UUID, target string, actor audit.Actor) (string, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return "", err
@@ -99,8 +99,8 @@ func (s *Service) Transition(ctx context.Context, id, tenantID uuid.UUID, target
 	defer tx.Rollback(ctx)
 	var cur string
 	err = tx.QueryRow(ctx, `
-		SELECT status FROM auth.agents WHERE id = $1 AND tenant_id = $2 FOR UPDATE
-	`, id, tenantID).Scan(&cur)
+		SELECT status FROM auth.agents WHERE id = $1 AND organization_id = $2 FOR UPDATE
+	`, id, organizationID).Scan(&cur)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", errs.ErrAgentNotFound
 	}
@@ -113,16 +113,16 @@ func (s *Service) Transition(ctx context.Context, id, tenantID uuid.UUID, target
 	if cur == target {
 		return cur, nil
 	}
-	err = s.q.WithTx(tx).SetAgentStatus(ctx, dbgen.SetAgentStatusParams{Status: target, ID: id, TenantID: tenantID})
+	err = s.q.WithTx(tx).SetAgentStatus(ctx, dbgen.SetAgentStatusParams{Status: target, ID: id, OrganizationID: organizationID})
 	if err != nil {
 		return cur, err
 	}
 	eventType := "agent." + transitionEvent[target]
 	payload := map[string]any{
-		"agent_id": id.String(), "tenant_id": tenantID.String(),
+		"agent_id": id.String(), "tenant_id": organizationID.String(),
 		"previous_status": cur, "status": target,
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, eventType, "agent", id,
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, eventType, "agent", id,
 		map[string]any{"previous_status": cur, "status": target})); err != nil {
 		return cur, err
 	}
@@ -191,19 +191,19 @@ func newSecret() (string, error) {
 	return "agt_" + hex.EncodeToString(b), nil
 }
 
-// sponsorBelongsToTenant reports whether userID is a member of tenantID: a
-// sponsor must be an accountable member of the tenant, not just any user.
-func (s *Service) sponsorBelongsToTenant(ctx context.Context, tenantID, userID uuid.UUID) (bool, error) {
-	return s.q.SponsorBelongsToTenant(ctx, dbgen.SponsorBelongsToTenantParams{
-		UserID:   userID,
-		TenantID: tenantID,
+// sponsorBelongsToOrganization reports whether userID is a member of organizationID: a
+// sponsor must be an accountable member of the organization, not just any user.
+func (s *Service) sponsorBelongsToOrganization(ctx context.Context, organizationID, userID uuid.UUID) (bool, error) {
+	return s.q.SponsorBelongsToOrganization(ctx, dbgen.SponsorBelongsToOrganizationParams{
+		UserID:         userID,
+		OrganizationID: organizationID,
 	})
 }
 
-// Create registers an agent in tenantID with its scopes, token lifetime in
-// seconds and sponsor, who must be a tenant member, recorded as actor's. The
+// Create registers an agent in organizationID with its scopes, token lifetime in
+// seconds and sponsor, who must be an organization member, recorded as actor's. The
 // returned Agent carries its plaintext secret, shown only now.
-func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, name string, scopes []string, ttl int, sponsorUserID uuid.UUID, actor audit.Actor) (*Agent, error) {
+func (s *Service) Create(ctx context.Context, organizationID uuid.UUID, name string, scopes []string, ttl int, sponsorUserID uuid.UUID, actor audit.Actor) (*Agent, error) {
 	if err := rbac.ValidateMachineScopes(scopes); err != nil {
 		return nil, err
 	}
@@ -213,7 +213,7 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, name string, s
 	if sponsorUserID == uuid.Nil {
 		return nil, errs.ErrAgentSponsorRequired
 	}
-	if ok, err := s.sponsorBelongsToTenant(ctx, tenantID, sponsorUserID); err != nil {
+	if ok, err := s.sponsorBelongsToOrganization(ctx, organizationID, sponsorUserID); err != nil {
 		return nil, err
 	} else if !ok {
 		return nil, errs.ErrAgentSponsorNotMember
@@ -233,7 +233,7 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, name string, s
 	}
 	defer tx.Rollback(ctx)
 	row, err := s.q.WithTx(tx).CreateAgent(ctx, dbgen.CreateAgentParams{
-		TenantID:        tenantID,
+		OrganizationID:  organizationID,
 		Name:            name,
 		SecretHash:      hash,
 		Scopes:          scopes,
@@ -253,14 +253,14 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, name string, s
 		Status:          "active", // DB default on insert
 		Secret:          secret,
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "agent.created", "agent", a.ID,
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "agent.created", "agent", a.ID,
 		map[string]any{"name": a.Name, "scopes": a.Scopes, "sponsor_user_id": sponsorUserID})); err != nil {
 		return nil, err
 	}
 	if err := outbox.Enqueue(ctx, tx, outbox.Event{
 		AggregateID: a.ID, Topic: "agent.events", EventType: "agent.created",
 		Payload: map[string]any{
-			"agent_id": a.ID, "tenant_id": tenantID, "name": a.Name,
+			"agent_id": a.ID, "tenant_id": organizationID, "name": a.Name,
 			"scopes": a.Scopes, "sponsor_user_id": sponsorUserID,
 		},
 	}); err != nil {
@@ -272,10 +272,10 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, name string, s
 	return a, nil
 }
 
-// List returns the tenant's agents.
-func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Agent, error) {
+// List returns the organization's agents.
+func (s *Service) List(ctx context.Context, organizationID uuid.UUID) ([]Agent, error) {
 	// Decommissioned agents are terminal and excluded from listings.
-	rows, err := s.q.ListAgents(ctx, tenantID)
+	rows, err := s.q.ListAgents(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -300,13 +300,13 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Agent, error)
 	return out, nil
 }
 
-// AgentsSponsoredBy lists a tenant's (non-decommissioned) agents sponsored by
+// AgentsSponsoredBy lists an organization's (non-decommissioned) agents sponsored by
 // userID — what an admin needs to see before offboarding that person, so no
 // agent is left with an owner who no longer has access.
-func (s *Service) AgentsSponsoredBy(ctx context.Context, tenantID, userID uuid.UUID) ([]Agent, error) {
+func (s *Service) AgentsSponsoredBy(ctx context.Context, organizationID, userID uuid.UUID) ([]Agent, error) {
 	rows, err := s.q.ListAgentsSponsoredBy(ctx, dbgen.ListAgentsSponsoredByParams{
-		TenantID: tenantID,
-		UserID:   pgUUID(userID),
+		OrganizationID: organizationID,
+		UserID:         pgUUID(userID),
 	})
 	if err != nil {
 		return nil, err
@@ -328,13 +328,13 @@ func (s *Service) AgentsSponsoredBy(ctx context.Context, tenantID, userID uuid.U
 }
 
 // TransferSponsor reassigns, in one statement, every agent fromUserID sponsors
-// in tenantID to toUserID, who must be a tenant member, and returns how many
+// in organizationID to toUserID, who must be an organization member, and returns how many
 // moved. Run it before removing fromUserID's access when offboarding.
-func (s *Service) TransferSponsor(ctx context.Context, tenantID, fromUserID, toUserID uuid.UUID, actor audit.Actor) (int, error) {
+func (s *Service) TransferSponsor(ctx context.Context, organizationID, fromUserID, toUserID uuid.UUID, actor audit.Actor) (int, error) {
 	if toUserID == uuid.Nil {
 		return 0, errs.ErrAgentSponsorRequired
 	}
-	if ok, err := s.sponsorBelongsToTenant(ctx, tenantID, toUserID); err != nil {
+	if ok, err := s.sponsorBelongsToOrganization(ctx, organizationID, toUserID); err != nil {
 		return 0, err
 	} else if !ok {
 		return 0, errs.ErrAgentSponsorNotMember
@@ -345,21 +345,21 @@ func (s *Service) TransferSponsor(ctx context.Context, tenantID, fromUserID, toU
 	}
 	defer tx.Rollback(ctx)
 	n, err := s.q.WithTx(tx).TransferAgentSponsor(ctx, dbgen.TransferAgentSponsorParams{
-		ToUserID:   pgUUID(toUserID),
-		TenantID:   tenantID,
-		FromUserID: pgUUID(fromUserID),
+		ToUserID:       pgUUID(toUserID),
+		OrganizationID: organizationID,
+		FromUserID:     pgUUID(fromUserID),
 	})
 	if err != nil {
 		return 0, err
 	}
 	count := int(n)
 	metadata := map[string]any{"from_user_id": fromUserID, "to_user_id": toUserID, "count": count}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "agent.sponsor_transferred", "user", fromUserID, metadata)); err != nil {
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "agent.sponsor_transferred", "user", fromUserID, metadata)); err != nil {
 		return 0, err
 	}
 	if err := outbox.Enqueue(ctx, tx, outbox.Event{
-		AggregateID: tenantID, Topic: "agent.events", EventType: "agent.sponsor_transferred",
-		Payload: map[string]any{"tenant_id": tenantID, "from_user_id": fromUserID, "to_user_id": toUserID, "count": count},
+		AggregateID: organizationID, Topic: "agent.events", EventType: "agent.sponsor_transferred",
+		Payload: map[string]any{"tenant_id": organizationID, "from_user_id": fromUserID, "to_user_id": toUserID, "count": count},
 	}); err != nil {
 		return 0, err
 	}
@@ -369,53 +369,53 @@ func (s *Service) TransferSponsor(ctx context.Context, tenantID, fromUserID, toU
 	return count, nil
 }
 
-// Delete removes one of the tenant's agents, recorded as actor's.
-func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
+// Delete removes one of the organization's agents, recorded as actor's.
+func (s *Service) Delete(ctx context.Context, id, organizationID uuid.UUID, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	n, err := s.q.WithTx(tx).DeleteAgent(ctx, dbgen.DeleteAgentParams{ID: id, TenantID: tenantID})
+	n, err := s.q.WithTx(tx).DeleteAgent(ctx, dbgen.DeleteAgentParams{ID: id, OrganizationID: organizationID})
 	if err != nil {
 		return err
 	}
 	if n == 0 {
 		return errs.ErrAgentNotFound
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "agent.deleted", "agent", id, nil)); err != nil {
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "agent.deleted", "agent", id, nil)); err != nil {
 		return err
 	}
 	if err := outbox.Enqueue(ctx, tx, outbox.Event{
 		AggregateID: id, Topic: "agent.events", EventType: "agent.deleted",
-		Payload: map[string]any{"agent_id": id, "tenant_id": tenantID},
+		Payload: map[string]any{"agent_id": id, "tenant_id": organizationID},
 	}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
 
-// KillAll suspends every active agent for a tenant in one statement (security
+// KillAll suspends every active agent for an organization in one statement (security
 // incident response). Returns the number suspended and emits a single
 // kill-switch webhook event.
-func (s *Service) KillAll(ctx context.Context, tenantID uuid.UUID, actor audit.Actor) (int, error) {
+func (s *Service) KillAll(ctx context.Context, organizationID uuid.UUID, actor audit.Actor) (int, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback(ctx)
-	n, err := s.q.WithTx(tx).KillAllAgents(ctx, tenantID)
+	n, err := s.q.WithTx(tx).KillAllAgents(ctx, organizationID)
 	if err != nil {
 		return 0, err
 	}
 	count := int(n)
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "agent.kill_switch", "tenant", tenantID,
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "agent.kill_switch", "tenant", organizationID,
 		map[string]any{"suspended": count})); err != nil {
 		return 0, err
 	}
 	if err := outbox.Enqueue(ctx, tx, outbox.Event{
-		AggregateID: tenantID, Topic: "agent.events", EventType: "agent.kill_switch",
-		Payload: map[string]any{"tenant_id": tenantID, "suspended": count},
+		AggregateID: organizationID, Topic: "agent.events", EventType: "agent.kill_switch",
+		Payload: map[string]any{"tenant_id": organizationID, "suspended": count},
 	}); err != nil {
 		return 0, err
 	}
@@ -464,7 +464,7 @@ func (s *Service) IssueToken(ctx context.Context, agentID, secret string) (*Toke
 	}
 	if rehash {
 		if err := s.q.UpgradeAgentSecretHash(ctx, dbgen.UpgradeAgentSecretHashParams{
-			NewHash: password.HashSecret(secret), ID: id, TenantID: row.TenantID, OldHash: row.SecretHash,
+			NewHash: password.HashSecret(secret), ID: id, OrganizationID: row.OrganizationID, OldHash: row.SecretHash,
 		}); err != nil {
 			slog.Warn("agent hash upgrade failed", "err", err, "agent_id", id)
 		}
@@ -472,7 +472,7 @@ func (s *Service) IssueToken(ctx context.Context, agentID, secret string) (*Toke
 	if row.Status != "active" {
 		return nil, errs.ErrAgentInactive
 	}
-	if err := s.q.TouchAgent(ctx, dbgen.TouchAgentParams{ID: id, TenantID: row.TenantID}); err != nil {
+	if err := s.q.TouchAgent(ctx, dbgen.TouchAgentParams{ID: id, OrganizationID: row.OrganizationID}); err != nil {
 		slog.Warn("agent last use not recorded", "err", err, "agent_id", id)
 	}
 
@@ -483,17 +483,17 @@ func (s *Service) IssueToken(ctx context.Context, agentID, secret string) (*Toke
 	// Mirror the service-principal token shape (same issuer/audience so it
 	// verifies on the standard path) but mark actor_type="agent" + agent_id.
 	type agentClaims struct {
-		TenantID  uuid.UUID `json:"tenant_id"`
-		Scope     string    `json:"scope,omitempty"`
-		ActorType string    `json:"actor_type"`
-		AgentID   string    `json:"agent_id"`
+		OrganizationID uuid.UUID `json:"tenant_id"`
+		Scope          string    `json:"scope,omitempty"`
+		ActorType      string    `json:"actor_type"`
+		AgentID        string    `json:"agent_id"`
 		jwt.RegisteredClaims
 	}
 	claims := agentClaims{
-		TenantID:  row.TenantID,
-		Scope:     scope,
-		ActorType: "agent",
-		AgentID:   id.String(),
+		OrganizationID: row.OrganizationID,
+		Scope:          scope,
+		ActorType:      "agent",
+		AgentID:        id.String(),
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    s.issuer.JWTIssuer(),
 			Audience:  jwt.ClaimStrings{s.issuer.JWTAudience()},
@@ -521,10 +521,10 @@ type Handler struct {
 	Service *Service
 	// GrantCheck refuses a credential carrying a scope the caller doesn't hold
 	// (rbac.Repository.CheckGrantScopes). Without it creating one is refused.
-	GrantCheck func(ctx context.Context, caller *httpx.Principal, tenantID uuid.UUID, scopes []string) error
+	GrantCheck func(ctx context.Context, caller *httpx.Principal, organizationID uuid.UUID, scopes []string) error
 }
 
-// Mount registers tenant-scoped admin endpoints (require a user JWT/API key).
+// Mount registers organization-scoped admin endpoints (require a user JWT/API key).
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/agents", h.list)
 	r.Post("/tenants/{tenantID}/agents", h.create)
@@ -546,17 +546,17 @@ func (h *Handler) MountPublic(r chi.Router) {
 	r.Post("/agents/token", h.token)
 }
 
-func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	return httpx.PathTenantOr(r, errs.ErrAgentInvalidID, errs.ErrAgentTenantMismatch)
+func requirePathOrganization(r *http.Request) (uuid.UUID, error) {
+	return httpx.PathOrganizationOr(r, errs.ErrAgentInvalidID, errs.ErrAgentOrganizationMismatch)
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out, err := h.Service.List(r.Context(), tenantID)
+	out, err := h.Service.List(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -565,7 +565,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -584,11 +584,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrNotImplemented)
 		return
 	}
-	if err := h.GrantCheck(r.Context(), httpx.PrincipalFromCtx(r.Context()), tenantID, in.Scopes); err != nil {
+	if err := h.GrantCheck(r.Context(), httpx.PrincipalFromCtx(r.Context()), organizationID, in.Scopes); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	a, err := h.Service.Create(r.Context(), tenantID, in.Name, in.Scopes, in.TokenTTLSeconds, in.SponsorUserID, audit.ActorOf(r))
+	a, err := h.Service.Create(r.Context(), organizationID, in.Name, in.Scopes, in.TokenTTLSeconds, in.SponsorUserID, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -597,7 +597,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) sponsoredBy(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -607,7 +607,7 @@ func (h *Handler) sponsoredBy(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrAgentInvalidID)
 		return
 	}
-	out, err := h.Service.AgentsSponsoredBy(r.Context(), tenantID, userID)
+	out, err := h.Service.AgentsSponsoredBy(r.Context(), organizationID, userID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -616,7 +616,7 @@ func (h *Handler) sponsoredBy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) transferSponsor(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -633,7 +633,7 @@ func (h *Handler) transferSponsor(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	n, err := h.Service.TransferSponsor(r.Context(), tenantID, fromUserID, in.ToUserID, audit.ActorOf(r))
+	n, err := h.Service.TransferSponsor(r.Context(), organizationID, fromUserID, in.ToUserID, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -642,7 +642,7 @@ func (h *Handler) transferSponsor(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -652,7 +652,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrAgentInvalidID)
 		return
 	}
-	if err := h.Service.Delete(r.Context(), id, tenantID, audit.ActorOf(r)); err != nil {
+	if err := h.Service.Delete(r.Context(), id, organizationID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -660,7 +660,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) patch(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -682,7 +682,7 @@ func (h *Handler) patch(w http.ResponseWriter, r *http.Request) {
 	if in.Disabled {
 		target = "suspended"
 	}
-	_, err = h.Service.Transition(r.Context(), id, tenantID, target, audit.ActorOf(r))
+	_, err = h.Service.Transition(r.Context(), id, organizationID, target, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -702,7 +702,7 @@ func (h *Handler) decommission(w http.ResponseWriter, r *http.Request) {
 
 // doTransition runs one lifecycle transition, audits it, and returns the new status.
 func (h *Handler) doTransition(w http.ResponseWriter, r *http.Request, target string) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -712,7 +712,7 @@ func (h *Handler) doTransition(w http.ResponseWriter, r *http.Request, target st
 		httpx.WriteError(w, r, errs.ErrAgentInvalidID)
 		return
 	}
-	_, err = h.Service.Transition(r.Context(), id, tenantID, target, audit.ActorOf(r))
+	_, err = h.Service.Transition(r.Context(), id, organizationID, target, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -721,12 +721,12 @@ func (h *Handler) doTransition(w http.ResponseWriter, r *http.Request, target st
 }
 
 func (h *Handler) killAll(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	n, err := h.Service.KillAll(r.Context(), tenantID, audit.ActorOf(r))
+	n, err := h.Service.KillAll(r.Context(), organizationID, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

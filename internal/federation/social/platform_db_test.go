@@ -14,14 +14,14 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// TestSignupRefusedOnADomainAnOrganisationManages checks that signing up for
+// TestSignupRefusedOnADomainAnOrganizationManages checks that signing up for
 // the console with a platform provider creates no account on a domain an
-// organisation has verified, or below it, while an address on no managed
+// organization has verified, or below it, while an address on no managed
 // domain still gets one.
-func TestSignupRefusedOnADomainAnOrganisationManages(t *testing.T) {
+func TestSignupRefusedOnADomainAnOrganizationManages(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := provisioningService(t)
-	domain := dbtest.Domain(t, dbtest.Tenant(t))
+	domain := dbtest.Domain(t, dbtest.Organization(t))
 	accounts := func(email string) int {
 		return dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, email)
 	}
@@ -41,7 +41,7 @@ func TestSignupRefusedOnADomainAnOrganisationManages(t *testing.T) {
 }
 
 // TestPlatformSocialSignInRefusedOnACapturedDomain checks that the console's
-// own social sign-in doesn't sign in a member of an organisation that requires
+// own social sign-in doesn't sign in a member of an organization that requires
 // single sign-on on their domain, whether their identity is linked already or
 // would be adopted by address, and links nothing new; a break-glass member
 // still signs in.
@@ -49,10 +49,10 @@ func TestPlatformSocialSignInRefusedOnACapturedDomain(t *testing.T) {
 	f := newSocialFixture(t)
 	capturing(t, f)
 	f.svc.SetPlatformProvider("console", "qeet", "idp-client-secret", f.idp.URL+"/.well-known/openid-configuration")
-	tenant := dbtest.Tenant(t)
-	domain := dbtest.Domain(t, tenant)
+	organization := dbtest.Organization(t)
+	domain := dbtest.Domain(t, organization)
 	member := func() (dbtest.Account, userInfo) {
-		a := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, tenant, tenant)
+		a := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, organization, organization)
 		return a, verified(t, a)
 	}
 	signIn := func(person userInfo) url.Values {
@@ -64,10 +64,10 @@ func TestPlatformSocialSignInRefusedOnACapturedDomain(t *testing.T) {
 		t.Fatalf("console sign-in before the organisation requires single sign-on: %v; want a code", q)
 	}
 	exempt, exemptAs := member()
-	breakGlass(t, tenant, exempt)
+	breakGlass(t, organization, exempt)
 	adopted, adoptedAs := member()
 
-	requireSSO(t, tenant)
+	requireSSO(t, organization)
 	if q := signIn(linkedAs); q.Get("social_code") != "" {
 		t.Errorf("a linked member's console sign-in on a captured domain: %v; want no code", q)
 	}
@@ -83,46 +83,46 @@ func TestPlatformSocialSignInRefusedOnACapturedDomain(t *testing.T) {
 }
 
 // TestASignInCodeWorksOnlyInTheFlowThatIssuedIt checks that the one table of
-// sign-in codes keeps the flows apart: an organisation's social sign-in code
+// sign-in codes keeps the flows apart: an organization's social sign-in code
 // is not a console sign-in code, nor the other way round, and a code refused
 // by the wrong exchange is still good for its own.
 func TestASignInCodeWorksOnlyInTheFlowThatIssuedIt(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
 	svc := newSocialFixture(t).svc
-	tenant := dbtest.Tenant(t)
-	person := dbtest.User(t, tenant, tenant)
-	organisation, console := dbtest.Unique("organisation-code"), dbtest.Unique("console-code")
+	organization := dbtest.Organization(t)
+	person := dbtest.User(t, organization, organization)
+	ownCode, consoleCode := dbtest.Unique("organisation-code"), dbtest.Unique("console-code")
 	for _, stmt := range []struct {
 		sql  string
 		args []any
 	}{
-		{`INSERT INTO tenant.social_providers (tenant_id, provider, client_id, client_secret_ct, client_secret_nonce) VALUES ($1, 'google', 'id', '\x00', '\x00')`, []any{tenant}},
-		{`INSERT INTO auth.login_codes (code_hash, kind, user_id, tenant_id, provider, expires_at) VALUES ($1, 'social', $2, $3, 'google', NOW() + INTERVAL '5 minutes')`,
-			[]any{codes.Hash(organisation), person.ID, tenant}},
+		{`INSERT INTO organization.social_providers (organization_id, provider, client_id, client_secret_ct, client_secret_nonce) VALUES ($1, 'google', 'id', '\x00', '\x00')`, []any{organization}},
+		{`INSERT INTO auth.login_codes (code_hash, kind, user_id, organization_id, provider, expires_at) VALUES ($1, 'social', $2, $3, 'google', NOW() + INTERVAL '5 minutes')`,
+			[]any{codes.Hash(ownCode), person.ID, organization}},
 		{`INSERT INTO auth.login_codes (code_hash, kind, user_id, expires_at) VALUES ($1, 'platform_social', $2, NOW() + INTERVAL '5 minutes')`,
-			[]any{codes.Hash(console), person.ID}},
+			[]any{codes.Hash(consoleCode), person.ID}},
 	} {
 		if _, err := pool.Exec(ctx, stmt.sql, stmt.args...); err != nil {
 			t.Fatalf("%s: %v", stmt.sql, err)
 		}
 	}
 
-	if _, err := svc.ExchangePlatformLogin(ctx, organisation, "192.0.2.10", "test"); !errors.Is(err, errs.ErrSocialLoginCodeInvalid) {
+	if _, err := svc.ExchangePlatformLogin(ctx, ownCode, "192.0.2.10", "test"); !errors.Is(err, errs.ErrSocialLoginCodeInvalid) {
 		t.Errorf("an organisation's sign-in code at the console exchange: %v, want %v", err, errs.ErrSocialLoginCodeInvalid)
 	}
-	if _, err := svc.ExchangeLogin(ctx, console, "192.0.2.10", "test"); !errors.Is(err, errs.ErrSocialLoginCodeInvalid) {
+	if _, err := svc.ExchangeLogin(ctx, consoleCode, "192.0.2.10", "test"); !errors.Is(err, errs.ErrSocialLoginCodeInvalid) {
 		t.Errorf("a console sign-in code at the organisation exchange: %v, want %v", err, errs.ErrSocialLoginCodeInvalid)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM auth.login_codes WHERE user_id = $1 AND used_at IS NULL`, person.ID); n != 2 {
 		t.Fatalf("%d of the two codes unused after the wrong exchanges, want both", n)
 	}
 
-	in, err := svc.ExchangeLogin(ctx, organisation, "192.0.2.10", "test")
-	if err != nil || in.Pair == nil || in.Pair.TenantID == nil || *in.Pair.TenantID != tenant {
+	in, err := svc.ExchangeLogin(ctx, ownCode, "192.0.2.10", "test")
+	if err != nil || in.Pair == nil || in.Pair.OrganizationID == nil || *in.Pair.OrganizationID != organization {
 		t.Errorf("the organisation's code at its own exchange: %+v, %v, want a session in the organisation", in, err)
 	}
-	out, err := svc.ExchangePlatformLogin(ctx, console, "192.0.2.10", "test")
-	if err != nil || out.Pair == nil || out.Pair.TenantID != nil {
+	out, err := svc.ExchangePlatformLogin(ctx, consoleCode, "192.0.2.10", "test")
+	if err != nil || out.Pair == nil || out.Pair.OrganizationID != nil {
 		t.Errorf("the console code at its own exchange: %+v, %v, want a session in no organisation", out, err)
 	}
 }

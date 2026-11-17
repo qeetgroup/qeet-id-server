@@ -110,7 +110,7 @@ func (s *Service) deliverNative(ctx context.Context, t pushTarget, m pushMessage
 }
 
 // pushHTTPClient is the client for the push services: operator-configured endpoints, never
-// tenant-controlled, with a bound on every call because a sign-in waits on it.
+// organization-controlled, with a bound on every call because a sign-in waits on it.
 func pushHTTPClient() *http.Client {
 	return &http.Client{Timeout: pushSendTimeout}
 }

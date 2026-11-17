@@ -17,14 +17,14 @@ import (
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
 
-// TestUsersStayInTheirTenant checks that an administrator of one tenant can
-// neither read nor change a user who belongs only to another tenant.
-func TestUsersStayInTheirTenant(t *testing.T) {
+// TestUsersStayInTheirOrganization checks that an administrator of one organization can
+// neither read nor change a user who belongs only to another organization.
+func TestUsersStayInTheirOrganization(t *testing.T) {
 	pool := dbtest.Pool(t)
-	tenantA, tenantB := dbtest.Tenant(t), dbtest.Tenant(t)
-	victim := dbtest.User(t, tenantA, tenantA)
-	adminA := dbtest.User(t, tenantA, tenantA)
-	adminB := dbtest.User(t, tenantB, tenantB)
+	organizationA, organizationB := dbtest.Organization(t), dbtest.Organization(t)
+	victim := dbtest.User(t, organizationA, organizationA)
+	adminA := dbtest.User(t, organizationA, organizationA)
+	adminB := dbtest.User(t, organizationB, organizationB)
 
 	h := &Handler{
 		Repo:           NewRepository(pool),
@@ -32,7 +32,7 @@ func TestUsersStayInTheirTenant(t *testing.T) {
 		PasswordPolicy: func(context.Context, uuid.UUID, string, string) error { return nil },
 		ActOnCheck:     rbac.NewRepository(pool).CheckActOn,
 	}
-	asB := dbtest.Serve(dbtest.Principal(adminB.ID, tenantB), h.Mount)
+	asB := dbtest.Serve(dbtest.Principal(adminB.ID, organizationB), h.Mount)
 	path := "/users/" + victim.ID.String()
 	for _, tc := range []struct {
 		method, path string
@@ -66,7 +66,7 @@ func TestUsersStayInTheirTenant(t *testing.T) {
 		t.Error("tenant B set a password for tenant A's user")
 	}
 
-	asA := dbtest.Serve(dbtest.Principal(adminA.ID, tenantA), h.Mount)
+	asA := dbtest.Serve(dbtest.Principal(adminA.ID, organizationA), h.Mount)
 	if rec := dbtest.Do(t, asA, http.MethodGet, path, nil); rec.Code != http.StatusOK {
 		t.Fatalf("tenant A reads its own user: status %d", rec.Code)
 	}
@@ -78,13 +78,13 @@ func TestEmptyUpdateReadsThroughTheTransaction(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	repo := NewRepository(pool)
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	created, err := repo.CreateWithCredentialTx(ctx, tx, CreateInput{TenantID: tenant, Email: dbtest.Unique("user") + "@example.test"}, "")
+	created, err := repo.CreateWithCredentialTx(ctx, tx, CreateInput{OrganizationID: organization, Email: dbtest.Unique("user") + "@example.test"}, "")
 	if err != nil {
 		t.Fatalf("create in the transaction: %v", err)
 	}

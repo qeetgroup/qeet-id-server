@@ -31,12 +31,12 @@ func TestSecretsCipherKeepsPreviousKeysReadable(t *testing.T) {
 	if ids := box.KeyIDs(); len(ids) != 2 || ids[1] != old.KeyIDs()[0] {
 		t.Fatalf("key ids = %v, want the new key then %s", ids, old.KeyIDs()[0])
 	}
-	tenant := uuid.New()
-	ct, nonce, err := old.Seal(tenant, "secret", "name", []byte("value"))
+	organization := uuid.New()
+	ct, nonce, err := old.Seal(organization, "secret", "name", []byte("value"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plain, err := box.Open(tenant, "secret", "name", ct, nonce); err != nil || string(plain) != "value" {
+	if plain, err := box.Open(organization, "secret", "name", ct, nonce); err != nil || string(plain) != "value" {
 		t.Errorf("open under the previous key = %q, %v", plain, err)
 	}
 }

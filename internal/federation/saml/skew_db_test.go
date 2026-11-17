@@ -17,9 +17,9 @@ import (
 func TestSAMLToleratesClockSkew(t *testing.T) {
 	sp := newSPSide(t)
 	idp := newUpstreamIdP(t)
-	tenant := dbtest.Tenant(t)
-	conn := sp.connect(t, tenant, idp)
-	member := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, tenant), tenant, tenant)
+	organization := dbtest.Organization(t)
+	conn := sp.connect(t, organization, idp)
+	member := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, organization), organization, organization)
 	verify(t, member.ID)
 	now := time.Now().UTC()
 

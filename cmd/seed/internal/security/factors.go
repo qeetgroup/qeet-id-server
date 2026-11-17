@@ -191,7 +191,7 @@ func date(w *world.World, b *pgx.Batch, e *enrolment) {
 	at := p.MFASince
 	tid := p.Org.ID
 	self := func(t time.Time, action string, meta map[string]any) {
-		w.Audit(t, audit.Event{TenantID: &tid, ActorUserID: &p.ID, Action: action, ResourceType: "user",
+		w.Audit(t, audit.Event{OrganizationID: &tid, ActorUserID: &p.ID, Action: action, ResourceType: "user",
 			ResourceID: &p.ID, IP: p.Device.IP, UserAgent: p.Device.UserAgent, Metadata: meta})
 	}
 
@@ -229,7 +229,7 @@ func date(w *world.World, b *pgx.Batch, e *enrolment) {
 		}
 		b.Queue(`UPDATE auth.mfa_push_devices SET created_at = $2, last_seen_at = $3, device_token_expires_at = $4
 			WHERE user_id = $1`, p.ID, linked, seen, relinked.Add(180*24*time.Hour))
-		w.Audit(linked, audit.Event{TenantID: &tid, ActorUserID: &p.ID, ActorType: "device", Action: "mfa.push_device_linked",
+		w.Audit(linked, audit.Event{OrganizationID: &tid, ActorUserID: &p.ID, ActorType: "device", Action: "mfa.push_device_linked",
 			ResourceType: "push_device", ResourceID: &e.push.id, IP: p.Mobile.IP, UserAgent: e.push.appUA,
 			Metadata: map[string]any{"platform": e.push.platform}})
 	}
@@ -267,7 +267,7 @@ func useRecoveryCodes(w *world.World, b *pgx.Batch, p *world.Person) {
 			continue
 		}
 		b.Queue(`UPDATE auth.mfa_recovery_codes SET used_at = $2 WHERE id = $1`, id, used)
-		w.Audit(used, audit.Event{TenantID: &tid, ActorUserID: &p.ID, Action: "mfa.recovery_code_used", ResourceType: "user",
+		w.Audit(used, audit.Event{OrganizationID: &tid, ActorUserID: &p.ID, Action: "mfa.recovery_code_used", ResourceType: "user",
 			ResourceID: &p.ID, IP: p.Device.IP, UserAgent: p.Device.UserAgent, Metadata: map[string]any{"recovery_code_id": id}})
 	}
 }

@@ -81,7 +81,7 @@ func (p *provider) asApplication(t *testing.T, accessToken string) http.Handler 
 	if err != nil {
 		t.Fatalf("verify the access token: %v", err)
 	}
-	principal := dbtest.Principal(claims.UserID, claims.TenantID)
+	principal := dbtest.Principal(claims.UserID, claims.OrganizationID)
 	principal.Scopes = strings.Fields(claims.Scope)
 	return dbtest.Serve(principal, p.mount)
 }
@@ -169,19 +169,19 @@ func authorizeURL(t *testing.T, clientID string, params ...string) (string, stri
 // redeemed for an ID token naming person, session and nonce, and userinfo.
 func TestBrowserSignInToAnApplication(t *testing.T) {
 	p := newProvider(t)
-	tenant := dbtest.Tenant(t)
-	person := dbtest.User(t, tenant, tenant)
-	client, secret := registerClient(t, p.svc, tenant)
+	organization := dbtest.Organization(t)
+	person := dbtest.User(t, organization, organization)
+	client, secret := registerClient(t, p.svc, organization)
 	cookie, sessionID := p.signIn(t, person.ID)
 	otherBrowser, _ := p.signIn(t, person.ID)
 	target, verifier := authorizeURL(t, client.ClientID, "scope", "openid email", "state", "st-1")
 
 	var app struct {
-		ClientName string    `json:"client_name"`
-		TenantID   uuid.UUID `json:"tenant_id"`
+		ClientName     string    `json:"client_name"`
+		OrganizationID uuid.UUID `json:"tenant_id"`
 	}
 	dbtest.Decode(t, browse(t, p.public, http.MethodGet, "/oauth/login-context?client_id="+client.ClientID, nil, nil), &app)
-	if app.ClientName != client.Name || app.TenantID != tenant {
+	if app.ClientName != client.Name || app.OrganizationID != organization {
 		t.Errorf("login context %+v, want the application's name and organisation", app)
 	}
 	if rec := browse(t, p.public, http.MethodGet, "/oauth/login-context?client_id=qci_unknown", nil, nil); !strings.Contains(rec.Body.String(), errs.CodeOIDCClientNotFound) {
@@ -242,7 +242,7 @@ func TestBrowserSignInToAnApplication(t *testing.T) {
 	}
 	for claim, want := range map[string]any{
 		"iss": p.svc.issuer.JWTIssuer(), "aud": client.ClientID, "sub": person.ID.String(), "nonce": "n-1",
-		"sid": sessionID.String(), "tenant_id": tenant.String(), "email": person.Email, "email_verified": false,
+		"sid": sessionID.String(), "tenant_id": organization.String(), "email": person.Email, "email_verified": false,
 	} {
 		if id[claim] != want {
 			t.Errorf("ID token %s = %v, want %v", claim, id[claim], want)
@@ -265,7 +265,7 @@ func TestBrowserSignInToAnApplication(t *testing.T) {
 	if rec.Code != http.StatusOK || info["sub"] != person.ID.String() || info["email"] != person.Email || info["updated_at"] != nil {
 		t.Errorf("userinfo: %d %v, want the person's email claims only", rec.Code, info)
 	}
-	noOpenID := dbtest.Principal(person.ID, tenant)
+	noOpenID := dbtest.Principal(person.ID, organization)
 	noOpenID.Scopes = []string{"email"}
 	rec = dbtest.Do(t, dbtest.Serve(noOpenID, p.mount), http.MethodPost, "/oauth/userinfo", nil)
 	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Header().Get("WWW-Authenticate"), `error="insufficient_scope"`) {
@@ -273,14 +273,14 @@ func TestBrowserSignInToAnApplication(t *testing.T) {
 	}
 }
 
-// openRegistration lets anyone register in any organisation, with any password.
+// openRegistration lets anyone register in any organization, with any password.
 type openRegistration struct{}
 
 func (openRegistration) SelfRegistrationEnabled(context.Context, uuid.UUID) (bool, error) {
 	return true, nil
 }
 
-func (openRegistration) ValidateForTenant(context.Context, uuid.UUID, string, string) error {
+func (openRegistration) ValidateForOrganization(context.Context, uuid.UUID, string, string) error {
 	return nil
 }
 
@@ -302,28 +302,28 @@ func (p *provider) authorizeInBrowser(t *testing.T, cookie *http.Cookie, clientI
 	return to, q, verifier
 }
 
-// TestOrganisationsOwnAccountsSignInWithoutARole checks that the accounts an
-// organisation makes hold no role and still sign in to its applications and
+// TestOrganizationsOwnAccountsSignInWithoutARole checks that the accounts an
+// organization makes hold no role and still sign in to its applications and
 // renew there, while a guest whose roles were removed and a suspended account
-// of the organisation's own are refused.
-func TestOrganisationsOwnAccountsSignInWithoutARole(t *testing.T) {
+// of the organization's own are refused.
+func TestOrganizationsOwnAccountsSignInWithoutARole(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	p := newProvider(t)
 	p.sessions.SetRegistrationPolicy(openRegistration{})
-	tenant, elsewhere := dbtest.Tenant(t), dbtest.Tenant(t)
-	client, secret := registerClient(t, p.svc, tenant)
+	organization, elsewhere := dbtest.Organization(t), dbtest.Organization(t)
+	client, secret := registerClient(t, p.svc, organization)
 
-	_, registered, err := p.sessions.RegisterInTenant(ctx, tenant, dbtest.Unique("registered")+"@example.test", "Pw4!nKx7mQ2v", "", "192.0.2.1", "test")
+	_, registered, err := p.sessions.RegisterInOrganization(ctx, organization, dbtest.Unique("registered")+"@example.test", "Pw4!nKx7mQ2v", "", "192.0.2.1", "test")
 	if err != nil || registered.RawCookie == "" {
 		t.Fatalf("register: %+v, %v; want a hosted-login session", registered, err)
 	}
-	created, err := user.NewRepository(pool).CreateWithCredential(ctx, user.CreateInput{TenantID: tenant, Email: dbtest.Unique("created") + "@example.test"}, "")
+	created, err := user.NewRepository(pool).CreateWithCredential(ctx, user.CreateInput{OrganizationID: organization, Email: dbtest.Unique("created") + "@example.test"}, "")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	createdCookie, _ := p.signIn(t, created.ID)
-	if n := dbtest.Count(t, `SELECT count(*) FROM rbac.user_roles WHERE tenant_id = $1`, tenant); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM rbac.user_roles WHERE organization_id = $1`, organization); n != 0 {
 		t.Fatalf("the organisation's accounts hold %d roles, want none", n)
 	}
 	for name, cookie := range map[string]*http.Cookie{
@@ -351,12 +351,12 @@ func TestOrganisationsOwnAccountsSignInWithoutARole(t *testing.T) {
 		}
 	}
 
-	formerGuest, suspended := dbtest.User(t, elsewhere, tenant), dbtest.User(t, tenant)
+	formerGuest, suspended := dbtest.User(t, elsewhere, organization), dbtest.User(t, organization)
 	guestTokens := redeemCode(t, p.svc, client, secret, formerGuest.ID, "")
 	suspendedTokens := redeemCode(t, p.svc, client, secret, suspended.ID, "")
 	guestCookie, _ := p.signIn(t, formerGuest.ID)
 	suspendedCookie, _ := p.signIn(t, suspended.ID)
-	if _, err := pool.Exec(ctx, `DELETE FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2`, formerGuest.ID, tenant); err != nil {
+	if _, err := pool.Exec(ctx, `DELETE FROM rbac.user_roles WHERE user_id = $1 AND organization_id = $2`, formerGuest.ID, organization); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `UPDATE account.users SET status = 'suspended' WHERE id = $1`, suspended.ID); err != nil {
@@ -369,15 +369,15 @@ func TestOrganisationsOwnAccountsSignInWithoutARole(t *testing.T) {
 		tokens  *TokenResponse
 		renewal error
 	}{
-		{"a guest whose roles were removed", formerGuest, guestCookie, guestTokens, errs.ErrOIDCUserTenantMismatch},
+		{"a guest whose roles were removed", formerGuest, guestCookie, guestTokens, errs.ErrOIDCUserOrganizationMismatch},
 		{"a suspended account of the organisation", suspended, suspendedCookie, suspendedTokens, errs.ErrAuthAccountSuspended},
 	} {
 		if to, q, _ := p.authorizeInBrowser(t, tc.cookie, client.ClientID); q.Get("code") != "" {
 			t.Errorf("%s signed in to the application: sent to %s %v", tc.name, to, q)
 		}
 		_, challenge, _ := codes.URLToken()
-		if _, _, err := p.svc.Authorize(ctx, tc.account.ID, client.ClientID, testRedirect, []string{"openid"}, "n-1", challenge, "S256"); !errors.Is(err, errs.ErrOIDCUserTenantMismatch) {
-			t.Errorf("%s authorized: %v, want %v", tc.name, err, errs.ErrOIDCUserTenantMismatch)
+		if _, _, err := p.svc.Authorize(ctx, tc.account.ID, client.ClientID, testRedirect, []string{"openid"}, "n-1", challenge, "S256"); !errors.Is(err, errs.ErrOIDCUserOrganizationMismatch) {
+			t.Errorf("%s authorized: %v, want %v", tc.name, err, errs.ErrOIDCUserOrganizationMismatch)
 		}
 		if out, err := p.svc.Introspect(ctx, client.ClientID, secret, tc.tokens.AccessToken, ""); err != nil || out["active"] == true {
 			t.Errorf("%s's access token introspects %v, %v; want inactive", tc.name, out, err)
@@ -395,9 +395,9 @@ func TestOrganisationsOwnAccountsSignInWithoutARole(t *testing.T) {
 func TestAuthorizeRemembersConsentAndHonoursPrompt(t *testing.T) {
 	ctx := dbtest.Context(t)
 	p := newProvider(t)
-	tenant := dbtest.Tenant(t)
-	person := dbtest.User(t, tenant, tenant)
-	client, _ := registerClient(t, p.svc, tenant)
+	organization := dbtest.Organization(t)
+	person := dbtest.User(t, organization, organization)
+	client, _ := registerClient(t, p.svc, organization)
 	cookie, _ := p.signIn(t, person.ID)
 	if err := p.svc.GrantConsent(ctx, person.ID, client.ClientID, []string{"openid", "email"}); err != nil {
 		t.Fatalf("consent: %v", err)
@@ -457,10 +457,10 @@ func TestAuthorizeRemembersConsentAndHonoursPrompt(t *testing.T) {
 // address goes back to it with the OAuth error, the state and iss.
 func TestAuthorizeAnswersOnlyRegisteredRedirects(t *testing.T) {
 	p := newProvider(t)
-	tenant, otherTenant := dbtest.Tenant(t), dbtest.Tenant(t)
-	person := dbtest.User(t, tenant, tenant)
-	outsider := dbtest.User(t, otherTenant, otherTenant)
-	client, _ := registerClient(t, p.svc, tenant)
+	organization, otherOrganization := dbtest.Organization(t), dbtest.Organization(t)
+	person := dbtest.User(t, organization, organization)
+	outsider := dbtest.User(t, otherOrganization, otherOrganization)
+	client, _ := registerClient(t, p.svc, organization)
 	cookie, _ := p.signIn(t, person.ID)
 	outsiderCookie, _ := p.signIn(t, outsider.ID)
 
@@ -514,9 +514,9 @@ func TestAuthorizeAnswersOnlyRegisteredRedirects(t *testing.T) {
 func TestCodeFlowWithPKCENeedsNoNonce(t *testing.T) {
 	ctx := dbtest.Context(t)
 	p := newProvider(t)
-	tenant := dbtest.Tenant(t)
-	person := dbtest.User(t, tenant, tenant)
-	client, secret := registerClient(t, p.svc, tenant)
+	organization := dbtest.Organization(t)
+	person := dbtest.User(t, organization, organization)
+	client, secret := registerClient(t, p.svc, organization)
 	cookie, _ := p.signIn(t, person.ID)
 	if err := p.svc.GrantConsent(ctx, person.ID, client.ClientID, []string{"openid"}); err != nil {
 		t.Fatalf("consent: %v", err)
@@ -547,9 +547,9 @@ func TestCodeFlowWithPKCENeedsNoNonce(t *testing.T) {
 func TestLoopbackRedirectOnAnyPort(t *testing.T) {
 	ctx := dbtest.Context(t)
 	p := newProvider(t)
-	tenant := dbtest.Tenant(t)
-	person := dbtest.User(t, tenant, tenant)
-	native, _ := registerClientWith(t, p.svc, CreateClientInput{TenantID: tenant, Type: "public", RedirectURIs: []string{"http://127.0.0.1/callback"}})
+	organization := dbtest.Organization(t)
+	person := dbtest.User(t, organization, organization)
+	native, _ := registerClientWith(t, p.svc, CreateClientInput{OrganizationID: organization, Type: "public", RedirectURIs: []string{"http://127.0.0.1/callback"}})
 	cookie, _ := p.signIn(t, person.ID)
 	if err := p.svc.GrantConsent(ctx, person.ID, native.ClientID, []string{"openid"}); err != nil {
 		t.Fatalf("consent: %v", err)
@@ -585,11 +585,11 @@ func TestLoopbackRedirectOnAnyPort(t *testing.T) {
 func TestOfflineAccessControlsRefreshTokens(t *testing.T) {
 	ctx := dbtest.Context(t)
 	p := newProvider(t)
-	tenant := dbtest.Tenant(t)
-	person := dbtest.User(t, tenant, tenant)
-	standard, standardSecret := registerClient(t, p.svc, tenant)
-	optedIn, optedInSecret := registerClientWith(t, p.svc, CreateClientInput{TenantID: tenant, Scopes: []string{"openid", "email", "offline_access"}})
-	codeOnly, _ := registerClientWith(t, p.svc, CreateClientInput{TenantID: tenant, GrantTypes: []string{"authorization_code"}})
+	organization := dbtest.Organization(t)
+	person := dbtest.User(t, organization, organization)
+	standard, standardSecret := registerClient(t, p.svc, organization)
+	optedIn, optedInSecret := registerClientWith(t, p.svc, CreateClientInput{OrganizationID: organization, Scopes: []string{"openid", "email", "offline_access"}})
+	codeOnly, _ := registerClientWith(t, p.svc, CreateClientInput{OrganizationID: organization, GrantTypes: []string{"authorization_code"}})
 	redeem := func(c *Client, secret string, scopes ...string) *TokenResponse {
 		t.Helper()
 		verifier, challenge, _ := codes.URLToken()
@@ -633,7 +633,7 @@ func TestOfflineAccessControlsRefreshTokens(t *testing.T) {
 	}
 
 	device, _ := registerClientWith(t, p.svc, CreateClientInput{
-		TenantID: tenant, Type: "public", GrantTypes: []string{grantTypeDeviceCode, "refresh_token"}, Scopes: []string{"openid", "offline_access"},
+		OrganizationID: organization, Type: "public", GrantTypes: []string{grantTypeDeviceCode, "refresh_token"}, Scopes: []string{"openid", "offline_access"},
 	})
 	cookie, _ := p.signIn(t, person.ID)
 	for scope, refresh := range map[string]bool{"openid": false, "openid offline_access": true, "": true} {
@@ -658,9 +658,9 @@ func TestOfflineAccessControlsRefreshTokens(t *testing.T) {
 func TestRefreshedIDTokenKeepsTheSignIn(t *testing.T) {
 	ctx := dbtest.Context(t)
 	p := newProvider(t)
-	tenant := dbtest.Tenant(t)
-	person := dbtest.User(t, tenant, tenant)
-	client, secret := registerClient(t, p.svc, tenant)
+	organization := dbtest.Organization(t)
+	person := dbtest.User(t, organization, organization)
+	client, secret := registerClient(t, p.svc, organization)
 	cookie, sessionID := p.signIn(t, person.ID)
 	if err := p.svc.GrantConsent(ctx, person.ID, client.ClientID, []string{"openid"}); err != nil {
 		t.Fatalf("consent: %v", err)
@@ -701,9 +701,9 @@ func TestRefreshedIDTokenKeepsTheSignIn(t *testing.T) {
 // person is asked to consent to it.
 func TestAuthorizeRefusesScopesBeforeConsent(t *testing.T) {
 	p := newProvider(t)
-	tenant := dbtest.Tenant(t)
-	person := dbtest.User(t, tenant, tenant)
-	client, _ := registerClient(t, p.svc, tenant)
+	organization := dbtest.Organization(t)
+	person := dbtest.User(t, organization, organization)
+	client, _ := registerClient(t, p.svc, organization)
 	cookie, _ := p.signIn(t, person.ID)
 
 	target, _ := authorizeURL(t, client.ClientID, "scope", "openid admin")
@@ -719,9 +719,9 @@ func TestAuthorizeRefusesScopesBeforeConsent(t *testing.T) {
 func TestDiscoveryNamesTheIssuerTokensCarry(t *testing.T) {
 	ctx := dbtest.Context(t)
 	p := newProvider(t)
-	tenant := dbtest.Tenant(t)
-	person := dbtest.User(t, tenant, tenant)
-	client, secret := registerClient(t, p.svc, tenant)
+	organization := dbtest.Organization(t)
+	person := dbtest.User(t, organization, organization)
+	client, secret := registerClient(t, p.svc, organization)
 	cookie, _ := p.signIn(t, person.ID)
 	if err := p.svc.GrantConsent(ctx, person.ID, client.ClientID, []string{"openid"}); err != nil {
 		t.Fatalf("consent: %v", err)
@@ -754,11 +754,11 @@ func TestCodeRedemptionRules(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	svc := NewService(pool, dbtest.Issuer(t))
-	tenant := dbtest.Tenant(t)
-	person := dbtest.User(t, tenant, tenant)
-	client, secret := registerClient(t, svc, tenant)
-	sibling, siblingSecret := registerClient(t, svc, tenant)
-	public, _ := registerClientWith(t, svc, CreateClientInput{TenantID: tenant, Type: "public"})
+	organization := dbtest.Organization(t)
+	person := dbtest.User(t, organization, organization)
+	client, secret := registerClient(t, svc, organization)
+	sibling, siblingSecret := registerClient(t, svc, organization)
+	public, _ := registerClientWith(t, svc, CreateClientInput{OrganizationID: organization, Type: "public"})
 	authorize := func(clientID string) (string, string) {
 		t.Helper()
 		verifier, challenge, _ := codes.URLToken()
@@ -782,7 +782,7 @@ func TestCodeRedemptionRules(t *testing.T) {
 
 	code, verifier = authorize(client.ClientID)
 	if _, err := pool.Exec(ctx, `UPDATE auth.oidc_authorization_codes SET expires_at = NOW() - INTERVAL '1 second'
-		WHERE tenant_id = $1 AND code_hash = $2`, tenant, codes.Hash(code)); err != nil {
+		WHERE organization_id = $1 AND code_hash = $2`, organization, codes.Hash(code)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, testRedirect, verifier, ""); !errors.Is(err, errs.ErrOIDCAuthCodeExpired) {
@@ -792,7 +792,7 @@ func TestCodeRedemptionRules(t *testing.T) {
 	code, verifier = authorize(client.ClientID)
 	setStatus := func(status string) {
 		t.Helper()
-		if _, err := pool.Exec(ctx, `UPDATE account.users SET status = $2 WHERE tenant_id = $1 AND id = $3`, tenant, status, person.ID); err != nil {
+		if _, err := pool.Exec(ctx, `UPDATE account.users SET status = $2 WHERE organization_id = $1 AND id = $3`, organization, status, person.ID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -817,7 +817,7 @@ func TestCodeRedemptionRules(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer tx.Rollback(ctx)
-		if _, err := svc.UpdateClient(ctx, tx, tenant, c.ID, UpdateClientInput{PKCEExemptUntil: OptionalTime{Set: true, At: until}}); err != nil {
+		if _, err := svc.UpdateClient(ctx, tx, organization, c.ID, UpdateClientInput{PKCEExemptUntil: OptionalTime{Set: true, At: until}}); err != nil {
 			return err
 		}
 		return tx.Commit(ctx)

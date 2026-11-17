@@ -170,18 +170,18 @@ func verified(t *testing.T, a dbtest.Account) userInfo {
 	return userInfo{Subject: "sub-" + a.ID.String(), Email: a.Email, EmailVerified: true, Name: "Asha"}
 }
 
-// TestOrganisationSocialSignIn checks an organisation's own provider end to
+// TestOrganizationSocialSignIn checks an organization's own provider end to
 // end: it is configured without its secret ever being returned; a sign-in
 // completes only in the browser that began it, with PKCE, for a one-time code
 // that buys a session once; the hosted flow returns to an allowed application
-// signed in; and a closed organisation, a suspended account, a switched-off
+// signed in; and a closed organization, a suspended account, a switched-off
 // provider and a provider people depend on are each refused.
-func TestOrganisationSocialSignIn(t *testing.T) {
+func TestOrganizationSocialSignIn(t *testing.T) {
 	ctx := dbtest.Context(t)
 	f := newSocialFixture(t)
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), f.mount)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), f.mount)
 
 	rec := dbtest.Do(t, asAdmin, http.MethodPost, "/social/providers", map[string]string{
 		"provider": "okta", "client_id": "qeet", "client_secret": "idp-client-secret",
@@ -193,19 +193,19 @@ func TestOrganisationSocialSignIn(t *testing.T) {
 	if rec := dbtest.Do(t, asAdmin, http.MethodPost, "/social/providers", map[string]string{"provider": "okta", "client_id": "qeet-2", "discovery_url": f.idp.URL + "/.well-known/openid-configuration"}); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"qeet-2"`) {
 		t.Errorf("replace keeping the secret: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec := dbtest.Do(t, asAdmin, http.MethodGet, "/tenants/"+tenant.String()+"/social/providers", nil); !strings.Contains(rec.Body.String(), `"okta"`) || strings.Contains(rec.Body.String(), "idp-client-secret") {
+	if rec := dbtest.Do(t, asAdmin, http.MethodGet, "/tenants/"+organization.String()+"/social/providers", nil); !strings.Contains(rec.Body.String(), `"okta"`) || strings.Contains(rec.Body.String(), "idp-client-secret") {
 		t.Errorf("providers: %s", rec.Body.String())
 	}
 	if rec := dbtest.Do(t, asAdmin, http.MethodPost, "/social/providers", map[string]string{"provider": "evil", "client_id": "x", "client_secret": "y", "discovery_url": "ftp://idp.example.test"}); rec.Code/100 != 4 {
 		t.Errorf("a provider without an http discovery URL: %d, want refused", rec.Code)
 	}
 
-	// The organisation chose the provider's endpoints, so it vouches only for
-	// people on the organisation's own domain.
-	domain := dbtest.Domain(t, tenant)
-	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, tenant, tenant)
+	// The organization chose the provider's endpoints, so it vouches only for
+	// people on the organization's own domain.
+	domain := dbtest.Domain(t, organization)
+	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, organization, organization)
 	person := verified(t, member)
-	start := "/social/okta/start?tenant_id=" + tenant.String()
+	start := "/social/okta/start?tenant_id=" + organization.String()
 	target, q := redirectQuery(t, f.signIn(t, "okta", start, person))
 	if target != "https://console.example.test/auth/social/callback" || q.Get("code") == "" {
 		t.Fatalf("callback went to %s %v; want the console with a one-time code", target, q)
@@ -219,7 +219,7 @@ func TestOrganisationSocialSignIn(t *testing.T) {
 	if rec := browse(t, f.public, http.MethodPost, "/social/exchange", nil, map[string]string{"code": q.Get("code")}); rec.Code == http.StatusOK {
 		t.Error("a one-time code bought a second session")
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE user_id = $1 AND tenant_id = $2 AND provider = 'okta'`, member.ID, tenant); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE user_id = $1 AND organization_id = $2 AND provider = 'okta'`, member.ID, organization); n != 1 {
 		t.Errorf("%d identities linked, want 1", n)
 	}
 
@@ -250,10 +250,10 @@ func TestOrganisationSocialSignIn(t *testing.T) {
 	if _, q := redirectQuery(t, f.signIn(t, "okta", start, userInfo{Subject: "newcomer", Email: dbtest.Unique("new") + "@example.test", EmailVerified: true})); q.Get("error") != "registration_closed" {
 		t.Errorf("a newcomer to a closed organisation: %v, want registration_closed", q)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'social.signup_refused'`, tenant); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'social.signup_refused'`, organization); n != 1 {
 		t.Errorf("%d refused sign-ups recorded, want 1", n)
 	}
-	suspended := dbtest.UserAt(t, dbtest.Unique("ravi")+"@"+domain, tenant, tenant)
+	suspended := dbtest.UserAt(t, dbtest.Unique("ravi")+"@"+domain, organization, organization)
 	suspendedPerson := verified(t, suspended)
 	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE account.users SET status = 'suspended' WHERE id = $1`, suspended.ID); err != nil {
 		t.Fatal(err)
@@ -290,10 +290,10 @@ func TestOrganisationSocialSignIn(t *testing.T) {
 	if rec := browse(t, f.public, http.MethodGet, start, nil, nil); !strings.HasPrefix(rec.Header().Get("Location"), "https://login.example.test/sign-in?error=social") {
 		t.Errorf("start with a switched-off provider: %s", rec.Header().Get("Location"))
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action LIKE 'social_provider.%'`, tenant); n != 3 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action LIKE 'social_provider.%'`, organization); n != 3 {
 		t.Errorf("%d provider changes recorded, want created, updated and disabled", n)
 	}
-	other := dbtest.Tenant(t)
+	other := dbtest.Organization(t)
 	otherAdmin := dbtest.User(t, other, other)
 	if rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(otherAdmin.ID, other), f.mount), http.MethodPatch, "/social/providers/okta", map[string]bool{"enabled": true}); rec.Code != http.StatusNotFound {
 		t.Errorf("another organisation switching the provider on: %d, want 404", rec.Code)
@@ -307,13 +307,13 @@ func TestOrganisationSocialSignIn(t *testing.T) {
 // issued just before its provider was switched off or deleted signs nobody in.
 func TestSocialCodeOfAProviderTurnedOffDoesNotExchange(t *testing.T) {
 	f := newSocialFixture(t)
-	tenant := dbtest.Tenant(t)
-	asAdmin := dbtest.Serve(dbtest.Principal(dbtest.User(t, tenant, tenant).ID, tenant), f.mount)
-	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+dbtest.Domain(t, tenant), tenant, tenant)
+	organization := dbtest.Organization(t)
+	asAdmin := dbtest.Serve(dbtest.Principal(dbtest.User(t, organization, organization).ID, organization), f.mount)
+	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+dbtest.Domain(t, organization), organization, organization)
 	person := verified(t, member)
 	for _, tc := range []struct{ provider, change, want string }{
-		{"okta", `UPDATE tenant.social_providers SET enabled = false WHERE tenant_id = $1 AND provider = $2`, errs.CodeSocialProviderNotConfigured},
-		{"keycloak", `DELETE FROM tenant.social_providers WHERE tenant_id = $1 AND provider = $2`, errs.CodeSocialLoginCodeInvalid},
+		{"okta", `UPDATE organization.social_providers SET enabled = false WHERE organization_id = $1 AND provider = $2`, errs.CodeSocialProviderNotConfigured},
+		{"keycloak", `DELETE FROM organization.social_providers WHERE organization_id = $1 AND provider = $2`, errs.CodeSocialLoginCodeInvalid},
 	} {
 		if rec := dbtest.Do(t, asAdmin, http.MethodPost, "/social/providers", map[string]string{
 			"provider": tc.provider, "client_id": "qeet", "client_secret": "idp-client-secret",
@@ -321,11 +321,11 @@ func TestSocialCodeOfAProviderTurnedOffDoesNotExchange(t *testing.T) {
 		}); rec.Code != http.StatusOK {
 			t.Fatalf("add provider: %d %s", rec.Code, rec.Body.String())
 		}
-		_, q := redirectQuery(t, f.signIn(t, tc.provider, "/social/"+tc.provider+"/start?tenant_id="+tenant.String(), person))
+		_, q := redirectQuery(t, f.signIn(t, tc.provider, "/social/"+tc.provider+"/start?tenant_id="+organization.String(), person))
 		if q.Get("code") == "" {
 			t.Fatalf("sign-in: %v, want a one-time code", q)
 		}
-		if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), tc.change, tenant, tc.provider); err != nil {
+		if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), tc.change, organization, tc.provider); err != nil {
 			t.Fatal(err)
 		}
 		if rec := browse(t, f.public, http.MethodPost, "/social/exchange", nil, map[string]string{"code": q.Get("code")}); rec.Code == http.StatusOK || !strings.Contains(rec.Body.String(), tc.want) {
@@ -365,10 +365,10 @@ func TestPlatformSocialSignIn(t *testing.T) {
 		t.Errorf("sign in again: %v", q)
 	}
 
-	tenant := dbtest.Tenant(t)
-	a := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	a := dbtest.User(t, organization, organization)
 	dbtest.SetPassword(t, a.ID, "Kx7mQ2vLp9Wz")
-	asA := dbtest.Serve(dbtest.Principal(a.ID, tenant), f.mount)
+	asA := dbtest.Serve(dbtest.Principal(a.ID, organization), f.mount)
 	link := func(code string) string {
 		t.Helper()
 		rec := dbtest.Do(t, asA, http.MethodPost, "/social/google/link/start", nil)
@@ -383,9 +383,9 @@ func TestPlatformSocialSignIn(t *testing.T) {
 		}
 		return q.Get("link_code")
 	}
-	b := dbtest.User(t, tenant, tenant)
+	b := dbtest.User(t, organization, organization)
 	stolen := link("link-1")
-	if rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(b.ID, tenant), f.mount), http.MethodPost, "/social/link/complete", map[string]string{"code": stolen}); !strings.Contains(rec.Body.String(), errs.CodeSocialLinkAccountMismatch) {
+	if rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(b.ID, organization), f.mount), http.MethodPost, "/social/link/complete", map[string]string{"code": stolen}); !strings.Contains(rec.Body.String(), errs.CodeSocialLinkAccountMismatch) {
 		t.Errorf("another account completing the link: %d %s", rec.Code, rec.Body.String())
 	}
 	if rec := dbtest.Do(t, asA, http.MethodPost, "/social/link/complete", map[string]string{"code": stolen}); !strings.Contains(rec.Body.String(), errs.CodeSocialLinkCodeInvalid) {
@@ -401,7 +401,7 @@ func TestPlatformSocialSignIn(t *testing.T) {
 	if len(mine.Items) != 1 || mine.Items[0].Provider != "google" {
 		t.Fatalf("my identities %+v; want google", mine.Items)
 	}
-	if rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(b.ID, tenant), f.mount), http.MethodDelete, "/me/social/identities/"+mine.Items[0].ID.String(), nil); rec.Code == http.StatusNoContent {
+	if rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(b.ID, organization), f.mount), http.MethodDelete, "/me/social/identities/"+mine.Items[0].ID.String(), nil); rec.Code == http.StatusNoContent {
 		t.Error("another account unlinked my identity")
 	}
 	if rec := dbtest.Do(t, asA, http.MethodDelete, "/me/social/identities/"+mine.Items[0].ID.String(), nil); rec.Code != http.StatusNoContent {

@@ -29,14 +29,14 @@ Both came out of a backend review and product research done in October 2026. The
 | F-03 | Offboarding receipt | [ideas.md](ideas.md#f-03-offboarding-receipt) |
 | F-04 | Rehearse a federation change before it affects people | [ideas.md](ideas.md#f-04-rehearse-a-federation-change-before-it-affects-people) |
 | F-05 | Agent actions through a credential broker, with approvals | [ideas.md](ideas.md#f-05-agent-actions-through-a-credential-broker-with-approvals) |
-| F-06 | Evidence pack for a release and an organisation's controls | [ideas.md](ideas.md#f-06-evidence-pack-for-a-release-and-an-organisations-controls) |
+| F-06 | Evidence pack for a release and an organization's controls | [ideas.md](ideas.md#f-06-evidence-pack-for-a-release-and-an-organizations-controls) |
 | N-01 | Sign in CI jobs and workloads without stored secrets | [ideas.md](ideas.md#n-01-sign-in-ci-jobs-and-workloads-without-stored-secrets) |
 | N-02 | Task-scoped agent identity with shared budgets | [ideas.md](ideas.md#n-02-task-scoped-agent-identity-with-shared-budgets) |
 | N-03 | Permission-aware AI retrieval with source records | [ideas.md](ideas.md#n-03-permission-aware-ai-retrieval-with-source-records) |
 | N-04 | Pin approved MCP tool servers to a reviewed revision | [ideas.md](ideas.md#n-04-pin-approved-mcp-tool-servers-to-a-reviewed-revision) |
 | N-05 | What could this account reach if it were compromised? | [ideas.md](ideas.md#n-05-what-could-this-account-reach-if-it-were-compromised) |
 | N-06 | Least-privilege suggestions from real usage | [ideas.md](ideas.md#n-06-least-privilege-suggestions-from-real-usage) |
-| N-07 | Two-way trust between partner organisations | [ideas.md](ideas.md#n-07-two-way-trust-between-partner-organisations) |
+| N-07 | Two-way trust between partner organizations | [ideas.md](ideas.md#n-07-two-way-trust-between-partner-organizations) |
 | N-08 | Per-app disclosure rules and pairwise subject IDs | [ideas.md](ideas.md#n-08-per-app-disclosure-rules-and-pairwise-subject-ids) |
 | N-09 | Recovery readiness and quorum-approved recovery | [ideas.md](ideas.md#n-09-recovery-readiness-and-quorum-approved-recovery) |
 | N-10 | Authenticator and device assurance | [ideas.md](ideas.md#n-10-authenticator-and-device-assurance) |
@@ -63,12 +63,12 @@ gate is not met, and re-estimate after discovery rather than promising a date.
 | Slot | Bounded deliverable | Exit decision |
 | --- | --- | --- |
 | 0: discovery | Interview 3-5 design partners, choose one buyer/problem, establish baseline pain, data-flow threat model and success measures. Confirm 1.0 operational stability. | A partner commits to a controlled pilot; otherwise stop/reprioritize. |
-| 1: N-03 contract | One source identity/ACL mapping, proposed OpenAPI, isolated authorization fixtures and a fake retrieval adapter. | No tenant or subject ambiguity; required permissions and integration owner agreed. |
+| 1: N-03 contract | One source identity/ACL mapping, proposed OpenAPI, isolated authorization fixtures and a fake retrieval adapter. | No organization or subject ambiguity; required permissions and integration owner agreed. |
 | 2: N-03 vertical slice | One real read-only connector, pre-model authorization and source-provenance recording with synthetic/non-sensitive data. | Unauthorized canaries never reach the fake model; lineage reconciles. |
 | 3: N-03 controlled pilot | ACL changes, deletion, cache reuse, quotas, SDK/docs, observability and rollback. Limited opt-in partner traffic after review. | Measured usefulness, latency and isolation meet agreed targets; no automatic broad rollout. |
 | 4: N-01 trust contract | One CI issuer's exact trust selectors, preview API and external-verifier threat model. Preserve existing token clients. | Consumer/contract approval and replay/key-rollover policy agreed. |
 | 5: N-01 pilot | One CI integration authenticates without a stored Qeet secret; exercise disabled trust and token lifecycle. | Adoption and failure handling demonstrated before adding Kubernetes/SPIFFE providers. |
-| 6: PQ-01 evidence | Read-only crypto inventory and dependency/exposure report, with unknowns and operator/tenant separation. | Partners can act on the report; choose whether PQ-02 merits an authorized staging experiment. |
+| 6: PQ-01 evidence | Read-only crypto inventory and dependency/exposure report, with unknowns and operator/organization separation. | Partners can act on the report; choose whether PQ-02 merits an authorized staging experiment. |
 
 If the selected buyer does not operate RAG, replace slots 1-3 with the N-05
 exposure-analysis pilot. N-02/N-04 follow a proven AI integration; N-06 follows
@@ -83,8 +83,8 @@ Resolve naming and contracts before implementation. Retain the current modular
 monolith and consumer-declared interfaces; wire dependencies in bootstrap. Do not
 introduce microservices or a second authorization engine just to implement a pilot.
 
-- Organization scope comes from `httpx.RequireTenant(r)`. A `{tenantID}` path
-  must match it; no path/body/header tenant value grants authority. Every related
+- Organization scope comes from `httpx.RequireOrganization(r)`. A `{tenantID}` path
+  must match it; no path/body/header organization value grants authority. Every related
   object must be looked up within that scope, with SQL predicates and applicable RLS.
 - Separate administrative configuration, integration evaluation and a person's
   own actions. Give each a deliberately reviewed permission/machine scope; do not
@@ -94,11 +94,11 @@ introduce microservices or a second authorization engine just to implement a pil
   IDs, task handles and decision receipts are not authentication credentials.
 - Management writes need audit events, validation, concurrency control and
   idempotency with explicit unknown-outcome behavior. Long analyses should return
-  a tenant-scoped job ID, with bounded work, status/cancel operations and expiry.
+  an organization-scoped job ID, with bounded work, status/cancel operations and expiry.
 - Bound input size, graph depth, candidate counts, concurrency, storage and
   provider costs. Apply egress restrictions and redaction to every connector.
   Paginate list APIs and never put secret key material or raw tokens in responses.
-- Ship OpenAPI, normal and cross-tenant denial tests, dependency-failure cases,
+- Ship OpenAPI, normal and cross-organization denial tests, dependency-failure cases,
   metrics and a disable/rollback procedure with every pilot. Do not present
   a mocked test as evidence of real provider or deployment compatibility.
 - JWT/JWKS/claims, federation/webhook contracts and changes to other repositories
@@ -112,7 +112,7 @@ idempotency, admission-control and observability work. Add reproducible SDK
 examples and conformance fixtures for the selected feature. Define retention
 for new task, provenance, analysis and evidence records; assess personal-data
 processing, customer exports and erasure. Chargeable work needs transparent
-usage and limits, not unbounded background tasks on a shared tenant tier.
+usage and limits, not unbounded background tasks on a shared organization tier.
 
 A feature requires an adoption path, not only routes in this repository. Name
 the consuming app/SDK, integration owner, operating cost, security failure mode
@@ -129,12 +129,12 @@ Numbers such as "4.4" or "5.3" in these pages are items of the October 2026 ente
 | 1.2 | Adding someone to a group checks the group's roles (no self-promotion to owner); add the route to step-up; SCIM can't add to admin groups |
 | 1.3 | Admins can act on (password, MFA reset, suspend, delete, purge, role removal) only people with fewer privileges; only owners act on owners; built-in owner role read-only |
 | 1.4 | Owners can always be offboarded: home org suspend/delete/SCIM deactivate never blocked by ownership elsewhere; policy for who may create orgs; enforce org limit |
-| 1.5 | Tokens can't cross tenants: resource identifiers unique platform-wide and on a verified domain; app tokens default aud = client_id |
+| 1.5 | Tokens can't cross organizations: resource identifiers unique platform-wide and on a verified domain; app tokens default aud = client_id |
 | 1.8 | Adding credentials / changing email needs recent sign-in even without a second factor; first-password set included |
 | 1.9 | Recovery: send to the stored address; expire outstanding reset/magic links on any credential change; per-address forgot-password limit |
 | 1.10 | Offboarding ends everything: SCIM suspend/delete end all sign-ins; personal API keys stop with the user; disabled service principals' tokens refused |
 | 1.15 | Token exchange can't widen scopes/resources; sign login_after |
-| 2.4 | Audit completeness: passkeys, bot/risk settings, anomaly resolve, billing profile/trial/webhook plan change, role-permission grants in the org log, tenant edits, restore/purge/mfa-required in-tx, PATCH /v1/users, self-service delete/export, phone verification |
+| 2.4 | Audit completeness: passkeys, bot/risk settings, anomaly resolve, billing profile/trial/webhook plan change, role-permission grants in the org log, organization edits, restore/purge/mfa-required in-tx, PATCH /v1/users, self-service delete/export, phone verification |
 | 2.7 | GDPR: erasure covers passkeys, OTP destinations, linked identities, directory profiles, vault grants, devices, notifications; export payload expires; erasure record kept; FKs don't block purges |
 | 2.9 | Migrations don't lock hot tables (CONCURRENTLY + lock timeout) |
 | 2.10 | Background throughput: SIEM (lease, loop, metadata, honest evidence), anomaly scorer, scheduler (parallel, checkpointed chain verify), outbox |
@@ -146,12 +146,12 @@ Numbers such as "4.4" or "5.3" in these pages are items of the October 2026 ente
 | 3.5 | Enterprise OIDC connections (validated ID token, issuer/tenant restriction, claim mapping) |
 | 3.6 | Admin portal completes a setup (SP/SCIM URLs, domain verification, test sign-in) |
 | 3.8 | SCIM tokens: several, expiring, overlap on rotation, refused for suspended orgs |
-| 4.1 | Organisation-aware apps: one app for many customer orgs, `organization` parameter, org_id/roles/permissions claims, per-org custom permissions |
+| 4.1 | Organization-aware apps: one app for many customer orgs, `organization` parameter, org_id/roles/permissions claims, per-org custom permissions |
 | 4.2 | Finer permissions (user.delete/suspend/credentials, session.revoke, member.invite, tenant.delete) + built-in Admin/Member/Viewer roles + rename/delete roles |
 | 4.4 | M2M for customers' APIs (client_credentials on machine apps with resource/scope), private_key_jwt, secret rotation with overlap |
 | 4.6 | Consent withdrawal + "connected apps" API; grants list filters/cursor |
 | 4.7 | Webhook events: user.created from every path, sign-in success/failure, MFA, invitations, roles, apps/keys |
-| 5.1 | Deleted organisations' data purged after a restore window (DPA) |
+| 5.1 | Deleted organizations' data purged after a restore window (DPA) |
 | 5.2 | Region: relabel + read-only until real data residency exists |
 | 5.3 | Audit tamper evidence (no UPDATE/DELETE for the app role, signed chain anchor) + audit export with hashes |
 | 5.4 | Encryption key ids + rotation |
@@ -181,7 +181,7 @@ Numbers such as "4.4" or "5.3" in these pages are items of the October 2026 ente
 | Step-up | Asking a signed-in person to authenticate again before a sensitive action. |
 | Break-glass | Emergency admin accounts that can still sign in when SSO is required or down. |
 | Egress policy | The server's rules for which outside addresses it may call. |
-| Row-level security (RLS) | Postgres rules that keep each organisation's rows separate. |
+| Row-level security (RLS) | Postgres rules that keep each organization's rows separate. |
 | Design partner | A customer who agrees to try an early version and give feedback. |
 | Shadow mode | Running a new check and recording its answer without enforcing it. |
 
@@ -243,10 +243,10 @@ The review looked at these and decided against them. Don't reopen them without n
   require a separate server-enforced approval design.
 - Exact matching to a registered logout URI does not require the additional
   domain-ownership rule proposed by a reviewer. No new logout bypass was proven.
-- Speculative tenant-switch/device/CIBA races were not demonstrated by the
+- Speculative organization-switch/device/CIBA races were not demonstrated by the
   presented evidence; a liveness check later in a path is not a bypass by itself.
-- Tenant-deletion/revocation events are expected; suppressing them because a
-  tenant was soft-deleted would break downstream cleanup. Do not do that.
+- Organization-deletion/revocation events are expected; suppressing them because an
+  organization was soft-deleted would break downstream cleanup. Do not do that.
 - Clearing MFA failure locks merely because an organization was reactivated
   would weaken a security control. Do not adopt that suggestion.
 - Ordinary in-flight AI completion, hypothetical startup races and a 24-hour

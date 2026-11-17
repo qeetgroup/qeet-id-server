@@ -1,5 +1,5 @@
 // Command seed fills a development database with production-shaped demo data:
-// Qeet Group and customer organisations of every plan, size and stage, their
+// Qeet Group and customer organizations of every plan, size and stage, their
 // people, connections, applications and integrations, and months of
 // sign-in and audit history. It drives the API's own services, so hashes,
 // encryption and permissions are real; history the API only writes as it
@@ -78,7 +78,7 @@ func main() {
 		fmt.Println("• emptied the database")
 	} else {
 		var n int
-		world.Must(admin.QueryRow(ctx, `SELECT count(*) FROM tenant.tenants`).Scan(&n), "count organisations")
+		world.Must(admin.QueryRow(ctx, `SELECT count(*) FROM organization.organizations`).Scan(&n), "count organisations")
 		if n > 0 {
 			log.Fatal("seed: the database already has organisations; run `make seed-reset` to start again")
 		}

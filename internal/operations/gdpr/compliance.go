@@ -32,10 +32,10 @@ func knownControl(id string) bool {
 	return false
 }
 
-// Owners returns who answers for each of tenantID's controls that has an
+// Owners returns who answers for each of organizationID's controls that has an
 // owner.
-func (s *EvidenceService) Owners(ctx context.Context, tenantID uuid.UUID) ([]ControlOwner, error) {
-	rows, err := s.q.ListControlOwners(ctx, tenantID)
+func (s *EvidenceService) Owners(ctx context.Context, organizationID uuid.UUID) ([]ControlOwner, error) {
+	rows, err := s.q.ListControlOwners(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -46,13 +46,13 @@ func (s *EvidenceService) Owners(ctx context.Context, tenantID uuid.UUID) ([]Con
 	return out, nil
 }
 
-// SetOwner makes userID, one of tenantID's people, answer for controlID, as
+// SetOwner makes userID, one of organizationID's people, answer for controlID, as
 // actor's change.
-func (s *EvidenceService) SetOwner(ctx context.Context, tenantID uuid.UUID, controlID string, userID uuid.UUID, actor audit.Actor) error {
+func (s *EvidenceService) SetOwner(ctx context.Context, organizationID uuid.UUID, controlID string, userID uuid.UUID, actor audit.Actor) error {
 	if !knownControl(controlID) {
 		return errs.ErrNotFound
 	}
-	member, err := s.q.IsTenantMember(ctx, dbgen.IsTenantMemberParams{UserID: userID, TenantID: pgtype.UUID{Bytes: tenantID, Valid: true}})
+	member, err := s.q.IsOrganizationMember(ctx, dbgen.IsOrganizationMemberParams{UserID: userID, OrganizationID: pgtype.UUID{Bytes: organizationID, Valid: true}})
 	if err != nil {
 		return err
 	}
@@ -67,11 +67,11 @@ func (s *EvidenceService) SetOwner(ctx context.Context, tenantID uuid.UUID, cont
 	}
 	defer tx.Rollback(ctx)
 	if err := s.q.WithTx(tx).UpsertControlOwner(ctx, dbgen.UpsertControlOwnerParams{
-		TenantID: tenantID, ControlID: controlID, UserID: userID, UpdatedBy: pgUUIDNullable(actor.UserID),
+		OrganizationID: organizationID, ControlID: controlID, UserID: userID, UpdatedBy: pgUUIDNullable(actor.UserID),
 	}); err != nil {
 		return err
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "compliance.control_owner_set", "user", userID,
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "compliance.control_owner_set", "user", userID,
 		map[string]any{"control_id": controlID, "user_id": userID})); err != nil {
 		return err
 	}
@@ -79,27 +79,27 @@ func (s *EvidenceService) SetOwner(ctx context.Context, tenantID uuid.UUID, cont
 }
 
 // RemoveOwner leaves controlID without an owner, as actor's change.
-func (s *EvidenceService) RemoveOwner(ctx context.Context, tenantID uuid.UUID, controlID string, actor audit.Actor) error {
+func (s *EvidenceService) RemoveOwner(ctx context.Context, organizationID uuid.UUID, controlID string, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	n, err := s.q.WithTx(tx).DeleteControlOwner(ctx, dbgen.DeleteControlOwnerParams{TenantID: tenantID, ControlID: controlID})
+	n, err := s.q.WithTx(tx).DeleteControlOwner(ctx, dbgen.DeleteControlOwnerParams{OrganizationID: organizationID, ControlID: controlID})
 	if err != nil {
 		return err
 	}
 	if n == 0 {
 		return errs.ErrNotFound
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "compliance.control_owner_removed", "compliance_control", uuid.Nil,
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "compliance.control_owner_removed", "compliance_control", uuid.Nil,
 		map[string]any{"control_id": controlID})); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
 
-// ExternalAudit is an audit an external body carried out on the organisation,
+// ExternalAudit is an audit an external body carried out on the organization,
 // or a certificate it issued, against a framework.
 type ExternalAudit struct {
 	ID        uuid.UUID  `json:"id"`
@@ -179,14 +179,14 @@ func externalAudit(id uuid.UUID, framework, kind, body, scope, reference string,
 	return out
 }
 
-// Audits returns up to 200 of tenantID's external audits and certificates,
+// Audits returns up to 200 of organizationID's external audits and certificates,
 // latest first, of framework when not "".
-func (s *EvidenceService) Audits(ctx context.Context, tenantID uuid.UUID, framework string) ([]ExternalAudit, error) {
+func (s *EvidenceService) Audits(ctx context.Context, organizationID uuid.UUID, framework string) ([]ExternalAudit, error) {
 	var f *string
 	if framework != "" {
 		f = &framework
 	}
-	rows, err := s.q.ListComplianceAudits(ctx, dbgen.ListComplianceAuditsParams{TenantID: tenantID, Framework: f})
+	rows, err := s.q.ListComplianceAudits(ctx, dbgen.ListComplianceAuditsParams{OrganizationID: organizationID, Framework: f})
 	if err != nil {
 		return nil, err
 	}
@@ -197,8 +197,8 @@ func (s *EvidenceService) Audits(ctx context.Context, tenantID uuid.UUID, framew
 	return out, nil
 }
 
-// RecordAudit stores an external audit or certificate of tenantID, as actor's.
-func (s *EvidenceService) RecordAudit(ctx context.Context, tenantID uuid.UUID, in ExternalAuditInput, actor audit.Actor) (*ExternalAudit, error) {
+// RecordAudit stores an external audit or certificate of organizationID, as actor's.
+func (s *EvidenceService) RecordAudit(ctx context.Context, organizationID uuid.UUID, in ExternalAuditInput, actor audit.Actor) (*ExternalAudit, error) {
 	issued, expires, err := in.check()
 	if err != nil {
 		return nil, err
@@ -209,35 +209,35 @@ func (s *EvidenceService) RecordAudit(ctx context.Context, tenantID uuid.UUID, i
 	}
 	defer tx.Rollback(ctx)
 	r, err := s.q.WithTx(tx).InsertComplianceAudit(ctx, dbgen.InsertComplianceAuditParams{
-		TenantID: tenantID, Framework: in.Framework, Kind: in.Kind, Body: in.Body, Scope: in.Scope, Reference: in.Reference,
+		OrganizationID: organizationID, Framework: in.Framework, Kind: in.Kind, Body: in.Body, Scope: in.Scope, Reference: in.Reference,
 		IssuedOn: issued, ExpiresOn: expires, CreatedBy: pgUUIDNullable(actor.UserID),
 	})
 	if err != nil {
 		return nil, err
 	}
 	out := externalAudit(r.ID, r.Framework, r.Kind, r.Body, r.Scope, r.Reference, r.IssuedOn, r.ExpiresOn, r.CreatedBy, r.CreatedAt)
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "compliance.audit_recorded", "compliance_audit", out.ID,
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "compliance.audit_recorded", "compliance_audit", out.ID,
 		map[string]any{"framework": out.Framework, "kind": out.Kind, "body": out.Body, "issued_on": out.IssuedOn})); err != nil {
 		return nil, err
 	}
 	return &out, tx.Commit(ctx)
 }
 
-// DeleteAudit removes one of tenantID's external audits, as actor's change.
-func (s *EvidenceService) DeleteAudit(ctx context.Context, tenantID, id uuid.UUID, actor audit.Actor) error {
+// DeleteAudit removes one of organizationID's external audits, as actor's change.
+func (s *EvidenceService) DeleteAudit(ctx context.Context, organizationID, id uuid.UUID, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	r, err := s.q.WithTx(tx).DeleteComplianceAudit(ctx, dbgen.DeleteComplianceAuditParams{ID: id, TenantID: tenantID})
+	r, err := s.q.WithTx(tx).DeleteComplianceAudit(ctx, dbgen.DeleteComplianceAuditParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return errs.ErrNotFound
 	}
 	if err != nil {
 		return err
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "compliance.audit_deleted", "compliance_audit", id,
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "compliance.audit_deleted", "compliance_audit", id,
 		map[string]any{"framework": r.Framework, "kind": r.Kind, "body": r.Body})); err != nil {
 		return err
 	}
@@ -245,7 +245,7 @@ func (s *EvidenceService) DeleteAudit(ctx context.Context, tenantID, id uuid.UUI
 }
 
 func (h *Handler) listOwners(w http.ResponseWriter, r *http.Request) {
-	tid, err := requireEvidencePathTenant(r)
+	tid, err := requireEvidencePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -259,7 +259,7 @@ func (h *Handler) listOwners(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) setOwner(w http.ResponseWriter, r *http.Request) {
-	tid, err := requireEvidencePathTenant(r)
+	tid, err := requireEvidencePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -279,7 +279,7 @@ func (h *Handler) setOwner(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) removeOwner(w http.ResponseWriter, r *http.Request) {
-	tid, err := requireEvidencePathTenant(r)
+	tid, err := requireEvidencePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -292,7 +292,7 @@ func (h *Handler) removeOwner(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listAudits(w http.ResponseWriter, r *http.Request) {
-	tid, err := requireEvidencePathTenant(r)
+	tid, err := requireEvidencePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -306,7 +306,7 @@ func (h *Handler) listAudits(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) recordAudit(w http.ResponseWriter, r *http.Request) {
-	tid, err := requireEvidencePathTenant(r)
+	tid, err := requireEvidencePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -325,7 +325,7 @@ func (h *Handler) recordAudit(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) deleteAudit(w http.ResponseWriter, r *http.Request) {
-	tid, err := requireEvidencePathTenant(r)
+	tid, err := requireEvidencePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

@@ -18,12 +18,12 @@ import (
 func TestPersonalAPIKeyLosesWhatItsOwnerLost(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
 	repo := NewRepository(pool)
-	tenant := dbtest.Tenant(t)
-	person := dbtest.User(t, tenant)
-	dbtest.Assign(t, person.ID, tenant, dbtest.Role(t, tenant, "user.read", "secret.read"))
+	organization := dbtest.Organization(t)
+	person := dbtest.User(t, organization)
+	dbtest.Assign(t, person.ID, organization, dbtest.Role(t, organization, "user.read", "secret.read"))
 	scopes := []string{"user.read", "vault:database"}
-	personal := &httpx.Principal{ActorType: "api_key", Subject: uuid.NewString(), UserID: &person.ID, TenantID: &tenant, Scopes: scopes}
-	shared := &httpx.Principal{ActorType: "api_key", Subject: uuid.NewString(), TenantID: &tenant, Scopes: scopes}
+	personal := &httpx.Principal{ActorType: "api_key", Subject: uuid.NewString(), UserID: &person.ID, OrganizationID: &organization, Scopes: scopes}
+	shared := &httpx.Principal{ActorType: "api_key", Subject: uuid.NewString(), OrganizationID: &organization, Scopes: scopes}
 	users, vault, writes := PermissionPolicy("user.read"), HandlerAuthorizedPolicy(true, "vault:read"), PermissionPolicy("user.write")
 	allows := func(p *httpx.Principal, policy RoutePolicy) bool {
 		t.Helper()
@@ -37,10 +37,10 @@ func TestPersonalAPIKeyLosesWhatItsOwnerLost(t *testing.T) {
 	if !allows(personal, users) || !allows(personal, vault) {
 		t.Fatal("a personal key whose person holds its scopes is refused")
 	}
-	if _, err := pool.Exec(ctx, `DELETE FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2`, person.ID, tenant); err != nil {
+	if _, err := pool.Exec(ctx, `DELETE FROM rbac.user_roles WHERE user_id = $1 AND organization_id = $2`, person.ID, organization); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.Assign(t, person.ID, tenant, dbtest.Role(t, tenant, "user.write"))
+	dbtest.Assign(t, person.ID, organization, dbtest.Role(t, organization, "user.write"))
 	if allows(personal, users) {
 		t.Error("a personal key reads users after its person lost user.read")
 	}

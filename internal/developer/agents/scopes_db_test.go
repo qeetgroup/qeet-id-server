@@ -16,12 +16,12 @@ import (
 // only with scopes its creator holds: a developer can't mint one with role.write.
 func TestAgentsCarryOnlyTheCreatorsAuthority(t *testing.T) {
 	pool := dbtest.Pool(t)
-	tenant := dbtest.Tenant(t)
-	developer := dbtest.User(t, tenant)
-	dbtest.Assign(t, developer.ID, tenant, dbtest.Role(t, tenant, "apikey.write", "user.read"))
-	h := dbtest.Serve(dbtest.Principal(developer.ID, tenant),
+	organization := dbtest.Organization(t)
+	developer := dbtest.User(t, organization)
+	dbtest.Assign(t, developer.ID, organization, dbtest.Role(t, organization, "apikey.write", "user.read"))
+	h := dbtest.Serve(dbtest.Principal(developer.ID, organization),
 		(&Handler{Service: NewService(pool, dbtest.Issuer(t)), GrantCheck: rbac.NewRepository(pool).CheckGrantScopes}).Mount)
-	path := "/tenants/" + tenant.String() + "/agents"
+	path := "/tenants/" + organization.String() + "/agents"
 
 	body := func(scopes ...string) map[string]any {
 		return map[string]any{"name": "ci-deploy", "scopes": scopes, "sponsor_user_id": developer.ID}
@@ -33,7 +33,7 @@ func TestAgentsCarryOnlyTheCreatorsAuthority(t *testing.T) {
 	if rec := dbtest.Do(t, h, http.MethodPost, path, body("user.read")); rec.Code != http.StatusCreated {
 		t.Errorf("create with the creator's own scope: %d %s, want 201", rec.Code, rec.Body.String())
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM auth.agents WHERE tenant_id = $1`, tenant); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM auth.agents WHERE organization_id = $1`, organization); n != 1 {
 		t.Errorf("%d credentials stored, want only the permitted one", n)
 	}
 }

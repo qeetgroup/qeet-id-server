@@ -33,7 +33,7 @@ func AccessRequestJobs(svc *accessrequest.Service) []worker.Scheduled {
 		Name:     "access-request-sweep",
 		Interval: accessrequest.SweepInterval,
 		Run: func(ctx context.Context) error {
-			res, err := svc.Sweep(postgres.AcrossTenants(ctx))
+			res, err := svc.Sweep(postgres.AcrossOrganizations(ctx))
 			if res.Lapsed+res.Ended+res.Failed > 0 {
 				slog.Info("access requests swept", "lapsed", res.Lapsed, "ended", res.Ended, "failed", res.Failed)
 			}

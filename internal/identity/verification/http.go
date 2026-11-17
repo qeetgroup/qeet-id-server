@@ -92,7 +92,7 @@ func requesterOf(r *http.Request) Requester {
 		if p.ActorType != "" {
 			who.Actor.Type = p.ActorType
 		}
-		who.TenantID = p.TenantID
+		who.OrganizationID = p.OrganizationID
 	}
 	return who
 }
@@ -100,7 +100,7 @@ func requesterOf(r *http.Request) Requester {
 // selfID resolves the target user from the path and enforces that it's the
 // caller: verification is self-service only. Without this, any authenticated
 // user could start/confirm verification against another user's id (an IDOR) —
-// {id} is NOT a {tenantID}, so the central EnforceTenantScope guard never fires.
+// {id} is NOT a {tenantID}, so the central EnforceOrganizationScope guard never fires.
 func selfID(r *http.Request) (uuid.UUID, error) {
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {

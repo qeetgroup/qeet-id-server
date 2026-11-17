@@ -17,17 +17,17 @@ import (
 )
 
 // TestApplicationAdministration checks that a client is created in the path's
-// organisation whatever the body says, its secret shown once and retired by
+// organization whatever the body says, its secret shown once and retired by
 // rotation, edits held to the registration rules, wrong secrets listed without
 // the secret, and that deleting it stops it authenticating, each audited.
 func TestApplicationAdministration(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
-	tenant, otherTenant := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: svc}).Mount)
-	clients := "/tenants/" + tenant.String() + "/oidc/clients"
-	app := map[string]any{"tenant_id": otherTenant, "name": "Portal", "redirect_uris": []string{testRedirect}}
+	organization, otherOrganization := dbtest.Organization(t), dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: svc}).Mount)
+	clients := "/tenants/" + organization.String() + "/oidc/clients"
+	app := map[string]any{"tenant_id": otherOrganization, "name": "Portal", "redirect_uris": []string{testRedirect}}
 
 	rec := dbtest.Do(t, asAdmin, http.MethodPost, clients, app)
 	var created struct {
@@ -35,10 +35,10 @@ func TestApplicationAdministration(t *testing.T) {
 		Secret string `json:"client_secret"`
 	}
 	dbtest.Decode(t, rec, &created)
-	if rec.Code != http.StatusCreated || created.Client.TenantID != tenant || created.Secret == "" {
+	if rec.Code != http.StatusCreated || created.Client.OrganizationID != organization || created.Secret == "" {
 		t.Fatalf("create: %d %s, want a client of the path's organisation and its secret", rec.Code, rec.Body.String())
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM auth.oidc_clients WHERE id = $1 AND tenant_id = $2 AND created_by = $3`, created.Client.ID, tenant, admin.ID); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM auth.oidc_clients WHERE id = $1 AND organization_id = $2 AND created_by = $3`, created.Client.ID, organization, admin.ID); n != 1 {
 		t.Error("the application doesn't record who created it")
 	}
 	path := clients + "/" + created.Client.ID.String()
@@ -47,7 +47,7 @@ func TestApplicationAdministration(t *testing.T) {
 			t.Errorf("GET %s: %d, or it shows the secret", read, rec.Code)
 		}
 	}
-	if rec := dbtest.Do(t, asAdmin, http.MethodPost, "/tenants/"+otherTenant.String()+"/oidc/clients", app); rec.Code != http.StatusForbidden {
+	if rec := dbtest.Do(t, asAdmin, http.MethodPost, "/tenants/"+otherOrganization.String()+"/oidc/clients", app); rec.Code != http.StatusForbidden {
 		t.Errorf("create in another organisation: %d, want 403", rec.Code)
 	}
 
@@ -67,7 +67,7 @@ func TestApplicationAdministration(t *testing.T) {
 			t.Errorf("PATCH %s: %d %s, want %s", tc.name, rec.Code, rec.Body.String(), tc.code)
 		}
 	}
-	if got, err := svc.GetClient(ctx, tenant, created.Client.ID); err != nil || !slices.Equal(got.RedirectURIs, []string{testRedirect}) || got.BackchannelLogoutURI != "" {
+	if got, err := svc.GetClient(ctx, organization, created.Client.ID); err != nil || !slices.Equal(got.RedirectURIs, []string{testRedirect}) || got.BackchannelLogoutURI != "" {
 		t.Errorf("client after refused edits: %+v, %v; want it unchanged", got, err)
 	}
 	var patched Client
@@ -122,28 +122,28 @@ func TestApplicationAdministration(t *testing.T) {
 	for action, want := range map[string]int{
 		"oidc.client_registered": 2, "oidc.client_updated": 1, "oidc.client_secret_rotated": 1, "oidc.client_deleted": 1,
 	} {
-		if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = $2 AND actor_user_id = $3`, tenant, action, admin.ID); n != want {
+		if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = $2 AND actor_user_id = $3`, organization, action, admin.ID); n != want {
 			t.Errorf("%s audited %d times, want %d", action, n, want)
 		}
 	}
 }
 
-// TestResourcesAndShadowAIReview checks that an organisation registers each
+// TestResourcesAndShadowAIReview checks that an organization registers each
 // resource once, served only by one of its own applications, which may then
 // introspect tokens for it where another may not, and that an unreviewed
 // machine application is listed until an admin reviews it.
 func TestResourcesAndShadowAIReview(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
-	tenant, otherTenant := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: svc}).Mount)
-	client, secret := registerClient(t, svc, tenant)
-	server, serverSecret := registerClient(t, svc, tenant)
-	bystander, bystanderSecret := registerClient(t, svc, tenant)
-	foreign, _ := registerClient(t, svc, otherTenant)
-	resources := "/tenants/" + tenant.String() + "/oidc/resources"
-	verifyDomain(t, tenant, strings.TrimPrefix(resourceA, "https://"))
+	organization, otherOrganization := dbtest.Organization(t), dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: svc}).Mount)
+	client, secret := registerClient(t, svc, organization)
+	server, serverSecret := registerClient(t, svc, organization)
+	bystander, bystanderSecret := registerClient(t, svc, organization)
+	foreign, _ := registerClient(t, svc, otherOrganization)
+	resources := "/tenants/" + organization.String() + "/oidc/resources"
+	verifyDomain(t, organization, strings.TrimPrefix(resourceA, "https://"))
 
 	for _, tc := range []struct {
 		name string
@@ -187,15 +187,15 @@ func TestResourcesAndShadowAIReview(t *testing.T) {
 		t.Error("a grant for a removed resource renewed")
 	}
 
-	if _, _, err := svc.RegisterClient(ctx, nil, CreateClientInput{TenantID: tenant, Name: "Cron", GrantTypes: []string{"client_credentials"}}); !errors.Is(err, errs.ErrOIDCGrantTypeUnsupported) {
+	if _, _, err := svc.RegisterClient(ctx, nil, CreateClientInput{OrganizationID: organization, Name: "Cron", GrantTypes: []string{"client_credentials"}}); !errors.Is(err, errs.ErrOIDCGrantTypeUnsupported) {
 		t.Errorf("register a client_credentials application: %v, want %v (machine callers are service principals)", err, errs.ErrOIDCGrantTypeUnsupported)
 	}
-	machine, _ := registerClientWith(t, svc, CreateClientInput{TenantID: tenant, Name: "Agent", GrantTypes: []string{"token_exchange"}})
-	shadow := "/tenants/" + tenant.String() + "/oidc/clients/shadow-ai"
+	machine, _ := registerClientWith(t, svc, CreateClientInput{OrganizationID: organization, Name: "Agent", GrantTypes: []string{"token_exchange"}})
+	shadow := "/tenants/" + organization.String() + "/oidc/clients/shadow-ai"
 	if ids := dbtest.IDs(t, dbtest.Do(t, asAdmin, http.MethodGet, shadow, nil)); !slices.Equal(ids, []uuid.UUID{machine.ID}) {
 		t.Errorf("shadow-AI candidates %v, want only the machine application %s", ids, machine.ID)
 	}
-	review := "/tenants/" + tenant.String() + "/oidc/clients/"
+	review := "/tenants/" + organization.String() + "/oidc/clients/"
 	if rec := dbtest.Do(t, asAdmin, http.MethodPost, review+foreign.ID.String()+"/review", nil); rec.Code != http.StatusNotFound {
 		t.Errorf("review another organisation's application: %d, want 404", rec.Code)
 	}
@@ -207,26 +207,26 @@ func TestResourcesAndShadowAIReview(t *testing.T) {
 	}
 }
 
-// TestGrantAdministration checks that an organisation's admin sees the live
+// TestGrantAdministration checks that an organization's admin sees the live
 // grants its people have given applications and can end one, every rotation
-// included, and can neither see nor end another organisation's.
+// included, and can neither see nor end another organization's.
 func TestGrantAdministration(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
-	tenant, otherTenant := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	person := dbtest.User(t, tenant, tenant)
-	outsider := dbtest.User(t, otherTenant, otherTenant)
+	organization, otherOrganization := dbtest.Organization(t), dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	person := dbtest.User(t, organization, organization)
+	outsider := dbtest.User(t, otherOrganization, otherOrganization)
 	h := (&Handler{Service: svc}).Mount
-	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), h)
-	asOutsider := dbtest.Serve(dbtest.Principal(outsider.ID, otherTenant), h)
-	client, secret := registerClient(t, svc, tenant)
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), h)
+	asOutsider := dbtest.Serve(dbtest.Principal(outsider.ID, otherOrganization), h)
+	client, secret := registerClient(t, svc, organization)
 	first := redeemCode(t, svc, client, secret, person.ID, "")
 	rotated, err := svc.RefreshToken(ctx, client.ClientID, secret, first.RefreshToken, "")
 	if err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
-	grants := "/tenants/" + tenant.String() + "/oauth/grants"
+	grants := "/tenants/" + organization.String() + "/oauth/grants"
 
 	var page struct {
 		Items []Grant `json:"items"`
@@ -239,7 +239,7 @@ func TestGrantAdministration(t *testing.T) {
 	if rec := dbtest.Do(t, asOutsider, http.MethodGet, grants, nil); rec.Code != http.StatusForbidden {
 		t.Errorf("another organisation listing the grants: %d, want 403", rec.Code)
 	}
-	inOther := "/tenants/" + otherTenant.String() + "/oauth/grants/" + grant
+	inOther := "/tenants/" + otherOrganization.String() + "/oauth/grants/" + grant
 	if rec := dbtest.Do(t, asOutsider, http.MethodDelete, inOther, nil); !strings.Contains(rec.Body.String(), errs.CodeOIDCGrantNotFound) {
 		t.Errorf("another organisation ending the grant: %d %s", rec.Code, rec.Body.String())
 	}
@@ -252,7 +252,7 @@ func TestGrantAdministration(t *testing.T) {
 	if ids := dbtest.IDs(t, dbtest.Do(t, asAdmin, http.MethodGet, grants, nil)); len(ids) != 0 {
 		t.Errorf("grants after ending it %v, want none", ids)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'oauth.grant_revoked' AND resource_id = $2`, tenant, person.ID); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'oauth.grant_revoked' AND resource_id = $2`, organization, person.ID); n != 1 {
 		t.Errorf("ending the grant was audited %d times, want once", n)
 	}
 }
@@ -265,10 +265,10 @@ func TestGrantAdministration(t *testing.T) {
 func TestApplicationWebOrigins(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: svc}).Mount)
-	clients := "/tenants/" + tenant.String() + "/oidc/clients"
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: svc}).Mount)
+	clients := "/tenants/" + organization.String() + "/oidc/clients"
 	spa := "https://" + dbtest.Unique("spa") + ".example.test"
 
 	var created struct {

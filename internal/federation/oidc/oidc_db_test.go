@@ -20,9 +20,9 @@ func TestMain(m *testing.M) { dbtest.Main(m) }
 
 const testRedirect = "https://app.example.test/callback"
 
-// registerClient registers a confidential client in tenant and returns it with
+// registerClient registers a confidential client in organization and returns it with
 // its secret.
-func registerClient(t *testing.T, svc *Service, tenant uuid.UUID) (*Client, string) {
+func registerClient(t *testing.T, svc *Service, organization uuid.UUID) (*Client, string) {
 	t.Helper()
 	ctx := dbtest.Context(t)
 	tx, err := dbtest.Pool(t).Begin(ctx)
@@ -31,7 +31,7 @@ func registerClient(t *testing.T, svc *Service, tenant uuid.UUID) (*Client, stri
 	}
 	defer tx.Rollback(ctx)
 	client, secret, err := svc.RegisterClient(ctx, tx, CreateClientInput{
-		TenantID: tenant, Name: "App", RedirectURIs: []string{testRedirect},
+		OrganizationID: organization, Name: "App", RedirectURIs: []string{testRedirect},
 	})
 	if err != nil {
 		t.Fatalf("register client: %v", err)
@@ -42,17 +42,17 @@ func registerClient(t *testing.T, svc *Service, tenant uuid.UUID) (*Client, stri
 	return client, secret
 }
 
-// TestOIDCClientsStayInTheirTenant checks that one tenant can neither read nor
-// change another tenant's OIDC client, and that its users can't authorize it.
-func TestOIDCClientsStayInTheirTenant(t *testing.T) {
+// TestOIDCClientsStayInTheirOrganization checks that one organization can neither read nor
+// change another organization's OIDC client, and that its users can't authorize it.
+func TestOIDCClientsStayInTheirOrganization(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
-	tenantA, tenantB := dbtest.Tenant(t), dbtest.Tenant(t)
-	clientA, secretA := registerClient(t, svc, tenantA)
-	adminB := dbtest.User(t, tenantB, tenantB)
+	organizationA, organizationB := dbtest.Organization(t), dbtest.Organization(t)
+	clientA, secretA := registerClient(t, svc, organizationA)
+	adminB := dbtest.User(t, organizationB, organizationB)
 
-	asB := dbtest.Serve(dbtest.Principal(adminB.ID, tenantB), (&Handler{Service: svc}).Mount)
-	inB := "/tenants/" + tenantB.String() + "/oidc/clients/" + clientA.ID.String()
+	asB := dbtest.Serve(dbtest.Principal(adminB.ID, organizationB), (&Handler{Service: svc}).Mount)
+	inB := "/tenants/" + organizationB.String() + "/oidc/clients/" + clientA.ID.String()
 	for _, tc := range []struct {
 		method, path string
 		body         any
@@ -63,7 +63,7 @@ func TestOIDCClientsStayInTheirTenant(t *testing.T) {
 		{http.MethodPost, inB + "/rotate-secret", nil, http.StatusNotFound},
 		{http.MethodDelete, inB, nil, http.StatusNotFound},
 		{http.MethodDelete, "/oidc/clients/" + clientA.ID.String(), nil, http.StatusNotFound},
-		{http.MethodGet, "/tenants/" + tenantA.String() + "/oidc/clients", nil, http.StatusForbidden},
+		{http.MethodGet, "/tenants/" + organizationA.String() + "/oidc/clients", nil, http.StatusForbidden},
 	} {
 		if rec := dbtest.Do(t, asB, tc.method, tc.path, tc.body); rec.Code != tc.want {
 			t.Errorf("tenant B %s %s: status %d, want %d (%s)", tc.method, tc.path, rec.Code, tc.want, rec.Body.String())
@@ -72,12 +72,12 @@ func TestOIDCClientsStayInTheirTenant(t *testing.T) {
 	var page struct {
 		Items []Client `json:"items"`
 	}
-	dbtest.Decode(t, dbtest.Do(t, asB, http.MethodGet, "/tenants/"+tenantB.String()+"/oidc/clients", nil), &page)
+	dbtest.Decode(t, dbtest.Do(t, asB, http.MethodGet, "/tenants/"+organizationB.String()+"/oidc/clients", nil), &page)
 	if slices.ContainsFunc(page.Items, func(c Client) bool { return c.ID == clientA.ID }) {
 		t.Error("tenant B's client list includes tenant A's client")
 	}
 
-	got, err := svc.GetClient(ctx, tenantA, clientA.ID)
+	got, err := svc.GetClient(ctx, organizationA, clientA.ID)
 	if err != nil || got.Name != "App" {
 		t.Fatalf("tenant A's client after tenant B's calls: %+v, %v", got, err)
 	}
@@ -96,17 +96,17 @@ func TestOIDCAuthorizationCodeWithPKCE(t *testing.T) {
 	ctx := dbtest.Context(t)
 	issuer := dbtest.Issuer(t)
 	svc := NewService(dbtest.Pool(t), issuer)
-	tenant := dbtest.Tenant(t)
-	user := dbtest.User(t, tenant, tenant)
-	client, secret := registerClient(t, svc, tenant)
+	organization := dbtest.Organization(t)
+	user := dbtest.User(t, organization, organization)
+	client, secret := registerClient(t, svc, organization)
 
 	verifier, challenge, err := codes.URLToken()
 	if err != nil {
 		t.Fatalf("pkce: %v", err)
 	}
-	code, gotTenant, err := svc.Authorize(ctx, user.ID, client.ClientID, testRedirect, []string{"openid"}, "n-0S6_WzA2Mj", challenge, "S256")
-	if err != nil || gotTenant != tenant {
-		t.Fatalf("authorize: tenant %s, %v", gotTenant, err)
+	code, gotOrganization, err := svc.Authorize(ctx, user.ID, client.ClientID, testRedirect, []string{"openid"}, "n-0S6_WzA2Mj", challenge, "S256")
+	if err != nil || gotOrganization != organization {
+		t.Fatalf("authorize: tenant %s, %v", gotOrganization, err)
 	}
 
 	wrongVerifier := strings.Repeat("a", 43)
@@ -127,8 +127,8 @@ func TestOIDCAuthorizationCodeWithPKCE(t *testing.T) {
 		t.Errorf("exchange returned id token %t, refresh token %t; want both", issued.IDToken != "", issued.RefreshToken != "")
 	}
 	claims, err := issuer.VerifyAccessAnyAudience(issued.AccessToken)
-	if err != nil || claims.UserID != user.ID || claims.TenantID != tenant {
-		t.Fatalf("access token claims %+v, %v; want user %s in tenant %s", claims, err, user.ID, tenant)
+	if err != nil || claims.UserID != user.ID || claims.OrganizationID != organization {
+		t.Fatalf("access token claims %+v, %v; want user %s in tenant %s", claims, err, user.ID, organization)
 	}
 
 	if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, testRedirect, verifier, ""); !errors.Is(err, errs.ErrOIDCAuthCodeUsed) {

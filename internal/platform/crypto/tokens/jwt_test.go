@@ -264,7 +264,7 @@ func TestVerifyAccess_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("VerifyAccess: %v", err)
 	}
-	if c.UserID != uid || c.TenantID != tid || c.SessionID != sid {
+	if c.UserID != uid || c.OrganizationID != tid || c.SessionID != sid {
 		t.Errorf("claims round-trip mismatch: %+v", c)
 	}
 	if c.Scope != "scope.a scope.b" {
@@ -345,10 +345,10 @@ func TestVerifyAccess_SurfacesActorClaims(t *testing.T) {
 	i, _ := testIssuer(t)
 	now := time.Now().UTC()
 	tok, err := i.Sign(Claims{
-		TenantID:  uuid.New(),
-		Scope:     "vault:read",
-		ActorType: "agent",
-		AgentID:   "agent-xyz",
+		OrganizationID: uuid.New(),
+		Scope:          "vault:read",
+		ActorType:      "agent",
+		AgentID:        "agent-xyz",
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    "qeet-test",
 			Audience:  jwt.ClaimStrings{"qeet-test"},
@@ -410,7 +410,7 @@ func TestVerifyVC_RoundTripAndRejection(t *testing.T) {
 // which verify as signed, are not taken for verifiable credentials.
 func TestVerifyVC_AcceptsOnlyCredentials(t *testing.T) {
 	i, _ := testIssuer(t)
-	user, tenant, session := uuid.New(), uuid.New(), uuid.New()
+	user, organization, session := uuid.New(), uuid.New(), uuid.New()
 	exp := time.Now().Add(time.Hour).Unix()
 	sign := func(claims jwt.MapClaims) string {
 		s, err := i.Sign(claims)
@@ -419,11 +419,11 @@ func TestVerifyVC_AcceptsOnlyCredentials(t *testing.T) {
 		}
 		return s
 	}
-	access, _, err := i.IssueAccess(user, tenant, session, "openid")
+	access, _, err := i.IssueAccess(user, organization, session, "openid")
 	if err != nil {
 		t.Fatalf("access: %v", err)
 	}
-	clientAccess, _, err := i.IssueClientAccess(ClientAccess{UserID: user, TenantID: tenant, SessionID: session, ClientID: "qci_app"})
+	clientAccess, _, err := i.IssueClientAccess(ClientAccess{UserID: user, OrganizationID: organization, SessionID: session, ClientID: "qci_app"})
 	if err != nil {
 		t.Fatalf("client access: %v", err)
 	}

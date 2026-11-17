@@ -13,18 +13,18 @@ import (
 )
 
 type QeetaiConversation struct {
-	ID        uuid.UUID
-	TenantID  uuid.UUID
-	UserID    uuid.UUID
-	Title     string
-	Pinned    bool
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	UserID         uuid.UUID
+	Title          string
+	Pinned         bool
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 type QeetaiMessage struct {
 	ID             uuid.UUID
-	TenantID       uuid.UUID
+	OrganizationID uuid.UUID
 	ConversationID uuid.UUID
 	Role           string
 	Content        json.RawMessage
@@ -32,16 +32,16 @@ type QeetaiMessage struct {
 }
 
 type QeetaiProviderSetting struct {
-	TenantID      uuid.UUID
-	Provider      string
-	Model         string
-	BaseUrl       string
-	MaxTokens     int32
-	KeyCiphertext []byte
-	KeyNonce      []byte
-	KeyLast4      string
-	Enabled       bool
-	UpdatedBy     pgtype.UUID
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	OrganizationID uuid.UUID
+	Provider       string
+	Model          string
+	BaseUrl        string
+	MaxTokens      int32
+	KeyCiphertext  []byte
+	KeyNonce       []byte
+	KeyLast4       string
+	Enabled        bool
+	UpdatedBy      pgtype.UUID
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }

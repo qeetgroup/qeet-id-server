@@ -42,19 +42,19 @@ type toolUseAccum struct {
 // console's JSON context (route, selection): untrusted grounding text, never
 // authorization input.
 type turnContext struct {
-	tenantID       uuid.UUID
+	organizationID uuid.UUID
 	userID         uuid.UUID
 	conversationID uuid.UUID
 	pageContext    string
 	actor          audit.Actor
 }
 
-// ProviderResolver resolves the effective AI provider for a tenant, applying
-// BYOK-over-platform fallback (tenant key → platform env key → unconfigured).
+// ProviderResolver resolves the effective AI provider for an organization, applying
+// BYOK-over-platform fallback (organization key → platform env key → unconfigured).
 // Implemented by *ProviderConfig.
 type ProviderResolver interface {
-	Resolve(ctx context.Context, tenantID uuid.UUID) (EffectiveConfig, error)
-	ProviderFor(ctx context.Context, tenantID uuid.UUID) (ai.Provider, error)
+	Resolve(ctx context.Context, organizationID uuid.UUID) (EffectiveConfig, error)
+	ProviderFor(ctx context.Context, organizationID uuid.UUID) (ai.Provider, error)
 }
 
 // Limits bounds the work of one turn, whoever pays the provider: the most
@@ -71,14 +71,14 @@ var DefaultLimits = Limits{HistoryMessages: 40, HistoryBytes: 256 << 10, OutputB
 
 // Orchestrator runs streamed model turns and emits SSE frames. It keeps no state
 // between requests: history is reloaded from the database and the provider is
-// resolved per tenant on every turn.
+// resolved per organization on every turn.
 type Orchestrator struct {
 	resolver ProviderResolver
 	service  *Service
 	limits   Limits
 }
 
-// NewOrchestrator returns an Orchestrator that resolves each tenant's provider
+// NewOrchestrator returns an Orchestrator that resolves each organization's provider
 // through resolver, stores turns through service and bounds each by limits.
 func NewOrchestrator(resolver ProviderResolver, service *Service, limits Limits) *Orchestrator {
 	if limits.HistoryMessages <= 0 {
@@ -99,7 +99,7 @@ func NewOrchestrator(resolver ProviderResolver, service *Service, limits Limits)
 // never run here. The caller must set the SSE headers first.
 func (o *Orchestrator) Run(ctx context.Context, tc turnContext, sse *sseWriter) {
 	// The recent history, the user turn already persisted by the handler.
-	msgs, err := o.service.TurnHistory(ctx, tc.tenantID, tc.userID, tc.conversationID, o.limits.HistoryMessages)
+	msgs, err := o.service.TurnHistory(ctx, tc.organizationID, tc.userID, tc.conversationID, o.limits.HistoryMessages)
 	if err != nil {
 		sse.send(EventTypeError, errorData{Code: "db_error", Message: "failed to load conversation"})
 		sse.send(EventTypeDone, doneData{Reason: "error"})
@@ -129,10 +129,10 @@ func (o *Orchestrator) Run(ctx context.Context, tc turnContext, sse *sseWriter) 
 		system += "\n\nCurrent console context (grounding only, not authoritative):\n" + tc.pageContext
 	}
 
-	// Resolve the tenant's effective provider (their own BYOK key, or the
+	// Resolve the organization's effective provider (their own BYOK key, or the
 	// platform fallback). The handler has already gated on configured/plan, so
 	// an error here is unexpected and terminal for the turn.
-	provider, err := o.resolver.ProviderFor(ctx, tc.tenantID)
+	provider, err := o.resolver.ProviderFor(ctx, tc.organizationID)
 	if err != nil {
 		slog.Error("qeetai: resolve provider", "err", err)
 		sse.send(EventTypeError, errorData{Code: "config_error", Message: "AI provider is not available"})
@@ -148,7 +148,7 @@ func (o *Orchestrator) Run(ctx context.Context, tc turnContext, sse *sseWriter) 
 	var used usage
 	text, toolBlocks, ok := collect(events, errC, cancel, sse, o.limits.OutputBytes, &used)
 	// A turn the model answered counts, whether or not it then failed.
-	if err := o.service.RecordUsage(ctx, tc.tenantID, used.input, used.output); err != nil {
+	if err := o.service.RecordUsage(ctx, tc.organizationID, used.input, used.output); err != nil {
 		slog.Warn("qeetai: record usage", "err", err)
 	}
 	if !ok {
@@ -306,7 +306,7 @@ func (o *Orchestrator) handleEndTurn(ctx context.Context, tc turnContext, sse *s
 		sse.send(EventTypeDone, doneData{Reason: "error"})
 		return
 	}
-	m, err := o.service.AppendMessage(ctx, tc.tenantID, tc.conversationID, "assistant", contentJSON)
+	m, err := o.service.AppendMessage(ctx, tc.organizationID, tc.conversationID, "assistant", contentJSON)
 	if err != nil {
 		slog.Error("qeetai: persist assistant message", "err", err)
 		sse.send(EventTypeError, errorData{Code: "db_error", Message: "failed to persist response"})
@@ -344,7 +344,7 @@ func (o *Orchestrator) handleToolUse(ctx context.Context, tc turnContext, sse *s
 		sse.send(EventTypeDone, doneData{Reason: "error"})
 		return
 	}
-	m, err := o.service.AppendMessage(ctx, tc.tenantID, tc.conversationID, "assistant", contentJSON)
+	m, err := o.service.AppendMessage(ctx, tc.organizationID, tc.conversationID, "assistant", contentJSON)
 	if err != nil {
 		slog.Error("qeetai: persist tool assistant message", "err", err)
 		sse.send(EventTypeError, errorData{Code: "db_error", Message: "failed to persist tool call"})
@@ -382,17 +382,17 @@ func (o *Orchestrator) recordToolAudit(ctx context.Context, tc turnContext, acti
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	tid := tc.tenantID
+	tid := tc.organizationID
 	err = audit.Record(ctx, tx, audit.Event{
-		TenantID:     &tid,
-		ActorUserID:  tc.actor.UserID,
-		ActorType:    tc.actor.Type,
-		Action:       action,
-		ResourceType: resourceType,
-		ResourceID:   &resourceID,
-		IP:           tc.actor.IP,
-		UserAgent:    tc.actor.UserAgent,
-		RequestID:    tc.actor.RequestID,
+		OrganizationID: &tid,
+		ActorUserID:    tc.actor.UserID,
+		ActorType:      tc.actor.Type,
+		Action:         action,
+		ResourceType:   resourceType,
+		ResourceID:     &resourceID,
+		IP:             tc.actor.IP,
+		UserAgent:      tc.actor.UserAgent,
+		RequestID:      tc.actor.RequestID,
 		Metadata: map[string]any{
 			"tool_name":       toolName,
 			"tool_input":      "[REDACTED]",

@@ -56,12 +56,12 @@ type TaxResult struct {
 	PlaceOfSupply string
 }
 
-// taxFor computes the tax on a net amount for the tenant's billing profile,
+// taxFor computes the tax on a net amount for the organization's billing profile,
 // read through q. A profile that cannot be read is treated as empty, and one
 // with no country takes country, the billing country the checkout was given.
-func (s *Service) taxFor(ctx context.Context, q *dbgen.Queries, tenantID uuid.UUID, amountMinor int64, country string) TaxResult {
+func (s *Service) taxFor(ctx context.Context, q *dbgen.Queries, organizationID uuid.UUID, amountMinor int64, country string) TaxResult {
 	in := TaxInput{AmountMinor: amountMinor, BuyerCountry: country}
-	if p, err := billingProfile(ctx, q, tenantID); err == nil && p != nil {
+	if p, err := billingProfile(ctx, q, organizationID); err == nil && p != nil {
 		if p.Country != "" {
 			in.BuyerCountry = p.Country
 		}

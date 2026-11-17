@@ -21,16 +21,16 @@ func testService(t *testing.T, key byte) *Service {
 
 func TestEncryptDecryptRoundTrip(t *testing.T) {
 	s := testService(t, 'k')
-	tenantID := uuid.New()
+	organizationID := uuid.New()
 	for _, plain := range []string{"", "short", "sk_live_0123456789abcdef", strings.Repeat("x", 4096)} {
-		ct, nonce, err := s.encrypt(tenantID, "api-key", plain)
+		ct, nonce, err := s.encrypt(organizationID, "api-key", plain)
 		if err != nil {
 			t.Fatalf("encrypt: %v", err)
 		}
 		if plain != "" && bytes.Contains(ct, []byte(plain)) {
 			t.Error("ciphertext must not contain plaintext")
 		}
-		got, err := s.decrypt(tenantID, "api-key", ct, nonce)
+		got, err := s.decrypt(organizationID, "api-key", ct, nonce)
 		if err != nil {
 			t.Fatalf("decrypt: %v", err)
 		}
@@ -42,10 +42,10 @@ func TestEncryptDecryptRoundTrip(t *testing.T) {
 
 func TestDecryptRejectsTamperedCiphertext(t *testing.T) {
 	s := testService(t, 'k')
-	tenantID := uuid.New()
-	ct, nonce, _ := s.encrypt(tenantID, "api-key", "sk_live_secret_value")
+	organizationID := uuid.New()
+	ct, nonce, _ := s.encrypt(organizationID, "api-key", "sk_live_secret_value")
 	ct[len(ct)-1] ^= 0xff // flip a byte
-	if _, err := s.decrypt(tenantID, "api-key", ct, nonce); err == nil {
+	if _, err := s.decrypt(organizationID, "api-key", ct, nonce); err == nil {
 		t.Error("GCM must reject tampered ciphertext")
 	}
 }
@@ -53,21 +53,21 @@ func TestDecryptRejectsTamperedCiphertext(t *testing.T) {
 func TestDecryptRejectsWrongKey(t *testing.T) {
 	s1 := testService(t, 'k')
 	s2 := testService(t, 'z')
-	tenantID := uuid.New()
-	ct, nonce, _ := s1.encrypt(tenantID, "api-key", "secret")
-	if _, err := s2.decrypt(tenantID, "api-key", ct, nonce); err == nil {
+	organizationID := uuid.New()
+	ct, nonce, _ := s1.encrypt(organizationID, "api-key", "secret")
+	if _, err := s2.decrypt(organizationID, "api-key", ct, nonce); err == nil {
 		t.Error("decrypting with the wrong key must fail")
 	}
 }
 
-func TestDecryptRejectsWrongTenantOrName(t *testing.T) {
+func TestDecryptRejectsWrongOrganizationOrName(t *testing.T) {
 	s := testService(t, 'k')
-	tenantID := uuid.New()
-	ct, nonce, _ := s.encrypt(tenantID, "api-key", "secret")
+	organizationID := uuid.New()
+	ct, nonce, _ := s.encrypt(organizationID, "api-key", "secret")
 	if _, err := s.decrypt(uuid.New(), "api-key", ct, nonce); err == nil {
 		t.Error("ciphertext transplanted to another tenant must fail")
 	}
-	if _, err := s.decrypt(tenantID, "other", ct, nonce); err == nil {
+	if _, err := s.decrypt(organizationID, "other", ct, nonce); err == nil {
 		t.Error("ciphertext transplanted to another secret must fail")
 	}
 }

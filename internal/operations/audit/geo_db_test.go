@@ -28,28 +28,28 @@ func TestEventsSayWhereTheyCameFrom(t *testing.T) {
 	httpx.GeoCountryContext(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { ctx = r.Context() })).
 		ServeHTTP(httptest.NewRecorder(), req)
 
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	tx, err := dbtest.Pool(t).Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
 	for _, meta := range []map[string]any{nil, {"geo": "given"}} {
-		if err := Record(ctx, tx, Actor{Type: "system"}.Event(tenant, "test.placed", "user", uuid.New(), meta)); err != nil {
+		if err := Record(ctx, tx, Actor{Type: "system"}.Event(organization, "test.placed", "user", uuid.New(), meta)); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1
-		AND metadata->'geo'->>'country' = 'IN' AND metadata->'geo'->>'city' = 'Pune'`, tenant); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1
+		AND metadata->'geo'->>'country' = 'IN' AND metadata->'geo'->>'city' = 'Pune'`, organization); n != 1 {
 		t.Errorf("%d events placed in Pune, IN, want the one that didn't say", n)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND metadata->>'geo' = 'given'`, tenant); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND metadata->>'geo' = 'given'`, organization); n != 1 {
 		t.Errorf("an event's own geo was replaced")
 	}
-	res, err := NewVerifier(dbtest.Pool(t), nil).Verify(dbtest.Context(t), &tenant)
+	res, err := NewVerifier(dbtest.Pool(t), nil).Verify(dbtest.Context(t), &organization)
 	if err != nil || !res.OK {
 		t.Errorf("the chain after placed events: %+v, %v", res, err)
 	}
@@ -59,7 +59,7 @@ func TestEventsSayWhereTheyCameFrom(t *testing.T) {
 // or service principal caused records its id as actor_id, and a person's
 // event doesn't.
 func TestEventsNameTheKeyOrAgentThatActed(t *testing.T) {
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	key := uuid.NewString()
 	for _, c := range []struct {
 		actorType, subject string
@@ -69,17 +69,17 @@ func TestEventsNameTheKeyOrAgentThatActed(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := Record(ctx, tx, Actor{Type: c.actorType}.Event(tenant, "test.acted", "user", uuid.New(), nil)); err != nil {
+		if err := Record(ctx, tx, Actor{Type: c.actorType}.Event(organization, "test.acted", "user", uuid.New(), nil)); err != nil {
 			t.Fatal(err)
 		}
 		if err := tx.Commit(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND metadata->>'actor_id' = $2 AND actor_type = 'api_key'`, tenant, key); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND metadata->>'actor_id' = $2 AND actor_type = 'api_key'`, organization, key); n != 1 {
 		t.Errorf("%d events name the key, want its one", n)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND actor_type = 'user' AND metadata ? 'actor_id'`, tenant); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND actor_type = 'user' AND metadata ? 'actor_id'`, organization); n != 0 {
 		t.Errorf("a person's event names an actor_id")
 	}
 }

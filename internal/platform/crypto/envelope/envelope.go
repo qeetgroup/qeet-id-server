@@ -1,5 +1,5 @@
-// Package envelope derives purpose-specific tenant keys from a deployment data
-// key and binds ciphertext to its tenant, purpose, and resource using AEAD.
+// Package envelope derives purpose-specific organization keys from a deployment data
+// key and binds ciphertext to its organization, purpose, and resource using AEAD.
 // Each ciphertext names the data key that sealed it, so the key can be rotated:
 // a Cipher seals with its current key and opens what any of its keys sealed.
 package envelope
@@ -48,7 +48,7 @@ type dataKey struct {
 	legacy cipher.AEAD // the data key used directly, for the oldest scheme
 }
 
-// Cipher encrypts with keys derived from its current data key per tenant,
+// Cipher encrypts with keys derived from its current data key per organization,
 // purpose and resource, and decrypts what any of its data keys sealed.
 type Cipher struct {
 	keys   []*dataKey // the current key first
@@ -152,10 +152,10 @@ func (k *dataKey) mac(purpose string, msg []byte) []byte {
 // starts with, so stored values sealed otherwise can be found.
 func (c *Cipher) CurrentPrefix() []byte { return append([]byte(nil), c.prefix...) }
 
-// Seal encrypts plaintext under the current key for tenantID, purpose and
+// Seal encrypts plaintext under the current key for organizationID, purpose and
 // resource, and returns the ciphertext and its nonce.
-func (c *Cipher) Seal(tenantID uuid.UUID, purpose, resource string, plaintext []byte) ([]byte, []byte, error) {
-	aead, aad, err := c.keys[0].contextAEAD(2, tenantID, purpose, resource)
+func (c *Cipher) Seal(organizationID uuid.UUID, purpose, resource string, plaintext []byte) ([]byte, []byte, error) {
+	aead, aad, err := c.keys[0].contextAEAD(2, organizationID, purpose, resource)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -168,10 +168,10 @@ func (c *Cipher) Seal(tenantID uuid.UUID, purpose, resource string, plaintext []
 	return aead.Seal(ciphertext, nonce, plaintext, aad), nonce, nil
 }
 
-// Open decrypts what Seal returned for the same tenantID, purpose and
+// Open decrypts what Seal returned for the same organizationID, purpose and
 // resource under any of the Cipher's keys, or a ciphertext of an older scheme.
 // A ciphertext naming a key the Cipher doesn't hold fails with ErrUnknownKey.
-func (c *Cipher) Open(tenantID uuid.UUID, purpose, resource string, ciphertext, nonce []byte) ([]byte, error) {
+func (c *Cipher) Open(organizationID uuid.UUID, purpose, resource string, ciphertext, nonce []byte) ([]byte, error) {
 	switch {
 	case bytes.HasPrefix(ciphertext, prefixV2):
 		rest := ciphertext[len(prefixV2):]
@@ -182,10 +182,10 @@ func (c *Cipher) Open(tenantID uuid.UUID, purpose, resource string, ciphertext, 
 		if k == nil {
 			return nil, fmt.Errorf("%w (key id %x)", ErrUnknownKey, rest[:KeyIDSize])
 		}
-		return k.open(2, tenantID, purpose, resource, rest[KeyIDSize:], nonce)
+		return k.open(2, organizationID, purpose, resource, rest[KeyIDSize:], nonce)
 	case bytes.HasPrefix(ciphertext, prefixV1):
 		return c.openAny(func(k *dataKey) ([]byte, error) {
-			return k.open(1, tenantID, purpose, resource, ciphertext[len(prefixV1):], nonce)
+			return k.open(1, organizationID, purpose, resource, ciphertext[len(prefixV1):], nonce)
 		})
 	default:
 		return c.openAny(func(k *dataKey) ([]byte, error) {
@@ -218,8 +218,8 @@ func (c *Cipher) openAny(open func(*dataKey) ([]byte, error)) ([]byte, error) {
 // scheme, so any other can be re-sealed.
 func (c *Cipher) IsCurrent(ciphertext []byte) bool { return bytes.HasPrefix(ciphertext, c.prefix) }
 
-func (k *dataKey) open(version int, tenantID uuid.UUID, purpose, resource string, sealed, nonce []byte) ([]byte, error) {
-	aead, aad, err := k.contextAEAD(version, tenantID, purpose, resource)
+func (k *dataKey) open(version int, organizationID uuid.UUID, purpose, resource string, sealed, nonce []byte) ([]byte, error) {
+	aead, aad, err := k.contextAEAD(version, organizationID, purpose, resource)
 	if err != nil {
 		return nil, err
 	}
@@ -229,8 +229,8 @@ func (k *dataKey) open(version int, tenantID uuid.UUID, purpose, resource string
 	return aead.Open(nil, nonce, sealed, aad)
 }
 
-func (k *dataKey) contextAEAD(version int, tenantID uuid.UUID, purpose, resource string) (cipher.AEAD, []byte, error) {
-	if tenantID == uuid.Nil || purpose == "" || resource == "" {
+func (k *dataKey) contextAEAD(version int, organizationID uuid.UUID, purpose, resource string) (cipher.AEAD, []byte, error) {
+	if organizationID == uuid.Nil || purpose == "" || resource == "" {
 		return nil, nil, errors.New("tenant, purpose, and resource encryption context are required")
 	}
 	var keyID string
@@ -238,17 +238,17 @@ func (k *dataKey) contextAEAD(version int, tenantID uuid.UUID, purpose, resource
 		keyID = hex.EncodeToString(k.id[:])
 	}
 	aad, err := json.Marshal(struct {
-		Version  int       `json:"version"`
-		Key      string    `json:"key,omitempty"`
-		Tenant   uuid.UUID `json:"tenant"`
-		Purpose  string    `json:"purpose"`
-		Resource string    `json:"resource"`
-	}{Version: version, Key: keyID, Tenant: tenantID, Purpose: purpose, Resource: resource})
+		Version      int       `json:"version"`
+		Key          string    `json:"key,omitempty"`
+		Organization uuid.UUID `json:"tenant"`
+		Purpose      string    `json:"purpose"`
+		Resource     string    `json:"resource"`
+	}{Version: version, Key: keyID, Organization: organizationID, Purpose: purpose, Resource: resource})
 	if err != nil {
 		return nil, nil, err
 	}
 	// Salt is the fixed scheme label and info is the encryption context, so
-	// every (tenant, purpose, resource) gets its own key from the one DEK.
+	// every (organization, purpose, resource) gets its own key from the one DEK.
 	salt := fmt.Sprintf("qeet-id-envelope-v%d", version)
 	derived, err := hkdf.Key(sha256.New, k.master, []byte(salt), string(aad), 32)
 	if err != nil {

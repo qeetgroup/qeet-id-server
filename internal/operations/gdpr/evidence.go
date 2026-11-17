@@ -1,7 +1,7 @@
 package gdpr
 
 // Compliance evidence for SOC 2 and ISO 27001. Each control maps to a framework
-// criterion (CC6.1, A.8.5, …), checks the tenant's live state, and returns pass,
+// criterion (CC6.1, A.8.5, …), checks the organization's live state, and returns pass,
 // fail or na with a readable explanation; each run is stored as a
 // compliance_evidence_runs row.
 
@@ -54,11 +54,11 @@ type ControlResult struct {
 	Remedy     string         `json:"remedy,omitempty"`
 	// FailingSince is when the control started failing, run after run.
 	FailingSince *time.Time `json:"failing_since,omitempty"`
-	// Owner is who the organisation has made answer for the control, now.
+	// Owner is who the organization has made answer for the control, now.
 	Owner *ControlOwner `json:"owner,omitempty"`
 }
 
-// ControlOwner is the person an organisation has made answer for a control.
+// ControlOwner is the person an organization has made answer for a control.
 type ControlOwner struct {
 	ControlID   string    `json:"control_id"`
 	UserID      uuid.UUID `json:"user_id"`
@@ -67,18 +67,18 @@ type ControlOwner struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
-// EvidenceRun is one generated evidence snapshot for a tenant+framework pair.
+// EvidenceRun is one generated evidence snapshot for an organization+framework pair.
 // Controls is populated on GetRun; it is omitted from list responses.
 type EvidenceRun struct {
-	ID          uuid.UUID       `json:"id"`
-	TenantID    uuid.UUID       `json:"tenant_id"`
-	Framework   string          `json:"framework"`
-	GeneratedAt time.Time       `json:"generated_at"`
-	GeneratedBy *uuid.UUID      `json:"generated_by,omitempty"`
-	PassCount   int             `json:"pass_count"`
-	FailCount   int             `json:"fail_count"`
-	NACount     int             `json:"na_count"`
-	Controls    []ControlResult `json:"controls,omitempty"`
+	ID             uuid.UUID       `json:"id"`
+	OrganizationID uuid.UUID       `json:"tenant_id"`
+	Framework      string          `json:"framework"`
+	GeneratedAt    time.Time       `json:"generated_at"`
+	GeneratedBy    *uuid.UUID      `json:"generated_by,omitempty"`
+	PassCount      int             `json:"pass_count"`
+	FailCount      int             `json:"fail_count"`
+	NACount        int             `json:"na_count"`
+	Controls       []ControlResult `json:"controls,omitempty"`
 }
 
 // control is a catalog entry: its metadata and a live check. check must return
@@ -89,11 +89,11 @@ type control struct {
 	category     string
 	criteria     string
 	criteria2013 string // ISO/IEC 27001:2013 Annex A, for an ISO control
-	check        func(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) finding
+	check        func(ctx context.Context, svc *EvidenceService, organizationID uuid.UUID) finding
 }
 
 // EvidenceService generates compliance evidence by running live control checks
-// against a tenant's system state, and stores the results.
+// against an organization's system state, and stores the results.
 type EvidenceService struct {
 	pool          *pgxpool.Pool
 	q             *dbgen.Queries
@@ -172,12 +172,12 @@ var remedies = map[string]string{
 }
 
 // checkMFAEnforcement reports whether sign-in actually enforces a second factor
-// for the tenant, not just whether the setting is stored. It fails during the
+// for the organization, not just whether the setting is stored. It fails during the
 // grace period after the requirement is turned on, while existing accounts may
 // still sign in without one.
-func checkMFAEnforcement(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) finding {
+func checkMFAEnforcement(ctx context.Context, svc *EvidenceService, organizationID uuid.UUID) finding {
 	const notEnforced = "MFA is not enforced: it is optional, so sign-in challenges only people who chose to set up a second factor — set mfa_enforcement to 'required'"
-	row, err := svc.q.CheckMFAEnforcement(ctx, tenantID)
+	row, err := svc.q.CheckMFAEnforcement(ctx, organizationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return found(ControlFail, "mfa.not_enforced", map[string]any{"mfa_enforcement": "optional"}, notEnforced+" (no security policy row)")
 	}
@@ -206,7 +206,7 @@ func checkMFAEnforcement(ctx context.Context, svc *EvidenceService, tenantID uui
 	detail := fmt.Sprintf("MFA is enforced at sign-in for %s%s: password sign-in challenges an account holding a second factor, and has one holding none set it up before any session is issued",
 		scope, since)
 	if row.MfaEnforcement == "required" {
-		if without, err := svc.q.CountUsersWithoutSecondFactor(ctx, pgtype.UUID{Bytes: tenantID, Valid: true}); err == nil {
+		if without, err := svc.q.CountUsersWithoutSecondFactor(ctx, pgtype.UUID{Bytes: organizationID, Valid: true}); err == nil {
 			params["accounts_without_factor"] = without
 			detail += fmt.Sprintf(" (%d account(s) hold none yet and will set one up at their next sign-in)", without)
 		}
@@ -214,10 +214,10 @@ func checkMFAEnforcement(ctx context.Context, svc *EvidenceService, tenantID uui
 	return found(ControlPass, "mfa.enforced", params, detail)
 }
 
-// checkPasswordMinLength checks that the tenant's auth policy requires passwords
+// checkPasswordMinLength checks that the organization's auth policy requires passwords
 // of at least 12 characters.
-func checkPasswordMinLength(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) finding {
-	minLen, err := svc.q.CheckPasswordMinLength(ctx, tenantID)
+func checkPasswordMinLength(ctx context.Context, svc *EvidenceService, organizationID uuid.UUID) finding {
+	minLen, err := svc.q.CheckPasswordMinLength(ctx, organizationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return found(ControlFail, "password_length.too_short", map[string]any{"min_length": 8, "required": 12},
 			"no auth policy configured; minimum length defaults to 8 — set to ≥ 12 for compliance")
@@ -234,8 +234,8 @@ func checkPasswordMinLength(ctx context.Context, svc *EvidenceService, tenantID 
 
 // checkPasswordComplexity checks that the uppercase, number and symbol rules are
 // all enabled.
-func checkPasswordComplexity(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) finding {
-	row, err := svc.q.CheckPasswordComplexity(ctx, tenantID)
+func checkPasswordComplexity(ctx context.Context, svc *EvidenceService, organizationID uuid.UUID) finding {
+	row, err := svc.q.CheckPasswordComplexity(ctx, organizationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return found(ControlFail, "password_complexity.weak", map[string]any{"missing": []string{"uppercase", "number", "symbol"}},
 			"no auth policy configured; complexity rules default to off — enable uppercase, number, and symbol requirements")
@@ -261,8 +261,8 @@ func checkPasswordComplexity(ctx context.Context, svc *EvidenceService, tenantID
 
 // checkSessionTimeout checks that the session max-age is set and at most 24
 // hours.
-func checkSessionTimeout(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) finding {
-	seconds, err := svc.q.CheckSessionTimeout(ctx, tenantID)
+func checkSessionTimeout(ctx context.Context, svc *EvidenceService, organizationID uuid.UUID) finding {
+	seconds, err := svc.q.CheckSessionTimeout(ctx, organizationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return found(ControlFail, "session.too_long", map[string]any{"max_age_hours": 720, "required_hours": 24},
 			"no security policy; session max-age defaults to 30 days — set to ≤ 24 hours for compliance")
@@ -278,10 +278,10 @@ func checkSessionTimeout(ctx context.Context, svc *EvidenceService, tenantID uui
 	return found(ControlPass, "session.bounded", params, fmt.Sprintf("session max-age is %.1f hours (≤ 24 required)", hours))
 }
 
-// checkBreachedPasswordAndRisk passes when the tenant has adaptive risk
+// checkBreachedPasswordAndRisk passes when the organization has adaptive risk
 // settings or the platform's breached-password (HIBP) check is on.
-func checkBreachedPasswordAndRisk(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) finding {
-	row, err := svc.q.CheckRiskSettings(ctx, tenantID)
+func checkBreachedPasswordAndRisk(ctx context.Context, svc *EvidenceService, organizationID uuid.UUID) finding {
+	row, err := svc.q.CheckRiskSettings(ctx, organizationID)
 	riskConfigured := !errors.Is(err, pgx.ErrNoRows) && err == nil
 
 	hibpStatus := "disabled"
@@ -302,9 +302,9 @@ func checkBreachedPasswordAndRisk(ctx context.Context, svc *EvidenceService, ten
 	return found(ControlPass, "breach.protected", params, strings.Join(parts, "; "))
 }
 
-// checkRBACRoles checks that the tenant defines RBAC roles.
-func checkRBACRoles(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) finding {
-	count, err := svc.q.CheckRBACRoles(ctx, tenantID)
+// checkRBACRoles checks that the organization defines RBAC roles.
+func checkRBACRoles(ctx context.Context, svc *EvidenceService, organizationID uuid.UUID) finding {
+	count, err := svc.q.CheckRBACRoles(ctx, organizationID)
 	if err != nil {
 		return unreadable("RBAC roles", err)
 	}
@@ -316,8 +316,8 @@ func checkRBACRoles(ctx context.Context, svc *EvidenceService, tenantID uuid.UUI
 
 // checkRBACAssignments checks that users hold roles; with no assignments it
 // reports na.
-func checkRBACAssignments(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) finding {
-	count, err := svc.q.CheckRBACAssignments(ctx, tenantID)
+func checkRBACAssignments(ctx context.Context, svc *EvidenceService, organizationID uuid.UUID) finding {
+	count, err := svc.q.CheckRBACAssignments(ctx, organizationID)
 	if err != nil {
 		return unreadable("RBAC assignments", err)
 	}
@@ -329,8 +329,8 @@ func checkRBACAssignments(ctx context.Context, svc *EvidenceService, tenantID uu
 
 // checkRetentionPolicy checks that a retention policy exists and purges deleted
 // users.
-func checkRetentionPolicy(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) finding {
-	row, err := svc.q.CheckRetentionPolicy(ctx, tenantID)
+func checkRetentionPolicy(ctx context.Context, svc *EvidenceService, organizationID uuid.UUID) finding {
+	row, err := svc.q.CheckRetentionPolicy(ctx, organizationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return found(ControlFail, "retention.not_configured", nil, "no retention policy configured; enable deleted-user purge to enforce data disposal")
 	}
@@ -346,8 +346,8 @@ func checkRetentionPolicy(ctx context.Context, svc *EvidenceService, tenantID uu
 
 // checkIPAccessRules checks that IP rule enforcement is on and at least one
 // CIDR rule is defined.
-func checkIPAccessRules(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) finding {
-	enabled, err := svc.q.CheckIPRulesConfig(ctx, tenantID)
+func checkIPAccessRules(ctx context.Context, svc *EvidenceService, organizationID uuid.UUID) finding {
+	enabled, err := svc.q.CheckIPRulesConfig(ctx, organizationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return found(ControlNA, "ip_rules.not_configured", nil, "no IP rule configuration found; configure IP allow/deny rules for network boundary protection")
 	}
@@ -357,17 +357,17 @@ func checkIPAccessRules(ctx context.Context, svc *EvidenceService, tenantID uuid
 	if !enabled {
 		return found(ControlFail, "ip_rules.not_enforced", nil, "IP access rules are configured but enforcement is disabled — enable to protect the network boundary")
 	}
-	ruleCount, _ := svc.q.CheckIPRulesCount(ctx, tenantID)
+	ruleCount, _ := svc.q.CheckIPRulesCount(ctx, organizationID)
 	if ruleCount == 0 {
 		return found(ControlNA, "ip_rules.no_rules", nil, "IP rule enforcement is enabled but no CIDR rules are defined — add allow/deny rules")
 	}
 	return found(ControlPass, "ip_rules.enforced", map[string]any{"rules": ruleCount}, fmt.Sprintf("IP access control enforced with %d CIDR rule(s)", ruleCount))
 }
 
-// checkSecretsEncryption checks that the tenant stores secrets in the vault,
+// checkSecretsEncryption checks that the organization stores secrets in the vault,
 // which encrypts them with AES-256-GCM; with no secrets it reports na.
-func checkSecretsEncryption(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) finding {
-	count, err := svc.q.CheckSecretsCount(ctx, tenantID)
+func checkSecretsEncryption(ctx context.Context, svc *EvidenceService, organizationID uuid.UUID) finding {
+	count, err := svc.q.CheckSecretsCount(ctx, organizationID)
 	if err != nil {
 		return unreadable("secrets vault", err)
 	}
@@ -377,10 +377,10 @@ func checkSecretsEncryption(ctx context.Context, svc *EvidenceService, tenantID 
 	return found(ControlPass, "secrets.encrypted", map[string]any{"secrets": count}, fmt.Sprintf("%d secret(s) stored encrypted at rest (AES-256-GCM, key via platform provider)", count))
 }
 
-// checkAuditLogChain verifies the SHA-256 hash chain of the tenant's audit log
+// checkAuditLogChain verifies the SHA-256 hash chain of the organization's audit log
 // with audit.Verifier. A broken chain means the log was tampered with.
-func checkAuditLogChain(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) finding {
-	result, err := svc.verifier.Verify(ctx, &tenantID)
+func checkAuditLogChain(ctx context.Context, svc *EvidenceService, organizationID uuid.UUID) finding {
+	result, err := svc.verifier.Verify(ctx, &organizationID)
 	if err != nil {
 		return found(ControlNA, "audit_chain.unverifiable", nil, fmt.Sprintf("could not verify audit chain: %v", err))
 	}
@@ -401,8 +401,8 @@ func checkAuditLogChain(ctx context.Context, svc *EvidenceService, tenantID uuid
 
 // checkAuditLogCoverage checks that audit events were recorded in the last 30
 // days.
-func checkAuditLogCoverage(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) finding {
-	count, err := svc.q.CheckAuditEventCount(ctx, pgtype.UUID{Bytes: tenantID, Valid: true})
+func checkAuditLogCoverage(ctx context.Context, svc *EvidenceService, organizationID uuid.UUID) finding {
+	count, err := svc.q.CheckAuditEventCount(ctx, pgtype.UUID{Bytes: organizationID, Valid: true})
 	if err != nil {
 		return unreadable("audit events", err)
 	}
@@ -415,8 +415,8 @@ func checkAuditLogCoverage(ctx context.Context, svc *EvidenceService, tenantID u
 // checkSIEMForwarding checks that a log sink is delivering the audit log
 // outside the system: enabled, forwarded within a day and not failing. A
 // webhook subscription doesn't count, as webhooks don't carry the audit log.
-func checkSIEMForwarding(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) finding {
-	sinks, err := svc.q.CheckLogSinksCount(ctx, tenantID)
+func checkSIEMForwarding(ctx context.Context, svc *EvidenceService, organizationID uuid.UUID) finding {
+	sinks, err := svc.q.CheckLogSinksCount(ctx, organizationID)
 	if err != nil {
 		return found(ControlFail, "siem.unreadable", nil, "the log sinks could not be read")
 	}
@@ -432,9 +432,9 @@ func checkSIEMForwarding(ctx context.Context, svc *EvidenceService, tenantID uui
 
 // checkGDPRProcesses checks that erasure or data-export requests have been
 // processed. With none yet it reports na, never a false pass.
-func checkGDPRProcesses(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) finding {
-	purgeCount, _ := svc.q.CheckPurgeRequestCount(ctx, tenantID)
-	exportCount, _ := svc.q.CheckExportRequestCount(ctx, tenantID)
+func checkGDPRProcesses(ctx context.Context, svc *EvidenceService, organizationID uuid.UUID) finding {
+	purgeCount, _ := svc.q.CheckPurgeRequestCount(ctx, organizationID)
+	exportCount, _ := svc.q.CheckExportRequestCount(ctx, organizationID)
 	params := map[string]any{"erasure_requests": purgeCount, "export_requests": exportCount}
 	if purgeCount == 0 && exportCount == 0 {
 		return found(ControlNA, "gdpr.no_requests", params, "data-subject rights (right-to-erasure, data portability) are implemented but no requests have been processed for this tenant yet")
@@ -585,10 +585,10 @@ var controlsByFramework = map[string][]control{
 	"iso27001": iso27001Controls,
 }
 
-// Generate runs every control of framework against the tenant's live state and
+// Generate runs every control of framework against the organization's live state and
 // stores the run, with an audit event, in one transaction. It returns the run
 // with its control results.
-func (s *EvidenceService) Generate(ctx context.Context, tenantID uuid.UUID, framework string, actor *uuid.UUID) (*EvidenceRun, error) {
+func (s *EvidenceService) Generate(ctx context.Context, organizationID uuid.UUID, framework string, actor *uuid.UUID) (*EvidenceRun, error) {
 	controls, ok := controlsByFramework[framework]
 	if !ok {
 		return nil, errs.ErrGDPRFrameworkInvalid
@@ -596,7 +596,7 @@ func (s *EvidenceService) Generate(ctx context.Context, tenantID uuid.UUID, fram
 
 	// A control failing in the last run too has been failing since then.
 	failingSince := map[string]time.Time{}
-	if last, err := s.q.LatestEvidenceControls(ctx, dbgen.LatestEvidenceControlsParams{TenantID: tenantID, Framework: framework}); err == nil {
+	if last, err := s.q.LatestEvidenceControls(ctx, dbgen.LatestEvidenceControlsParams{OrganizationID: organizationID, Framework: framework}); err == nil {
 		var before []ControlResult
 		if json.Unmarshal(last.Controls, &before) == nil {
 			for _, c := range before {
@@ -616,7 +616,7 @@ func (s *EvidenceService) Generate(ctx context.Context, tenantID uuid.UUID, fram
 	now := time.Now().UTC()
 	results := make([]ControlResult, 0, len(controls))
 	for _, c := range controls {
-		f := c.check(ctx, s, tenantID)
+		f := c.check(ctx, s, organizationID)
 		result := ControlResult{
 			ID:           c.id,
 			Name:         c.name,
@@ -653,42 +653,42 @@ func (s *EvidenceService) Generate(ctx context.Context, tenantID uuid.UUID, fram
 	defer tx.Rollback(ctx)
 
 	row, err := dbgen.New(tx).InsertEvidenceRun(ctx, dbgen.InsertEvidenceRunParams{
-		TenantID:    tenantID,
-		Framework:   framework,
-		GeneratedBy: pgUUIDNullable(actor),
-		PassCount:   passCount,
-		FailCount:   failCount,
-		NaCount:     naCount,
-		Controls:    controlsJSON,
+		OrganizationID: organizationID,
+		Framework:      framework,
+		GeneratedBy:    pgUUIDNullable(actor),
+		PassCount:      passCount,
+		FailCount:      failCount,
+		NaCount:        naCount,
+		Controls:       controlsJSON,
 	})
 	if err != nil {
 		return nil, err
 	}
 
 	run := EvidenceRun{
-		ID:          row.ID,
-		TenantID:    row.TenantID,
-		Framework:   row.Framework,
-		GeneratedAt: row.GeneratedAt,
-		GeneratedBy: toUUIDPtr(row.GeneratedBy),
-		PassCount:   int(row.PassCount),
-		FailCount:   int(row.FailCount),
-		NACount:     int(row.NaCount),
+		ID:             row.ID,
+		OrganizationID: row.OrganizationID,
+		Framework:      row.Framework,
+		GeneratedAt:    row.GeneratedAt,
+		GeneratedBy:    toUUIDPtr(row.GeneratedBy),
+		PassCount:      int(row.PassCount),
+		FailCount:      int(row.FailCount),
+		NACount:        int(row.NaCount),
 	}
 
 	rid := run.ID
-	tid := tenantID
+	tid := organizationID
 	actorType := "system"
 	if actor != nil {
 		actorType = "user"
 	}
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     &tid,
-		ActorUserID:  actor,
-		ActorType:    actorType,
-		Action:       "compliance.evidence_generated",
-		ResourceType: "compliance_evidence_run",
-		ResourceID:   &rid,
+		OrganizationID: &tid,
+		ActorUserID:    actor,
+		ActorType:      actorType,
+		Action:         "compliance.evidence_generated",
+		ResourceType:   "compliance_evidence_run",
+		ResourceID:     &rid,
 		Metadata: map[string]any{
 			"framework":  framework,
 			"pass_count": passCount,
@@ -704,15 +704,15 @@ func (s *EvidenceService) Generate(ctx context.Context, tenantID uuid.UUID, fram
 	}
 
 	run.Controls = results
-	if err := s.withOwners(ctx, tenantID, run.Controls); err != nil {
+	if err := s.withOwners(ctx, organizationID, run.Controls); err != nil {
 		return nil, err
 	}
 	return &run, nil
 }
 
-// withOwners sets each control's current owner in tenantID.
-func (s *EvidenceService) withOwners(ctx context.Context, tenantID uuid.UUID, controls []ControlResult) error {
-	owners, err := s.Owners(ctx, tenantID)
+// withOwners sets each control's current owner in organizationID.
+func (s *EvidenceService) withOwners(ctx context.Context, organizationID uuid.UUID, controls []ControlResult) error {
+	owners, err := s.Owners(ctx, organizationID)
 	if err != nil {
 		return err
 	}
@@ -726,12 +726,12 @@ func (s *EvidenceService) withOwners(ctx context.Context, tenantID uuid.UUID, co
 	return nil
 }
 
-// ListRuns returns the tenant's 100 most recent runs of framework, newest
+// ListRuns returns the organization's 100 most recent runs of framework, newest
 // first, without their controls; GetRun has the full report.
-func (s *EvidenceService) ListRuns(ctx context.Context, tenantID uuid.UUID, framework string) ([]EvidenceRun, error) {
+func (s *EvidenceService) ListRuns(ctx context.Context, organizationID uuid.UUID, framework string) ([]EvidenceRun, error) {
 	rows, err := s.q.ListEvidenceRuns(ctx, dbgen.ListEvidenceRunsParams{
-		TenantID:  tenantID,
-		Framework: framework,
+		OrganizationID: organizationID,
+		Framework:      framework,
 	})
 	if err != nil {
 		return nil, err
@@ -739,25 +739,25 @@ func (s *EvidenceService) ListRuns(ctx context.Context, tenantID uuid.UUID, fram
 	out := make([]EvidenceRun, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, EvidenceRun{
-			ID:          r.ID,
-			TenantID:    r.TenantID,
-			Framework:   r.Framework,
-			GeneratedAt: r.GeneratedAt,
-			GeneratedBy: toUUIDPtr(r.GeneratedBy),
-			PassCount:   int(r.PassCount),
-			FailCount:   int(r.FailCount),
-			NACount:     int(r.NaCount),
+			ID:             r.ID,
+			OrganizationID: r.OrganizationID,
+			Framework:      r.Framework,
+			GeneratedAt:    r.GeneratedAt,
+			GeneratedBy:    toUUIDPtr(r.GeneratedBy),
+			PassCount:      int(r.PassCount),
+			FailCount:      int(r.FailCount),
+			NACount:        int(r.NaCount),
 		})
 	}
 	return out, nil
 }
 
-// GetRun returns one of the tenant's evidence runs with its control results:
+// GetRun returns one of the organization's evidence runs with its control results:
 // the full evidence report.
-func (s *EvidenceService) GetRun(ctx context.Context, tenantID, id uuid.UUID) (*EvidenceRun, error) {
+func (s *EvidenceService) GetRun(ctx context.Context, organizationID, id uuid.UUID) (*EvidenceRun, error) {
 	r, err := s.q.GetEvidenceRun(ctx, dbgen.GetEvidenceRunParams{
-		ID:       id,
-		TenantID: tenantID,
+		ID:             id,
+		OrganizationID: organizationID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
@@ -766,40 +766,40 @@ func (s *EvidenceService) GetRun(ctx context.Context, tenantID, id uuid.UUID) (*
 		return nil, err
 	}
 	run := &EvidenceRun{
-		ID:          r.ID,
-		TenantID:    r.TenantID,
-		Framework:   r.Framework,
-		GeneratedAt: r.GeneratedAt,
-		GeneratedBy: toUUIDPtr(r.GeneratedBy),
-		PassCount:   int(r.PassCount),
-		FailCount:   int(r.FailCount),
-		NACount:     int(r.NaCount),
+		ID:             r.ID,
+		OrganizationID: r.OrganizationID,
+		Framework:      r.Framework,
+		GeneratedAt:    r.GeneratedAt,
+		GeneratedBy:    toUUIDPtr(r.GeneratedBy),
+		PassCount:      int(r.PassCount),
+		FailCount:      int(r.FailCount),
+		NACount:        int(r.NaCount),
 	}
 	if len(r.Controls) > 0 {
 		if err := json.Unmarshal(r.Controls, &run.Controls); err != nil {
 			return nil, err
 		}
 	}
-	if err := s.withOwners(ctx, tenantID, run.Controls); err != nil {
+	if err := s.withOwners(ctx, organizationID, run.Controls); err != nil {
 		return nil, err
 	}
 	return run, nil
 }
 
-// requireEvidencePathTenant returns the {tenantID} path parameter if it matches
-// the caller's tenant. httpx.EnforceTenantScope is the primary guard; this is
+// requireEvidencePathOrganization returns the {tenantID} path parameter if it matches
+// the caller's organization. httpx.EnforceOrganizationScope is the primary guard; this is
 // defence in depth.
-func requireEvidencePathTenant(r *http.Request) (uuid.UUID, error) {
-	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+func requireEvidencePathOrganization(r *http.Request) (uuid.UUID, error) {
+	pathOrganization, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
-		return uuid.Nil, errs.ErrGDPRTenantInvalid
+		return uuid.Nil, errs.ErrGDPROrganizationInvalid
 	}
-	scope, err := httpx.RequireTenant(r)
+	scope, err := httpx.RequireOrganization(r)
 	if err != nil {
 		return uuid.Nil, err
 	}
-	if pathTenant != scope {
-		return uuid.Nil, errs.ErrGDPRTenantMismatch
+	if pathOrganization != scope {
+		return uuid.Nil, errs.ErrGDPROrganizationMismatch
 	}
 	return scope, nil
 }
@@ -817,7 +817,7 @@ func validEvidenceFramework(r *http.Request) (string, error) {
 // generateEvidence serves POST /tenants/{tenantID}/compliance/{framework}/evidence:
 // it runs the framework's controls and returns the full run.
 func (h *Handler) generateEvidence(w http.ResponseWriter, r *http.Request) {
-	tid, err := requireEvidencePathTenant(r)
+	tid, err := requireEvidencePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -842,7 +842,7 @@ func (h *Handler) generateEvidence(w http.ResponseWriter, r *http.Request) {
 // listEvidence serves GET /tenants/{tenantID}/compliance/{framework}/evidence:
 // the framework's previous runs, newest first, without controls.
 func (h *Handler) listEvidence(w http.ResponseWriter, r *http.Request) {
-	tid, err := requireEvidencePathTenant(r)
+	tid, err := requireEvidencePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -863,7 +863,7 @@ func (h *Handler) listEvidence(w http.ResponseWriter, r *http.Request) {
 // getEvidence serves GET /tenants/{tenantID}/compliance/evidence/{id}: the full
 // run, with a Content-Disposition header so it downloads as a report.
 func (h *Handler) getEvidence(w http.ResponseWriter, r *http.Request) {
-	tid, err := requireEvidencePathTenant(r)
+	tid, err := requireEvidencePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

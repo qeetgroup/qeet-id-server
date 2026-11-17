@@ -7,6 +7,6 @@ DROP TRIGGER IF EXISTS clear_step_ups_on_password_change ON auth.password_creden
 DROP FUNCTION IF EXISTS account.capture_suspension_transition();
 DROP FUNCTION IF EXISTS auth.forget_trusted_devices_on_password_change();
 DROP FUNCTION IF EXISTS auth.clear_step_ups_on_password_change();
-DROP FUNCTION IF EXISTS tenant.refuse_last_owner(uuid, uuid);
-DROP FUNCTION IF EXISTS tenant.keep_owner_on_role_removal();
-DROP FUNCTION IF EXISTS tenant.keep_owner_on_account_change();
+DROP FUNCTION IF EXISTS organization.refuse_last_owner(uuid, uuid);
+DROP FUNCTION IF EXISTS organization.keep_owner_on_role_removal();
+DROP FUNCTION IF EXISTS organization.keep_owner_on_account_change();

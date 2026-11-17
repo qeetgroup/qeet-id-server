@@ -22,7 +22,7 @@ type accessRequest struct {
 	by, note string // who answered (an email), and what they wrote
 }
 
-// accessRequests are the requests each organisation's people made, a few of
+// accessRequests are the requests each organization's people made, a few of
 // each outcome: the console's queue, a person's own requests, and roles given
 // for a while and taken back when the time was up.
 var accessRequests = map[string][]accessRequest{
@@ -120,7 +120,7 @@ func (s *seeder) accessRequests(o *world.Org) {
 		}
 		// The API dates the lapse from now; the story dates it from the asking.
 		// Only once it is answered: the API refuses to answer a lapsed request.
-		w.Exec("access request expiry", `UPDATE rbac.access_requests SET expires_at = $3 WHERE id = $1 AND tenant_id = $2`,
+		w.Exec("access request expiry", `UPDATE rbac.access_requests SET expires_at = $3 WHERE id = $1 AND organization_id = $2`,
 			req.ID, o.ID, asked.Add(accessrequest.PendingFor))
 	}
 }
@@ -129,7 +129,7 @@ func (s *seeder) accessRequests(o *world.Org) {
 // passed, takes the role back as the scheduler does then.
 func (s *seeder) endAccess(o *world.Org, p *world.Person, req *accessrequest.AccessRequest, ends time.Time) {
 	w := s.w
-	w.Exec("access request end", `UPDATE rbac.access_requests SET access_ends_at = $3 WHERE id = $1 AND tenant_id = $2`, req.ID, o.ID, ends)
+	w.Exec("access request end", `UPDATE rbac.access_requests SET access_ends_at = $3 WHERE id = $1 AND organization_id = $2`, req.ID, o.ID, ends)
 	if ends.After(w.Now) {
 		return
 	}
@@ -137,12 +137,12 @@ func (s *seeder) endAccess(o *world.Org, p *world.Person, req *accessrequest.Acc
 	system := audit.Actor{Type: "system"}
 	w.At(at, func() {
 		w.Check(w.Deps.RBAC.Service.UnassignRole(w.Ctx, p.ID, o.ID, req.Role.ID, system), "take back the role of "+p.Email)
-		w.Exec("access ended", `UPDATE rbac.access_requests SET ended_at = NOW() WHERE id = $1 AND tenant_id = $2`, req.ID, o.ID)
+		w.Exec("access ended", `UPDATE rbac.access_requests SET ended_at = NOW() WHERE id = $1 AND organization_id = $2`, req.ID, o.ID)
 		w.Check(w.Deps.Notification.Service.Notify(w.Ctx, o.ID, p.ID, "info", "Your time-limited access has ended", "", ""),
 			"tell "+p.Email+" their access ended")
 	})
 	id := req.ID
-	w.Audit(at, audit.Event{TenantID: &o.ID, ActorType: "system", Action: "access_request.access_ended", ResourceType: "access_request",
+	w.Audit(at, audit.Event{OrganizationID: &o.ID, ActorType: "system", Action: "access_request.access_ended", ResourceType: "access_request",
 		ResourceID: &id, Metadata: map[string]any{"role_id": req.Role.ID, "requester_id": p.ID}})
 }
 
@@ -151,12 +151,12 @@ func (s *seeder) endAccess(o *world.Org, p *world.Person, req *accessrequest.Acc
 func (s *seeder) lapse(o *world.Org, p *world.Person, req *accessrequest.AccessRequest, at time.Time) {
 	w := s.w
 	w.At(at, func() {
-		w.Exec("access request lapsed", `UPDATE rbac.access_requests SET status = 'expired' WHERE id = $1 AND tenant_id = $2`, req.ID, o.ID)
+		w.Exec("access request lapsed", `UPDATE rbac.access_requests SET status = 'expired' WHERE id = $1 AND organization_id = $2`, req.ID, o.ID)
 		w.Check(w.Deps.Notification.Service.Notify(w.Ctx, o.ID, p.ID, "info", "Your access request expired without an answer", "", ""),
 			"tell "+p.Email+" their request expired")
 	})
 	id := req.ID
-	w.Audit(at, audit.Event{TenantID: &o.ID, ActorType: "system", Action: "access_request.expired", ResourceType: "access_request",
+	w.Audit(at, audit.Event{OrganizationID: &o.ID, ActorType: "system", Action: "access_request.expired", ResourceType: "access_request",
 		ResourceID: &id, Metadata: map[string]any{"role_id": req.Role.ID, "requester_id": p.ID}})
 }
 

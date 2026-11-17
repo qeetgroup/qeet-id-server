@@ -57,7 +57,7 @@ type cachedKeys struct {
 	fetchedAt time.Time
 }
 
-// providerClient talks to organisations' providers through the outbound
+// providerClient talks to organizations' providers through the outbound
 // policy, caching their discovery documents and signing keys in memory.
 type providerClient struct {
 	http   *http.Client

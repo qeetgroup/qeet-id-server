@@ -15,7 +15,7 @@ const getRateLimitOverrides = `-- name: GetRateLimitOverrides :many
 
 SELECT limit_key, rate, capacity
 FROM platform.rate_limit_overrides
-WHERE tenant_id = $1
+WHERE organization_id = $1
 `
 
 type GetRateLimitOverridesRow struct {
@@ -28,9 +28,9 @@ type GetRateLimitOverridesRow struct {
 // Static queries against platform.rate_limit_overrides live here and are
 // compiled by sqlc into ./dbgen.
 // SetOverride / DeleteOverride are owned by platform/cache/ratelimit (the
-// TenantLimiter) and remain hand-written there; this package only reads.
-func (q *Queries) GetRateLimitOverrides(ctx context.Context, tenantID uuid.UUID) ([]GetRateLimitOverridesRow, error) {
-	rows, err := q.db.Query(ctx, getRateLimitOverrides, tenantID)
+// OrganizationLimiter) and remain hand-written there; this package only reads.
+func (q *Queries) GetRateLimitOverrides(ctx context.Context, organizationID uuid.UUID) ([]GetRateLimitOverridesRow, error) {
+	rows, err := q.db.Query(ctx, getRateLimitOverrides, organizationID)
 	if err != nil {
 		return nil, err
 	}

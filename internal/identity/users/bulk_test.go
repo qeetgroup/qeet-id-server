@@ -20,7 +20,7 @@ import (
 // create.
 func TestRunBulkImport_PartialSuccess(t *testing.T) {
 	v := validator.New()
-	tenant := uuid.New()
+	organization := uuid.New()
 	rows := []BulkUserInput{
 		{Email: "a@example.com", DisplayName: "A"},                   // 1: ok
 		{Email: "not-an-email"},                                      // 2: invalid email
@@ -32,16 +32,16 @@ func TestRunBulkImport_PartialSuccess(t *testing.T) {
 	var calls int
 	create := func(_ context.Context, in CreateInput) (*User, error) {
 		calls++
-		if in.TenantID != tenant {
-			t.Errorf("create got tenant %s, want %s", in.TenantID, tenant)
+		if in.OrganizationID != organization {
+			t.Errorf("create got tenant %s, want %s", in.OrganizationID, organization)
 		}
 		if in.Email == "dupe@example.com" {
 			return nil, errs.ErrAuthEmailExists
 		}
-		return &User{ID: uuid.New(), TenantID: in.TenantID, Email: in.Email}, nil
+		return &User{ID: uuid.New(), OrganizationID: in.OrganizationID, Email: in.Email}, nil
 	}
 
-	res := runBulkImport(context.Background(), v, tenant, rows, create)
+	res := runBulkImport(context.Background(), v, organization, rows, create)
 
 	if res.Succeeded != 2 {
 		t.Errorf("Succeeded = %d, want 2", res.Succeeded)
@@ -72,12 +72,12 @@ func TestRunBulkImport_PartialSuccess(t *testing.T) {
 // TestRunBulkImport_AllValid checks that every valid row is created.
 func TestRunBulkImport_AllValid(t *testing.T) {
 	v := validator.New()
-	tenant := uuid.New()
+	organization := uuid.New()
 	rows := []BulkUserInput{{Email: "x@example.com"}, {Email: "y@example.com"}}
 	create := func(_ context.Context, in CreateInput) (*User, error) {
-		return &User{ID: uuid.New(), TenantID: in.TenantID, Email: in.Email}, nil
+		return &User{ID: uuid.New(), OrganizationID: in.OrganizationID, Email: in.Email}, nil
 	}
-	res := runBulkImport(context.Background(), v, tenant, rows, create)
+	res := runBulkImport(context.Background(), v, organization, rows, create)
 	if res.Succeeded != 2 || res.Failed != 0 || len(res.Errors) != 0 {
 		t.Errorf("all-valid: got succeeded=%d failed=%d errors=%d, want 2/0/0",
 			res.Succeeded, res.Failed, len(res.Errors))
@@ -87,7 +87,7 @@ func TestRunBulkImport_AllValid(t *testing.T) {
 // TestRunBulkImport_RefusedPasswordReportsTheRule checks that a row whose
 // password is refused reports the rule it broke, not a generic failure.
 func TestRunBulkImport_RefusedPasswordReportsTheRule(t *testing.T) {
-	tenant := uuid.New()
+	organization := uuid.New()
 	rows := []BulkUserInput{
 		{Email: "ok@example.com", Password: "Correct-Horse-Battery-9"},
 		{Email: "nosymbol@example.com", Password: "CorrectHorseBattery99"},
@@ -96,9 +96,9 @@ func TestRunBulkImport_RefusedPasswordReportsTheRule(t *testing.T) {
 		if in.Password == "CorrectHorseBattery99" {
 			return nil, errs.ErrAuthPolicyPasswordNoSymbol
 		}
-		return &User{ID: uuid.New(), TenantID: in.TenantID, Email: in.Email}, nil
+		return &User{ID: uuid.New(), OrganizationID: in.OrganizationID, Email: in.Email}, nil
 	}
-	res := runBulkImport(context.Background(), validator.New(), tenant, rows, create)
+	res := runBulkImport(context.Background(), validator.New(), organization, rows, create)
 	if res.Succeeded != 1 || res.Failed != 1 || len(res.Errors) != 1 {
 		t.Fatalf("result = %+v, want 1 created and 1 refused", res)
 	}
@@ -224,7 +224,7 @@ func TestRunBulkImport_ExportRowsReportTheirFileLine(t *testing.T) {
 		if in.Email == "dupe@example.com" {
 			return nil, errs.ErrAuthEmailExists
 		}
-		return &User{ID: uuid.New(), TenantID: in.TenantID, Email: in.Email}, nil
+		return &User{ID: uuid.New(), OrganizationID: in.OrganizationID, Email: in.Email}, nil
 	}
 	res := runBulkImport(context.Background(), validator.New(), uuid.New(), rows, create)
 	var lines []int

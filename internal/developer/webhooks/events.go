@@ -100,17 +100,17 @@ func subscribableEvents(names []string) ([]string, error) {
 // Event is the body of every delivery. ID is the same in every delivery of
 // one event, retries included, so a receiver deduplicates on it.
 type Event struct {
-	ID         uuid.UUID       `json:"id"`
-	Type       string          `json:"type"`
-	TenantID   uuid.UUID       `json:"tenant_id"`
-	OccurredAt time.Time       `json:"occurred_at"`
-	Data       json.RawMessage `json:"data"`
+	ID             uuid.UUID       `json:"id"`
+	Type           string          `json:"type"`
+	OrganizationID uuid.UUID       `json:"tenant_id"`
+	OccurredAt     time.Time       `json:"occurred_at"`
+	Data           json.RawMessage `json:"data"`
 }
 
-// queue inserts a delivery of e for each of its organisation's active
+// queue inserts a delivery of e for each of its organization's active
 // subscriptions that name it. Queuing an event already queued is a no-op.
 func (s *Service) queue(ctx context.Context, q *dbgen.Queries, e Event) error {
-	ids, err := q.GetSubscriptionsForEvent(ctx, dbgen.GetSubscriptionsForEventParams{TenantID: e.TenantID, EventType: e.Type})
+	ids, err := q.GetSubscriptionsForEvent(ctx, dbgen.GetSubscriptionsForEventParams{OrganizationID: e.OrganizationID, EventType: e.Type})
 	if err != nil || len(ids) == 0 {
 		return err
 	}
@@ -129,7 +129,7 @@ func (s *Service) queue(ctx context.Context, q *dbgen.Queries, e Event) error {
 }
 
 // Relay returns a Publisher that queues each committed outbox event in the
-// catalogue for its organisation's subscriptions, then hands it to next. The
+// catalogue for its organization's subscriptions, then hands it to next. The
 // outbox retries an event next failed; queuing it again is a no-op.
 func (s *Service) Relay(next outbox.Publisher) outbox.Publisher {
 	return relay{s: s, next: next}
@@ -142,13 +142,13 @@ type relay struct {
 
 func (r relay) Publish(ctx context.Context, m outbox.Message) error {
 	if knownEvent(m.EventType) {
-		// An event belongs to the organisation its payload names; one that
-		// names none, such as a person's with no organisation, has no subscribers.
+		// An event belongs to the organization its payload names; one that
+		// names none, such as a person's with no organization, has no subscribers.
 		var owner struct {
-			TenantID uuid.UUID `json:"tenant_id"`
+			OrganizationID uuid.UUID `json:"tenant_id"`
 		}
-		if json.Unmarshal(m.Payload, &owner) == nil && owner.TenantID != uuid.Nil {
-			e := Event{ID: m.ID, Type: m.EventType, TenantID: owner.TenantID, OccurredAt: m.OccurredAt.UTC(), Data: m.Payload}
+		if json.Unmarshal(m.Payload, &owner) == nil && owner.OrganizationID != uuid.Nil {
+			e := Event{ID: m.ID, Type: m.EventType, OrganizationID: owner.OrganizationID, OccurredAt: m.OccurredAt.UTC(), Data: m.Payload}
 			if err := r.s.queue(ctx, r.s.q, e); err != nil {
 				return err
 			}

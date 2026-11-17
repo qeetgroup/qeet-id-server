@@ -1,7 +1,7 @@
 // Package scim implements SCIM 2.0 (RFC 7643/7644) provisioning, so IdPs such
 // as Okta and Entra ID can push and deprovision users and groups. The protocol
-// is served at /scim/v2 behind a per-tenant bearer token managed under /v1.
-// Provisioned users are ordinary tenant users tagged provisioned_via='scim'.
+// is served at /scim/v2 behind a per-organization bearer token managed under /v1.
+// Provisioned users are ordinary organization users tagged provisioned_via='scim'.
 package scim
 
 import (
@@ -61,35 +61,35 @@ type Service struct {
 	seats    SeatGuard
 }
 
-// SeatGuard keeps the people holding a role in a tenant within its plan's
+// SeatGuard keeps the people holding a role in an organization within its plan's
 // seats; joining a group that carries a role takes one. Satisfied by
 // *invite.Service.
 type SeatGuard interface {
-	// SeatLimit returns the tenant's seat cap, negative for none; it reads on
+	// SeatLimit returns the organization's seat cap, negative for none; it reads on
 	// the pool, so it is asked before the transaction.
-	SeatLimit(ctx context.Context, tenantID uuid.UUID) (int, error)
+	SeatLimit(ctx context.Context, organizationID uuid.UUID) (int, error)
 	// WithinSeats runs change in tx and refuses it when it gives someone a
 	// first role beyond limit.
-	WithinSeats(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, limit int, change func() error) error
+	WithinSeats(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, limit int, change func() error) error
 }
 
 // SetSeatGuard wires the seat limit on group membership (nil disables it).
 func (s *Service) SetSeatGuard(g SeatGuard) { s.seats = g }
 
-// seatLimit returns the tenant's seat cap, or -1 without a seat guard.
-func (s *Service) seatLimit(ctx context.Context, tenantID uuid.UUID) (int, error) {
+// seatLimit returns the organization's seat cap, or -1 without a seat guard.
+func (s *Service) seatLimit(ctx context.Context, organizationID uuid.UUID) (int, error) {
 	if s.seats == nil {
 		return -1, nil
 	}
-	return s.seats.SeatLimit(ctx, tenantID)
+	return s.seats.SeatLimit(ctx, organizationID)
 }
 
 // withinSeats runs change in tx through the seat guard, if there is one.
-func (s *Service) withinSeats(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, limit int, change func() error) error {
+func (s *Service) withinSeats(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, limit int, change func() error) error {
 	if s.seats == nil {
 		return change()
 	}
-	return s.seats.WithinSeats(ctx, tx, tenantID, limit, change)
+	return s.seats.WithinSeats(ctx, tx, organizationID, limit, change)
 }
 
 // SetSessionSignals sets where the sessions ended by a SCIM suspension are
@@ -102,21 +102,21 @@ func NewService(pool *pgxpool.Pool, users *user.Repository) *Service {
 }
 
 // PlanGate reports whether a plan-gated boolean feature is included in the
-// tenant's plan. Satisfied by *entitlements.Service.
+// organization's plan. Satisfied by *entitlements.Service.
 type PlanGate interface {
-	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
+	FeatureAllowed(ctx context.Context, organizationID uuid.UUID, feature string) (bool, error)
 }
 
 // SetPlanGate wires the plan-feature gate (nil allows all features).
 func (s *Service) SetPlanGate(g PlanGate) { s.gate = g }
 
-// planIncludesSCIM reports whether the tenant's plan includes SCIM; with no
+// planIncludesSCIM reports whether the organization's plan includes SCIM; with no
 // gate set, every plan does.
-func (s *Service) planIncludesSCIM(ctx context.Context, tenantID uuid.UUID) (bool, error) {
+func (s *Service) planIncludesSCIM(ctx context.Context, organizationID uuid.UUID) (bool, error) {
 	if s.gate == nil {
 		return true, nil
 	}
-	return s.gate.FeatureAllowed(ctx, tenantID, "scim")
+	return s.gate.FeatureAllowed(ctx, organizationID, "scim")
 }
 
 // Pool returns the connection pool, for handlers that run their own transaction.
@@ -135,10 +135,10 @@ type userRow struct {
 
 const userRowCols = `id, email, display_name, status, external_id, created_at, updated_at`
 
-func (s *Service) getProvisioned(ctx context.Context, tenantID, id uuid.UUID) (*userRow, error) {
+func (s *Service) getProvisioned(ctx context.Context, organizationID, id uuid.UUID) (*userRow, error) {
 	r, err := s.q.GetProvisionedUser(ctx, dbgen.GetProvisionedUserParams{
-		ID:       id,
-		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
+		ID:             id,
+		OrganizationID: pgtype.UUID{Bytes: organizationID, Valid: true},
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
@@ -157,12 +157,12 @@ func (s *Service) getProvisioned(ctx context.Context, tenantID, id uuid.UUID) (*
 	}, nil
 }
 
-// listProvisioned lists the organisation's directory-provisioned users. A
+// listProvisioned lists the organization's directory-provisioned users. A
 // userName lookup finds any account at home there, whoever created it, so an
 // identity provider can match and link the people who are already members.
-func (s *Service) listProvisioned(ctx context.Context, tenantID uuid.UUID, emailFilter string, start, count int) ([]userRow, int, error) {
-	args := []any{tenantID}
-	where := `tenant_id = $1 AND deleted_at IS NULL`
+func (s *Service) listProvisioned(ctx context.Context, organizationID uuid.UUID, emailFilter string, start, count int) ([]userRow, int, error) {
+	args := []any{organizationID}
+	where := `organization_id = $1 AND deleted_at IS NULL`
 	if emailFilter != "" {
 		args = append(args, emailFilter)
 		where += ` AND LOWER(email) = LOWER($2)`
@@ -254,10 +254,10 @@ func adminPage(r *http.Request) (int, time.Time, uuid.UUID, error) {
 	return limit, before, beforeID, nil
 }
 
-// adminListUsers returns a page of this tenant's SCIM-provisioned users for the
+// adminListUsers returns a page of this organization's SCIM-provisioned users for the
 // admin UI, newest first, with how many there are.
 func (h *Handler) adminListUsers(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -269,15 +269,15 @@ func (h *Handler) adminListUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	var total int
-	if err := h.Service.pool.QueryRow(ctx, `SELECT count(*) FROM account.users WHERE tenant_id = $1 AND deleted_at IS NULL AND provisioned_via = $2`,
-		tenantID, provisionedScim).Scan(&total); err != nil {
+	if err := h.Service.pool.QueryRow(ctx, `SELECT count(*) FROM account.users WHERE organization_id = $1 AND deleted_at IS NULL AND provisioned_via = $2`,
+		organizationID, provisionedScim).Scan(&total); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	rows, err := h.Service.pool.Query(ctx, `
 		SELECT id, email, display_name, status, external_id, created_at FROM account.users
-		WHERE tenant_id = $1 AND deleted_at IS NULL AND provisioned_via = $2 AND (created_at, id) < ($3, $4)
-		ORDER BY created_at DESC, id DESC LIMIT $5`, tenantID, provisionedScim, before, beforeID, limit+1)
+		WHERE organization_id = $1 AND deleted_at IS NULL AND provisioned_via = $2 AND (created_at, id) < ($3, $4)
+		ORDER BY created_at DESC, id DESC LIMIT $5`, organizationID, provisionedScim, before, beforeID, limit+1)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -315,10 +315,10 @@ type adminGroup struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
-// adminListGroups returns a page of the groups this tenant's SCIM made, newest
+// adminListGroups returns a page of the groups this organization's SCIM made, newest
 // first, each with its count of live members, and how many there are.
 func (h *Handler) adminListGroups(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -330,18 +330,18 @@ func (h *Handler) adminListGroups(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	var total int
-	if err := h.Service.pool.QueryRow(ctx, `SELECT count(*) FROM tenant.groups WHERE tenant_id = $1 AND provisioned_via = 'scim'`,
-		tenantID).Scan(&total); err != nil {
+	if err := h.Service.pool.QueryRow(ctx, `SELECT count(*) FROM organization.groups WHERE organization_id = $1 AND provisioned_via = 'scim'`,
+		organizationID).Scan(&total); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	rows, err := h.Service.pool.Query(ctx, `
 		SELECT g.id, g.name, g.external_id, g.created_at, g.updated_at,
-		       (SELECT count(*) FROM tenant.group_members gm JOIN account.users u ON u.id = gm.user_id
-		        WHERE gm.group_id = g.id AND gm.tenant_id = g.tenant_id AND u.deleted_at IS NULL)::int
-		FROM tenant.groups g
-		WHERE g.tenant_id = $1 AND g.provisioned_via = 'scim' AND (g.created_at, g.id) < ($2, $3)
-		ORDER BY g.created_at DESC, g.id DESC LIMIT $4`, tenantID, before, beforeID, limit+1)
+		       (SELECT count(*) FROM organization.group_members gm JOIN account.users u ON u.id = gm.user_id
+		        WHERE gm.group_id = g.id AND gm.organization_id = g.organization_id AND u.deleted_at IS NULL)::int
+		FROM organization.groups g
+		WHERE g.organization_id = $1 AND g.provisioned_via = 'scim' AND (g.created_at, g.id) < ($2, $3)
+		ORDER BY g.created_at DESC, g.id DESC LIMIT $4`, organizationID, before, beforeID, limit+1)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -370,7 +370,7 @@ func (h *Handler) adminListGroups(w http.ResponseWriter, r *http.Request) {
 }
 
 // MountPublic registers the SCIM 2.0 protocol surface at the root, guarded
-// by the per-tenant bearer token rather than the user-JWT middleware.
+// by the per-organization bearer token rather than the user-JWT middleware.
 func (h *Handler) MountPublic(r chi.Router) {
 	r.Route("/scim/v2", func(r chi.Router) {
 		r.Use(h.scimAuth)
@@ -394,17 +394,17 @@ func (h *Handler) MountPublic(r chi.Router) {
 
 // --- admin handlers ---
 
-func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	return httpx.PathTenantOr(r, errs.ErrSCIMTenantIDInvalid, errs.ErrSCIMTenantMismatch)
+func requirePathOrganization(r *http.Request) (uuid.UUID, error) {
+	return httpx.PathOrganizationOr(r, errs.ErrSCIMOrganizationIDInvalid, errs.ErrSCIMOrganizationMismatch)
 }
 
 func (h *Handler) config(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	cfg, err := h.Service.Config(r.Context(), tenantID)
+	cfg, err := h.Service.Config(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -413,7 +413,7 @@ func (h *Handler) config(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) rotate(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -425,24 +425,24 @@ func (h *Handler) rotate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	issued, full, err := h.Service.replaceAll(ctx, tx, tenantID)
+	issued, full, err := h.Service.replaceAll(ctx, tx, organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	actorID, actorType := audit.ActorOf(r).Identity()
-	tid := tenantID
+	tid := organizationID
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     &tid,
-		ActorUserID:  actorID,
-		ActorType:    actorType,
-		Action:       "scim.token_rotated",
-		ResourceType: "scim_token",
-		ResourceID:   &issued.ID,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
-		Metadata:     map[string]any{"name": issued.Name, "replaced": "all"},
+		OrganizationID: &tid,
+		ActorUserID:    actorID,
+		ActorType:      actorType,
+		Action:         "scim.token_rotated",
+		ResourceType:   "scim_token",
+		ResourceID:     &issued.ID,
+		IP:             httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
+		RequestID:      httpx.RequestID(r),
+		Metadata:       map[string]any{"name": issued.Name, "replaced": "all"},
 	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -451,7 +451,7 @@ func (h *Handler) rotate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	cfg, err := h.Service.Config(ctx, tenantID)
+	cfg, err := h.Service.Config(ctx, organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -460,7 +460,7 @@ func (h *Handler) rotate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -472,21 +472,21 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	if err := h.Service.Revoke(ctx, tx, tenantID); err != nil {
+	if err := h.Service.Revoke(ctx, tx, organizationID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	actorID, actorType := audit.ActorOf(r).Identity()
-	tid := tenantID
+	tid := organizationID
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     &tid,
-		ActorUserID:  actorID,
-		ActorType:    actorType,
-		Action:       "scim.token_revoked",
-		ResourceType: "scim_token",
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
+		OrganizationID: &tid,
+		ActorUserID:    actorID,
+		ActorType:      actorType,
+		Action:         "scim.token_revoked",
+		ResourceType:   "scim_token",
+		IP:             httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
+		RequestID:      httpx.RequestID(r),
 	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -502,7 +502,7 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 
 type ctxKey int
 
-const tenantCtxKey ctxKey = iota
+const organizationCtxKey ctxKey = iota
 
 func (h *Handler) scimAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -529,13 +529,13 @@ func (h *Handler) scimAuth(next http.Handler) http.Handler {
 			writeSCIMErr(w, http.StatusForbidden, "the organisation's plan does not include SCIM provisioning")
 			return
 		}
-		ctx := context.WithValue(r.Context(), tenantCtxKey, tid)
+		ctx := context.WithValue(r.Context(), organizationCtxKey, tid)
 		h.observeMutations(next).ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
-func tenantFromCtx(ctx context.Context) (uuid.UUID, bool) {
-	tid, ok := ctx.Value(tenantCtxKey).(uuid.UUID)
+func organizationFromCtx(ctx context.Context) (uuid.UUID, bool) {
+	tid, ok := ctx.Value(organizationCtxKey).(uuid.UUID)
 	return tid, ok
 }
 
@@ -632,7 +632,7 @@ func parseUserNameFilter(filter string) (string, error) {
 // --- SCIM /Users handlers ---
 
 func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
-	tid, ok := tenantFromCtx(r.Context())
+	tid, ok := organizationFromCtx(r.Context())
 	if !ok {
 		writeSCIMErr(w, http.StatusUnauthorized, "no tenant")
 		return
@@ -725,7 +725,7 @@ func (p scimUserPayload) display() string {
 }
 
 func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
-	tid, ok := tenantFromCtx(r.Context())
+	tid, ok := organizationFromCtx(r.Context())
 	if !ok {
 		writeSCIMErr(w, http.StatusUnauthorized, "no tenant")
 		return
@@ -752,9 +752,9 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	// Someone already at home in the organisation (invited, or signed in with
+	// Someone already at home in the organization (invited, or signed in with
 	// single sign-on) is adopted rather than refused as a duplicate.
-	if existing, err := h.Service.q.HomeUserByEmail(ctx, dbgen.HomeUserByEmailParams{TenantID: tid, Email: email}); err == nil {
+	if existing, err := h.Service.q.HomeUserByEmail(ctx, dbgen.HomeUserByEmailParams{OrganizationID: tid, Email: email}); err == nil {
 		c := userChange{profile: profile, tag: &p.ExternalID, adopted: true}
 		if display != "" {
 			c.in.DisplayName = &display
@@ -791,9 +791,9 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(ctx)
 	u, err := h.Service.users.CreateWithCredentialTx(ctx, tx, user.CreateInput{
-		TenantID:    tid,
-		Email:       email,
-		DisplayName: display,
+		OrganizationID: tid,
+		Email:          email,
+		DisplayName:    display,
 	}, "")
 	if err != nil {
 		if errors.Is(err, errs.ErrAuthEmailExists) || errors.Is(err, errs.ErrConflict) {
@@ -822,7 +822,7 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 			writeSCIMErr(w, http.StatusInternalServerError, "create failed")
 			return
 		}
-		if _, err := tx.Exec(ctx, `UPDATE account.users SET suspension_source='scim',suspension_reason='provider' WHERE tenant_id=$1 AND id=$2`, tid, u.ID); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE account.users SET suspension_source='scim',suspension_reason='provider' WHERE organization_id=$1 AND id=$2`, tid, u.ID); err != nil {
 			writeSCIMErr(w, http.StatusInternalServerError, "create failed")
 			return
 		}
@@ -935,7 +935,7 @@ func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Confirm the user belongs to this tenant before soft-deleting.
+	// Confirm the user belongs to this organization before soft-deleting.
 	if _, err := h.Service.getProvisioned(r.Context(), tid, id); err != nil {
 		writeSCIMErr(w, http.StatusNotFound, "user not found")
 		return
@@ -951,10 +951,10 @@ func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// scimTarget pulls the tenant from context and the {id} path param,
+// scimTarget pulls the organization from context and the {id} path param,
 // writing a SCIM error and returning ok=false on failure.
 func (h *Handler) scimTarget(w http.ResponseWriter, r *http.Request) (uuid.UUID, uuid.UUID, bool) {
-	tid, ok := tenantFromCtx(r.Context())
+	tid, ok := organizationFromCtx(r.Context())
 	if !ok {
 		writeSCIMErr(w, http.StatusUnauthorized, "no tenant")
 		return uuid.Nil, uuid.Nil, false
@@ -1202,25 +1202,25 @@ func decodeSCIMBody(w http.ResponseWriter, r *http.Request, out any) bool {
 }
 
 // recordUserEvidence writes the audit row and outbox event for a SCIM user
-// change inside the caller's transaction. The actor is the tenant's SCIM
+// change inside the caller's transaction. The actor is the organization's SCIM
 // credential, recorded as actor type "scim".
-func recordUserEvidence(ctx context.Context, tx pgx.Tx, r *http.Request, tenantID, userID uuid.UUID, action string, metadata map[string]any) error {
-	tenant := tenantID
+func recordUserEvidence(ctx context.Context, tx pgx.Tx, r *http.Request, organizationID, userID uuid.UUID, action string, metadata map[string]any) error {
+	organization := organizationID
 	target := userID
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     &tenant,
-		ActorType:    "scim",
-		Action:       action,
-		ResourceType: "user",
-		ResourceID:   &target,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
-		Metadata:     metadata,
+		OrganizationID: &organization,
+		ActorType:      "scim",
+		Action:         action,
+		ResourceType:   "user",
+		ResourceID:     &target,
+		IP:             httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
+		RequestID:      httpx.RequestID(r),
+		Metadata:       metadata,
 	}); err != nil {
 		return err
 	}
-	payload := map[string]any{"user_id": userID, "tenant_id": tenantID, "source": "scim"}
+	payload := map[string]any{"user_id": userID, "tenant_id": organizationID, "source": "scim"}
 	for k, v := range metadata {
 		payload[k] = v
 	}
@@ -1246,15 +1246,15 @@ type userChange struct {
 
 // applyUserChange runs a SCIM-driven user change and its evidence in one
 // transaction, so a provisioning change is never durable without a record of
-// it. A new address must be on a domain the organisation manages; it counts as
-// verified, as the organisation's directory vouches for it, and links sent to
+// it. A new address must be on a domain the organization manages; it counts as
+// verified, as the organization's directory vouches for it, and links sent to
 // the old one stop working.
-func (h *Handler) applyUserChange(w http.ResponseWriter, r *http.Request, tenantID, userID uuid.UUID, c userChange, action string) bool {
+func (h *Handler) applyUserChange(w http.ResponseWriter, r *http.Request, organizationID, userID uuid.UUID, c userChange, action string) bool {
 	ctx := r.Context()
 	in := c.in
-	// UpdateTx matches on the user ID alone, so without this check one tenant's
-	// SCIM token could suspend or rename a user in any tenant.
-	current, err := h.Service.getProvisioned(ctx, tenantID, userID)
+	// UpdateTx matches on the user ID alone, so without this check one organization's
+	// SCIM token could suspend or rename a user in any organization.
+	current, err := h.Service.getProvisioned(ctx, organizationID, userID)
 	if err != nil {
 		writeSCIMErr(w, http.StatusNotFound, "user not found")
 		return false
@@ -1263,12 +1263,12 @@ func (h *Handler) applyUserChange(w http.ResponseWriter, r *http.Request, tenant
 		c.email = ""
 	}
 	if c.email != "" {
-		manager, managed, err := domainverify.ManagerOf(postgres.AcrossTenants(ctx), h.Service.users.Pool(), c.email)
+		manager, managed, err := domainverify.ManagerOf(postgres.AcrossOrganizations(ctx), h.Service.users.Pool(), c.email)
 		if err != nil {
 			writeSCIMErr(w, http.StatusInternalServerError, "update failed")
 			return false
 		}
-		if !managed || manager != tenantID {
+		if !managed || manager != organizationID {
 			writeSCIMTypedErr(w, http.StatusBadRequest, "invalidValue", "userName must be on a domain the organization has verified")
 			return false
 		}
@@ -1279,7 +1279,7 @@ func (h *Handler) applyUserChange(w http.ResponseWriter, r *http.Request, tenant
 		return false
 	}
 	defer tx.Rollback(ctx)
-	state, err := h.Service.q.WithTx(tx).ProvisionedUserState(ctx, dbgen.ProvisionedUserStateParams{TenantID: tenantID, ID: userID})
+	state, err := h.Service.q.WithTx(tx).ProvisionedUserState(ctx, dbgen.ProvisionedUserStateParams{OrganizationID: organizationID, ID: userID})
 	if err != nil {
 		writeSCIMErr(w, http.StatusNotFound, "user not found")
 		return false
@@ -1291,7 +1291,7 @@ func (h *Handler) applyUserChange(w http.ResponseWriter, r *http.Request, tenant
 	// Nor does it move an administrator to another address, where their
 	// password reset would then go, as single sign-on doesn't (ssosync).
 	if c.email != "" {
-		admin, err := identitylink.Administers(ctx, tx, userID, tenantID)
+		admin, err := identitylink.Administers(ctx, tx, userID, organizationID)
 		if err != nil {
 			writeSCIMErr(w, http.StatusInternalServerError, "update failed")
 			return false
@@ -1316,7 +1316,7 @@ func (h *Handler) applyUserChange(w http.ResponseWriter, r *http.Request, tenant
 	// the address, nor did the directory provision it) keeps nothing whoever
 	// registered the address first set up, whichever request does it.
 	if c.adopted || c.tag != nil || c.email != "" {
-		if err := h.forgetUnvouched(ctx, tx, r, tenantID, userID); err != nil {
+		if err := h.forgetUnvouched(ctx, tx, r, organizationID, userID); err != nil {
 			writeSCIMErr(w, http.StatusInternalServerError, "update failed")
 			return false
 		}
@@ -1334,7 +1334,7 @@ func (h *Handler) applyUserChange(w http.ResponseWriter, r *http.Request, tenant
 		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE account.users SET email = $3, email_verified_at = NOW(), updated_at = NOW()
-			WHERE id = $1 AND tenant_id = $2`, userID, tenantID, c.email); err != nil {
+			WHERE id = $1 AND organization_id = $2`, userID, organizationID, c.email); err != nil {
 			if pgxerr.IsUnique(err) {
 				writeSCIMTypedErr(w, http.StatusConflict, "uniqueness", "userName already exists")
 				return false
@@ -1344,7 +1344,7 @@ func (h *Handler) applyUserChange(w http.ResponseWriter, r *http.Request, tenant
 		}
 	}
 	if in.Status != nil && *in.Status == "suspended" {
-		if _, err := tx.Exec(ctx, `UPDATE account.users SET suspension_source='scim',suspension_reason='provider' WHERE tenant_id=$1 AND id=$2 AND suspension_source='unknown'`, tenantID, userID); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE account.users SET suspension_source='scim',suspension_reason='provider' WHERE organization_id=$1 AND id=$2 AND suspension_source='unknown'`, organizationID, userID); err != nil {
 			writeSCIMErr(w, http.StatusInternalServerError, "update failed")
 			return false
 		}
@@ -1356,7 +1356,7 @@ func (h *Handler) applyUserChange(w http.ResponseWriter, r *http.Request, tenant
 		}
 	}
 	if h.Service.mapper != nil && c.profile != nil {
-		if err := h.Service.mapper.StoreProfile(ctx, tx, tenantID, userID, "scim:"+tenantID.String(), c.profile); err != nil {
+		if err := h.Service.mapper.StoreProfile(ctx, tx, organizationID, userID, "scim:"+organizationID.String(), c.profile); err != nil {
 			writeSCIMErr(w, http.StatusInternalServerError, "Profile mapping could not be saved")
 			return false
 		}
@@ -1374,7 +1374,7 @@ func (h *Handler) applyUserChange(w http.ResponseWriter, r *http.Request, tenant
 	if c.adopted {
 		metadata["adopted"] = true
 	}
-	if err := recordUserEvidence(ctx, tx, r, tenantID, userID, action, metadata); err != nil {
+	if err := recordUserEvidence(ctx, tx, r, organizationID, userID, action, metadata); err != nil {
 		writeSCIMErr(w, http.StatusInternalServerError, "update failed")
 		return false
 	}
@@ -1387,8 +1387,8 @@ func (h *Handler) applyUserChange(w http.ResponseWriter, r *http.Request, tenant
 
 // forgetUnvouched removes, inside tx, every credential and sign-in of an
 // account the directory is about to vouch for when nothing vouched for its
-// address yet, and records the removal in tenantID's trail.
-func (h *Handler) forgetUnvouched(ctx context.Context, tx pgx.Tx, r *http.Request, tenantID, userID uuid.UUID) error {
+// address yet, and records the removal in organizationID's trail.
+func (h *Handler) forgetUnvouched(ctx context.Context, tx pgx.Tx, r *http.Request, organizationID, userID uuid.UUID) error {
 	vouched, err := identitylink.AddressVerified(ctx, tx, userID)
 	if err != nil || vouched {
 		return err
@@ -1402,18 +1402,18 @@ func (h *Handler) forgetUnvouched(ctx context.Context, tx pgx.Tx, r *http.Reques
 	}
 	// Audited only, as the other first proofs are: no event leaves for webhooks.
 	return audit.Record(ctx, tx, audit.Event{
-		TenantID: &tenantID, ActorType: "scim", Action: "auth.credentials_removed", ResourceType: "user",
+		OrganizationID: &organizationID, ActorType: "scim", Action: "auth.credentials_removed", ResourceType: "user",
 		ResourceID: &userID, IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
 		Metadata: map[string]any{"proof": "scim_adoption", "removed": removed},
 	})
 }
 
 // ownerUnchangeable is the refusal of a directory change to an account that
-// owns the organisation: owners are changed only by people, in the console.
+// owns the organization: owners are changed only by people, in the console.
 const ownerUnchangeable = "This account owns the organization, so the directory can't change it."
 
 // administratorAddressUnchangeable is the refusal of a directory change to the
-// address of an account that administers the organisation.
+// address of an account that administers the organization.
 const administratorAddressUnchangeable = "This account administers the organization, so the directory can't change its address. Change it in the console."
 
 // errOwnerUnchangeable refuses deprovisioning an owner.
@@ -1423,14 +1423,14 @@ var errOwnerUnchangeable = errors.New("scim: the account owns the organization")
 // in, and records it and what they leave behind (OffboardTx) in the same
 // transaction. An owner is refused with
 // errOwnerUnchangeable.
-func (h *Handler) deprovision(r *http.Request, tenantID, userID uuid.UUID) error {
+func (h *Handler) deprovision(r *http.Request, organizationID, userID uuid.UUID) error {
 	ctx := r.Context()
 	tx, err := h.Service.users.Pool().Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	state, err := h.Service.q.WithTx(tx).ProvisionedUserState(ctx, dbgen.ProvisionedUserStateParams{TenantID: tenantID, ID: userID})
+	state, err := h.Service.q.WithTx(tx).ProvisionedUserState(ctx, dbgen.ProvisionedUserStateParams{OrganizationID: organizationID, ID: userID})
 	if err != nil {
 		return err
 	}
@@ -1443,11 +1443,11 @@ func (h *Handler) deprovision(r *http.Request, tenantID, userID uuid.UUID) error
 	if _, err := auth.EndSignIns(ctx, tx, h.Service.signals, userID, sessionsignal.ReasonDeprovisioned); err != nil {
 		return err
 	}
-	if err := recordUserEvidence(ctx, tx, r, tenantID, userID, "user.deleted", nil); err != nil {
+	if err := recordUserEvidence(ctx, tx, r, organizationID, userID, "user.deleted", nil); err != nil {
 		return err
 	}
 	directory := audit.Actor{Type: "scim", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
-	if err := h.Service.users.OffboardTx(ctx, tx, tenantID, userID, directory); err != nil {
+	if err := h.Service.users.OffboardTx(ctx, tx, organizationID, userID, directory); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

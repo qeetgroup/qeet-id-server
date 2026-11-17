@@ -25,7 +25,7 @@ import (
 // serves it and may introspect its tokens ("" for none).
 type Resource struct {
 	ID             uuid.UUID `json:"id"`
-	TenantID       uuid.UUID `json:"tenant_id"`
+	OrganizationID uuid.UUID `json:"tenant_id"`
 	Identifier     string    `json:"identifier"`
 	Name           string    `json:"name"`
 	ServerClientID string    `json:"server_client_id,omitempty"`
@@ -33,7 +33,7 @@ type Resource struct {
 }
 
 func resourceFromRow(r dbgen.AuthOidcResource) Resource {
-	out := Resource{ID: r.ID, TenantID: r.TenantID, Identifier: r.Identifier, Name: r.Name, CreatedAt: r.CreatedAt}
+	out := Resource{ID: r.ID, OrganizationID: r.OrganizationID, Identifier: r.Identifier, Name: r.Name, CreatedAt: r.CreatedAt}
 	if r.ServerClientID != nil {
 		out.ServerClientID = *r.ServerClientID
 	}
@@ -47,16 +47,16 @@ func wellFormedResource(resource string) bool {
 }
 
 // checkResource holds a requested resource ("" for none) to the client's
-// organisation's registry: anything it hasn't registered is invalid_target. q
+// organization's registry: anything it hasn't registered is invalid_target. q
 // lets it run in the caller's transaction.
-func checkResource(ctx context.Context, q *dbgen.Queries, tenantID uuid.UUID, resource string) error {
+func checkResource(ctx context.Context, q *dbgen.Queries, organizationID uuid.UUID, resource string) error {
 	if resource == "" {
 		return nil
 	}
 	if !wellFormedResource(resource) {
 		return oauthErr("invalid_target", "resource must be an absolute URI without a fragment")
 	}
-	ok, err := q.ResourceRegistered(ctx, dbgen.ResourceRegisteredParams{TenantID: tenantID, Identifier: resource})
+	ok, err := q.ResourceRegistered(ctx, dbgen.ResourceRegisteredParams{OrganizationID: organizationID, Identifier: resource})
 	if err != nil {
 		return err
 	}
@@ -66,9 +66,9 @@ func checkResource(ctx context.Context, q *dbgen.Queries, tenantID uuid.UUID, re
 	return nil
 }
 
-// ListResources returns an organisation's registered resources.
-func (s *Service) ListResources(ctx context.Context, tenantID uuid.UUID) ([]Resource, error) {
-	rows, err := s.q.ListResources(ctx, tenantID)
+// ListResources returns an organization's registered resources.
+func (s *Service) ListResources(ctx context.Context, organizationID uuid.UUID) ([]Resource, error) {
+	rows, err := s.q.ListResources(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +80,7 @@ func (s *Service) ListResources(ctx context.Context, tenantID uuid.UUID) ([]Reso
 }
 
 // CreateResourceInput registers a resource. ServerClientID, when set, must be
-// one of the organisation's applications.
+// one of the organization's applications.
 type CreateResourceInput struct {
 	Identifier     string `json:"identifier"`
 	Name           string `json:"name"`
@@ -89,13 +89,13 @@ type CreateResourceInput struct {
 
 // CheckResourceDomain refuses a resource identifier that names the platform
 // itself (ErrOIDCResourceReserved: its token issuer or audience, or their host
-// or publicBaseURL's), one on a domain another organisation has verified
-// (ErrOIDCResourceDomainTaken), and one on a host the organisation hasn't
+// or publicBaseURL's), one on a domain another organization has verified
+// (ErrOIDCResourceDomainTaken), and one on a host the organization hasn't
 // verified, or a domain above it (ErrOIDCResourceDomainUnverified): only a
-// host's owner may name a service there. It reads every organisation's
+// host's owner may name a service there. It reads every organization's
 // domains, so it runs before the registration's transaction; CreateResource
 // rejects a malformed one.
-func (s *Service) CheckResourceDomain(ctx context.Context, tenantID uuid.UUID, identifier, publicBaseURL string) error {
+func (s *Service) CheckResourceDomain(ctx context.Context, organizationID uuid.UUID, identifier, publicBaseURL string) error {
 	identifier = strings.TrimSpace(identifier)
 	host := hostOf(identifier)
 	for _, own := range []string{s.issuer.JWTIssuer(), s.issuer.JWTAudience(), publicBaseURL} {
@@ -106,14 +106,14 @@ func (s *Service) CheckResourceDomain(ctx context.Context, tenantID uuid.UUID, i
 	if host == "" {
 		return nil
 	}
-	taken, err := s.q.ResourceHostClaimedElsewhere(postgres.AcrossTenants(ctx), dbgen.ResourceHostClaimedElsewhereParams{TenantID: tenantID, Host: host})
+	taken, err := s.q.ResourceHostClaimedElsewhere(postgres.AcrossOrganizations(ctx), dbgen.ResourceHostClaimedElsewhereParams{OrganizationID: organizationID, Host: host})
 	if err != nil {
 		return err
 	}
 	if taken {
 		return errs.ErrOIDCResourceDomainTaken
 	}
-	verified, err := s.q.ResourceHostVerifiedHere(ctx, dbgen.ResourceHostVerifiedHereParams{TenantID: tenantID, Host: host})
+	verified, err := s.q.ResourceHostVerifiedHere(ctx, dbgen.ResourceHostVerifiedHereParams{OrganizationID: organizationID, Host: host})
 	if err != nil {
 		return err
 	}
@@ -131,10 +131,10 @@ func hostOf(uri string) string {
 	return ""
 }
 
-// CreateResource registers a resource for the organisation. An identifier is
+// CreateResource registers a resource for the organization. An identifier is
 // unique across the platform (ErrOIDCResourceExists); callers check its domain
 // first with CheckResourceDomain.
-func (s *Service) CreateResource(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in CreateResourceInput) (*Resource, error) {
+func (s *Service) CreateResource(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, in CreateResourceInput) (*Resource, error) {
 	in.Identifier = strings.TrimSpace(in.Identifier)
 	if !wellFormedResource(in.Identifier) {
 		return nil, errs.ErrOIDCResourceInvalid
@@ -143,7 +143,7 @@ func (s *Service) CreateResource(ctx context.Context, tx pgx.Tx, tenantID uuid.U
 	var server *string
 	if in.ServerClientID != "" {
 		owner, err := q.GetClientName(ctx, in.ServerClientID)
-		if errors.Is(err, pgx.ErrNoRows) || (err == nil && owner.TenantID != tenantID) {
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && owner.OrganizationID != organizationID) {
 			return nil, errs.ErrOIDCClientNotFound
 		}
 		if err != nil {
@@ -152,7 +152,7 @@ func (s *Service) CreateResource(ctx context.Context, tx pgx.Tx, tenantID uuid.U
 		server = &in.ServerClientID
 	}
 	row, err := q.InsertResource(ctx, dbgen.InsertResourceParams{
-		TenantID: tenantID, Identifier: in.Identifier, Name: strings.TrimSpace(in.Name), ServerClientID: server,
+		OrganizationID: organizationID, Identifier: in.Identifier, Name: strings.TrimSpace(in.Name), ServerClientID: server,
 	})
 	if pgxerr.IsUnique(err) {
 		return nil, errs.ErrOIDCResourceExists
@@ -166,8 +166,8 @@ func (s *Service) CreateResource(ctx context.Context, tx pgx.Tx, tenantID uuid.U
 
 // DeleteResource removes a registered resource; tokens already issued for it
 // last out their lifetime, and no new one is issued.
-func (s *Service) DeleteResource(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (string, error) {
-	identifier, err := s.q.WithTx(tx).DeleteResource(ctx, dbgen.DeleteResourceParams{ID: id, TenantID: tenantID})
+func (s *Service) DeleteResource(ctx context.Context, tx pgx.Tx, organizationID, id uuid.UUID) (string, error) {
+	identifier, err := s.q.WithTx(tx).DeleteResource(ctx, dbgen.DeleteResourceParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", errs.ErrOIDCResourceNotFound
 	}
@@ -175,12 +175,12 @@ func (s *Service) DeleteResource(ctx context.Context, tx pgx.Tx, tenantID, id uu
 }
 
 func (h *Handler) listResources(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	items, err := h.Service.ListResources(r.Context(), tenantID)
+	items, err := h.Service.ListResources(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -189,7 +189,7 @@ func (h *Handler) listResources(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) createResource(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -200,7 +200,7 @@ func (h *Handler) createResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	if err := h.Service.CheckResourceDomain(ctx, tenantID, in.Identifier, h.PublicBaseURL); err != nil {
+	if err := h.Service.CheckResourceDomain(ctx, organizationID, in.Identifier, h.PublicBaseURL); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -210,12 +210,12 @@ func (h *Handler) createResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	res, err := h.Service.CreateResource(ctx, tx, tenantID, in)
+	res, err := h.Service.CreateResource(ctx, tx, organizationID, in)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.auditResource(ctx, tx, r, tenantID, res.ID, "oidc.resource_registered", res.Identifier); err != nil {
+	if err := h.auditResource(ctx, tx, r, organizationID, res.ID, "oidc.resource_registered", res.Identifier); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -227,7 +227,7 @@ func (h *Handler) createResource(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) deleteResource(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -244,12 +244,12 @@ func (h *Handler) deleteResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	identifier, err := h.Service.DeleteResource(ctx, tx, tenantID, id)
+	identifier, err := h.Service.DeleteResource(ctx, tx, organizationID, id)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.auditResource(ctx, tx, r, tenantID, id, "oidc.resource_removed", identifier); err != nil {
+	if err := h.auditResource(ctx, tx, r, organizationID, id, "oidc.resource_removed", identifier); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -260,10 +260,10 @@ func (h *Handler) deleteResource(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *Handler) auditResource(ctx context.Context, tx pgx.Tx, r *http.Request, tenantID, id uuid.UUID, action, identifier string) error {
+func (h *Handler) auditResource(ctx context.Context, tx pgx.Tx, r *http.Request, organizationID, id uuid.UUID, action, identifier string) error {
 	actorID, actorType := audit.ActorOf(r).Identity()
 	return audit.Record(ctx, tx, audit.Event{
-		TenantID: &tenantID, ActorUserID: actorID, ActorType: actorType,
+		OrganizationID: &organizationID, ActorUserID: actorID, ActorType: actorType,
 		Action: action, ResourceType: "oidc_resource", ResourceID: &id,
 		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
 		Metadata: map[string]any{"identifier": identifier},

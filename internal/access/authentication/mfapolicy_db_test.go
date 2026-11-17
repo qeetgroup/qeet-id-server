@@ -10,7 +10,7 @@ import (
 )
 
 // TestAdminMFARequirementCoversEveryAdministrativePermission checks that an
-// organisation requiring a second factor of its administrators requires it of
+// organization requiring a second factor of its administrators requires it of
 // a member holding any one permission outside the member reads, such as
 // user.credentials or session.revoke and not only a *.write one, and not of a
 // member holding every member read.
@@ -22,15 +22,15 @@ func TestAdminMFARequirementCoversEveryAdministrativePermission(t *testing.T) {
 	svc.SetMemberPermissions(identitylink.MemberPermissions())
 	signInHolding := func(permissions ...string) *LoginResult {
 		t.Helper()
-		tenant := dbtest.Tenant(t)
+		organization := dbtest.Organization(t)
 		if _, err := pool.Exec(ctx, `
-			INSERT INTO tenant.security_policies (tenant_id, mfa_enforcement, mfa_grace_days, mfa_enforced_since)
-			VALUES ($1, 'admin_only', 0, NOW())`, tenant); err != nil {
+			INSERT INTO organization.security_policies (organization_id, mfa_enforcement, mfa_grace_days, mfa_enforced_since)
+			VALUES ($1, 'admin_only', 0, NOW())`, organization); err != nil {
 			t.Fatal(err)
 		}
-		a := dbtest.User(t, tenant)
+		a := dbtest.User(t, organization)
 		dbtest.SetPassword(t, a.ID, testPassword)
-		dbtest.Assign(t, a.ID, tenant, dbtest.Role(t, tenant, permissions...))
+		dbtest.Assign(t, a.ID, organization, dbtest.Role(t, organization, permissions...))
 		res, err := svc.Login(ctx, LoginInput{Email: a.Email, Password: testPassword})
 		if err != nil {
 			t.Fatalf("sign in holding %v: %v", permissions, err)

@@ -9,9 +9,9 @@ import (
 // init registers the HTTP statuses of the GDPR error codes.
 func init() {
 	registerStatuses(map[string]int{
-		errs.CodeGDPRFrameworkInvalid: http.StatusBadRequest,
-		errs.CodeGDPRTenantInvalid:    http.StatusBadRequest,
-		errs.CodeGDPRTenantMismatch:   http.StatusForbidden,
-		errs.CodeGDPRIDInvalid:        http.StatusBadRequest,
+		errs.CodeGDPRFrameworkInvalid:     http.StatusBadRequest,
+		errs.CodeGDPROrganizationInvalid:  http.StatusBadRequest,
+		errs.CodeGDPROrganizationMismatch: http.StatusForbidden,
+		errs.CodeGDPRIDInvalid:            http.StatusBadRequest,
 	})
 }

@@ -14,19 +14,19 @@ import (
 )
 
 const consumeOidcConnectionLoginCode = `-- name: ConsumeOidcConnectionLoginCode :one
-SELECT lc.user_id, lc.expires_at, lc.used_at, c.tenant_id, c.status
+SELECT lc.user_id, lc.expires_at, lc.used_at, c.organization_id, c.status
 FROM auth.login_codes lc
-JOIN tenant.oidc_connections c ON c.tenant_id = lc.tenant_id AND c.id = lc.connection_id
+JOIN organization.oidc_connections c ON c.organization_id = lc.organization_id AND c.id = lc.connection_id
 WHERE lc.code_hash = $1 AND lc.kind = 'oidc_connection'
 FOR UPDATE OF lc
 `
 
 type ConsumeOidcConnectionLoginCodeRow struct {
-	UserID    uuid.UUID
-	ExpiresAt time.Time
-	UsedAt    pgtype.Timestamptz
-	TenantID  uuid.UUID
-	Status    string
+	UserID         uuid.UUID
+	ExpiresAt      time.Time
+	UsedAt         pgtype.Timestamptz
+	OrganizationID uuid.UUID
+	Status         string
 }
 
 func (q *Queries) ConsumeOidcConnectionLoginCode(ctx context.Context, codeHash string) (ConsumeOidcConnectionLoginCodeRow, error) {
@@ -36,7 +36,7 @@ func (q *Queries) ConsumeOidcConnectionLoginCode(ctx context.Context, codeHash s
 		&i.UserID,
 		&i.ExpiresAt,
 		&i.UsedAt,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Status,
 	)
 	return i, err
@@ -45,14 +45,14 @@ func (q *Queries) ConsumeOidcConnectionLoginCode(ctx context.Context, codeHash s
 const consumeOidcConnectionState = `-- name: ConsumeOidcConnectionState :one
 DELETE FROM auth.oauth_states
 WHERE state_hash = $1 AND kind = 'oidc_connection'
-  AND tenant_id = $2::uuid AND connection_id = $3::uuid
+  AND organization_id = $2::uuid AND connection_id = $3::uuid
 RETURNING code_verifier, nonce_hash::text AS nonce_hash, redirect_uri, expires_at, return_to
 `
 
 type ConsumeOidcConnectionStateParams struct {
-	StateHash    string
-	TenantID     uuid.UUID
-	ConnectionID uuid.UUID
+	StateHash      string
+	OrganizationID uuid.UUID
+	ConnectionID   uuid.UUID
 }
 
 type ConsumeOidcConnectionStateRow struct {
@@ -66,7 +66,7 @@ type ConsumeOidcConnectionStateRow struct {
 // ConsumeOidcConnectionState spends a state the connection issued as it reads
 // it, so a callback carrying it succeeds at most once.
 func (q *Queries) ConsumeOidcConnectionState(ctx context.Context, arg ConsumeOidcConnectionStateParams) (ConsumeOidcConnectionStateRow, error) {
-	row := q.db.QueryRow(ctx, consumeOidcConnectionState, arg.StateHash, arg.TenantID, arg.ConnectionID)
+	row := q.db.QueryRow(ctx, consumeOidcConnectionState, arg.StateHash, arg.OrganizationID, arg.ConnectionID)
 	var i ConsumeOidcConnectionStateRow
 	err := row.Scan(
 		&i.CodeVerifier,
@@ -79,16 +79,16 @@ func (q *Queries) ConsumeOidcConnectionState(ctx context.Context, arg ConsumeOid
 }
 
 const deleteOidcConnection = `-- name: DeleteOidcConnection :execrows
-DELETE FROM tenant.oidc_connections WHERE id = $1 AND tenant_id = $2
+DELETE FROM organization.oidc_connections WHERE id = $1 AND organization_id = $2
 `
 
 type DeleteOidcConnectionParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) DeleteOidcConnection(ctx context.Context, arg DeleteOidcConnectionParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteOidcConnection, arg.ID, arg.TenantID)
+	result, err := q.db.Exec(ctx, deleteOidcConnection, arg.ID, arg.OrganizationID)
 	if err != nil {
 		return 0, err
 	}
@@ -98,15 +98,15 @@ func (q *Queries) DeleteOidcConnection(ctx context.Context, arg DeleteOidcConnec
 const getExternalIdentityUser = `-- name: GetExternalIdentityUser :one
 
 SELECT user_id FROM account.external_identities
-WHERE tenant_id = $1 AND provider = $2 AND connection_id = $3::uuid
+WHERE organization_id = $1 AND provider = $2 AND connection_id = $3::uuid
   AND subject = $4
 `
 
 type GetExternalIdentityUserParams struct {
-	TenantID     uuid.UUID
-	Provider     string
-	ConnectionID uuid.UUID
-	Subject      string
+	OrganizationID uuid.UUID
+	Provider       string
+	ConnectionID   uuid.UUID
+	Subject        string
 }
 
 // ==========================================================================
@@ -114,7 +114,7 @@ type GetExternalIdentityUserParams struct {
 // ==========================================================================
 func (q *Queries) GetExternalIdentityUser(ctx context.Context, arg GetExternalIdentityUserParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, getExternalIdentityUser,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Provider,
 		arg.ConnectionID,
 		arg.Subject,
@@ -125,20 +125,20 @@ func (q *Queries) GetExternalIdentityUser(ctx context.Context, arg GetExternalId
 }
 
 const getOidcConnection = `-- name: GetOidcConnection :one
-SELECT id, tenant_id, name, issuer, discovery_url, client_id, scopes, allowed_idp_tenant_ids,
+SELECT id, organization_id, name, issuer, discovery_url, client_id, scopes, allowed_idp_tenant_ids,
        email_claim, name_claim, given_name_claim, family_name_claim, groups_claim, status,
        created_at, updated_at, last_login_at
-FROM tenant.oidc_connections WHERE id = $1 AND tenant_id = $2
+FROM organization.oidc_connections WHERE id = $1 AND organization_id = $2
 `
 
 type GetOidcConnectionParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type GetOidcConnectionRow struct {
 	ID                  uuid.UUID
-	TenantID            uuid.UUID
+	OrganizationID      uuid.UUID
 	Name                string
 	Issuer              string
 	DiscoveryUrl        string
@@ -157,11 +157,11 @@ type GetOidcConnectionRow struct {
 }
 
 func (q *Queries) GetOidcConnection(ctx context.Context, arg GetOidcConnectionParams) (GetOidcConnectionRow, error) {
-	row := q.db.QueryRow(ctx, getOidcConnection, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, getOidcConnection, arg.ID, arg.OrganizationID)
 	var i GetOidcConnectionRow
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Name,
 		&i.Issuer,
 		&i.DiscoveryUrl,
@@ -182,15 +182,15 @@ func (q *Queries) GetOidcConnection(ctx context.Context, arg GetOidcConnectionPa
 }
 
 const getOidcConnectionForSignIn = `-- name: GetOidcConnectionForSignIn :one
-SELECT id, tenant_id, name, issuer, discovery_url, client_id, scopes, allowed_idp_tenant_ids,
+SELECT id, organization_id, name, issuer, discovery_url, client_id, scopes, allowed_idp_tenant_ids,
        email_claim, name_claim, given_name_claim, family_name_claim, groups_claim, status,
        created_at, updated_at, last_login_at, client_secret_ct, client_secret_nonce
-FROM tenant.oidc_connections WHERE id = $1
+FROM organization.oidc_connections WHERE id = $1
 `
 
 type GetOidcConnectionForSignInRow struct {
 	ID                  uuid.UUID
-	TenantID            uuid.UUID
+	OrganizationID      uuid.UUID
 	Name                string
 	Issuer              string
 	DiscoveryUrl        string
@@ -212,13 +212,13 @@ type GetOidcConnectionForSignInRow struct {
 
 // GetOidcConnectionForSignIn loads a connection and its sealed secret by ID
 // alone: the public sign-in endpoints name it in the path, and it names the
-// organisation.
+// organization.
 func (q *Queries) GetOidcConnectionForSignIn(ctx context.Context, id uuid.UUID) (GetOidcConnectionForSignInRow, error) {
 	row := q.db.QueryRow(ctx, getOidcConnectionForSignIn, id)
 	var i GetOidcConnectionForSignInRow
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Name,
 		&i.Issuer,
 		&i.DiscoveryUrl,
@@ -254,21 +254,21 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (uuid.UUID, 
 const insertOidcConnection = `-- name: InsertOidcConnection :one
 
 
-INSERT INTO tenant.oidc_connections
-    (id, tenant_id, name, issuer, discovery_url, client_id, client_secret_ct, client_secret_nonce,
+INSERT INTO organization.oidc_connections
+    (id, organization_id, name, issuer, discovery_url, client_id, client_secret_ct, client_secret_nonce,
      scopes, allowed_idp_tenant_ids, email_claim, name_claim, given_name_claim, family_name_claim,
      groups_claim, status)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
         $9, $10, $11, $12, $13, $14,
         $15, $16)
-RETURNING id, tenant_id, name, issuer, discovery_url, client_id, scopes, allowed_idp_tenant_ids,
+RETURNING id, organization_id, name, issuer, discovery_url, client_id, scopes, allowed_idp_tenant_ids,
           email_claim, name_claim, given_name_claim, family_name_claim, groups_claim, status,
           created_at, updated_at, last_login_at
 `
 
 type InsertOidcConnectionParams struct {
 	ID                  uuid.UUID
-	TenantID            uuid.UUID
+	OrganizationID      uuid.UUID
 	Name                string
 	Issuer              string
 	DiscoveryUrl        string
@@ -287,7 +287,7 @@ type InsertOidcConnectionParams struct {
 
 type InsertOidcConnectionRow struct {
 	ID                  uuid.UUID
-	TenantID            uuid.UUID
+	OrganizationID      uuid.UUID
 	Name                string
 	Issuer              string
 	DiscoveryUrl        string
@@ -305,7 +305,7 @@ type InsertOidcConnectionRow struct {
 	LastLoginAt         pgtype.Timestamptz
 }
 
-// Queries for the oidcsso domain: an organisation's own OpenID Connect
+// Queries for the oidcsso domain: an organization's own OpenID Connect
 // identity providers, their sign-in states and one-time login codes, and the
 // identities they link. All queries are STATIC.
 // ==========================================================================
@@ -314,7 +314,7 @@ type InsertOidcConnectionRow struct {
 func (q *Queries) InsertOidcConnection(ctx context.Context, arg InsertOidcConnectionParams) (InsertOidcConnectionRow, error) {
 	row := q.db.QueryRow(ctx, insertOidcConnection,
 		arg.ID,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Name,
 		arg.Issuer,
 		arg.DiscoveryUrl,
@@ -333,7 +333,7 @@ func (q *Queries) InsertOidcConnection(ctx context.Context, arg InsertOidcConnec
 	var i InsertOidcConnectionRow
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Name,
 		&i.Issuer,
 		&i.DiscoveryUrl,
@@ -354,23 +354,23 @@ func (q *Queries) InsertOidcConnection(ctx context.Context, arg InsertOidcConnec
 }
 
 const insertOidcConnectionLoginCode = `-- name: InsertOidcConnectionLoginCode :exec
-INSERT INTO auth.login_codes (code_hash, kind, user_id, tenant_id, connection_id, expires_at)
+INSERT INTO auth.login_codes (code_hash, kind, user_id, organization_id, connection_id, expires_at)
 VALUES ($1, 'oidc_connection', $2, $3::uuid, $4::uuid, $5)
 `
 
 type InsertOidcConnectionLoginCodeParams struct {
-	CodeHash     string
-	UserID       uuid.UUID
-	TenantID     uuid.UUID
-	ConnectionID uuid.UUID
-	ExpiresAt    time.Time
+	CodeHash       string
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
+	ConnectionID   uuid.UUID
+	ExpiresAt      time.Time
 }
 
 func (q *Queries) InsertOidcConnectionLoginCode(ctx context.Context, arg InsertOidcConnectionLoginCodeParams) error {
 	_, err := q.db.Exec(ctx, insertOidcConnectionLoginCode,
 		arg.CodeHash,
 		arg.UserID,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.ConnectionID,
 		arg.ExpiresAt,
 	)
@@ -380,20 +380,20 @@ func (q *Queries) InsertOidcConnectionLoginCode(ctx context.Context, arg InsertO
 const insertOidcConnectionState = `-- name: InsertOidcConnectionState :exec
 
 INSERT INTO auth.oauth_states
-    (state_hash, kind, tenant_id, connection_id, code_verifier, nonce_hash, redirect_uri, expires_at, return_to)
+    (state_hash, kind, organization_id, connection_id, code_verifier, nonce_hash, redirect_uri, expires_at, return_to)
 VALUES ($1, 'oidc_connection', $2::uuid, $3::uuid, $4, $5::text,
         $6, $7, $8)
 `
 
 type InsertOidcConnectionStateParams struct {
-	StateHash    string
-	TenantID     uuid.UUID
-	ConnectionID uuid.UUID
-	CodeVerifier string
-	NonceHash    string
-	RedirectUri  string
-	ExpiresAt    time.Time
-	ReturnTo     *string
+	StateHash      string
+	OrganizationID uuid.UUID
+	ConnectionID   uuid.UUID
+	CodeVerifier   string
+	NonceHash      string
+	RedirectUri    string
+	ExpiresAt      time.Time
+	ReturnTo       *string
 }
 
 // ==========================================================================
@@ -402,7 +402,7 @@ type InsertOidcConnectionStateParams struct {
 func (q *Queries) InsertOidcConnectionState(ctx context.Context, arg InsertOidcConnectionStateParams) error {
 	_, err := q.db.Exec(ctx, insertOidcConnectionState,
 		arg.StateHash,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.ConnectionID,
 		arg.CodeVerifier,
 		arg.NonceHash,
@@ -414,39 +414,39 @@ func (q *Queries) InsertOidcConnectionState(ctx context.Context, arg InsertOidcC
 }
 
 const insertUserWithEmail = `-- name: InsertUserWithEmail :one
-INSERT INTO account.users (tenant_id, email, email_verified_at, display_name, status)
+INSERT INTO account.users (organization_id, email, email_verified_at, display_name, status)
 VALUES ($1, $2, NOW(), $3, 'active')
 RETURNING id
 `
 
 type InsertUserWithEmailParams struct {
-	TenantID    pgtype.UUID
-	Email       string
-	DisplayName *string
+	OrganizationID pgtype.UUID
+	Email          string
+	DisplayName    *string
 }
 
 func (q *Queries) InsertUserWithEmail(ctx context.Context, arg InsertUserWithEmailParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, insertUserWithEmail, arg.TenantID, arg.Email, arg.DisplayName)
+	row := q.db.QueryRow(ctx, insertUserWithEmail, arg.OrganizationID, arg.Email, arg.DisplayName)
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
 }
 
 const linkExternalIdentity = `-- name: LinkExternalIdentity :exec
-INSERT INTO account.external_identities (user_id, tenant_id, provider, connection_id, subject, email, metadata)
+INSERT INTO account.external_identities (user_id, organization_id, provider, connection_id, subject, email, metadata)
 VALUES ($1, $2, $3, $4::uuid, $5, $6, $7)
-ON CONFLICT (tenant_id, provider, connection_id, subject)
+ON CONFLICT (organization_id, provider, connection_id, subject)
 DO UPDATE SET email = EXCLUDED.email, metadata = EXCLUDED.metadata
 `
 
 type LinkExternalIdentityParams struct {
-	UserID       uuid.UUID
-	TenantID     uuid.UUID
-	Provider     string
-	ConnectionID uuid.UUID
-	Subject      string
-	Email        *string
-	Metadata     []byte
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
+	Provider       string
+	ConnectionID   uuid.UUID
+	Subject        string
+	Email          *string
+	Metadata       []byte
 }
 
 // LinkExternalIdentity links the subject to the connection, or refreshes the
@@ -454,7 +454,7 @@ type LinkExternalIdentityParams struct {
 func (q *Queries) LinkExternalIdentity(ctx context.Context, arg LinkExternalIdentityParams) error {
 	_, err := q.db.Exec(ctx, linkExternalIdentity,
 		arg.UserID,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Provider,
 		arg.ConnectionID,
 		arg.Subject,
@@ -465,16 +465,16 @@ func (q *Queries) LinkExternalIdentity(ctx context.Context, arg LinkExternalIden
 }
 
 const listOidcConnections = `-- name: ListOidcConnections :many
-SELECT id, tenant_id, name, issuer, discovery_url, client_id, scopes, allowed_idp_tenant_ids,
+SELECT id, organization_id, name, issuer, discovery_url, client_id, scopes, allowed_idp_tenant_ids,
        email_claim, name_claim, given_name_claim, family_name_claim, groups_claim, status,
        created_at, updated_at, last_login_at
-FROM tenant.oidc_connections WHERE tenant_id = $1 ORDER BY created_at DESC
+FROM organization.oidc_connections WHERE organization_id = $1 ORDER BY created_at DESC
 LIMIT 1001
 `
 
 type ListOidcConnectionsRow struct {
 	ID                  uuid.UUID
-	TenantID            uuid.UUID
+	OrganizationID      uuid.UUID
 	Name                string
 	Issuer              string
 	DiscoveryUrl        string
@@ -493,8 +493,8 @@ type ListOidcConnectionsRow struct {
 }
 
 // At most paging.MaxListItems+1 rows: the API truncates the rest.
-func (q *Queries) ListOidcConnections(ctx context.Context, tenantID uuid.UUID) ([]ListOidcConnectionsRow, error) {
-	rows, err := q.db.Query(ctx, listOidcConnections, tenantID)
+func (q *Queries) ListOidcConnections(ctx context.Context, organizationID uuid.UUID) ([]ListOidcConnectionsRow, error) {
+	rows, err := q.db.Query(ctx, listOidcConnections, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -504,7 +504,7 @@ func (q *Queries) ListOidcConnections(ctx context.Context, tenantID uuid.UUID) (
 		var i ListOidcConnectionsRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.Name,
 			&i.Issuer,
 			&i.DiscoveryUrl,
@@ -532,35 +532,35 @@ func (q *Queries) ListOidcConnections(ctx context.Context, tenantID uuid.UUID) (
 }
 
 const markOidcConnectionLoginCodeUsed = `-- name: MarkOidcConnectionLoginCodeUsed :exec
-UPDATE auth.login_codes SET used_at = NOW() WHERE code_hash = $1 AND tenant_id = $2::uuid
+UPDATE auth.login_codes SET used_at = NOW() WHERE code_hash = $1 AND organization_id = $2::uuid
 `
 
 type MarkOidcConnectionLoginCodeUsedParams struct {
-	CodeHash string
-	TenantID uuid.UUID
+	CodeHash       string
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) MarkOidcConnectionLoginCodeUsed(ctx context.Context, arg MarkOidcConnectionLoginCodeUsedParams) error {
-	_, err := q.db.Exec(ctx, markOidcConnectionLoginCodeUsed, arg.CodeHash, arg.TenantID)
+	_, err := q.db.Exec(ctx, markOidcConnectionLoginCodeUsed, arg.CodeHash, arg.OrganizationID)
 	return err
 }
 
 const touchOidcConnectionLastLogin = `-- name: TouchOidcConnectionLastLogin :exec
-UPDATE tenant.oidc_connections SET last_login_at = NOW() WHERE id = $1 AND tenant_id = $2
+UPDATE organization.oidc_connections SET last_login_at = NOW() WHERE id = $1 AND organization_id = $2
 `
 
 type TouchOidcConnectionLastLoginParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) TouchOidcConnectionLastLogin(ctx context.Context, arg TouchOidcConnectionLastLoginParams) error {
-	_, err := q.db.Exec(ctx, touchOidcConnectionLastLogin, arg.ID, arg.TenantID)
+	_, err := q.db.Exec(ctx, touchOidcConnectionLastLogin, arg.ID, arg.OrganizationID)
 	return err
 }
 
 const updateOidcConnection = `-- name: UpdateOidcConnection :one
-UPDATE tenant.oidc_connections SET
+UPDATE organization.oidc_connections SET
     name                   = COALESCE($1, name),
     issuer                 = COALESCE($2, issuer),
     discovery_url          = COALESCE($3, discovery_url),
@@ -576,8 +576,8 @@ UPDATE tenant.oidc_connections SET
     groups_claim           = COALESCE($13, groups_claim),
     status                 = COALESCE($14, status),
     updated_at             = NOW()
-WHERE id = $15 AND tenant_id = $16
-RETURNING id, tenant_id, name, issuer, discovery_url, client_id, scopes, allowed_idp_tenant_ids,
+WHERE id = $15 AND organization_id = $16
+RETURNING id, organization_id, name, issuer, discovery_url, client_id, scopes, allowed_idp_tenant_ids,
           email_claim, name_claim, given_name_claim, family_name_claim, groups_claim, status,
           created_at, updated_at, last_login_at
 `
@@ -598,12 +598,12 @@ type UpdateOidcConnectionParams struct {
 	GroupsClaim         *string
 	Status              *string
 	ID                  uuid.UUID
-	TenantID            uuid.UUID
+	OrganizationID      uuid.UUID
 }
 
 type UpdateOidcConnectionRow struct {
 	ID                  uuid.UUID
-	TenantID            uuid.UUID
+	OrganizationID      uuid.UUID
 	Name                string
 	Issuer              string
 	DiscoveryUrl        string
@@ -638,12 +638,12 @@ func (q *Queries) UpdateOidcConnection(ctx context.Context, arg UpdateOidcConnec
 		arg.GroupsClaim,
 		arg.Status,
 		arg.ID,
-		arg.TenantID,
+		arg.OrganizationID,
 	)
 	var i UpdateOidcConnectionRow
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Name,
 		&i.Issuer,
 		&i.DiscoveryUrl,

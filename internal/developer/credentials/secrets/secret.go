@@ -1,4 +1,4 @@
-// Package secret is a per-tenant secrets vault. Values are encrypted at rest with
+// Package secret is a per-organization secrets vault. Values are encrypted at rest with
 // AES-256-GCM and never returned except via an explicit, audited reveal. The
 // data-encryption key comes from a KeyProvider (keyprovider.go), unwrapped once at
 // startup — independent of the JWT secret and swappable for a KMS-backed provider.
@@ -63,7 +63,7 @@ const (
 	maxRotationDays = 3650
 )
 
-// Service stores each tenant's secrets, encrypted at rest.
+// Service stores each organization's secrets, encrypted at rest.
 type Service struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
@@ -79,12 +79,12 @@ func NewService(pool *pgxpool.Pool, box *envelope.Cipher) *Service {
 // Pool returns the connection pool, for handlers that run their own transaction.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
-func (s *Service) encrypt(tenantID uuid.UUID, name, plaintext string) (ciphertext, nonce []byte, err error) {
-	return s.box.Seal(tenantID, "secret", name, []byte(plaintext))
+func (s *Service) encrypt(organizationID uuid.UUID, name, plaintext string) (ciphertext, nonce []byte, err error) {
+	return s.box.Seal(organizationID, "secret", name, []byte(plaintext))
 }
 
-func (s *Service) decrypt(tenantID uuid.UUID, name string, ciphertext, nonce []byte) (string, error) {
-	pt, err := s.box.Open(tenantID, "secret", name, ciphertext, nonce)
+func (s *Service) decrypt(organizationID uuid.UUID, name string, ciphertext, nonce []byte) (string, error) {
+	pt, err := s.box.Open(organizationID, "secret", name, ciphertext, nonce)
 	if err != nil {
 		return "", err
 	}
@@ -133,9 +133,9 @@ func toSecret(row dbgen.ListSecretsRow, now time.Time) *Secret {
 	return sec
 }
 
-// get returns one of the tenant's secrets.
-func (s *Service) get(ctx context.Context, tenantID, id uuid.UUID) (*Secret, error) {
-	row, err := s.q.GetSecret(ctx, dbgen.GetSecretParams{ID: id, TenantID: tenantID})
+// get returns one of the organization's secrets.
+func (s *Service) get(ctx context.Context, organizationID, id uuid.UUID) (*Secret, error) {
+	row, err := s.q.GetSecret(ctx, dbgen.GetSecretParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrSecretNotFound
 	}
@@ -145,9 +145,9 @@ func (s *Service) get(ctx context.Context, tenantID, id uuid.UUID) (*Secret, err
 	return toSecret(dbgen.ListSecretsRow(row), time.Now()), nil
 }
 
-// List returns the tenant's secrets.
-func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Secret, error) {
-	rows, err := s.q.ListSecrets(ctx, tenantID)
+// List returns the organization's secrets.
+func (s *Service) List(ctx context.Context, organizationID uuid.UUID) ([]Secret, error) {
+	rows, err := s.q.ListSecrets(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -170,9 +170,9 @@ func checkRotationDays(days *int32) error {
 	return nil
 }
 
-// Create stores a secret for the tenant, with an optional rotation interval
+// Create stores a secret for the organization, with an optional rotation interval
 // in days.
-func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, name, scope, value string, rotationDays *int32) (*Secret, error) {
+func (s *Service) Create(ctx context.Context, organizationID uuid.UUID, name, scope, value string, rotationDays *int32) (*Secret, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || value == "" {
 		return nil, errs.ErrSecretNameValueRequired
@@ -180,12 +180,12 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, name, scope, v
 	if err := checkRotationDays(rotationDays); err != nil {
 		return nil, err
 	}
-	ct, nonce, err := s.encrypt(tenantID, name, value)
+	ct, nonce, err := s.encrypt(organizationID, name, value)
 	if err != nil {
 		return nil, err
 	}
 	id, err := s.q.CreateSecret(ctx, dbgen.CreateSecretParams{
-		TenantID:             tenantID,
+		OrganizationID:       organizationID,
 		Name:                 name,
 		Scope:                scope,
 		Ciphertext:           ct,
@@ -194,12 +194,12 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, name, scope, v
 		RotationIntervalDays: rotationDays,
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "secrets_tenant_id_name_key") || strings.Contains(err.Error(), "duplicate") {
+		if strings.Contains(err.Error(), "secrets_organization_id_name_key") || strings.Contains(err.Error(), "duplicate") {
 			return nil, errs.ErrSecretNameExists
 		}
 		return nil, err
 	}
-	return s.get(ctx, tenantID, id)
+	return s.get(ctx, organizationID, id)
 }
 
 // UpdateInput is what Update takes. RotationIntervalDays left out keeps the
@@ -226,7 +226,7 @@ func (o *OptionalDays) UnmarshalJSON(b []byte) error {
 // Update changes a secret's value, scope and/or rotation interval; a field
 // left out is kept. It is hand-written because sqlc reads the NOT NULL scope
 // column as a plain string, so nil couldn't mean "no change".
-func (s *Service) Update(ctx context.Context, tenantID, id uuid.UUID, in UpdateInput) (*Secret, error) {
+func (s *Service) Update(ctx context.Context, organizationID, id uuid.UUID, in UpdateInput) (*Secret, error) {
 	if err := checkRotationDays(in.RotationIntervalDays.Days); err != nil {
 		return nil, err
 	}
@@ -235,51 +235,51 @@ func (s *Service) Update(ctx context.Context, tenantID, id uuid.UUID, in UpdateI
 		if *in.Value == "" {
 			return nil, errs.ErrSecretValueRequired
 		}
-		current, err := s.q.RevealSecret(ctx, dbgen.RevealSecretParams{ID: id, TenantID: tenantID})
+		current, err := s.q.RevealSecret(ctx, dbgen.RevealSecretParams{ID: id, OrganizationID: organizationID})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errs.ErrSecretNotFound
 		}
 		if err != nil {
 			return nil, err
 		}
-		ct, nonce, err := s.encrypt(tenantID, current.Name, *in.Value)
+		ct, nonce, err := s.encrypt(organizationID, current.Name, *in.Value)
 		if err != nil {
 			return nil, err
 		}
 		tag, err := s.pool.Exec(ctx, `
-			UPDATE tenant.secrets
+			UPDATE organization.secrets
 			SET ciphertext = $3, nonce = $4, last4 = $5, scope = COALESCE($6, scope),
 			    rotation_interval_days = CASE WHEN $7 THEN $8 ELSE rotation_interval_days END,
 			    value_changed_at = NOW(), updated_at = NOW()
-			WHERE id = $1 AND tenant_id = $2`,
-			id, tenantID, ct, nonce, hint(*in.Value), in.Scope, in.RotationIntervalDays.Set, in.RotationIntervalDays.Days)
-		return s.updated(ctx, tenantID, id, tag, err)
+			WHERE id = $1 AND organization_id = $2`,
+			id, organizationID, ct, nonce, hint(*in.Value), in.Scope, in.RotationIntervalDays.Set, in.RotationIntervalDays.Days)
+		return s.updated(ctx, organizationID, id, tag, err)
 	}
 	tag, err := s.pool.Exec(ctx, `
-		UPDATE tenant.secrets
+		UPDATE organization.secrets
 		SET scope = COALESCE($3, scope),
 		    rotation_interval_days = CASE WHEN $4 THEN $5 ELSE rotation_interval_days END,
 		    updated_at = NOW()
-		WHERE id = $1 AND tenant_id = $2`,
-		id, tenantID, in.Scope, in.RotationIntervalDays.Set, in.RotationIntervalDays.Days)
-	return s.updated(ctx, tenantID, id, tag, err)
+		WHERE id = $1 AND organization_id = $2`,
+		id, organizationID, in.Scope, in.RotationIntervalDays.Set, in.RotationIntervalDays.Days)
+	return s.updated(ctx, organizationID, id, tag, err)
 }
 
 // updated returns the secret an UPDATE changed; no row is ErrSecretNotFound.
-func (s *Service) updated(ctx context.Context, tenantID, id uuid.UUID, tag pgconn.CommandTag, err error) (*Secret, error) {
+func (s *Service) updated(ctx context.Context, organizationID, id uuid.UUID, tag pgconn.CommandTag, err error) (*Secret, error) {
 	if err != nil {
 		return nil, err
 	}
 	if tag.RowsAffected() == 0 {
 		return nil, errs.ErrSecretNotFound
 	}
-	return s.get(ctx, tenantID, id)
+	return s.get(ctx, organizationID, id)
 }
 
 // MarkRevealed records on the secret who revealed it, in the transaction that
 // audits the reveal: a person, or a machine credential by its id.
-func (s *Service) MarkRevealed(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, userID *uuid.UUID, credential string) error {
-	arg := dbgen.MarkSecretRevealedParams{ID: id, TenantID: tenantID}
+func (s *Service) MarkRevealed(ctx context.Context, tx pgx.Tx, organizationID, id uuid.UUID, userID *uuid.UUID, credential string) error {
+	arg := dbgen.MarkSecretRevealedParams{ID: id, OrganizationID: organizationID}
 	if credential != "" {
 		arg.Credential = &credential
 	} else if userID != nil {
@@ -288,16 +288,16 @@ func (s *Service) MarkRevealed(ctx context.Context, tx pgx.Tx, tenantID, id uuid
 	return s.q.WithTx(tx).MarkSecretRevealed(ctx, arg)
 }
 
-// Reveal returns one of the tenant's secrets: its name and decrypted value.
-func (s *Service) Reveal(ctx context.Context, tenantID, id uuid.UUID) (string, string, error) {
-	row, err := s.q.RevealSecret(ctx, dbgen.RevealSecretParams{ID: id, TenantID: tenantID})
+// Reveal returns one of the organization's secrets: its name and decrypted value.
+func (s *Service) Reveal(ctx context.Context, organizationID, id uuid.UUID) (string, string, error) {
+	row, err := s.q.RevealSecret(ctx, dbgen.RevealSecretParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", errs.ErrSecretNotFound
 	}
 	if err != nil {
 		return "", "", err
 	}
-	val, err := s.decrypt(tenantID, row.Name, row.Ciphertext, row.Nonce)
+	val, err := s.decrypt(organizationID, row.Name, row.Ciphertext, row.Nonce)
 	if err != nil {
 		return "", "", errs.ErrSecretDecryptFailed.Wrap(err)
 	}
@@ -306,24 +306,24 @@ func (s *Service) Reveal(ctx context.Context, tenantID, id uuid.UUID) (string, s
 
 // GetByName decrypts a secret by its name (for agent/credential retrieval via
 // the scoped vault endpoint). Returns the secret id (for auditing) + value.
-func (s *Service) GetByName(ctx context.Context, tenantID uuid.UUID, name string) (uuid.UUID, string, error) {
-	row, err := s.q.GetSecretByName(ctx, dbgen.GetSecretByNameParams{TenantID: tenantID, Name: name})
+func (s *Service) GetByName(ctx context.Context, organizationID uuid.UUID, name string) (uuid.UUID, string, error) {
+	row, err := s.q.GetSecretByName(ctx, dbgen.GetSecretByNameParams{OrganizationID: organizationID, Name: name})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, "", errs.ErrSecretNotFound
 	}
 	if err != nil {
 		return uuid.Nil, "", err
 	}
-	val, err := s.decrypt(tenantID, name, row.Ciphertext, row.Nonce)
+	val, err := s.decrypt(organizationID, name, row.Ciphertext, row.Nonce)
 	if err != nil {
 		return uuid.Nil, "", errs.ErrSecretDecryptFailed.Wrap(err)
 	}
 	return row.ID, val, nil
 }
 
-// Delete removes one of the tenant's secrets.
-func (s *Service) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
-	n, err := s.q.DeleteSecret(ctx, dbgen.DeleteSecretParams{ID: id, TenantID: tenantID})
+// Delete removes one of the organization's secrets.
+func (s *Service) Delete(ctx context.Context, organizationID, id uuid.UUID) error {
+	n, err := s.q.DeleteSecret(ctx, dbgen.DeleteSecretParams{ID: id, OrganizationID: organizationID})
 	if err != nil {
 		return err
 	}
@@ -350,7 +350,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/vault/{name}", h.vaultGet)
 }
 
-func (h *Handler) recordAudit(ctx context.Context, tx pgx.Tx, r *http.Request, tenantID, resourceID uuid.UUID, action string, meta map[string]any) error {
+func (h *Handler) recordAudit(ctx context.Context, tx pgx.Tx, r *http.Request, organizationID, resourceID uuid.UUID, action string, meta map[string]any) error {
 	var actorID *uuid.UUID
 	actorType := "system"
 	if p := httpx.PrincipalFromCtx(ctx); p != nil {
@@ -367,10 +367,10 @@ func (h *Handler) recordAudit(ctx context.Context, tx pgx.Tx, r *http.Request, t
 			meta["credential_id"] = p.Subject
 		}
 	}
-	tid := tenantID
+	tid := organizationID
 	rid := resourceID
 	return audit.Record(ctx, tx, audit.Event{
-		TenantID: &tid, ActorUserID: actorID, ActorType: actorType,
+		OrganizationID: &tid, ActorUserID: actorID, ActorType: actorType,
 		Action: action, ResourceType: "secret", ResourceID: &rid,
 		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
 		Metadata: meta,
@@ -378,12 +378,12 @@ func (h *Handler) recordAudit(ctx context.Context, tx pgx.Tx, r *http.Request, t
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out, err := h.Service.List(r.Context(), tenantID)
+	out, err := h.Service.List(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -392,7 +392,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -408,7 +408,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	sec, err := h.Service.Create(ctx, tenantID, in.Name, in.Scope, in.Value, in.RotationIntervalDays)
+	sec, err := h.Service.Create(ctx, organizationID, in.Name, in.Scope, in.Value, in.RotationIntervalDays)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -416,7 +416,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	tx, err := h.Service.Pool().Begin(ctx)
 	if err == nil {
 		defer tx.Rollback(ctx)
-		if aerr := h.recordAudit(ctx, tx, r, tenantID, sec.ID, "secret.created", map[string]any{"name": sec.Name}); aerr == nil {
+		if aerr := h.recordAudit(ctx, tx, r, organizationID, sec.ID, "secret.created", map[string]any{"name": sec.Name}); aerr == nil {
 			_ = tx.Commit(ctx)
 		}
 	}
@@ -424,7 +424,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -440,7 +440,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	sec, err := h.Service.Update(ctx, tenantID, id, in)
+	sec, err := h.Service.Update(ctx, organizationID, id, in)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -452,7 +452,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		if in.Value != nil {
 			action = "secret.rotated"
 		}
-		if aerr := h.recordAudit(ctx, tx, r, tenantID, sec.ID, action, map[string]any{"name": sec.Name}); aerr == nil {
+		if aerr := h.recordAudit(ctx, tx, r, organizationID, sec.ID, action, map[string]any{"name": sec.Name}); aerr == nil {
 			_ = tx.Commit(ctx)
 		}
 	}
@@ -460,7 +460,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) reveal(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -471,7 +471,7 @@ func (h *Handler) reveal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	name, value, err := h.Service.Reveal(ctx, tenantID, id)
+	name, value, err := h.Service.Reveal(ctx, organizationID, id)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -489,9 +489,9 @@ func (h *Handler) reveal(w http.ResponseWriter, r *http.Request) {
 				credential = p.Subject
 			}
 		}
-		aerr := h.recordAudit(ctx, tx, r, tenantID, id, "secret.revealed", map[string]any{"name": name})
+		aerr := h.recordAudit(ctx, tx, r, organizationID, id, "secret.revealed", map[string]any{"name": name})
 		if aerr == nil {
-			aerr = h.Service.MarkRevealed(ctx, tx, tenantID, id, userID, credential)
+			aerr = h.Service.MarkRevealed(ctx, tx, organizationID, id, userID, credential)
 		}
 		if aerr == nil {
 			_ = tx.Commit(ctx)
@@ -513,7 +513,7 @@ func hasVaultScope(scopes []string, name string) bool {
 }
 
 // vaultGet returns a vault secret's value to a scoped principal (e.g. an AI
-// agent fetching a credential at runtime). Tenant comes from the caller's
+// agent fetching a credential at runtime). Organization comes from the caller's
 // token; access requires a matching vault scope and is always audited.
 func (h *Handler) vaultGet(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFromCtx(r.Context())
@@ -521,7 +521,7 @@ func (h *Handler) vaultGet(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
 		return
 	}
-	tenantID, err := httpx.RequireTenant(r)
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -532,7 +532,7 @@ func (h *Handler) vaultGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	id, value, err := h.Service.GetByName(ctx, tenantID, name)
+	id, value, err := h.Service.GetByName(ctx, organizationID, name)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -541,7 +541,7 @@ func (h *Handler) vaultGet(w http.ResponseWriter, r *http.Request) {
 	tx, terr := h.Service.Pool().Begin(ctx)
 	if terr == nil {
 		defer tx.Rollback(ctx)
-		if aerr := h.recordAudit(ctx, tx, r, tenantID, id, "vault.accessed", map[string]any{"name": name}); aerr == nil {
+		if aerr := h.recordAudit(ctx, tx, r, organizationID, id, "vault.accessed", map[string]any{"name": name}); aerr == nil {
 			_ = tx.Commit(ctx)
 		}
 	}
@@ -549,7 +549,7 @@ func (h *Handler) vaultGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -560,14 +560,14 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	if err := h.Service.Delete(ctx, tenantID, id); err != nil {
+	if err := h.Service.Delete(ctx, organizationID, id); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	tx, err := h.Service.Pool().Begin(ctx)
 	if err == nil {
 		defer tx.Rollback(ctx)
-		if aerr := h.recordAudit(ctx, tx, r, tenantID, id, "secret.deleted", nil); aerr == nil {
+		if aerr := h.recordAudit(ctx, tx, r, organizationID, id, "secret.deleted", nil); aerr == nil {
 			_ = tx.Commit(ctx)
 		}
 	}

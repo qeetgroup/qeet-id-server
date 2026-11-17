@@ -12,21 +12,21 @@ import (
 )
 
 const deleteIPRule = `-- name: DeleteIPRule :one
-DELETE FROM tenant.ip_rules WHERE id = $1 AND tenant_id = $2
-RETURNING id, tenant_id, cidr, label, action, created_at
+DELETE FROM organization.ip_rules WHERE id = $1 AND organization_id = $2
+RETURNING id, organization_id, cidr, label, action, created_at
 `
 
 type DeleteIPRuleParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
-func (q *Queries) DeleteIPRule(ctx context.Context, arg DeleteIPRuleParams) (TenantIpRule, error) {
-	row := q.db.QueryRow(ctx, deleteIPRule, arg.ID, arg.TenantID)
-	var i TenantIpRule
+func (q *Queries) DeleteIPRule(ctx context.Context, arg DeleteIPRuleParams) (OrganizationIpRule, error) {
+	row := q.db.QueryRow(ctx, deleteIPRule, arg.ID, arg.OrganizationID)
+	var i OrganizationIpRule
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Cidr,
 		&i.Label,
 		&i.Action,
@@ -36,40 +36,40 @@ func (q *Queries) DeleteIPRule(ctx context.Context, arg DeleteIPRuleParams) (Ten
 }
 
 const getIPRulesEnabled = `-- name: GetIPRulesEnabled :one
-SELECT enabled FROM tenant.ip_rules_config WHERE tenant_id = $1
+SELECT enabled FROM organization.ip_rules_config WHERE organization_id = $1
 `
 
-func (q *Queries) GetIPRulesEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error) {
-	row := q.db.QueryRow(ctx, getIPRulesEnabled, tenantID)
+func (q *Queries) GetIPRulesEnabled(ctx context.Context, organizationID uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, getIPRulesEnabled, organizationID)
 	var enabled bool
 	err := row.Scan(&enabled)
 	return enabled, err
 }
 
 const insertIPRule = `-- name: InsertIPRule :one
-INSERT INTO tenant.ip_rules (tenant_id, cidr, label, action)
+INSERT INTO organization.ip_rules (organization_id, cidr, label, action)
 VALUES ($1, $2, $3, $4)
-RETURNING id, tenant_id, cidr, label, action, created_at
+RETURNING id, organization_id, cidr, label, action, created_at
 `
 
 type InsertIPRuleParams struct {
-	TenantID uuid.UUID
-	Cidr     string
-	Label    string
-	Action   string
+	OrganizationID uuid.UUID
+	Cidr           string
+	Label          string
+	Action         string
 }
 
-func (q *Queries) InsertIPRule(ctx context.Context, arg InsertIPRuleParams) (TenantIpRule, error) {
+func (q *Queries) InsertIPRule(ctx context.Context, arg InsertIPRuleParams) (OrganizationIpRule, error) {
 	row := q.db.QueryRow(ctx, insertIPRule,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Cidr,
 		arg.Label,
 		arg.Action,
 	)
-	var i TenantIpRule
+	var i OrganizationIpRule
 	err := row.Scan(
 		&i.ID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Cidr,
 		&i.Label,
 		&i.Action,
@@ -80,24 +80,24 @@ func (q *Queries) InsertIPRule(ctx context.Context, arg InsertIPRuleParams) (Ten
 
 const listIPRules = `-- name: ListIPRules :many
 
-SELECT id, tenant_id, cidr, label, action, created_at
-FROM tenant.ip_rules WHERE tenant_id = $1 ORDER BY action, created_at
+SELECT id, organization_id, cidr, label, action, created_at
+FROM organization.ip_rules WHERE organization_id = $1 ORDER BY action, created_at
 `
 
 // Queries for the risk/ipallow domain.
 // All queries are static and compiled by sqlc into ./dbgen.
-func (q *Queries) ListIPRules(ctx context.Context, tenantID uuid.UUID) ([]TenantIpRule, error) {
-	rows, err := q.db.Query(ctx, listIPRules, tenantID)
+func (q *Queries) ListIPRules(ctx context.Context, organizationID uuid.UUID) ([]OrganizationIpRule, error) {
+	rows, err := q.db.Query(ctx, listIPRules, organizationID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []TenantIpRule{}
+	items := []OrganizationIpRule{}
 	for rows.Next() {
-		var i TenantIpRule
+		var i OrganizationIpRule
 		if err := rows.Scan(
 			&i.ID,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.Cidr,
 			&i.Label,
 			&i.Action,
@@ -114,17 +114,17 @@ func (q *Queries) ListIPRules(ctx context.Context, tenantID uuid.UUID) ([]Tenant
 }
 
 const setIPRulesEnabled = `-- name: SetIPRulesEnabled :exec
-INSERT INTO tenant.ip_rules_config (tenant_id, enabled, updated_at)
+INSERT INTO organization.ip_rules_config (organization_id, enabled, updated_at)
 VALUES ($1, $2, NOW())
-ON CONFLICT (tenant_id) DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = NOW()
+ON CONFLICT (organization_id) DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = NOW()
 `
 
 type SetIPRulesEnabledParams struct {
-	TenantID uuid.UUID
-	Enabled  bool
+	OrganizationID uuid.UUID
+	Enabled        bool
 }
 
 func (q *Queries) SetIPRulesEnabled(ctx context.Context, arg SetIPRulesEnabledParams) error {
-	_, err := q.db.Exec(ctx, setIPRulesEnabled, arg.TenantID, arg.Enabled)
+	_, err := q.db.Exec(ctx, setIPRulesEnabled, arg.OrganizationID, arg.Enabled)
 	return err
 }

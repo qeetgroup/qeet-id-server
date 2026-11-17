@@ -15,13 +15,13 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// Principal is a signed-in user acting in tenant.
-func Principal(userID, tenant uuid.UUID) *httpx.Principal {
-	return &httpx.Principal{UserID: &userID, TenantID: &tenant, ActorType: "user", Subject: userID.String()}
+// Principal is a signed-in user acting in organization.
+func Principal(userID, organization uuid.UUID) *httpx.Principal {
+	return &httpx.Principal{UserID: &userID, OrganizationID: &organization, ActorType: "user", Subject: userID.String()}
 }
 
 // Serve returns a router that runs the routes mount registers as p, behind the
-// same tenant-scope guard and row-level security scope as the authenticated
+// same organization-scope guard and row-level security scope as the authenticated
 // /v1 routes.
 func Serve(p *httpx.Principal, mount func(chi.Router)) http.Handler {
 	r := chi.NewRouter()
@@ -31,7 +31,7 @@ func Serve(p *httpx.Principal, mount func(chi.Router)) http.Handler {
 				next.ServeHTTP(w, req.WithContext(httpx.WithPrincipal(req.Context(), p)))
 			})
 		})
-		r.Use(httpx.EnforceTenantScope)
+		r.Use(httpx.EnforceOrganizationScope)
 		r.Use(httpx.ScopeDatabase)
 		mount(r)
 	})

@@ -11,14 +11,14 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// TestOrganisationRoutesAreScoped checks that row-level security scopes the
-// organisation-administration routes to the caller's organisation, and leaves a
-// person's own routes, which act across their organisations, unscoped.
-func TestOrganisationRoutesAreScoped(t *testing.T) {
-	tenant, user := uuid.New(), uuid.New()
+// TestOrganizationRoutesAreScoped checks that row-level security scopes the
+// organization-administration routes to the caller's organization, and leaves a
+// person's own routes, which act across their organizations, unscoped.
+func TestOrganizationRoutesAreScoped(t *testing.T) {
+	organization, user := uuid.New(), uuid.New()
 	var scoped bool
 	var scopedTo uuid.UUID
-	h := scopeOrganisationRoutes(RoutePolicies())(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+	h := scopeOrganizationRoutes(RoutePolicies())(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		scopedTo, scoped = postgres.ScopedTo(r.Context())
 	}))
 	for _, tc := range []struct {
@@ -26,8 +26,8 @@ func TestOrganisationRoutesAreScoped(t *testing.T) {
 		want         bool
 	}{
 		{http.MethodGet, "/v1/users", true},
-		{http.MethodGet, "/v1/tenants/" + tenant.String() + "/webhooks", true},
-		{http.MethodPatch, "/v1/tenants/" + tenant.String(), true},
+		{http.MethodGet, "/v1/tenants/" + organization.String() + "/webhooks", true},
+		{http.MethodPatch, "/v1/tenants/" + organization.String(), true},
 		{http.MethodPost, "/v1/auth/switch-tenant", false},
 		{http.MethodPost, "/v1/auth/password", false},
 		{http.MethodGet, "/v1/me/organizations", false},
@@ -36,9 +36,9 @@ func TestOrganisationRoutesAreScoped(t *testing.T) {
 		{http.MethodPost, "/v1/tenants", false},
 	} {
 		r := httptest.NewRequest(tc.method, tc.path, nil)
-		r = r.WithContext(httpx.WithPrincipal(r.Context(), &httpx.Principal{ActorType: "user", UserID: &user, TenantID: &tenant}))
+		r = r.WithContext(httpx.WithPrincipal(r.Context(), &httpx.Principal{ActorType: "user", UserID: &user, OrganizationID: &organization}))
 		h.ServeHTTP(httptest.NewRecorder(), r)
-		if scoped != tc.want || (scoped && scopedTo != tenant) {
+		if scoped != tc.want || (scoped && scopedTo != organization) {
 			t.Errorf("%s %s: scoped %v to %s, want scoped %v", tc.method, tc.path, scoped, scopedTo, tc.want)
 		}
 	}

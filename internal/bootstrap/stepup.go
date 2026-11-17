@@ -134,7 +134,7 @@ func StepUpRoutes() map[string]mfa.StepUpRule {
 		"POST /v1/tenants/{tenantID}/admin-portal/links",
 		"DELETE /v1/tenants/{tenantID}/admin-portal/links/{id}",
 
-		// Email the organisation sends in its name.
+		// Email the organization sends in its name.
 		"PUT /v1/tenants/{tenantID}/email-templates/{key}",
 		"DELETE /v1/tenants/{tenantID}/email-templates/{key}",
 
@@ -175,7 +175,7 @@ func StepUpRoutes() map[string]mfa.StepUpRule {
 		"POST /v1/users/{id}/reactivate",
 		"POST /v1/users/{id}/restore",
 
-		// Destroying an organisation or an account. Updating the organisation
+		// Destroying an organization or an account. Updating the organization
 		// can suspend it, which locks every member out.
 		"DELETE /v1/tenants/{tenantID}",
 		"PATCH /v1/tenants/{tenantID}",

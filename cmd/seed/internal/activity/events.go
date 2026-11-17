@@ -11,7 +11,7 @@ import (
 
 // planTrips sends every test account, and a few others, abroad for a few
 // days in the last month, so their session lists show a sign-in from another
-// country. Organisations that allow only their office network are skipped:
+// country. Organizations that allow only their office network are skipped:
 // sign-in from abroad is refused there.
 func (h *history) planTrips() {
 	w := h.w
@@ -243,19 +243,19 @@ func (h *history) apply(ev accountEvent) {
 			meta["kept_session_id"] = kept.id
 			action = "auth.password_changed"
 		}
-		h.audit(t, audit.Event{TenantID: ptr(kept.org.ID), ActorUserID: ptr(p.ID), ActorType: "user", Action: action,
+		h.audit(t, audit.Event{OrganizationID: ptr(kept.org.ID), ActorUserID: ptr(p.ID), ActorType: "user", Action: action,
 			ResourceType: "user", ResourceID: ptr(p.ID), IP: kept.dev.IP, UserAgent: kept.dev.UserAgent,
 			RequestID: h.requestID(), Metadata: meta})
 	case "password_reset":
 		dev := h.device(o, p, t, "desktop")
 		asked := t.Add(-jitter(w, 2, 5))
-		h.audit(asked, audit.Event{TenantID: ptr(home), ActorType: "anonymous", Action: "auth.password_reset_requested",
+		h.audit(asked, audit.Event{OrganizationID: ptr(home), ActorType: "anonymous", Action: "auth.password_reset_requested",
 			ResourceType: "user", ResourceID: ptr(p.ID), IP: dev.IP, UserAgent: dev.UserAgent, RequestID: h.requestID(),
 			Metadata: map[string]any{"app": ""}})
 		h.mail(nil, p.Email, "", asked.Add(time.Second))
 		meta := counts(endLive(nil))
 		meta["sessions_revoked"] = true
-		h.audit(t, audit.Event{TenantID: ptr(home), ActorUserID: ptr(p.ID), ActorType: "system", Action: "auth.password_reset_confirmed",
+		h.audit(t, audit.Event{OrganizationID: ptr(home), ActorUserID: ptr(p.ID), ActorType: "system", Action: "auth.password_reset_confirmed",
 			ResourceType: "user", ResourceID: ptr(p.ID), IP: dev.IP, UserAgent: dev.UserAgent, RequestID: h.requestID(), Metadata: meta})
 		after := t.Add(jitter(w, 1, 3))
 		s := h.newSession(o, p, after, "desktop", h.duration(p, after, "desktop", true))
@@ -265,11 +265,11 @@ func (h *history) apply(ev accountEvent) {
 	case "password_set":
 		meta := counts(endLive(nil))
 		meta["sessions_revoked"] = true
-		h.audit(t, audit.Event{TenantID: ptr(o.ID), ActorUserID: ptr(ev.by.ID), ActorType: "user", Action: "user.password_set",
+		h.audit(t, audit.Event{OrganizationID: ptr(o.ID), ActorUserID: ptr(ev.by.ID), ActorType: "user", Action: "user.password_set",
 			ResourceType: "user", ResourceID: ptr(p.ID), IP: officeIP(ev.by), UserAgent: ev.by.Device.UserAgent,
 			RequestID: h.requestID(), Metadata: meta})
 	case "admin_revoked":
-		h.audit(t, audit.Event{TenantID: ptr(o.ID), ActorUserID: ptr(ev.by.ID), ActorType: "user", Action: "session.admin_revoked_all",
+		h.audit(t, audit.Event{OrganizationID: ptr(o.ID), ActorUserID: ptr(ev.by.ID), ActorType: "user", Action: "session.admin_revoked_all",
 			ResourceType: "user", ResourceID: ptr(p.ID), IP: officeIP(ev.by), UserAgent: ev.by.Device.UserAgent,
 			RequestID: h.requestID(), Metadata: counts(endLive(nil))})
 	}
@@ -292,7 +292,7 @@ func officeIP(p *world.Person) string {
 // failure records a failed sign-in by p (nil: an address with no account)
 // to o, as RecordSignInFailure does.
 func (h *history) failure(o *world.Org, p *world.Person, dev world.Device, t time.Time, method, reason string) {
-	e := audit.Event{TenantID: ptr(o.ID), ActorType: "anonymous", Action: "auth.sign_in_failed", IP: dev.IP, UserAgent: dev.UserAgent,
+	e := audit.Event{OrganizationID: ptr(o.ID), ActorType: "anonymous", Action: "auth.sign_in_failed", IP: dev.IP, UserAgent: dev.UserAgent,
 		Metadata: map[string]any{"method": method, "reason": reason, "network": dev.IP}}
 	if p != nil {
 		e.ActorUserID, e.ActorType, e.ResourceType, e.ResourceID = ptr(p.ID), "user", "user", ptr(p.ID)
@@ -314,7 +314,7 @@ func (h *history) endAtDeparture(p *world.Person) {
 }
 
 // limitLive leaves p one live session per browser, signed out of the older
-// before signing in again, and keeps them within their organisation's limit
+// before signing in again, and keeps them within their organization's limit
 // on simultaneous sessions (four in any case): the oldest were ended when a
 // newer one pushed past it.
 func (h *history) limitLive(p *world.Person) {
@@ -363,7 +363,7 @@ func (h *history) markExpiries(p *world.Person) {
 				reason = "max_age"
 			}
 			s.ended = at
-			h.audit(at, audit.Event{TenantID: ptr(s.org.ID), ActorUserID: ptr(p.ID), ActorType: "system",
+			h.audit(at, audit.Event{OrganizationID: ptr(s.org.ID), ActorUserID: ptr(p.ID), ActorType: "system",
 				Action: "auth.session_expired", ResourceType: "session", ResourceID: ptr(s.id),
 				IP: next.dev.IP, UserAgent: next.dev.UserAgent,
 				Metadata: map[string]any{"session_id": s.id, "reason": reason}})

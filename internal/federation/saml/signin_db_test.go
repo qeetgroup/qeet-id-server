@@ -2,7 +2,7 @@
 
 package saml
 
-// Database tests for SP-initiated SAML sign-in: an organisation's external IdP,
+// Database tests for SP-initiated SAML sign-in: an organization's external IdP,
 // built here with its own signing key, answers the AuthnRequest /saml/login
 // sends it, and /saml/acs and /saml/exchange turn its assertion into a session.
 
@@ -32,7 +32,7 @@ const (
 	callbackStart = testAppBase + "/sso/callback#saml_code=" // an accepted assertion's redirect, before the code
 )
 
-// upstreamIdP is an organisation's external identity provider, signing what it
+// upstreamIdP is an organization's external identity provider, signing what it
 // issues with its own key.
 type upstreamIdP struct {
 	entityID string
@@ -215,16 +215,16 @@ func newSPSide(t *testing.T) *spSide {
 	return &spSide{auth: authSvc, handler: h, public: public}
 }
 
-// asAdmin returns tenant's routes as a new admin of it.
-func (s *spSide) asAdmin(t *testing.T, tenant uuid.UUID) http.Handler {
+// asAdmin returns organization's routes as a new admin of it.
+func (s *spSide) asAdmin(t *testing.T, organization uuid.UUID) http.Handler {
 	t.Helper()
-	return dbtest.Serve(dbtest.Principal(dbtest.User(t, tenant, tenant).ID, tenant), s.handler.Mount)
+	return dbtest.Serve(dbtest.Principal(dbtest.User(t, organization, organization).ID, organization), s.handler.Mount)
 }
 
-// connect has tenant's admin create an active connection to idp over HTTP.
-func (s *spSide) connect(t *testing.T, tenant uuid.UUID, idp *upstreamIdP) Connection {
+// connect has organization's admin create an active connection to idp over HTTP.
+func (s *spSide) connect(t *testing.T, organization uuid.UUID, idp *upstreamIdP) Connection {
 	t.Helper()
-	rec := dbtest.Do(t, s.asAdmin(t, tenant), http.MethodPost, "/tenants/"+tenant.String()+"/saml", map[string]any{
+	rec := dbtest.Do(t, s.asAdmin(t, organization), http.MethodPost, "/tenants/"+organization.String()+"/saml", map[string]any{
 		"name": "Okta", "idp_entity_id": idp.entityID, "idp_sso_url": upstreamSSO, "idp_certificate": idp.certPEM,
 		"email_attribute": "email", "name_attribute": "name", "status": "active",
 	})
@@ -304,36 +304,36 @@ func verify(t *testing.T, userID uuid.UUID) {
 	}
 }
 
-// sessionTenant returns the organisation a session was issued in.
-func sessionTenant(t *testing.T, sessionID uuid.UUID) uuid.UUID {
+// sessionOrganization returns the organization a session was issued in.
+func sessionOrganization(t *testing.T, sessionID uuid.UUID) uuid.UUID {
 	t.Helper()
-	var tenant uuid.UUID
-	if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `SELECT tenant_id FROM auth.sessions WHERE id = $1`, sessionID).Scan(&tenant); err != nil {
+	var organization uuid.UUID
+	if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `SELECT organization_id FROM auth.sessions WHERE id = $1`, sessionID).Scan(&organization); err != nil {
 		t.Fatalf("session %s: %v", sessionID, err)
 	}
-	return tenant
+	return organization
 }
 
 // TestSAMLSignIn checks that the IdP's signed answer to this connection's
-// AuthnRequest buys a session in the organisation through a one-time code,
+// AuthnRequest buys a session in the organization through a one-time code,
 // that the answer and the code are each accepted once, that the subject stays
 // linked to its person, and that a newcomer is provisioned into the
-// organisation only while its domain has just-in-time provisioning on, which an
+// organization only while its domain has just-in-time provisioning on, which an
 // existing member's adoption doesn't need.
 func TestSAMLSignIn(t *testing.T) {
 	sp := newSPSide(t)
 	idp := newUpstreamIdP(t)
-	tenant := dbtest.Tenant(t)
-	conn := sp.connect(t, tenant, idp)
-	domain := dbtest.Domain(t, tenant)
+	organization := dbtest.Organization(t)
+	conn := sp.connect(t, organization, idp)
+	domain := dbtest.Domain(t, organization)
 	setJIT := func(on bool) {
 		t.Helper()
-		if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `UPDATE tenant.domains SET jit_enabled = $2 WHERE tenant_id = $1`, tenant, on); err != nil {
+		if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `UPDATE organization.domains SET jit_enabled = $2 WHERE organization_id = $1`, organization, on); err != nil {
 			t.Fatal(err)
 		}
 	}
 	setJIT(false)
-	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, tenant, tenant)
+	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, organization, organization)
 	verify(t, member.ID)
 
 	meta := dbtest.Do(t, sp.public, http.MethodGet, "/saml/metadata/"+conn.ID.String(), nil)
@@ -357,7 +357,7 @@ func TestSAMLSignIn(t *testing.T) {
 	rec := sp.exchange(t, code)
 	var pair auth.TokenPair
 	dbtest.Decode(t, rec, &pair)
-	if rec.Code != http.StatusOK || pair.UserID != member.ID || pair.AccessToken == "" || sessionTenant(t, pair.SessionID) != tenant {
+	if rec.Code != http.StatusOK || pair.UserID != member.ID || pair.AccessToken == "" || sessionOrganization(t, pair.SessionID) != organization {
 		t.Fatalf("exchange: %d %s; want a session for the member in the organisation", rec.Code, rec.Body.String())
 	}
 	if rec := sp.exchange(t, code); !strings.Contains(rec.Body.String(), errs.CodeSAMLLoginCodeUsed) {
@@ -366,11 +366,11 @@ func TestSAMLSignIn(t *testing.T) {
 	if rec := sp.post(t, conn.ID, response); !strings.Contains(rec.Body.String(), errs.CodeSAMLReplayDetected) {
 		t.Errorf("the same answer posted again: %d %s, want %s", rec.Code, rec.Body.String(), errs.CodeSAMLReplayDetected)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE user_id = $1 AND tenant_id = $2 AND provider = 'saml' AND connection_id = $3 AND subject = 'okta|asha'`, member.ID, tenant, conn.ID); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE user_id = $1 AND organization_id = $2 AND provider = 'saml' AND connection_id = $3 AND subject = 'okta|asha'`, member.ID, organization, conn.ID); n != 1 {
 		t.Errorf("%d identities linked for the member to the connection, want 1", n)
 	}
 	var got Connection
-	dbtest.Decode(t, dbtest.Do(t, sp.asAdmin(t, tenant), http.MethodGet, "/tenants/"+tenant.String()+"/saml/"+conn.ID.String(), nil), &got)
+	dbtest.Decode(t, dbtest.Do(t, sp.asAdmin(t, organization), http.MethodGet, "/tenants/"+organization.String()+"/saml/"+conn.ID.String(), nil), &got)
 	if got.LastLoginAt == nil {
 		t.Error("the connection's last sign-in was not recorded")
 	}
@@ -390,10 +390,10 @@ func TestSAMLSignIn(t *testing.T) {
 	}
 	setJIT(true)
 	joined := sp.signIn(t, idp, conn.ID, answer{nameID: "okta|newcomer", email: newcomer})
-	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND tenant_id = $2 AND email = $3 AND email_verified_at IS NOT NULL AND display_name = 'Asha Rao'`, joined.UserID, tenant, newcomer); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND organization_id = $2 AND email = $3 AND email_verified_at IS NOT NULL AND display_name = 'Asha Rao'`, joined.UserID, organization, newcomer); n != 1 {
 		t.Errorf("the newcomer was not provisioned into the organisation, verified and named")
 	}
-	if sessionTenant(t, joined.SessionID) != tenant {
+	if sessionOrganization(t, joined.SessionID) != organization {
 		t.Errorf("the newcomer's session is not in the organisation")
 	}
 
@@ -419,17 +419,17 @@ func TestSAMLSignIn(t *testing.T) {
 func TestSAMLIdPInitiatedSignIn(t *testing.T) {
 	sp := newSPSide(t)
 	idp := newUpstreamIdP(t)
-	tenant := dbtest.Tenant(t)
-	conn := sp.connect(t, tenant, idp)
-	member := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, tenant), tenant, tenant)
+	organization := dbtest.Organization(t)
+	conn := sp.connect(t, organization, idp)
+	member := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, organization), organization, organization)
 	verify(t, member.ID)
 
 	unsolicited := idp.respond(t, conn.ID, answer{email: member.Email, signResponse: true})
 	if rec := sp.post(t, conn.ID, unsolicited); !strings.Contains(rec.Body.String(), errs.CodeSAMLRequestCorrelation) {
 		t.Errorf("an unsolicited assertion without the opt-in: %d %s, want %s", rec.Code, rec.Body.String(), errs.CodeSAMLRequestCorrelation)
 	}
-	admin := sp.asAdmin(t, tenant)
-	if rec := dbtest.Do(t, admin, http.MethodPatch, "/tenants/"+tenant.String()+"/saml/"+conn.ID.String(), map[string]any{"allow_idp_initiated": true}); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"allow_idp_initiated":true`) {
+	admin := sp.asAdmin(t, organization)
+	if rec := dbtest.Do(t, admin, http.MethodPatch, "/tenants/"+organization.String()+"/saml/"+conn.ID.String(), map[string]any{"allow_idp_initiated": true}); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"allow_idp_initiated":true`) {
 		t.Fatalf("opt in: %d %s", rec.Code, rec.Body.String())
 	}
 	rec := sp.exchange(t, loginCode(t, sp.post(t, conn.ID, unsolicited)))
@@ -450,11 +450,11 @@ func TestReplayIDOutlivesItsAssertion(t *testing.T) {
 	ctx := dbtest.Context(t)
 	sp := newSPSide(t)
 	idp := newUpstreamIdP(t)
-	tenant := dbtest.Tenant(t)
-	conn := sp.connect(t, tenant, idp)
-	member := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, tenant), tenant, tenant)
+	organization := dbtest.Organization(t)
+	conn := sp.connect(t, organization, idp)
+	member := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, organization), organization, organization)
 	verify(t, member.ID)
-	if rec := dbtest.Do(t, sp.asAdmin(t, tenant), http.MethodPatch, "/tenants/"+tenant.String()+"/saml/"+conn.ID.String(), map[string]any{"allow_idp_initiated": true}); rec.Code != http.StatusOK {
+	if rec := dbtest.Do(t, sp.asAdmin(t, organization), http.MethodPatch, "/tenants/"+organization.String()+"/saml/"+conn.ID.String(), map[string]any{"allow_idp_initiated": true}); rec.Code != http.StatusOK {
 		t.Fatalf("opt in: %d %s", rec.Code, rec.Body.String())
 	}
 	longLived := idp.respond(t, conn.ID, answer{email: member.Email, signResponse: true, notOnOrAfter: time.Now().UTC().Add(72 * time.Hour)})
@@ -481,15 +481,15 @@ func TestSAMLAssertionRefused(t *testing.T) {
 	ctx := dbtest.Context(t)
 	sp := newSPSide(t)
 	idp, impostor := newUpstreamIdP(t), newUpstreamIdP(t)
-	tenant := dbtest.Tenant(t)
-	conn := sp.connect(t, tenant, idp)
-	member := dbtest.User(t, tenant, tenant)
-	victim := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	conn := sp.connect(t, organization, idp)
+	member := dbtest.User(t, organization, organization)
+	victim := dbtest.User(t, organization, organization)
 	verify(t, member.ID)
 	verify(t, victim.ID)
 	now := time.Now().UTC()
 	issued := func() int {
-		return dbtest.Count(t, `SELECT count(*) FROM auth.login_codes WHERE tenant_id = $1`, tenant)
+		return dbtest.Count(t, `SELECT count(*) FROM auth.login_codes WHERE organization_id = $1`, organization)
 	}
 
 	renameSubject := func(el *etree.Element) {
@@ -577,7 +577,7 @@ func TestSAMLAssertionRefused(t *testing.T) {
 	}
 
 	pending := sp.begin(t, conn.ID)
-	if rec := dbtest.Do(t, sp.asAdmin(t, tenant), http.MethodPatch, "/tenants/"+tenant.String()+"/saml/"+conn.ID.String(), map[string]any{"status": "disabled"}); rec.Code != http.StatusOK {
+	if rec := dbtest.Do(t, sp.asAdmin(t, organization), http.MethodPatch, "/tenants/"+organization.String()+"/saml/"+conn.ID.String(), map[string]any{"status": "disabled"}); rec.Code != http.StatusOK {
 		t.Fatalf("disable: %d %s", rec.Code, rec.Body.String())
 	}
 	if rec := dbtest.Do(t, sp.public, http.MethodGet, "/saml/login/"+conn.ID.String(), nil); !strings.Contains(rec.Body.String(), errs.CodeSAMLConnectionDisabled) {
@@ -589,12 +589,12 @@ func TestSAMLAssertionRefused(t *testing.T) {
 
 	// A connection stored before today's checks: a plain-http SSO URL, then an
 	// unreadable certificate.
-	broken := sp.connect(t, tenant, idp)
+	broken := sp.connect(t, organization, idp)
 	pending = sp.begin(t, broken.ID)
 	for _, change := range []string{
-		`UPDATE tenant.saml_connections SET idp_sso_url = 'http://idp.example.test/sso' WHERE id = $1`,
-		`WITH sso AS (UPDATE tenant.saml_connections SET idp_sso_url = '` + upstreamSSO + `' WHERE id = $1)
-		 UPDATE tenant.saml_connection_certificates SET certificate = 'not a certificate' WHERE connection_id = $1`,
+		`UPDATE organization.saml_connections SET idp_sso_url = 'http://idp.example.test/sso' WHERE id = $1`,
+		`WITH sso AS (UPDATE organization.saml_connections SET idp_sso_url = '` + upstreamSSO + `' WHERE id = $1)
+		 UPDATE organization.saml_connection_certificates SET certificate = 'not a certificate' WHERE connection_id = $1`,
 	} {
 		if _, err := dbtest.Pool(t).Exec(ctx, change, broken.ID); err != nil {
 			t.Fatal(err)
@@ -611,17 +611,17 @@ func TestSAMLAssertionRefused(t *testing.T) {
 	}
 }
 
-// TestSAMLSignInAcrossOrganisations checks that one organisation's connection
-// accepts neither an answer meant for another organisation's connection to the
+// TestSAMLSignInAcrossOrganizations checks that one organization's connection
+// accepts neither an answer meant for another organization's connection to the
 // same IdP, nor one to a request that connection made, and adopts no account
-// of another organisation; and that a suspended person buys no session.
-func TestSAMLSignInAcrossOrganisations(t *testing.T) {
+// of another organization; and that a suspended person buys no session.
+func TestSAMLSignInAcrossOrganizations(t *testing.T) {
 	ctx := dbtest.Context(t)
 	sp := newSPSide(t)
 	idp := newUpstreamIdP(t)
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	conn, otherConn := sp.connect(t, tenant, idp), sp.connect(t, other, idp)
-	member := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, tenant), tenant, tenant)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	conn, otherConn := sp.connect(t, organization, idp), sp.connect(t, other, idp)
+	member := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, organization), organization, organization)
 	outsider := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, other), other, other)
 	verify(t, member.ID)
 	verify(t, outsider.ID)
@@ -660,18 +660,18 @@ func TestSAMLSignInAcrossOrganisations(t *testing.T) {
 	}
 }
 
-// TestSAMLNamesAnotherOrganisationsAccount checks that the refusal of another
-// organisation's account on the organisation's own domain says why.
-func TestSAMLNamesAnotherOrganisationsAccount(t *testing.T) {
+// TestSAMLNamesAnotherOrganizationsAccount checks that the refusal of another
+// organization's account on the organization's own domain says why.
+func TestSAMLNamesAnotherOrganizationsAccount(t *testing.T) {
 	sp := newSPSide(t)
 	idp := newUpstreamIdP(t)
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	conn := sp.connect(t, tenant, idp)
-	outsider := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, tenant), other, other)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	conn := sp.connect(t, organization, idp)
+	outsider := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, organization), other, other)
 	verify(t, outsider.ID)
 	rec := sp.post(t, conn.ID, idp.respond(t, conn.ID, answer{inResponseTo: sp.begin(t, conn.ID), email: outsider.Email}))
-	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeSAMLUserTenantMismatch) {
-		t.Errorf("an assertion of another organisation's account: %d %s, want 403 %s", rec.Code, rec.Body.String(), errs.CodeSAMLUserTenantMismatch)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeSAMLUserOrganizationMismatch) {
+		t.Errorf("an assertion of another organisation's account: %d %s, want 403 %s", rec.Code, rec.Body.String(), errs.CodeSAMLUserOrganizationMismatch)
 	}
 }
 
@@ -681,9 +681,9 @@ func TestSAMLNamesAnotherOrganisationsAccount(t *testing.T) {
 func TestSAMLDoesNotAdoptAnUnverifiedAccount(t *testing.T) {
 	sp := newSPSide(t)
 	idp := newUpstreamIdP(t)
-	tenant := dbtest.Tenant(t)
-	conn := sp.connect(t, tenant, idp)
-	squatted := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, tenant), tenant)
+	organization := dbtest.Organization(t)
+	conn := sp.connect(t, organization, idp)
+	squatted := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, organization), organization)
 	dbtest.SetPassword(t, squatted.ID, "squatter-password")
 	rec := sp.post(t, conn.ID, idp.respond(t, conn.ID, answer{inResponseTo: sp.begin(t, conn.ID), nameID: "okta|real-owner", email: squatted.Email}))
 	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeSAMLAccountUnverified) {
@@ -695,24 +695,24 @@ func TestSAMLDoesNotAdoptAnUnverifiedAccount(t *testing.T) {
 }
 
 // TestSAMLLinkSignsInOnlyHomeAccounts checks that a subject linked to an
-// account signs it in only while this organisation is the account's home, so a
+// account signs it in only while this organization is the account's home, so a
 // link made before the account moved, or for a guest, signs nobody in.
 func TestSAMLLinkSignsInOnlyHomeAccounts(t *testing.T) {
 	ctx := dbtest.Context(t)
 	sp := newSPSide(t)
 	idp := newUpstreamIdP(t)
-	tenant, home := dbtest.Tenant(t), dbtest.Tenant(t)
-	conn := sp.connect(t, tenant, idp)
-	guest := dbtest.User(t, home, home, tenant)
+	organization, home := dbtest.Organization(t), dbtest.Organization(t)
+	conn := sp.connect(t, organization, idp)
+	guest := dbtest.User(t, home, home, organization)
 	verify(t, guest.ID)
 	if _, err := dbtest.Pool(t).Exec(ctx, `
-		INSERT INTO account.external_identities (user_id, tenant_id, provider, connection_id, subject, email) VALUES ($1, $2, 'saml', $3, 'okta|guest', $4)
-	`, guest.ID, tenant, conn.ID, guest.Email); err != nil {
+		INSERT INTO account.external_identities (user_id, organization_id, provider, connection_id, subject, email) VALUES ($1, $2, 'saml', $3, 'okta|guest', $4)
+	`, guest.ID, organization, conn.ID, guest.Email); err != nil {
 		t.Fatal(err)
 	}
 	rec := sp.post(t, conn.ID, idp.respond(t, conn.ID, answer{inResponseTo: sp.begin(t, conn.ID), nameID: "okta|guest", email: guest.Email}))
-	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeSAMLUserTenantMismatch) {
-		t.Errorf("a linked subject of a guest whose home is elsewhere: %d %s, want 403 %s", rec.Code, rec.Body.String(), errs.CodeSAMLUserTenantMismatch)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeSAMLUserOrganizationMismatch) {
+		t.Errorf("a linked subject of a guest whose home is elsewhere: %d %s, want 403 %s", rec.Code, rec.Body.String(), errs.CodeSAMLUserOrganizationMismatch)
 	}
 }
 
@@ -722,7 +722,7 @@ func TestSAMLLinkSignsInOnlyHomeAccounts(t *testing.T) {
 func TestSAMLSignInNeedsSSOInThePlan(t *testing.T) {
 	sp := newSPSide(t)
 	idp := newUpstreamIdP(t)
-	paid, free := dbtest.Tenant(t), dbtest.Tenant(t)
+	paid, free := dbtest.Organization(t), dbtest.Organization(t)
 	allowed := map[uuid.UUID]bool{paid: true}
 	sp.handler.Service.SetPlanGate(poolGate{pool: dbtest.Pool(t), allowed: allowed})
 
@@ -755,42 +755,42 @@ func TestSAMLSignInNeedsSSOInThePlan(t *testing.T) {
 	}
 }
 
-// TestSAMLRefusesAGuest checks that an organisation's IdP can't vouch for a
-// guest member whose home is another organisation, so its session can't be
+// TestSAMLRefusesAGuest checks that an organization's IdP can't vouch for a
+// guest member whose home is another organization, so its session can't be
 // switched into the guest's home.
 func TestSAMLRefusesAGuest(t *testing.T) {
 	sp := newSPSide(t)
 	idp := newUpstreamIdP(t)
-	tenant, home := dbtest.Tenant(t), dbtest.Tenant(t)
-	conn := sp.connect(t, tenant, idp)
-	guest := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, tenant), home, home, tenant)
+	organization, home := dbtest.Organization(t), dbtest.Organization(t)
+	conn := sp.connect(t, organization, idp)
+	guest := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, organization), home, home, organization)
 	verify(t, guest.ID)
 	rec := sp.post(t, conn.ID, idp.respond(t, conn.ID, answer{inResponseTo: sp.begin(t, conn.ID), nameID: "attacker-controlled", email: guest.Email}))
-	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeSAMLUserTenantMismatch) {
-		t.Errorf("an assertion of a guest whose home is elsewhere: %d %s, want 403 %s", rec.Code, rec.Body.String(), errs.CodeSAMLUserTenantMismatch)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeSAMLUserOrganizationMismatch) {
+		t.Errorf("an assertion of a guest whose home is elsewhere: %d %s, want 403 %s", rec.Code, rec.Body.String(), errs.CodeSAMLUserOrganizationMismatch)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE user_id = $1`, guest.ID); n != 0 {
 		t.Errorf("the guest was linked to the organisation's IdP")
 	}
 }
 
-// TestSAMLSpeaksOnlyForTheOrganisationsDomains checks that a connection adopts
-// or creates an account only on a domain its organisation has verified, or one
-// below it, and not where another organisation verified a closer domain.
-func TestSAMLSpeaksOnlyForTheOrganisationsDomains(t *testing.T) {
+// TestSAMLSpeaksOnlyForTheOrganizationsDomains checks that a connection adopts
+// or creates an account only on a domain its organization has verified, or one
+// below it, and not where another organization verified a closer domain.
+func TestSAMLSpeaksOnlyForTheOrganizationsDomains(t *testing.T) {
 	ctx := dbtest.Context(t)
 	sp := newSPSide(t)
 	idp := newUpstreamIdP(t)
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	conn := sp.connect(t, tenant, idp)
-	domain := dbtest.Domain(t, tenant)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	conn := sp.connect(t, organization, idp)
+	domain := dbtest.Domain(t, organization)
 	team := "team." + domain
 	if _, err := dbtest.Pool(t).Exec(ctx, `
-		INSERT INTO tenant.domains (tenant_id, domain, verification_token, verified_at) VALUES ($1, $2, 'test', NOW())
+		INSERT INTO organization.domains (organization_id, domain, verification_token, verified_at) VALUES ($1, $2, 'test', NOW())
 	`, other, team); err != nil {
 		t.Fatal(err)
 	}
-	member := dbtest.User(t, tenant, tenant)
+	member := dbtest.User(t, organization, organization)
 	verify(t, member.ID)
 
 	for name, email := range map[string]string{
@@ -803,28 +803,28 @@ func TestSAMLSpeaksOnlyForTheOrganisationsDomains(t *testing.T) {
 		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeSAMLEmailDomainUnverified) {
 			t.Errorf("%s: %d %s, want 403 %s", name, rec.Code, rec.Body.String(), errs.CodeSAMLEmailDomainUnverified)
 		}
-		if n := dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE tenant_id = $1 AND subject = $2`, tenant, email); n != 0 {
+		if n := dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE organization_id = $1 AND subject = $2`, organization, email); n != 0 {
 			t.Errorf("%s: the address was linked", name)
 		}
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE tenant_id = $1`, tenant); n != 2 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE organization_id = $1`, organization); n != 2 {
 		t.Errorf("%d accounts in the organisation, want its member and its admin only", n)
 	}
 
 	below := dbtest.Unique("new") + "@eu." + domain
-	if joined := sp.signIn(t, idp, conn.ID, answer{email: below}); dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND tenant_id = $2 AND email = $3`, joined.UserID, tenant, below) != 1 {
+	if joined := sp.signIn(t, idp, conn.ID, answer{email: below}); dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND organization_id = $2 AND email = $3`, joined.UserID, organization, below) != 1 {
 		t.Errorf("a newcomer below the organisation's domain was not provisioned into it")
 	}
 }
 
 // TestSAMLLinkBelongsToItsConnection checks that a subject linked through one
-// connection signs nobody in through another connection of the organisation.
+// connection signs nobody in through another connection of the organization.
 func TestSAMLLinkBelongsToItsConnection(t *testing.T) {
 	sp := newSPSide(t)
 	idp, rogue := newUpstreamIdP(t), newUpstreamIdP(t)
-	tenant := dbtest.Tenant(t)
-	conn, rogueConn := sp.connect(t, tenant, idp), sp.connect(t, tenant, rogue)
-	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+dbtest.Domain(t, tenant), tenant, tenant)
+	organization := dbtest.Organization(t)
+	conn, rogueConn := sp.connect(t, organization, idp), sp.connect(t, organization, rogue)
+	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+dbtest.Domain(t, organization), organization, organization)
 	verify(t, member.ID)
 	if got := sp.signIn(t, idp, conn.ID, answer{nameID: "okta|asha", email: member.Email}); got.UserID != member.ID {
 		t.Fatalf("signed in %s, want the member %s", got.UserID, member.ID)
@@ -837,40 +837,40 @@ func TestSAMLLinkBelongsToItsConnection(t *testing.T) {
 }
 
 // TestSAMLDoesNotAdoptAnAdministrator checks that an assertion adopts no
-// account that owns the organisation or holds an admin permission there,
+// account that owns the organization or holds an admin permission there,
 // directly or through a group, and that one linked before keeps signing in.
 func TestSAMLDoesNotAdoptAnAdministrator(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	sp := newSPSide(t)
 	idp := newUpstreamIdP(t)
-	tenant := dbtest.Tenant(t)
-	conn := sp.connect(t, tenant, idp)
-	domain := dbtest.Domain(t, tenant)
+	organization := dbtest.Organization(t)
+	conn := sp.connect(t, organization, idp)
+	domain := dbtest.Domain(t, organization)
 	account := func(roles ...uuid.UUID) dbtest.Account {
-		a := dbtest.UserAt(t, dbtest.Unique("user")+"@"+domain, tenant)
+		a := dbtest.UserAt(t, dbtest.Unique("user")+"@"+domain, organization)
 		verify(t, a.ID)
 		for _, role := range roles {
-			dbtest.Assign(t, a.ID, tenant, role)
+			dbtest.Assign(t, a.ID, organization, role)
 		}
 		return a
 	}
 	var ownerRole uuid.UUID
-	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, tenant).Scan(&ownerRole); err != nil {
+	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (organization_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, organization).Scan(&ownerRole); err != nil {
 		t.Fatal(err)
 	}
 	grouped := account()
 	if _, err := pool.Exec(ctx, `
-		WITH g AS (INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, 'Identity team') RETURNING id),
-		     r AS (INSERT INTO rbac.group_roles (group_id, tenant_id, role_id) SELECT id, $1, $3 FROM g)
-		INSERT INTO tenant.group_members (group_id, user_id, tenant_id) SELECT id, $2, $1 FROM g
-	`, tenant, grouped.ID, dbtest.Role(t, tenant, "role.write")); err != nil {
+		WITH g AS (INSERT INTO organization.groups (organization_id, name) VALUES ($1, 'Identity team') RETURNING id),
+		     r AS (INSERT INTO rbac.group_roles (group_id, organization_id, role_id) SELECT id, $1, $3 FROM g)
+		INSERT INTO organization.group_members (group_id, user_id, organization_id) SELECT id, $2, $1 FROM g
+	`, organization, grouped.ID, dbtest.Role(t, organization, "role.write")); err != nil {
 		t.Fatal(err)
 	}
 
 	for name, a := range map[string]dbtest.Account{
 		"an owner":                               account(ownerRole),
-		"an account holding connection.write":    account(dbtest.Role(t, tenant, "user.read", "connection.write")),
+		"an account holding connection.write":    account(dbtest.Role(t, organization, "user.read", "connection.write")),
 		"a member of a group holding role.write": grouped,
 	} {
 		rec := sp.post(t, conn.ID, idp.respond(t, conn.ID, answer{inResponseTo: sp.begin(t, conn.ID), email: a.Email}))
@@ -882,11 +882,11 @@ func TestSAMLDoesNotAdoptAnAdministrator(t *testing.T) {
 		}
 	}
 
-	reader := account(dbtest.Role(t, tenant, "user.read", "audit.read"))
+	reader := account(dbtest.Role(t, organization, "user.read", "audit.read"))
 	if got := sp.signIn(t, idp, conn.ID, answer{email: reader.Email}); got.UserID != reader.ID {
 		t.Errorf("an account holding only read permissions: signed in %s, want %s", got.UserID, reader.ID)
 	}
-	dbtest.Assign(t, reader.ID, tenant, dbtest.Role(t, tenant, "user.write"))
+	dbtest.Assign(t, reader.ID, organization, dbtest.Role(t, organization, "user.write"))
 	if got := sp.signIn(t, idp, conn.ID, answer{email: reader.Email}); got.UserID != reader.ID {
 		t.Errorf("an administrator linked before: signed in %s, want %s", got.UserID, reader.ID)
 	}
@@ -898,12 +898,12 @@ func TestSAMLDraftConnectionSignsNobodyIn(t *testing.T) {
 	ctx := dbtest.Context(t)
 	sp := newSPSide(t)
 	idp := newUpstreamIdP(t)
-	tenant := dbtest.Tenant(t)
-	conn := sp.connect(t, tenant, idp)
-	member := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, tenant), tenant, tenant)
+	organization := dbtest.Organization(t)
+	conn := sp.connect(t, organization, idp)
+	member := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, organization), organization, organization)
 	verify(t, member.ID)
 	pending := sp.begin(t, conn.ID)
-	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE tenant.saml_connections SET status = 'draft' WHERE id = $1`, conn.ID); err != nil {
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE organization.saml_connections SET status = 'draft' WHERE id = $1`, conn.ID); err != nil {
 		t.Fatal(err)
 	}
 	if rec := dbtest.Do(t, sp.public, http.MethodGet, "/saml/login/"+conn.ID.String(), nil); !strings.Contains(rec.Body.String(), errs.CodeSAMLConnectionDraft) {
@@ -921,19 +921,19 @@ func TestSAMLCodeOfAConnectionTurnedOffDoesNotExchange(t *testing.T) {
 	ctx := dbtest.Context(t)
 	sp := newSPSide(t)
 	idp := newUpstreamIdP(t)
-	tenant := dbtest.Tenant(t)
-	member := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, tenant), tenant, tenant)
+	organization := dbtest.Organization(t)
+	member := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, organization), organization, organization)
 	verify(t, member.ID)
 	code := func(conn Connection) string {
 		t.Helper()
 		return loginCode(t, sp.post(t, conn.ID, idp.respond(t, conn.ID, answer{inResponseTo: sp.begin(t, conn.ID), email: member.Email})))
 	}
 	for _, tc := range []struct{ change, want string }{
-		{`UPDATE tenant.saml_connections SET status = 'disabled' WHERE id = $1`, errs.CodeSAMLConnectionDisabled},
-		{`UPDATE tenant.saml_connections SET status = 'draft' WHERE id = $1`, errs.CodeSAMLConnectionDraft},
-		{`DELETE FROM tenant.saml_connections WHERE id = $1`, errs.CodeSAMLLoginCodeInvalid},
+		{`UPDATE organization.saml_connections SET status = 'disabled' WHERE id = $1`, errs.CodeSAMLConnectionDisabled},
+		{`UPDATE organization.saml_connections SET status = 'draft' WHERE id = $1`, errs.CodeSAMLConnectionDraft},
+		{`DELETE FROM organization.saml_connections WHERE id = $1`, errs.CodeSAMLLoginCodeInvalid},
 	} {
-		conn := sp.connect(t, tenant, idp)
+		conn := sp.connect(t, organization, idp)
 		exchange, session := code(conn), code(conn)
 		if _, err := dbtest.Pool(t).Exec(ctx, tc.change, conn.ID); err != nil {
 			t.Fatal(err)
@@ -953,9 +953,9 @@ func TestSAMLCodeOfAConnectionTurnedOffDoesNotExchange(t *testing.T) {
 func TestSAMLAnswerCompletesOnlyInTheBrowserThatAsked(t *testing.T) {
 	sp := newSPSide(t)
 	idp := newUpstreamIdP(t)
-	tenant := dbtest.Tenant(t)
-	conn := sp.connect(t, tenant, idp)
-	attacker := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, tenant), tenant, tenant)
+	organization := dbtest.Organization(t)
+	conn := sp.connect(t, organization, idp)
+	attacker := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, organization), organization, organization)
 	verify(t, attacker.ID)
 	response := idp.respond(t, conn.ID, answer{inResponseTo: sp.begin(t, conn.ID), email: attacker.Email})
 
@@ -972,15 +972,15 @@ func TestSAMLAnswerCompletesOnlyInTheBrowserThatAsked(t *testing.T) {
 }
 
 // TestSAMLAdoptsADirectoryProvisionedAccount checks that an account the
-// organisation's directory provisioned, its address never proved, is adopted
-// by the organisation's IdP and marked verified.
+// organization's directory provisioned, its address never proved, is adopted
+// by the organization's IdP and marked verified.
 func TestSAMLAdoptsADirectoryProvisionedAccount(t *testing.T) {
 	ctx := dbtest.Context(t)
 	sp := newSPSide(t)
 	idp := newUpstreamIdP(t)
-	tenant := dbtest.Tenant(t)
-	conn := sp.connect(t, tenant, idp)
-	provisioned := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, tenant), tenant, tenant)
+	organization := dbtest.Organization(t)
+	conn := sp.connect(t, organization, idp)
+	provisioned := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, organization), organization, organization)
 	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE account.users SET provisioned_via = 'scim', email_verified_at = NULL WHERE id = $1`, provisioned.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -1002,9 +1002,9 @@ func TestSAMLSignInSyncsGroupsAndName(t *testing.T) {
 	pool := dbtest.Pool(t)
 	sp := newSPSide(t)
 	idp := newUpstreamIdP(t)
-	tenant := dbtest.Tenant(t)
-	admin := sp.asAdmin(t, tenant)
-	path := "/tenants/" + tenant.String() + "/saml"
+	organization := dbtest.Organization(t)
+	admin := sp.asAdmin(t, organization)
+	path := "/tenants/" + organization.String() + "/saml"
 	rec := dbtest.Do(t, admin, http.MethodPost, path, map[string]any{
 		"name": "Entra ID", "idp_entity_id": idp.entityID, "idp_sso_url": upstreamSSO, "idp_certificate": idp.certPEM,
 		"email_attribute": "email", "name_attribute": "name", "groups_attribute": " roles ", "status": "active",
@@ -1032,17 +1032,17 @@ func TestSAMLSignInSyncsGroupsAndName(t *testing.T) {
 	}
 
 	var engineering uuid.UUID
-	if err := pool.QueryRow(ctx, `INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, 'Engineering') RETURNING id`, tenant).Scan(&engineering); err != nil {
+	if err := pool.QueryRow(ctx, `INSERT INTO organization.groups (organization_id, name) VALUES ($1, 'Engineering') RETURNING id`, organization).Scan(&engineering); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO tenant.sso_group_mappings (tenant_id, connection_id, idp_group, group_id) VALUES ($1, $2, 'eng-team', $3)`, tenant, conn.ID, engineering); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO organization.sso_group_mappings (organization_id, connection_id, idp_group, group_id) VALUES ($1, $2, 'eng-team', $3)`, organization, conn.ID, engineering); err != nil {
 		t.Fatal(err)
 	}
-	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+dbtest.Domain(t, tenant), tenant, tenant)
+	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+dbtest.Domain(t, organization), organization, organization)
 	verify(t, member.ID)
 	synced := func() int {
-		return dbtest.Count(t, `SELECT count(*) FROM tenant.group_members WHERE tenant_id = $1 AND group_id = $2 AND user_id = $3 AND source_connection_id = $4`,
-			tenant, engineering, member.ID, conn.ID)
+		return dbtest.Count(t, `SELECT count(*) FROM organization.group_members WHERE organization_id = $1 AND group_id = $2 AND user_id = $3 AND source_connection_id = $4`,
+			organization, engineering, member.ID, conn.ID)
 	}
 
 	sp.signIn(t, idp, conn.ID, answer{nameID: "entra|asha", email: member.Email,
@@ -1053,7 +1053,7 @@ func TestSAMLSignInSyncsGroupsAndName(t *testing.T) {
 	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND display_name = 'Asha Rao'`, member.ID); n != 1 {
 		t.Error("the sign-in didn't set the asserted display name")
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'group.member_added' AND resource_id = $2 AND actor_type = 'saml'`, tenant, engineering); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'group.member_added' AND resource_id = $2 AND actor_type = 'saml'`, organization, engineering); n != 1 {
 		t.Errorf("%d member_added events by the sign-in, want 1", n)
 	}
 

@@ -19,7 +19,7 @@ func TestCheckNamesItsReason(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	svc := NewService(pool)
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	inTx := func(fn func(tx pgx.Tx) error) {
 		t.Helper()
 		tx, err := pool.Begin(ctx)
@@ -35,17 +35,17 @@ func TestCheckNamesItsReason(t *testing.T) {
 		}
 	}
 
-	if res, err := svc.Check(ctx, tenant, "8.8.8.8"); err != nil || res.Enabled || !res.Allowed || res.ReasonCode != CodeEnforcementOff {
+	if res, err := svc.Check(ctx, organization, "8.8.8.8"); err != nil || res.Enabled || !res.Allowed || res.ReasonCode != CodeEnforcementOff {
 		t.Errorf("rules off: %+v, %v; want allowed as %s", res, err, CodeEnforcementOff)
 	}
 	inTx(func(tx pgx.Tx) error {
-		if _, err := svc.AddRule(ctx, tx, tenant, "10.0.0.0/8", "office", "allow"); err != nil {
+		if _, err := svc.AddRule(ctx, tx, organization, "10.0.0.0/8", "office", "allow"); err != nil {
 			return err
 		}
-		if _, err := svc.AddRule(ctx, tx, tenant, "10.6.0.0/16", "lab", "deny"); err != nil {
+		if _, err := svc.AddRule(ctx, tx, organization, "10.6.0.0/16", "lab", "deny"); err != nil {
 			return err
 		}
-		return svc.SetEnabled(ctx, tx, tenant, true)
+		return svc.SetEnabled(ctx, tx, organization, true)
 	})
 	for _, tc := range []struct {
 		ip, code string
@@ -57,7 +57,7 @@ func TestCheckNamesItsReason(t *testing.T) {
 		{"8.8.8.8", "ip.not_in_allow_rules", false, nil},
 		{"not an address", "ip.address_unknown", false, nil},
 	} {
-		res, err := svc.Check(ctx, tenant, tc.ip)
+		res, err := svc.Check(ctx, organization, tc.ip)
 		if err != nil || !res.Enabled || res.Allowed != tc.allowed || res.ReasonCode != tc.code || res.Reason == "" ||
 			fmt.Sprint(res.ReasonParams) != fmt.Sprint(tc.params) || res.Rules.Allowed != tc.allowed || res.Rules.ReasonCode != tc.code {
 			t.Errorf("%s: %+v, %v; want allowed %v as %s %v", tc.ip, res, err, tc.allowed, tc.code, tc.params)
@@ -66,8 +66,8 @@ func TestCheckNamesItsReason(t *testing.T) {
 
 	// With the rules off, the address is let in, and the rules still say what
 	// they would decide.
-	inTx(func(tx pgx.Tx) error { return svc.SetEnabled(ctx, tx, tenant, false) })
-	res, err := svc.Check(ctx, tenant, "10.6.6.6")
+	inTx(func(tx pgx.Tx) error { return svc.SetEnabled(ctx, tx, organization, false) })
+	res, err := svc.Check(ctx, organization, "10.6.6.6")
 	if err != nil || res.Enabled || !res.Allowed || res.ReasonCode != CodeEnforcementOff ||
 		res.Rules.Allowed || res.Rules.ReasonCode != "ip.deny_rule" || fmt.Sprint(res.Rules.ReasonParams) != fmt.Sprint(map[string]any{"cidr": "10.6.0.0/16"}) {
 		t.Errorf("rules off: %+v, %v; want allowed now, and the deny rule named as what the rules decide", res, err)

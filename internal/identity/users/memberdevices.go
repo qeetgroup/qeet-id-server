@@ -29,7 +29,7 @@ type MemberPasskey struct {
 // listPasskeys handles GET /v1/tenants/{tenantID}/users/{id}/passkeys: the
 // member's passkeys.
 func (h *Handler) listPasskeys(w http.ResponseWriter, r *http.Request) {
-	if _, err := httpx.PathTenant(r); err != nil {
+	if _, err := httpx.PathOrganization(r); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -56,15 +56,15 @@ func (h *Handler) listPasskeys(w http.ResponseWriter, r *http.Request) {
 
 // removePasskey handles DELETE /v1/tenants/{tenantID}/users/{id}/passkeys/
 // {passkeyID}, for a lost device: like a second-factor reset it is the
-// account's home organisation's alone to make, and only while the account
+// account's home organization's alone to make, and only while the account
 // belongs to no other. Its last way to sign in isn't removed. Audited, and the
 // person is emailed.
 func (h *Handler) removePasskey(w http.ResponseWriter, r *http.Request) {
-	if _, err := httpx.PathTenant(r); err != nil {
+	if _, err := httpx.PathOrganization(r); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	id, tenantID, err := h.actOnID(r)
+	id, organizationID, err := h.actOnID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -75,7 +75,7 @@ func (h *Handler) removePasskey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	if err := h.refuseSharedCredentials(ctx, id, tenantID); err != nil {
+	if err := h.refuseSharedCredentials(ctx, id, organizationID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -88,8 +88,8 @@ func (h *Handler) removePasskey(w http.ResponseWriter, r *http.Request) {
 	if p := httpx.PrincipalFromCtx(ctx); p != nil {
 		actorID = p.UserID
 	}
-	// The account's other ways to sign in span its organisations.
-	ctx = postgres.AcrossTenants(ctx)
+	// The account's other ways to sign in span its organizations.
+	ctx = postgres.AcrossOrganizations(ctx)
 	tx, err := h.Repo.Pool().Begin(ctx)
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -113,7 +113,7 @@ func (h *Handler) removePasskey(w http.ResponseWriter, r *http.Request) {
 	if methods.Total() <= 1 {
 		_ = tx.Rollback(ctx)
 		by := Remover{UserID: actorID, IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
-		httpx.WriteError(w, r, RefuseLastMethodRemoval(ctx, h.Repo.Pool(), id, &tenantID, "passkey", passkeyID, by))
+		httpx.WriteError(w, r, RefuseLastMethodRemoval(ctx, h.Repo.Pool(), id, &organizationID, "passkey", passkeyID, by))
 		return
 	}
 	passkeyName := ""
@@ -121,15 +121,15 @@ func (h *Handler) removePasskey(w http.ResponseWriter, r *http.Request) {
 		passkeyName = *name
 	}
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     &tenantID,
-		ActorUserID:  actorID,
-		Action:       "passkey.admin_deleted",
-		ResourceType: "user",
-		ResourceID:   &id,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
-		Metadata:     map[string]any{"passkey_id": passkeyID, "name": passkeyName},
+		OrganizationID: &organizationID,
+		ActorUserID:    actorID,
+		Action:         "passkey.admin_deleted",
+		ResourceType:   "user",
+		ResourceID:     &id,
+		IP:             httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
+		RequestID:      httpx.RequestID(r),
+		Metadata:       map[string]any{"passkey_id": passkeyID, "name": passkeyName},
 	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -138,25 +138,25 @@ func (h *Handler) removePasskey(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	h.tellCredentialChange(ctx, tenantID, target.Email, credentialPasskeyRemoved, passkeyName)
+	h.tellCredentialChange(ctx, organizationID, target.Email, credentialPasskeyRemoved, passkeyName)
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // endSession handles DELETE /v1/tenants/{tenantID}/users/{id}/sessions/
-// {sessionID}: one of the member's sessions in the caller's organisation, as
+// {sessionID}: one of the member's sessions in the caller's organization, as
 // GET /v1/users/{id}/sessions lists them, ends. Audited and announced as
 // session.revoked.
 func (h *Handler) endSession(w http.ResponseWriter, r *http.Request) {
-	if _, err := httpx.PathTenant(r); err != nil {
+	if _, err := httpx.PathOrganization(r); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	id, tenantID, err := h.memberID(r)
+	id, organizationID, err := h.memberID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.checkActOn(r, tenantID, id); err != nil {
+	if err := h.checkActOn(r, organizationID, id); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -172,7 +172,7 @@ func (h *Handler) endSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	sessionTenant, err := h.Repo.q.WithTx(tx).EndMemberSession(ctx, dbgen.EndMemberSessionParams{ID: sessionID, UserID: id, TenantID: tenantID})
+	sessionOrganization, err := h.Repo.q.WithTx(tx).EndMemberSession(ctx, dbgen.EndMemberSessionParams{ID: sessionID, UserID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		httpx.WriteError(w, r, errs.ErrNotFound)
 		return
@@ -186,20 +186,20 @@ func (h *Handler) endSession(w http.ResponseWriter, r *http.Request) {
 		actorID = p.UserID
 	}
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     &tenantID,
-		ActorUserID:  actorID,
-		Action:       "session.admin_revoked",
-		ResourceType: "user",
-		ResourceID:   &id,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
-		Metadata:     map[string]any{"session_id": sessionID},
+		OrganizationID: &organizationID,
+		ActorUserID:    actorID,
+		Action:         "session.admin_revoked",
+		ResourceType:   "user",
+		ResourceID:     &id,
+		IP:             httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
+		RequestID:      httpx.RequestID(r),
+		Metadata:       map[string]any{"session_id": sessionID},
 	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	h.Signals.Revoked(ctx, tx, sessionsignal.ReasonAdminRevoked, sessionsignal.Session{ID: sessionID, UserID: id, TenantID: sessionTenant})
+	h.Signals.Revoked(ctx, tx, sessionsignal.ReasonAdminRevoked, sessionsignal.Session{ID: sessionID, UserID: id, OrganizationID: sessionOrganization})
 	if err := tx.Commit(ctx); err != nil {
 		httpx.WriteError(w, r, err)
 		return

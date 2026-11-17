@@ -28,17 +28,17 @@ func (q *Queries) CountUnreadNotifications(ctx context.Context, userID uuid.UUID
 
 const insertNotification = `-- name: InsertNotification :exec
 
-INSERT INTO auth.notifications (user_id, tenant_id, kind, title, description, href)
+INSERT INTO auth.notifications (user_id, organization_id, kind, title, description, href)
 VALUES ($1, $2, $3, $4, $5, $6)
 `
 
 type InsertNotificationParams struct {
-	UserID      uuid.UUID
-	TenantID    pgtype.UUID
-	Kind        string
-	Title       string
-	Description string
-	Href        string
+	UserID         uuid.UUID
+	OrganizationID pgtype.UUID
+	Kind           string
+	Title          string
+	Description    string
+	Href           string
 }
 
 // Queries for the notifications domain.
@@ -47,7 +47,7 @@ type InsertNotificationParams struct {
 func (q *Queries) InsertNotification(ctx context.Context, arg InsertNotificationParams) error {
 	_, err := q.db.Exec(ctx, insertNotification,
 		arg.UserID,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Kind,
 		arg.Title,
 		arg.Description,

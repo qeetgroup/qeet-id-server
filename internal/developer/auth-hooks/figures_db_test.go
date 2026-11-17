@@ -17,23 +17,23 @@ import (
 func TestAHookShowsHowItAnswersAndCanBeTestedAndMoved(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := hookService(t)
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
 	server := newPolicyServer(t, "first-secret")
-	hook, err := svc.Create(ctx, tenant, server.URL, "first-secret", true, audit.Actor{Type: "user", UserID: &admin.ID})
+	hook, err := svc.Create(ctx, organization, server.URL, "first-secret", true, audit.Actor{Type: "user", UserID: &admin.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Run(ctx, tenant, admin.ID, admin.Email); err != nil {
+	if _, err := svc.Run(ctx, organization, admin.ID, admin.Email); err != nil {
 		t.Fatal(err)
 	}
 	server.answer(http.StatusOK, `{"decision":"deny","message":"no"}`)
-	_, _ = svc.Run(ctx, tenant, admin.ID, admin.Email)
+	_, _ = svc.Run(ctx, organization, admin.ID, admin.Email)
 	server.answer(http.StatusBadGateway, ``)
-	_, _ = svc.Run(ctx, tenant, admin.ID, admin.Email)
+	_, _ = svc.Run(ctx, organization, admin.ID, admin.Email)
 
-	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: svc}).Mount)
-	base := "/tenants/" + tenant.String() + "/auth-hooks"
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: svc}).Mount)
+	base := "/tenants/" + organization.String() + "/auth-hooks"
 	figures := func() Hook {
 		t.Helper()
 		var list struct {
@@ -65,7 +65,7 @@ func TestAHookShowsHowItAnswersAndCanBeTestedAndMoved(t *testing.T) {
 	if rec := dbtest.Do(t, h, http.MethodPatch, base+"/"+hook.ID.String(), map[string]any{"url": moved.URL, "secret": "second-secret"}); rec.Code != http.StatusOK {
 		t.Fatalf("change the URL and secret: %d %s", rec.Code, rec.Body.String())
 	}
-	if _, err := svc.Run(ctx, tenant, admin.ID, admin.Email); err != nil {
+	if _, err := svc.Run(ctx, organization, admin.ID, admin.Email); err != nil {
 		t.Fatal(err)
 	}
 	if moved.calls != 1 || moved.badSigns != 0 {

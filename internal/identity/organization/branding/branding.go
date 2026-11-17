@@ -1,4 +1,4 @@
-// Package branding stores per-tenant theming, custom-domain and email-sender
+// Package branding stores per-organization theming, custom-domain and email-sender
 // settings.
 package branding
 
@@ -17,16 +17,16 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant/branding/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/organization/branding/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/dbutil"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// Branding is a tenant's theming, custom domain and email sender.
+// Branding is an organization's theming, custom domain and email sender.
 type Branding struct {
-	TenantID       uuid.UUID `json:"tenant_id"`
+	OrganizationID uuid.UUID `json:"tenant_id"`
 	LogoURL        *string   `json:"logo_url"`
 	PrimaryColor   *string   `json:"primary_color"`
 	SecondaryColor *string   `json:"secondary_color"`
@@ -38,7 +38,7 @@ type Branding struct {
 	Settings         map[string]any `json:"settings"`
 }
 
-// Repository reads and writes tenant branding.
+// Repository reads and writes organization branding.
 type Repository struct {
 	pool       *pgxpool.Pool
 	q          *dbgen.Queries
@@ -51,31 +51,31 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool, q: dbgen.New(pool)}
 }
 
-// PlanGate reports whether a boolean plan feature is in the tenant's plan.
+// PlanGate reports whether a boolean plan feature is in the organization's plan.
 // Satisfied by *entitlements.Service.
 type PlanGate interface {
-	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
+	FeatureAllowed(ctx context.Context, organizationID uuid.UUID, feature string) (bool, error)
 }
 
 // SetPlanGate sets the plan-feature gate (nil allows all features).
 func (r *Repository) SetPlanGate(g PlanGate) { r.gate = g }
 
-// brandingAllowed reports whether the tenant's plan includes custom branding;
+// brandingAllowed reports whether the organization's plan includes custom branding;
 // a gate that can't answer counts as no, so the default look is shown.
-func (r *Repository) brandingAllowed(ctx context.Context, tenantID uuid.UUID) bool {
+func (r *Repository) brandingAllowed(ctx context.Context, organizationID uuid.UUID) bool {
 	if r.gate == nil {
 		return true
 	}
-	ok, err := r.gate.FeatureAllowed(ctx, tenantID, "custom_branding")
+	ok, err := r.gate.FeatureAllowed(ctx, organizationID, "custom_branding")
 	return err == nil && ok
 }
 
 // Pool returns the connection pool, for handlers that run their own transaction.
 func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
-func toDomain(tenantID uuid.UUID, row dbgen.GetBrandingRow) *Branding {
+func toDomain(organizationID uuid.UUID, row dbgen.GetBrandingRow) *Branding {
 	return &Branding{
-		TenantID:       row.TenantID,
+		OrganizationID: row.OrganizationID,
 		LogoURL:        row.LogoUrl,
 		PrimaryColor:   row.PrimaryColor,
 		SecondaryColor: row.SecondaryColor,
@@ -85,33 +85,33 @@ func toDomain(tenantID uuid.UUID, row dbgen.GetBrandingRow) *Branding {
 	}
 }
 
-// Get returns the tenant's branding.
-func (r *Repository) Get(ctx context.Context, tenantID uuid.UUID) (*Branding, error) {
-	row, err := r.q.GetBranding(ctx, tenantID)
+// Get returns the organization's branding.
+func (r *Repository) Get(ctx context.Context, organizationID uuid.UUID) (*Branding, error) {
+	row, err := r.q.GetBranding(ctx, organizationID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return &Branding{TenantID: tenantID, Settings: map[string]any{}}, nil
+		return &Branding{OrganizationID: organizationID, Settings: map[string]any{}}, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	return toDomain(tenantID, row), nil
+	return toDomain(organizationID, row), nil
 }
 
-// LoginBranding returns the tenant's hosted-login logo and colors as plain
+// LoginBranding returns the organization's hosted-login logo and colors as plain
 // strings, empty when unset, on error, or when its plan lacks custom branding
 // (the stored values are kept for an upgrade). It satisfies
 // oidc.BrandingLister, which takes primitives so federation doesn't depend on
 // this package.
-func (r *Repository) LoginBranding(ctx context.Context, tenantID uuid.UUID) (logoURL, primaryColor, secondaryColor, backgroundColor string) {
-	if !r.brandingAllowed(ctx, tenantID) {
+func (r *Repository) LoginBranding(ctx context.Context, organizationID uuid.UUID) (logoURL, primaryColor, secondaryColor, backgroundColor string) {
+	if !r.brandingAllowed(ctx, organizationID) {
 		return "", "", "", ""
 	}
-	b, err := r.Get(ctx, tenantID)
+	b, err := r.Get(ctx, organizationID)
 	if err != nil || b == nil {
 		return "", "", "", ""
 	}
 	logoURL, primaryColor, secondaryColor, backgroundColor = loginAppearance(b)
-	return r.publicLogo(tenantID, logoURL), primaryColor, secondaryColor, backgroundColor
+	return r.publicLogo(organizationID, logoURL), primaryColor, secondaryColor, backgroundColor
 }
 
 func loginAppearance(b *Branding) (logoURL, primaryColor, secondaryColor, backgroundColor string) {
@@ -199,7 +199,7 @@ func (r *Repository) Upsert(ctx context.Context, tx pgx.Tx, b Branding) error {
 	}
 	// Plan gate: custom branding (logo, colors, custom email sender) is a paid feature.
 	if r.gate != nil {
-		ok, err := r.gate.FeatureAllowed(ctx, b.TenantID, "custom_branding")
+		ok, err := r.gate.FeatureAllowed(ctx, b.OrganizationID, "custom_branding")
 		if err != nil {
 			return err
 		}
@@ -209,11 +209,11 @@ func (r *Repository) Upsert(ctx context.Context, tx pgx.Tx, b Branding) error {
 	}
 	settings, _ := json.Marshal(b.Settings)
 	_, err := tx.Exec(ctx, `
-		INSERT INTO tenant.branding (
-			tenant_id, logo_url, primary_color, secondary_color, custom_domain,
+		INSERT INTO organization.branding (
+			organization_id, logo_url, primary_color, secondary_color, custom_domain,
 			email_from_name, email_from_address, settings
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE(NULLIF($8::jsonb,'null'::jsonb), '{}'::jsonb))
-		ON CONFLICT (tenant_id) DO UPDATE SET
+		ON CONFLICT (organization_id) DO UPDATE SET
 			logo_url = EXCLUDED.logo_url,
 			primary_color = EXCLUDED.primary_color,
 			secondary_color = EXCLUDED.secondary_color,
@@ -222,7 +222,7 @@ func (r *Repository) Upsert(ctx context.Context, tx pgx.Tx, b Branding) error {
 			email_from_address = EXCLUDED.email_from_address,
 			settings = EXCLUDED.settings,
 			updated_at = NOW()
-	`, b.TenantID, b.LogoURL, b.PrimaryColor, b.SecondaryColor, b.CustomDomain,
+	`, b.OrganizationID, b.LogoURL, b.PrimaryColor, b.SecondaryColor, b.CustomDomain,
 		b.EmailFromName, nil, settings) // email_from_address is no longer kept
 	return err
 }
@@ -263,7 +263,7 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	in.TenantID = tid
+	in.OrganizationID = tid
 	ctx := r.Context()
 	tx, err := h.Repo.Pool().Begin(ctx)
 	if err != nil {
@@ -285,16 +285,16 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		meta["primary_color"] = *in.PrimaryColor
 	}
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     &target,
-		ActorUserID:  actorID,
-		ActorType:    actorType,
-		Action:       "branding.updated",
-		ResourceType: "tenant",
-		ResourceID:   &target,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
-		Metadata:     meta,
+		OrganizationID: &target,
+		ActorUserID:    actorID,
+		ActorType:      actorType,
+		Action:         "branding.updated",
+		ResourceType:   "tenant",
+		ResourceID:     &target,
+		IP:             httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
+		RequestID:      httpx.RequestID(r),
+		Metadata:       meta,
 	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return

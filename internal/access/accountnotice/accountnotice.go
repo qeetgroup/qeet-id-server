@@ -30,8 +30,8 @@ func Tell(ctx context.Context, db Querier, sender notifier.Sender, userID uuid.U
 		return
 	}
 	var email string
-	var tenantID *uuid.UUID
-	if err := db.QueryRow(ctx, `SELECT email, tenant_id FROM account.users WHERE id = $1 AND deleted_at IS NULL`, userID).Scan(&email, &tenantID); err != nil || email == "" {
+	var organizationID *uuid.UUID
+	if err := db.QueryRow(ctx, `SELECT email, organization_id FROM account.users WHERE id = $1 AND deleted_at IS NULL`, userID).Scan(&email, &organizationID); err != nil || email == "" {
 		slog.Warn("account notice not sent: no address", "err", err, "user_id", userID, "subject", subject)
 		return
 	}
@@ -42,8 +42,8 @@ func Tell(ctx context.Context, db Querier, sender notifier.Sender, userID uuid.U
 		Body:    intro + " " + wasntYou,
 		HTML:    emailtmpl.Notice(subject, intro, wasntYou),
 	}
-	if tenantID != nil {
-		msg.TenantID = tenantID.String()
+	if organizationID != nil {
+		msg.OrganizationID = organizationID.String()
 	}
 	if err := sender.Send(ctx, msg); err != nil {
 		slog.Warn("account notice not sent", "err", err, "user_id", userID, "subject", subject)

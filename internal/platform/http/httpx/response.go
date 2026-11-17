@@ -56,7 +56,7 @@ const overloadRetryAfter = 3
 
 // WriteError writes err as the JSON error envelope with its code's HTTP status.
 // An error that is not an *errs.Error is logged and sent as ErrInternalServer,
-// except the database's last-owner guard, which becomes ErrTenantLastOwner, and
+// except the database's last-owner guard, which becomes ErrOrganizationLastOwner, and
 // work cancelled because the client went away, which is answered 499.
 // server.overloaded also carries Retry-After, as a header and as metadata.
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {
@@ -68,8 +68,8 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 			e = domain
 		case pgxerr.IsLastOwner(err):
 			// The database's own guard (migration 0151): whichever path tried to
-			// take away the organisation's last active owner is told why.
-			e = errs.ErrTenantLastOwner
+			// take away the organization's last active owner is told why.
+			e = errs.ErrOrganizationLastOwner
 		case errors.Is(err, context.Canceled) && r.Context().Err() != nil:
 			// The client hung up or gave up waiting, cancelling the request's work.
 			// Not a server fault: noted, and answered 499 (nginx's "client closed
@@ -89,8 +89,8 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 				"client_ip", ClientIP(r),
 			}
 			if p := PrincipalFromCtx(r.Context()); p != nil {
-				if p.TenantID != nil {
-					attrs = append(attrs, "tenant_id", p.TenantID.String())
+				if p.OrganizationID != nil {
+					attrs = append(attrs, "tenant_id", p.OrganizationID.String())
 				}
 				if p.UserID != nil {
 					attrs = append(attrs, "user_id", p.UserID.String())

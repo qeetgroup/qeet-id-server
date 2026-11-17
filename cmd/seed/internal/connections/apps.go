@@ -30,7 +30,7 @@ var (
 	deviceGrants = []string{deviceGrant, refreshGrant}
 )
 
-// appSpec is an OIDC application an organisation registered.
+// appSpec is an OIDC application an organization registered.
 type appSpec struct {
 	name, kind string // kind: web, spa, native, device or m2m
 	// clientID and secret are fixed for the applications testers use; "" lets
@@ -39,10 +39,10 @@ type appSpec struct {
 	redirects, postLogout     []string
 	backchannel, frontchannel string
 	grants, scopes            []string
-	after                     time.Duration // after the organisation signed up
+	after                     time.Duration // after the organization signed up
 	pkceExempt                bool          // a legacy app given time to add PKCE
 	users                     float64       // share of people who use it
-	hosted                    bool          // the organisation's hosted-test app
+	hosted                    bool          // the organization's hosted-test app
 	tester                    string        // who signs in to it in the test
 	note                      string
 	resource                  [2]string // an API it serves: identifier, name
@@ -55,7 +55,7 @@ func (s appSpec) public() bool { return s.kind == "spa" || s.kind == "native" ||
 
 const day = 24 * time.Hour
 
-// catalogue is each organisation's applications, by organisation slug.
+// catalogue is each organization's applications, by organization slug.
 var catalogue = map[string][]appSpec{
 	// Qeet Group's own products, each signing its staff in with Qeet ID the way
 	// the Qeet ID SDKs do (a callback at /auth/callback), and the services
@@ -180,7 +180,7 @@ type app struct {
 	created          time.Time
 }
 
-// applications registers the organisation's OIDC applications, within its
+// applications registers the organization's OIDC applications, within its
 // plan's limit, then the grants, consents and device sign-ins its people made.
 func (f *fed) applications(o *world.Org) {
 	w := f.w
@@ -227,7 +227,7 @@ func (f *fed) register(o *world.Org, by *world.Person, t time.Time, s appSpec) *
 	w.At(t, func() {
 		w.Tx("register "+s.name, func(tx pgx.Tx) error {
 			c, secret, err := w.Deps.OIDC.Service.RegisterClient(w.Ctx, tx, oidc.CreateClientInput{
-				TenantID: o.ID, Name: s.name, Type: typ, RedirectURIs: s.redirects, PostLogoutURIs: s.postLogout,
+				OrganizationID: o.ID, Name: s.name, Type: typ, RedirectURIs: s.redirects, PostLogoutURIs: s.postLogout,
 				GrantTypes: s.grants, Scopes: s.scopes, BackchannelLogoutURI: s.backchannel, FrontchannelLogoutURI: s.frontchannel,
 			})
 			if err != nil {
@@ -244,7 +244,7 @@ func (f *fed) register(o *world.Org, by *world.Person, t time.Time, s appSpec) *
 				h := password.HashSecret(s.secret)
 				hash = &h
 			}
-			_, err = tx.Exec(w.Ctx, `UPDATE auth.oidc_clients SET client_id = $3, client_secret_hash = $4 WHERE id = $1 AND tenant_id = $2`,
+			_, err = tx.Exec(w.Ctx, `UPDATE auth.oidc_clients SET client_id = $3, client_secret_hash = $4 WHERE id = $1 AND organization_id = $2`,
 				c.ID, o.ID, s.clientID, hash)
 			return err
 		})
@@ -305,7 +305,7 @@ func (f *fed) configure(o *world.Org, a *app) {
 		reviewer := adminAt(o, t)
 		for _, p := range o.Admins() {
 			if p.Department == "Security" && p.Joined.Before(t) {
-				reviewer = p // the security lead, who administers the organisation
+				reviewer = p // the security lead, who administers the organization
 				break
 			}
 		}
@@ -315,18 +315,18 @@ func (f *fed) configure(o *world.Org, a *app) {
 	}
 }
 
-// allowedAddress is an address the organisation's address rules let sign in,
+// allowedAddress is an address the organization's address rules let sign in,
 // or "" when it has none switched on.
 func (f *fed) allowedAddress(o *world.Org) string {
 	w := f.w
 	var enabled bool
-	err := w.Admin.QueryRow(w.Ctx, `SELECT enabled FROM tenant.ip_rules_config WHERE tenant_id = $1`, o.ID).Scan(&enabled)
+	err := w.Admin.QueryRow(w.Ctx, `SELECT enabled FROM organization.ip_rules_config WHERE organization_id = $1`, o.ID).Scan(&enabled)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !enabled) {
 		return ""
 	}
 	w.Check(err, "address rules of "+o.Spec.Slug)
 	var cidr string
-	err = w.Admin.QueryRow(w.Ctx, `SELECT cidr FROM tenant.ip_rules WHERE tenant_id = $1 AND action = 'allow' ORDER BY created_at LIMIT 1`, o.ID).Scan(&cidr)
+	err = w.Admin.QueryRow(w.Ctx, `SELECT cidr FROM organization.ip_rules WHERE organization_id = $1 AND action = 'allow' ORDER BY created_at LIMIT 1`, o.ID).Scan(&cidr)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ""
 	}
@@ -343,7 +343,7 @@ func (f *fed) allowedAddress(o *world.Org) string {
 	return prefix.Masked().Addr().Next().String()
 }
 
-// users is who signed in to a: a share of the organisation's people, the
+// users is who signed in to a: a share of the organization's people, the
 // testers excepted on the application they test, so its consent screen shows.
 func (f *fed) users(o *world.Org, a *app) []*world.Person {
 	w := f.w
@@ -362,7 +362,7 @@ func (f *fed) users(o *world.Org, a *app) []*world.Person {
 }
 
 // grants signs the application's users in to it: their consent and, where it
-// renews, a refresh grant started within the organisation's grant lifetime,
+// renews, a refresh grant started within the organization's grant lifetime,
 // some renewed since, one revoked by an administrator and, on Lumen Desktop, a
 // replayed refresh token caught as theft.
 func (f *fed) grants(o *world.Org, a *app, ip string) {
@@ -421,7 +421,7 @@ func (f *fed) grants(o *world.Org, a *app, ip string) {
 }
 
 // signIn is p signing in to a at t through the authorization-code flow; it
-// returns the refresh token, or "" when the organisation's rules refused it.
+// returns the refresh token, or "" when the organization's rules refused it.
 func (f *fed) signIn(o *world.Org, a *app, p *world.Person, t time.Time, ip string) string {
 	w := f.w
 	svc := w.Deps.OIDC.Service
@@ -452,7 +452,7 @@ func (f *fed) revokeGrant(o *world.Org, a *app, p *world.Person, t time.Time) {
 	}
 	var id uuid.UUID
 	err := w.Admin.QueryRow(w.Ctx, `SELECT id FROM auth.oidc_refresh_tokens
-		WHERE tenant_id = $1 AND client_id = $2 AND user_id = $3 AND revoked_at IS NULL AND replaced_by IS NULL
+		WHERE organization_id = $1 AND client_id = $2 AND user_id = $3 AND revoked_at IS NULL AND replaced_by IS NULL
 		ORDER BY issued_at DESC LIMIT 1`, o.ID, a.clientID, p.ID).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return
@@ -556,12 +556,12 @@ func (f *fed) lockout(o *world.Org, a *app) {
 	f.locked = o.Spec.Name + " · " + a.spec.name + " (" + a.clientID + ")"
 }
 
-// grantLifetime is how long the organisation lets an application's grant last:
+// grantLifetime is how long the organization lets an application's grant last:
 // its maximum session age, or the platform's.
 func (f *fed) grantLifetime(o *world.Org) time.Duration {
 	w := f.w
 	var secs float64
-	err := w.Admin.QueryRow(w.Ctx, `SELECT EXTRACT(EPOCH FROM session_max_age) FROM tenant.security_policies WHERE tenant_id = $1`, o.ID).Scan(&secs)
+	err := w.Admin.QueryRow(w.Ctx, `SELECT EXTRACT(EPOCH FROM session_max_age) FROM organization.security_policies WHERE organization_id = $1`, o.ID).Scan(&secs)
 	if err == nil && secs > 0 {
 		return time.Duration(secs * float64(time.Second))
 	}
@@ -578,8 +578,8 @@ func (f *fed) fixExpiries(o *world.Org) {
 		UPDATE auth.oidc_refresh_tokens t
 		SET grant_expires_at = g.started + $2 * interval '1 second',
 		    expires_at = LEAST(t.issued_at + $3 * interval '1 second', g.started + $2 * interval '1 second')
-		FROM (SELECT grant_id, min(issued_at) AS started FROM auth.oidc_refresh_tokens WHERE tenant_id = $1 GROUP BY grant_id) g
-		WHERE t.tenant_id = $1 AND t.grant_id = g.grant_id`, o.ID, life.Seconds(), w.Cfg.RefreshTokenTTL.Seconds())
-	w.Exec("device code expiries", `UPDATE auth.oidc_device_codes SET expires_at = created_at + interval '10 minutes' WHERE tenant_id = $1`, o.ID)
-	w.Exec("authorization code expiries", `UPDATE auth.oidc_authorization_codes SET expires_at = created_at + interval '10 minutes' WHERE tenant_id = $1`, o.ID)
+		FROM (SELECT grant_id, min(issued_at) AS started FROM auth.oidc_refresh_tokens WHERE organization_id = $1 GROUP BY grant_id) g
+		WHERE t.organization_id = $1 AND t.grant_id = g.grant_id`, o.ID, life.Seconds(), w.Cfg.RefreshTokenTTL.Seconds())
+	w.Exec("device code expiries", `UPDATE auth.oidc_device_codes SET expires_at = created_at + interval '10 minutes' WHERE organization_id = $1`, o.ID)
+	w.Exec("authorization code expiries", `UPDATE auth.oidc_authorization_codes SET expires_at = created_at + interval '10 minutes' WHERE organization_id = $1`, o.ID)
 }

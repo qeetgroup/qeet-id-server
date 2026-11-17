@@ -14,16 +14,16 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// TestSignupRefusedOnADomainAnOrganisationManages checks that neither sign-up
-// nor another organisation's hosted registration creates an account on a
-// domain an organisation has verified, or below it, while the managing
-// organisation's own registration still can; and that the refusal reads
+// TestSignupRefusedOnADomainAnOrganizationManages checks that neither sign-up
+// nor another organization's hosted registration creates an account on a
+// domain an organization has verified, or below it, while the managing
+// organization's own registration still can; and that the refusal reads
 // exactly like the answer for an address that already has an account.
-func TestSignupRefusedOnADomainAnOrganisationManages(t *testing.T) {
+func TestSignupRefusedOnADomainAnOrganizationManages(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := newService(t)
 	svc.SetRegistrationPolicy(anyPassword{})
-	tenant, manager := dbtest.Tenant(t), dbtest.Tenant(t)
+	organization, manager := dbtest.Organization(t), dbtest.Organization(t)
 	domain := dbtest.Domain(t, manager)
 	accounts := func(email string) int {
 		return dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, email)
@@ -34,7 +34,7 @@ func TestSignupRefusedOnADomainAnOrganisationManages(t *testing.T) {
 		if _, _, _, err := svc.Signup(ctx, SignupInput{Email: email, Password: testPassword}); !errors.Is(err, errs.ErrUserDomainManaged) {
 			t.Errorf("sign-up at %s: %v; want %v", host, err, errs.ErrUserDomainManaged)
 		}
-		if _, _, err := svc.RegisterInTenant(ctx, tenant, email, testPassword, "", "192.0.2.1", "test"); !errors.Is(err, errs.ErrUserDomainManaged) {
+		if _, _, err := svc.RegisterInOrganization(ctx, organization, email, testPassword, "", "192.0.2.1", "test"); !errors.Is(err, errs.ErrUserDomainManaged) {
 			t.Errorf("registration in another organisation at %s: %v; want %v", host, err, errs.ErrUserDomainManaged)
 		}
 		if n := accounts(email); n != 0 {
@@ -42,7 +42,7 @@ func TestSignupRefusedOnADomainAnOrganisationManages(t *testing.T) {
 		}
 	}
 	own := dbtest.Unique("own") + "@" + domain
-	if _, _, err := svc.RegisterInTenant(ctx, manager, own, testPassword, "", "192.0.2.1", "test"); err != nil || accounts(own) != 1 {
+	if _, _, err := svc.RegisterInOrganization(ctx, manager, own, testPassword, "", "192.0.2.1", "test"); err != nil || accounts(own) != 1 {
 		t.Errorf("registration in the organisation that manages the domain: %v; want an account", err)
 	}
 
@@ -61,11 +61,11 @@ func TestSignupRefusedOnADomainAnOrganisationManages(t *testing.T) {
 		dbtest.Decode(t, rec, &got)
 		return answer{rec.Code, got.Error.Code, got.Error.Message}
 	}
-	taken := dbtest.User(t, tenant, tenant).Email
+	taken := dbtest.User(t, organization, organization).Email
 	for path, body := range map[string]func(email string) map[string]any{
 		"/auth/signup": func(e string) map[string]any { return map[string]any{"email": e, "password": testPassword} },
 		"/auth/register": func(e string) map[string]any {
-			return map[string]any{"tenant_id": tenant, "email": e, "password": testPassword}
+			return map[string]any{"tenant_id": organization, "email": e, "password": testPassword}
 		},
 	} {
 		want := ask(path, body(taken))

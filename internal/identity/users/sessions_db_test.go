@@ -13,25 +13,25 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
-// TestMemberSessionsStayInTheirTenant checks that an administrator sees only
-// the sessions a member holds in the administrator's own tenant, and that only
-// the member's home tenant also sees their sessions in no tenant.
-func TestMemberSessionsStayInTheirTenant(t *testing.T) {
+// TestMemberSessionsStayInTheirOrganization checks that an administrator sees only
+// the sessions a member holds in the administrator's own organization, and that only
+// the member's home organization also sees their sessions in no organization.
+func TestMemberSessionsStayInTheirOrganization(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	tenantA, tenantB := dbtest.Tenant(t), dbtest.Tenant(t)
-	member := dbtest.User(t, tenantA, tenantA, tenantB)
-	adminA := dbtest.User(t, tenantA, tenantA)
-	adminB := dbtest.User(t, tenantB, tenantB)
-	session := func(tenant any) uuid.UUID {
+	organizationA, organizationB := dbtest.Organization(t), dbtest.Organization(t)
+	member := dbtest.User(t, organizationA, organizationA, organizationB)
+	adminA := dbtest.User(t, organizationA, organizationA)
+	adminB := dbtest.User(t, organizationB, organizationB)
+	session := func(organization any) uuid.UUID {
 		t.Helper()
 		var id uuid.UUID
-		if err := pool.QueryRow(ctx, `INSERT INTO auth.sessions (user_id, tenant_id) VALUES ($1, $2) RETURNING id`, member.ID, tenant).Scan(&id); err != nil {
+		if err := pool.QueryRow(ctx, `INSERT INTO auth.sessions (user_id, organization_id) VALUES ($1, $2) RETURNING id`, member.ID, organization).Scan(&id); err != nil {
 			t.Fatalf("create session: %v", err)
 		}
 		return id
 	}
-	sessionA, sessionB, accountSession := session(tenantA), session(tenantB), session(nil)
+	sessionA, sessionB, accountSession := session(organizationA), session(organizationB), session(nil)
 
 	h := &Handler{Repo: NewRepository(pool), ActOnCheck: rbac.NewRepository(pool).CheckActOn}
 	for _, tc := range []struct {
@@ -40,8 +40,8 @@ func TestMemberSessionsStayInTheirTenant(t *testing.T) {
 		in    uuid.UUID
 		want  []uuid.UUID
 	}{
-		{"home tenant", adminA.ID, tenantA, []uuid.UUID{sessionA, accountSession}},
-		{"other tenant", adminB.ID, tenantB, []uuid.UUID{sessionB}},
+		{"home tenant", adminA.ID, organizationA, []uuid.UUID{sessionA, accountSession}},
+		{"other tenant", adminB.ID, organizationB, []uuid.UUID{sessionB}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			as := dbtest.Serve(dbtest.Principal(tc.admin, tc.in), h.Mount)

@@ -14,26 +14,26 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// newOwner makes a new owner of tenant.
-func newOwner(t *testing.T, tenant uuid.UUID) dbtest.Account {
+// newOwner makes a new owner of organization.
+func newOwner(t *testing.T, organization uuid.UUID) dbtest.Account {
 	t.Helper()
 	var ownerRole uuid.UUID
-	if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `INSERT INTO rbac.roles (tenant_id, name, is_system) VALUES ($1, 'owner', true)
-		ON CONFLICT (tenant_id, LOWER(name)) DO UPDATE SET is_system = true RETURNING id`, tenant).Scan(&ownerRole); err != nil {
+	if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `INSERT INTO rbac.roles (organization_id, name, is_system) VALUES ($1, 'owner', true)
+		ON CONFLICT (organization_id, LOWER(name)) DO UPDATE SET is_system = true RETURNING id`, organization).Scan(&ownerRole); err != nil {
 		t.Fatal(err)
 	}
-	a := dbtest.User(t, tenant, tenant)
-	dbtest.Assign(t, a.ID, tenant, ownerRole)
+	a := dbtest.User(t, organization, organization)
+	dbtest.Assign(t, a.ID, organization, ownerRole)
 	return a
 }
 
-// linkOwner makes a new owner of tenant whose account is linked to connection
+// linkOwner makes a new owner of organization whose account is linked to connection
 // conn, as an account single sign-on created and an owner later promoted is.
-func linkOwner(t *testing.T, tenant, conn uuid.UUID) dbtest.Account {
+func linkOwner(t *testing.T, organization, conn uuid.UUID) dbtest.Account {
 	t.Helper()
-	a := newOwner(t, tenant)
-	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `INSERT INTO account.external_identities (user_id, tenant_id, provider, connection_id, subject) VALUES ($1, $2, 'saml', $3, $4)`,
-		a.ID, tenant, conn, dbtest.Unique("okta|owner")); err != nil {
+	a := newOwner(t, organization)
+	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `INSERT INTO account.external_identities (user_id, organization_id, provider, connection_id, subject) VALUES ($1, $2, 'saml', $3, $4)`,
+		a.ID, organization, conn, dbtest.Unique("okta|owner")); err != nil {
 		t.Fatal(err)
 	}
 	return a
@@ -50,13 +50,13 @@ func TestSAMLTrustChangeMustOutrankLinkedAdministrators(t *testing.T) {
 	pool := dbtest.Pool(t)
 	sp.handler.ActOnCheck = rbac.NewRepository(pool).CheckActOn
 	idp, next := newUpstreamIdP(t), newUpstreamIdP(t)
-	tenant := dbtest.Tenant(t)
-	conn, unlinked := sp.connect(t, tenant, idp), sp.connect(t, tenant, idp)
-	linkOwner(t, tenant, conn.ID)
-	editor := dbtest.User(t, tenant, tenant)
-	dbtest.Assign(t, editor.ID, tenant, dbtest.Role(t, tenant, "connection.write", "connection.read"))
-	as := dbtest.Serve(dbtest.Principal(editor.ID, tenant), sp.handler.Mount)
-	path := func(c Connection) string { return "/tenants/" + tenant.String() + "/saml/" + c.ID.String() }
+	organization := dbtest.Organization(t)
+	conn, unlinked := sp.connect(t, organization, idp), sp.connect(t, organization, idp)
+	linkOwner(t, organization, conn.ID)
+	editor := dbtest.User(t, organization, organization)
+	dbtest.Assign(t, editor.ID, organization, dbtest.Role(t, organization, "connection.write", "connection.read"))
+	as := dbtest.Serve(dbtest.Principal(editor.ID, organization), sp.handler.Mount)
+	path := func(c Connection) string { return "/tenants/" + organization.String() + "/saml/" + c.ID.String() }
 
 	for name, c := range map[string]struct {
 		method, suffix string
@@ -72,7 +72,7 @@ func TestSAMLTrustChangeMustOutrankLinkedAdministrators(t *testing.T) {
 			t.Errorf("%s of a connection an owner is linked to: %d %s, want 403 %s", name, rec.Code, rec.Body.String(), errs.CodeRBACTrustChangeOutranks)
 		}
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.saml_connection_certificates WHERE connection_id = $1`, conn.ID); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM organization.saml_connection_certificates WHERE connection_id = $1`, conn.ID); n != 1 {
 		t.Errorf("the connection trusts %d certificates, want its one", n)
 	}
 	for name, c := range map[string]struct {
@@ -97,12 +97,12 @@ func TestSAMLCertificateRolloverByOwnerKeepsLinks(t *testing.T) {
 	pool := dbtest.Pool(t)
 	sp.handler.ActOnCheck = rbac.NewRepository(pool).CheckActOn
 	idp, next := newUpstreamIdP(t), newUpstreamIdP(t)
-	tenant := dbtest.Tenant(t)
-	conn := sp.connect(t, tenant, idp)
-	linked := linkOwner(t, tenant, conn.ID)
-	owner := newOwner(t, tenant)
-	as := dbtest.Serve(dbtest.Principal(owner.ID, tenant), sp.handler.Mount)
-	if rec := dbtest.Do(t, as, http.MethodPost, "/tenants/"+tenant.String()+"/saml/"+conn.ID.String()+"/certificates", map[string]any{"certificate": next.certPEM}); rec.Code != http.StatusCreated {
+	organization := dbtest.Organization(t)
+	conn := sp.connect(t, organization, idp)
+	linked := linkOwner(t, organization, conn.ID)
+	owner := newOwner(t, organization)
+	as := dbtest.Serve(dbtest.Principal(owner.ID, organization), sp.handler.Mount)
+	if rec := dbtest.Do(t, as, http.MethodPost, "/tenants/"+organization.String()+"/saml/"+conn.ID.String()+"/certificates", map[string]any{"certificate": next.certPEM}); rec.Code != http.StatusCreated {
 		t.Fatalf("an owner adds the next certificate: %d %s, want 201", rec.Code, rec.Body.String())
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE user_id = $1 AND connection_id = $2`, linked.ID, conn.ID); n != 1 {

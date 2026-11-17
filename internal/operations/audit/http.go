@@ -18,7 +18,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// Reader reads a tenant's audit log.
+// Reader reads an organization's audit log.
 type Reader struct {
 	pool *pgxpool.Pool
 }
@@ -30,18 +30,18 @@ func NewReader(pool *pgxpool.Pool) *Reader {
 
 // Row is one audit event as List returns it.
 type Row struct {
-	ID           uuid.UUID      `json:"id"`
-	TenantID     *uuid.UUID     `json:"tenant_id"`
-	ActorUserID  *uuid.UUID     `json:"actor_user_id"`
-	ActorType    string         `json:"actor_type"`
-	Action       string         `json:"action"`
-	ResourceType string         `json:"resource_type"`
-	ResourceID   *uuid.UUID     `json:"resource_id"`
-	IP           *string        `json:"ip"`
-	UserAgent    *string        `json:"user_agent"`
-	RequestID    *string        `json:"request_id"`
-	CreatedAt    time.Time      `json:"created_at"`
-	Metadata     map[string]any `json:"metadata"`
+	ID             uuid.UUID      `json:"id"`
+	OrganizationID *uuid.UUID     `json:"tenant_id"`
+	ActorUserID    *uuid.UUID     `json:"actor_user_id"`
+	ActorType      string         `json:"actor_type"`
+	Action         string         `json:"action"`
+	ResourceType   string         `json:"resource_type"`
+	ResourceID     *uuid.UUID     `json:"resource_id"`
+	IP             *string        `json:"ip"`
+	UserAgent      *string        `json:"user_agent"`
+	RequestID      *string        `json:"request_id"`
+	CreatedAt      time.Time      `json:"created_at"`
+	Metadata       map[string]any `json:"metadata"`
 }
 
 // ListFilter narrows List's results; zero-value fields do not filter, and set
@@ -63,11 +63,11 @@ type ListFilter struct {
 // capped, as a count of a long history would read all of it.
 const MaxCounted = 10000
 
-// where is filter's conditions beyond the tenant's own rows ($1), with their
-// arguments, the tenant's first.
-func (filter ListFilter) where(tenantID uuid.UUID) (string, []any) {
+// where is filter's conditions beyond the organization's own rows ($1), with their
+// arguments, the organization's first.
+func (filter ListFilter) where(organizationID uuid.UUID) (string, []any) {
 	q := `TRUE`
-	args := []any{tenantID}
+	args := []any{organizationID}
 	arg := func(v any) string {
 		args = append(args, v)
 		return "$" + strconv.Itoa(len(args))
@@ -98,36 +98,36 @@ func (filter ListFilter) where(tenantID uuid.UUID) (string, []any) {
 		q += ` AND (search_vector @@ audit.search_query(` + search + `) OR actor_user_id IN (
 			SELECT su.id FROM account.users su
 			WHERE (su.email ILIKE ` + like + ` || '%' OR su.display_name ILIKE '%' || ` + like + ` || '%')
-			  AND (su.tenant_id = $1 OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = $1))))`
+			  AND (su.organization_id = $1 OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.organization_id = $1))))`
 	}
 	return q, args
 }
 
-// List returns up to limit of the tenant's audit rows (50 if limit is not in
+// List returns up to limit of the organization's audit rows (50 if limit is not in
 // 1..200), newest first, a cursor for the next page, or "" on the last page,
 // and how many rows match, up to MaxCounted.
-func (rd *Reader) List(ctx context.Context, tenantID uuid.UUID, limit int, cursor string, filter ListFilter) ([]Row, string, int, error) {
+func (rd *Reader) List(ctx context.Context, organizationID uuid.UUID, limit int, cursor string, filter ListFilter) ([]Row, string, int, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	where, args := filter.where(tenantID)
+	where, args := filter.where(organizationID)
 	var total int
-	if err := rd.pool.QueryRow(ctx, `SELECT count(*) FROM (SELECT 1 FROM audit.events WHERE tenant_id = $1 AND `+where+
+	if err := rd.pool.QueryRow(ctx, `SELECT count(*) FROM (SELECT 1 FROM audit.events WHERE organization_id = $1 AND `+where+
 		` LIMIT `+strconv.Itoa(MaxCounted+1)+`) matched`, args...).Scan(&total); err != nil {
 		return nil, "", 0, err
 	}
 	q := `
-		SELECT id, tenant_id, actor_user_id, actor_type, action, resource_type, resource_id,
+		SELECT id, organization_id, actor_user_id, actor_type, action, resource_type, resource_id,
 		       host(ip), user_agent, request_id, created_at, metadata
 		FROM audit.events
-		WHERE tenant_id = $1 AND ` + where
+		WHERE organization_id = $1 AND ` + where
 	if cursor != "" {
 		cid, err := uuid.Parse(cursor)
 		if err != nil {
 			return nil, "", 0, errs.ErrAuditCursorInvalid
 		}
 		args = append(args, cid)
-		q += ` AND (created_at, id) < (SELECT created_at, id FROM audit.events WHERE id = $` + strconv.Itoa(len(args)) + ` AND tenant_id = $1)`
+		q += ` AND (created_at, id) < (SELECT created_at, id FROM audit.events WHERE id = $` + strconv.Itoa(len(args)) + ` AND organization_id = $1)`
 	}
 	args = append(args, limit+1)
 	q += ` ORDER BY created_at DESC, id DESC LIMIT $` + strconv.Itoa(len(args))
@@ -142,7 +142,7 @@ func (rd *Reader) List(ctx context.Context, tenantID uuid.UUID, limit int, curso
 	for resRows.Next() {
 		var r Row
 		var meta []byte
-		if err := resRows.Scan(&r.ID, &r.TenantID, &r.ActorUserID, &r.ActorType, &r.Action,
+		if err := resRows.Scan(&r.ID, &r.OrganizationID, &r.ActorUserID, &r.ActorType, &r.Action,
 			&r.ResourceType, &r.ResourceID, &r.IP, &r.UserAgent, &r.RequestID, &r.CreatedAt, &meta); err != nil {
 			return nil, "", 0, err
 		}
@@ -182,21 +182,21 @@ func (h *Handler) Mount(r chi.Router) {
 }
 
 // MountPublic registers GET /audit/verify, an unauthenticated check of the
-// platform audit chains, so anyone can confirm they are intact. Tenant chains are
+// platform audit chains, so anyone can confirm they are intact. Organization chains are
 // verified only behind auth, in Mount.
 func (h *Handler) MountPublic(r chi.Router) {
 	r.Get("/audit/verify", h.verifyPublic)
 }
 
 // publicVerifyResult is verifyPublic's deliberately minimal result: whether the
-// platform chains are intact, with no tenant data or row identifiers.
+// platform chains are intact, with no organization data or row identifiers.
 type publicVerifyResult struct {
 	ChainValid  bool `json:"chain_valid"`
 	RowsChecked int  `json:"rows_checked"`
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tid, err := httpx.PathTenantOr(r, errs.ErrAuditTenantInvalid, errs.ErrAuditTenantMismatch)
+	tid, err := httpx.PathOrganizationOr(r, errs.ErrAuditOrganizationInvalid, errs.ErrAuditOrganizationMismatch)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -267,7 +267,7 @@ func splitList(raw string) []string {
 }
 
 func (h *Handler) verify(w http.ResponseWriter, r *http.Request) {
-	tid, err := httpx.PathTenantOr(r, errs.ErrAuditTenantInvalid, errs.ErrAuditTenantMismatch)
+	tid, err := httpx.PathOrganizationOr(r, errs.ErrAuditOrganizationInvalid, errs.ErrAuditOrganizationMismatch)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -281,14 +281,14 @@ func (h *Handler) verify(w http.ResponseWriter, r *http.Request) {
 }
 
 // lastVerification serves GET /tenants/{tenantID}/audit/verification: how the
-// scheduled verification last left the organisation's chain, read, not walked.
+// scheduled verification last left the organization's chain, read, not walked.
 func (h *Handler) lastVerification(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	res, err := h.Verifier.LastVerification(r.Context(), tenantID)
+	res, err := h.Verifier.LastVerification(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -296,7 +296,7 @@ func (h *Handler) lastVerification(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
-// verifyPublic verifies the platform audit chains (rows with a NULL tenant_id)
+// verifyPublic verifies the platform audit chains (rows with a NULL organization_id)
 // and returns only whether they are intact and how many rows were checked.
 func (h *Handler) verifyPublic(w http.ResponseWriter, r *http.Request) {
 	res, err := h.Verifier.Verify(r.Context(), nil)

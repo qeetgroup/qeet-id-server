@@ -1,5 +1,5 @@
 -- 0006_rbac — roles, permissions and who holds which role in which
--- organisation.
+-- organization.
 --
 -- Each table is headed by the package that owns it. A column marked (0010) is a
 -- foreign key into another schema, which 0010_cross_schema_keys adds.
@@ -13,35 +13,35 @@ CREATE TABLE rbac.permissions (
 
 -- internal/access/authorization/rbac
 CREATE TABLE rbac.roles (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id   UUID NOT NULL, -- tenant.tenants (0010)
-    name        TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    is_system   BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (tenant_id, id)
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID NOT NULL, -- organization.organizations (0010)
+    name            TEXT NOT NULL,
+    description     TEXT NOT NULL DEFAULT '',
+    is_system       BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (organization_id, id)
 );
-CREATE UNIQUE INDEX uq_roles_tenant_name ON rbac.roles (tenant_id, lower(name));
+CREATE UNIQUE INDEX uq_roles_organization_name ON rbac.roles (organization_id, lower(name));
 
 -- internal/access/authorization/accessrequest
 CREATE TABLE rbac.access_requests (
-    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id      UUID NOT NULL, -- tenant.tenants (0010)
-    requester_id   UUID NOT NULL,
-    role_id        UUID NOT NULL,
-    reason         TEXT NOT NULL,
-    duration_hours INTEGER,
-    status         TEXT NOT NULL DEFAULT 'pending',
-    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    expires_at     TIMESTAMPTZ NOT NULL,
-    decided_by     UUID,
-    decided_at     TIMESTAMPTZ,
-    decision_note  TEXT,
-    granted        BOOLEAN NOT NULL DEFAULT FALSE,
-    access_ends_at TIMESTAMPTZ,
-    ended_at       TIMESTAMPTZ,
-    CONSTRAINT access_requests_tenant_id_role_id_fkey FOREIGN KEY (tenant_id, role_id)
-        REFERENCES rbac.roles (tenant_id, id) ON DELETE CASCADE,
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID NOT NULL, -- organization.organizations (0010)
+    requester_id    UUID NOT NULL,
+    role_id         UUID NOT NULL,
+    reason          TEXT NOT NULL,
+    duration_hours  INTEGER,
+    status          TEXT NOT NULL DEFAULT 'pending',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at      TIMESTAMPTZ NOT NULL,
+    decided_by      UUID,
+    decided_at      TIMESTAMPTZ,
+    decision_note   TEXT,
+    granted         BOOLEAN NOT NULL DEFAULT FALSE,
+    access_ends_at  TIMESTAMPTZ,
+    ended_at        TIMESTAMPTZ,
+    CONSTRAINT access_requests_organization_id_role_id_fkey FOREIGN KEY (organization_id, role_id)
+        REFERENCES rbac.roles (organization_id, id) ON DELETE CASCADE,
     CONSTRAINT access_requests_check CHECK (
         status <> 'denied'
         OR (decision_note IS NOT NULL AND decision_note <> '')),
@@ -59,24 +59,24 @@ CREATE TABLE rbac.access_requests (
 CREATE INDEX access_requests_ending_idx ON rbac.access_requests (access_ends_at)
     WHERE status = 'approved' AND granted AND ended_at IS NULL;
 CREATE INDEX access_requests_lapsing_idx ON rbac.access_requests (expires_at) WHERE status = 'pending';
-CREATE UNIQUE INDEX access_requests_one_pending_idx ON rbac.access_requests (tenant_id, requester_id, role_id)
+CREATE UNIQUE INDEX access_requests_one_pending_idx ON rbac.access_requests (organization_id, requester_id, role_id)
     WHERE status = 'pending';
-CREATE INDEX access_requests_requester_idx ON rbac.access_requests (requester_id, tenant_id, created_at DESC);
-CREATE INDEX access_requests_tenant_idx ON rbac.access_requests (tenant_id, status, created_at DESC, id DESC);
+CREATE INDEX access_requests_requester_idx ON rbac.access_requests (requester_id, organization_id, created_at DESC);
+CREATE INDEX access_requests_organization_idx ON rbac.access_requests (organization_id, status, created_at DESC, id DESC);
 
 -- internal/access/authorization/rbac
 CREATE TABLE rbac.group_roles (
-    tenant_id  UUID NOT NULL, -- tenant.groups, tenant.tenants (0010)
-    group_id   UUID NOT NULL, -- tenant.groups (0010)
-    role_id    UUID NOT NULL,
-    granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    granted_by UUID,
+    organization_id UUID NOT NULL, -- organization.groups, organization.organizations (0010)
+    group_id        UUID NOT NULL, -- organization.groups (0010)
+    role_id         UUID NOT NULL,
+    granted_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    granted_by      UUID,
     PRIMARY KEY (group_id, role_id),
-    CONSTRAINT group_roles_role_id_fkey FOREIGN KEY (tenant_id, role_id)
-        REFERENCES rbac.roles (tenant_id, id) ON DELETE CASCADE
+    CONSTRAINT group_roles_role_id_fkey FOREIGN KEY (organization_id, role_id)
+        REFERENCES rbac.roles (organization_id, id) ON DELETE CASCADE
 );
 CREATE INDEX idx_group_roles_role ON rbac.group_roles (role_id);
-CREATE INDEX idx_group_roles_tenant ON rbac.group_roles (tenant_id);
+CREATE INDEX idx_group_roles_organization ON rbac.group_roles (organization_id);
 
 -- internal/access/authorization/rbac
 CREATE TABLE rbac.role_permissions (
@@ -87,13 +87,13 @@ CREATE TABLE rbac.role_permissions (
 
 -- internal/access/authorization/rbac
 CREATE TABLE rbac.user_roles (
-    user_id    UUID NOT NULL, -- account.users (0010)
-    tenant_id  UUID NOT NULL, -- tenant.tenants (0010)
-    role_id    UUID NOT NULL,
-    granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    granted_by UUID,
-    PRIMARY KEY (user_id, tenant_id, role_id),
-    CONSTRAINT user_roles_role_id_fkey FOREIGN KEY (tenant_id, role_id)
-        REFERENCES rbac.roles (tenant_id, id) ON DELETE CASCADE
+    user_id         UUID NOT NULL, -- account.users (0010)
+    organization_id UUID NOT NULL, -- organization.organizations (0010)
+    role_id         UUID NOT NULL,
+    granted_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    granted_by      UUID,
+    PRIMARY KEY (user_id, organization_id, role_id),
+    CONSTRAINT user_roles_role_id_fkey FOREIGN KEY (organization_id, role_id)
+        REFERENCES rbac.roles (organization_id, id) ON DELETE CASCADE
 );
-CREATE INDEX idx_user_roles_tenant ON rbac.user_roles (tenant_id, user_id);
+CREATE INDEX idx_user_roles_organization ON rbac.user_roles (organization_id, user_id);

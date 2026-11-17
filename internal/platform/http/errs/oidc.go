@@ -62,21 +62,21 @@ const (
 	CodeOIDCRefreshTokenReuse          = "oidc.refresh_token_reuse"
 
 	// Request shape & path parameters.
-	CodeOIDCFormInvalid     = "oidc.form_invalid"
-	CodeOIDCTenantIDInvalid = "oidc.tenant_id_invalid"
-	CodeOIDCTenantMismatch  = "oidc.tenant_mismatch"
-	CodeOIDCIDInvalid       = "oidc.id_invalid"
+	CodeOIDCFormInvalid           = "oidc.form_invalid"
+	CodeOIDCOrganizationIDInvalid = "oidc.tenant_id_invalid"
+	CodeOIDCOrganizationMismatch  = "oidc.tenant_mismatch"
+	CodeOIDCIDInvalid             = "oidc.id_invalid"
 
 	// Grant & device administration.
 	CodeOIDCGrantNotFound  = "oidc.grant_not_found"
 	CodeOIDCDeviceNotFound = "oidc.device_not_found"
 
 	// Device Authorization Grant (RFC 8628) user-code flow.
-	CodeOIDCUserCodeInvalid      = "oidc.user_code_invalid"
-	CodeOIDCUserCodeExpired      = "oidc.user_code_expired"
-	CodeOIDCUserCodeRequired     = "oidc.user_code_required"
-	CodeOIDCDeviceAlreadyDecided = "oidc.device_already_decided"
-	CodeOIDCUserTenantMismatch   = "oidc.user_tenant_mismatch"
+	CodeOIDCUserCodeInvalid          = "oidc.user_code_invalid"
+	CodeOIDCUserCodeExpired          = "oidc.user_code_expired"
+	CodeOIDCUserCodeRequired         = "oidc.user_code_required"
+	CodeOIDCDeviceAlreadyDecided     = "oidc.device_already_decided"
+	CodeOIDCUserOrganizationMismatch = "oidc.user_tenant_mismatch"
 
 	// CIBA backchannel sign-in requests.
 	CodeOIDCCIBARequestNotFound       = "oidc.ciba_request_not_found"
@@ -151,21 +151,21 @@ var (
 	ErrOIDCRefreshTokenReuse          = New(CodeOIDCRefreshTokenReuse, "That refresh token was already used; all related tokens have been revoked.")
 
 	// Request shape & path parameters.
-	ErrOIDCFormInvalid     = New(CodeOIDCFormInvalid, "The request form couldn't be parsed.")
-	ErrOIDCTenantIDInvalid = New(CodeOIDCTenantIDInvalid, "That tenant ID is invalid.")
-	ErrOIDCTenantMismatch  = New(CodeOIDCTenantMismatch, "You can only access your own tenant.")
-	ErrOIDCIDInvalid       = New(CodeOIDCIDInvalid, "That ID is invalid.")
+	ErrOIDCFormInvalid           = New(CodeOIDCFormInvalid, "The request form couldn't be parsed.")
+	ErrOIDCOrganizationIDInvalid = New(CodeOIDCOrganizationIDInvalid, "That tenant ID is invalid.")
+	ErrOIDCOrganizationMismatch  = New(CodeOIDCOrganizationMismatch, "You can only access your own tenant.")
+	ErrOIDCIDInvalid             = New(CodeOIDCIDInvalid, "That ID is invalid.")
 
 	// Grant & device administration.
 	ErrOIDCGrantNotFound  = New(CodeOIDCGrantNotFound, "We couldn't find that grant.")
 	ErrOIDCDeviceNotFound = New(CodeOIDCDeviceNotFound, "We couldn't find that device authorization.")
 
 	// Device Authorization Grant (RFC 8628) user-code flow.
-	ErrOIDCUserCodeInvalid      = New(CodeOIDCUserCodeInvalid, "That code isn't recognized.")
-	ErrOIDCUserCodeExpired      = New(CodeOIDCUserCodeExpired, "That code has expired. Request a new one on your device.")
-	ErrOIDCUserCodeRequired     = New(CodeOIDCUserCodeRequired, "Enter the code shown on your device.")
-	ErrOIDCDeviceAlreadyDecided = New(CodeOIDCDeviceAlreadyDecided, "This device authorization has already been decided.")
-	ErrOIDCUserTenantMismatch   = New(CodeOIDCUserTenantMismatch, "You don't belong to this client's tenant.")
+	ErrOIDCUserCodeInvalid          = New(CodeOIDCUserCodeInvalid, "That code isn't recognized.")
+	ErrOIDCUserCodeExpired          = New(CodeOIDCUserCodeExpired, "That code has expired. Request a new one on your device.")
+	ErrOIDCUserCodeRequired         = New(CodeOIDCUserCodeRequired, "Enter the code shown on your device.")
+	ErrOIDCDeviceAlreadyDecided     = New(CodeOIDCDeviceAlreadyDecided, "This device authorization has already been decided.")
+	ErrOIDCUserOrganizationMismatch = New(CodeOIDCUserOrganizationMismatch, "You don't belong to this client's tenant.")
 
 	// CIBA backchannel sign-in requests.
 	ErrOIDCCIBARequestNotFound       = New(CodeOIDCCIBARequestNotFound, "We couldn't find that sign-in request.")

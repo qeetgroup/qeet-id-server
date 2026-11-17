@@ -28,7 +28,7 @@ Contexts: `access` · `identity` · `federation` · `developer` · `operations`.
 ## Security-critical — review carefully
 
 ```text
-internal/platform/http/httpx/auth.go       tenant scope, principal, RequireAuth
+internal/platform/http/httpx/auth.go       organization scope, principal, RequireAuth
 internal/platform/http/httpx/csrf.go       CSRF
 internal/platform/crypto/tokens/jwt.go     ES256, kid, rotation
 internal/platform/crypto/password/         Argon2id password hashing
@@ -39,15 +39,15 @@ internal/access/authorization/             RBAC, ABAC, ReBAC, AuthZEN
 internal/federation/{saml,scim,ldap}/      untrusted external input
 ```
 
-## Tenant isolation
+## Organization isolation
 
-Take the tenant from `httpx.RequireTenant(r)` — **never** from a path, body or header.
-`httpx.EnforceTenantScope` checks `{tenantID}` against the caller. Every tenant-scoped query carries
-`WHERE tenant_id = $1`.
+Take the organization from `httpx.RequireOrganization(r)` — **never** from a path, body or header.
+`httpx.EnforceOrganizationScope` checks `{tenantID}` against the caller. Every organization-scoped query carries
+`WHERE organization_id = $1`.
 
-**Row-level security is a second layer, not the first.** It covers organisation-owned tables in
-organisation-administration requests only; on a person's own routes, in background jobs, sign-in
-and on account-level tables a missing predicate is still a cross-tenant data exposure.
+**Row-level security is a second layer, not the first.** It covers organization-owned tables in
+organization-administration requests only; on a person's own routes, in background jobs, sign-in
+and on account-level tables a missing predicate is still a cross-organization data exposure.
 
 ## API contracts
 
@@ -61,12 +61,12 @@ and on account-level tables a missing predicate is still a cross-tenant data exp
 
 ## Tests
 
-New behaviour ships with a test. Anything touching tenant scoping needs a cross-tenant denial test.
+New behaviour ships with a test. Anything touching organization scoping needs a cross-organization denial test.
 
 ## Do not
 
 - suggest editing generated `dbgen/` code — change `queries.sql` and regenerate
 - suggest wiring outside `internal/bootstrap`
-- suggest taking a tenant ID from a request parameter
+- suggest taking an organization ID from a request parameter
 - weaken a security control to make something pass
 - invent Make targets — the list in `AGENTS.md` is complete

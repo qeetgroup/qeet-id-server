@@ -14,31 +14,31 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// SwitchTenantInput names who switches, from which of their sessions, and to
+// SwitchOrganizationInput names who switches, from which of their sessions, and to
 // which organization. FromSessionID must come from the caller's own access
 // token, never from anything the client supplies.
-type SwitchTenantInput struct {
-	UserID        uuid.UUID
-	FromSessionID uuid.UUID
-	TenantID      uuid.UUID
-	IP            string
-	UserAgent     string
+type SwitchOrganizationInput struct {
+	UserID         uuid.UUID
+	FromSessionID  uuid.UUID
+	OrganizationID uuid.UUID
+	IP             string
+	UserAgent      string
 }
 
-// SwitchTenant replaces the caller's session with one in another organisation
-// they belong to, ending the old one in the same transaction. The organisation's
+// SwitchOrganization replaces the caller's session with one in another organization
+// they belong to, ending the old one in the same transaction. The organization's
 // second-factor requirement must already be met (ErrStepUpRequired,
 // ErrMFAEnrollmentRequired); on any refusal nothing changes.
-func (s *Service) SwitchTenant(ctx context.Context, in SwitchTenantInput) (*TokenPair, error) {
-	member, err := s.q.CheckTenantMembership(ctx, dbgen.CheckTenantMembershipParams{
-		UserID:   in.UserID,
-		TenantID: in.TenantID,
+func (s *Service) SwitchOrganization(ctx context.Context, in SwitchOrganizationInput) (*TokenPair, error) {
+	member, err := s.q.CheckOrganizationMembership(ctx, dbgen.CheckOrganizationMembershipParams{
+		UserID:         in.UserID,
+		OrganizationID: in.OrganizationID,
 	})
 	if err != nil {
 		return nil, err
 	}
 	if !member {
-		return nil, errs.ErrAuthNotTenantMember
+		return nil, errs.ErrAuthNotOrganizationMember
 	}
 	// Cheap check before calling out to the hook; the supersede below is the
 	// authoritative one.
@@ -53,7 +53,7 @@ func (s *Service) SwitchTenant(ctx context.Context, in SwitchTenantInput) (*Toke
 	if err != nil {
 		return nil, err
 	}
-	if err := s.tenantFactorShortfall(ctx, in.UserID, in.TenantID, carried); err != nil {
+	if err := s.organizationFactorShortfall(ctx, in.UserID, in.OrganizationID, carried); err != nil {
 		return nil, err
 	}
 	var claims map[string]any
@@ -62,14 +62,14 @@ func (s *Service) SwitchTenant(ctx context.Context, in SwitchTenantInput) (*Toke
 		if err != nil {
 			return nil, err
 		}
-		if claims, err = s.loginHook.Run(ctx, in.TenantID, in.UserID, u.Email); err != nil {
+		if claims, err = s.loginHook.Run(ctx, in.OrganizationID, in.UserID, u.Email); err != nil {
 			return nil, err
 		}
 	}
-	if err := s.refuseSignIn(ctx, in.UserID, in.TenantID, "tenant_switch", in.IP, in.UserAgent); err != nil {
+	if err := s.refuseSignIn(ctx, in.UserID, in.OrganizationID, "tenant_switch", in.IP, in.UserAgent); err != nil {
 		return nil, err
 	}
-	if err := s.refuseSwitchIntoCapture(ctx, in.UserID, in.TenantID); err != nil {
+	if err := s.refuseSwitchIntoCapture(ctx, in.UserID, in.OrganizationID); err != nil {
 		return nil, err
 	}
 
@@ -94,7 +94,7 @@ func (s *Service) SwitchTenant(ctx context.Context, in SwitchTenantInput) (*Toke
 	if err != nil {
 		return nil, err
 	}
-	pair, err := s.issuePairTx(ctx, tx, in.UserID, in.TenantID, in.IP, in.UserAgent, "tenant_switch", claims,
+	pair, err := s.issuePairTx(ctx, tx, in.UserID, in.OrganizationID, in.IP, in.UserAgent, "tenant_switch", claims,
 		map[string]any{"previous_session_id": in.FromSessionID, "second_factor": carried}, ends)
 	if err != nil {
 		return nil, s.signInFailed(ctx, tx, err)
@@ -113,7 +113,7 @@ func (s *Service) SwitchTenant(ctx context.Context, in SwitchTenantInput) (*Toke
 	if err != nil {
 		return nil, err
 	}
-	s.signals.Revoked(ctx, tx, sessionsignal.ReasonTenantSwitch,
+	s.signals.Revoked(ctx, tx, sessionsignal.ReasonOrganizationSwitch,
 		endedSessions(in.UserID, []uuid.UUID{in.FromSessionID}, []pgtype.UUID{left})...)
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
@@ -122,50 +122,50 @@ func (s *Service) SwitchTenant(ctx context.Context, in SwitchTenantInput) (*Toke
 }
 
 // SignInInvitedAccount signs in an account an accepted invitation has just
-// created in tenantID, as at sign-up: where the organisation requires a second
+// created in organizationID, as at sign-up: where the organization requires a second
 // factor the result is the enrolment challenge instead of a session.
-func (s *Service) SignInInvitedAccount(ctx context.Context, userID, tenantID uuid.UUID, ip, ua string) (*LoginResult, error) {
-	gate, err := s.mfaGate(ctx, userID, tenantID)
+func (s *Service) SignInInvitedAccount(ctx context.Context, userID, organizationID uuid.UUID, ip, ua string) (*LoginResult, error) {
+	gate, err := s.mfaGate(ctx, userID, organizationID)
 	if err != nil {
 		return nil, err
 	}
-	claims, err := s.signInHook(ctx, userID, tenantID)
+	claims, err := s.signInHook(ctx, userID, organizationID)
 	if err != nil {
 		return nil, err
 	}
 	if gate.challenged() {
-		challenge, err := s.challengeSignIn(ctx, userID, tenantID, claims, gate, firstFactorPassword, ip, ua)
+		challenge, err := s.challengeSignIn(ctx, userID, organizationID, claims, gate, firstFactorPassword, ip, ua)
 		if err != nil {
 			return nil, err
 		}
 		return &LoginResult{MFAChallenge: challenge}, nil
 	}
-	pair, err := s.IssuePairWithClaims(ctx, userID, tenantID, ip, ua, "invite_accept", claims)
+	pair, err := s.IssuePairWithClaims(ctx, userID, organizationID, ip, ua, "invite_accept", claims)
 	if err != nil {
 		return nil, err
 	}
 	return &LoginResult{Pair: pair}, nil
 }
 
-// EnterInvitedTenant issues a session in tenantID for an account that accepted
-// its invitation while signed in. Like SwitchTenant, it is refused while the
-// organisation's second-factor requirement isn't met; the invitation stays
+// EnterInvitedOrganization issues a session in organizationID for an account that accepted
+// its invitation while signed in. Like SwitchOrganization, it is refused while the
+// organization's second-factor requirement isn't met; the invitation stays
 // accepted so the user can step up and switch in.
-func (s *Service) EnterInvitedTenant(ctx context.Context, userID, tenantID, fromSessionID uuid.UUID, ip, ua string) (*TokenPair, error) {
-	return s.enterTenant(ctx, userID, tenantID, fromSessionID, ip, ua, "invite_accept")
+func (s *Service) EnterInvitedOrganization(ctx context.Context, userID, organizationID, fromSessionID uuid.UUID, ip, ua string) (*TokenPair, error) {
+	return s.enterOrganization(ctx, userID, organizationID, fromSessionID, ip, ua, "invite_accept")
 }
 
-// EnterCreatedTenant opens a session in tenantID, which userID has just
+// EnterCreatedOrganization opens a session in organizationID, which userID has just
 // created, continuing their session fromSessionID: it ends when that one
 // would, and carries its sign-in and second factor.
-func (s *Service) EnterCreatedTenant(ctx context.Context, userID, tenantID, fromSessionID uuid.UUID, ip, ua string) (*TokenPair, error) {
-	return s.enterTenant(ctx, userID, tenantID, fromSessionID, ip, ua, "tenant_create")
+func (s *Service) EnterCreatedOrganization(ctx context.Context, userID, organizationID, fromSessionID uuid.UUID, ip, ua string) (*TokenPair, error) {
+	return s.enterOrganization(ctx, userID, organizationID, fromSessionID, ip, ua, "tenant_create")
 }
 
-// enterTenant opens a session in tenantID continuing userID's session
+// enterOrganization opens a session in organizationID continuing userID's session
 // fromSessionID (uuid.Nil: none), which stays open, recorded as a method
 // sign-in.
-func (s *Service) enterTenant(ctx context.Context, userID, tenantID, fromSessionID uuid.UUID, ip, ua, method string) (*TokenPair, error) {
+func (s *Service) enterOrganization(ctx context.Context, userID, organizationID, fromSessionID uuid.UUID, ip, ua, method string) (*TokenPair, error) {
 	carried := ""
 	if fromSessionID != uuid.Nil {
 		var err error
@@ -173,10 +173,10 @@ func (s *Service) enterTenant(ctx context.Context, userID, tenantID, fromSession
 			return nil, err
 		}
 	}
-	if err := s.tenantFactorShortfall(ctx, userID, tenantID, carried); err != nil {
+	if err := s.organizationFactorShortfall(ctx, userID, organizationID, carried); err != nil {
 		return nil, err
 	}
-	if err := s.refuseSignIn(ctx, userID, tenantID, method, ip, ua); err != nil {
+	if err := s.refuseSignIn(ctx, userID, organizationID, method, ip, ua); err != nil {
 		return nil, err
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -194,7 +194,7 @@ func (s *Service) enterTenant(ctx context.Context, userID, tenantID, fromSession
 			return nil, err
 		}
 	}
-	pair, err := s.issuePairTx(ctx, tx, userID, tenantID, ip, ua, method, nil,
+	pair, err := s.issuePairTx(ctx, tx, userID, organizationID, ip, ua, method, nil,
 		map[string]any{"previous_session_id": fromSessionID, "second_factor": carried}, ends)
 	if err != nil {
 		return nil, s.signInFailed(ctx, tx, err)
@@ -210,11 +210,11 @@ func (s *Service) enterTenant(ctx context.Context, userID, tenantID, fromSession
 	return pair, nil
 }
 
-// SessionFactorShortfall reports what stops userID acting in tenantID through
+// SessionFactorShortfall reports what stops userID acting in organizationID through
 // their session sessionID (uuid.Nil: none, so no factor met), as entering it
-// would: nil, or ErrStepUpRequired / ErrMFAEnrollmentRequired while tenantID
+// would: nil, or ErrStepUpRequired / ErrMFAEnrollmentRequired while organizationID
 // requires a second factor the session's sign-in didn't meet.
-func (s *Service) SessionFactorShortfall(ctx context.Context, sessionID, userID, tenantID uuid.UUID) error {
+func (s *Service) SessionFactorShortfall(ctx context.Context, sessionID, userID, organizationID uuid.UUID) error {
 	carried := ""
 	if sessionID != uuid.Nil {
 		var err error
@@ -222,7 +222,7 @@ func (s *Service) SessionFactorShortfall(ctx context.Context, sessionID, userID,
 			return err
 		}
 	}
-	return s.tenantFactorShortfall(ctx, userID, tenantID, carried)
+	return s.organizationFactorShortfall(ctx, userID, organizationID, carried)
 }
 
 // carriedSecondFactor is the second factor a session's sign-in met, for a

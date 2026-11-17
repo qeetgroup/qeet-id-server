@@ -14,9 +14,9 @@ import (
 // rangeMaxDays bounds a chosen range, so a trend never scans unbounded history.
 const rangeMaxDays = 366
 
-// SignInRange is the organisation's sign-ins day by day over a chosen range:
+// SignInRange is the organization's sign-ins day by day over a chosen range:
 // how many, by how many people, and how many failed, by one method when
-// Method is set. Organisation switches and creations aren't sign-ins.
+// Method is set. Organization switches and creations aren't sign-ins.
 type SignInRange struct {
 	From   time.Time    `json:"from"`
 	To     time.Time    `json:"to"`
@@ -32,9 +32,9 @@ type DayOfLogin struct {
 	Failed  int    `json:"failed"`
 }
 
-// Range returns tenantID's sign-ins by UTC day from the day of from to the day
+// Range returns organizationID's sign-ins by UTC day from the day of from to the day
 // of to, of method when not "".
-func (r *Reader) Range(ctx context.Context, tenantID uuid.UUID, from, to time.Time, method string) (*SignInRange, error) {
+func (r *Reader) Range(ctx context.Context, organizationID uuid.UUID, from, to time.Time, method string) (*SignInRange, error) {
 	out := &SignInRange{From: from, To: to, Method: method, Days: []DayOfLogin{}}
 	rows, err := r.pool.Query(ctx, `
 		SELECT to_char(d, 'YYYY-MM-DD'),
@@ -44,13 +44,13 @@ func (r *Reader) Range(ctx context.Context, tenantID uuid.UUID, from, to time.Ti
 		FROM generate_series(date_trunc('day', $2::timestamptz AT TIME ZONE 'UTC'),
 		                     date_trunc('day', $3::timestamptz AT TIME ZONE 'UTC'), INTERVAL '1 day') AS d
 		LEFT JOIN audit.events e
-		  ON e.tenant_id = $1
+		  ON e.organization_id = $1
 		 AND e.created_at >= d AT TIME ZONE 'UTC' AND e.created_at < (d + INTERVAL '1 day') AT TIME ZONE 'UTC'
 		 AND e.created_at >= $2 AND e.created_at <= $3
 		 AND e.action IN ('auth.login_succeeded', 'auth.sign_in_failed')
 		 AND COALESCE(e.metadata->>'method', '') NOT IN ('tenant_switch', 'tenant_create', 'invite_accept')
 		 AND ($4 = '' OR e.metadata->>'method' = $4)
-		GROUP BY d ORDER BY d`, tenantID, from, to, method)
+		GROUP BY d ORDER BY d`, organizationID, from, to, method)
 	if err != nil {
 		return nil, err
 	}

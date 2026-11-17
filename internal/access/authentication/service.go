@@ -31,7 +31,7 @@ type Service struct {
 	// SetMFA; kept as an interface so package auth doesn't import package mfa.
 	mfa MFAEnroller
 	// memberPermissions are all a member may hold without counting as an
-	// administrator for an organisation's admin_only second-factor requirement
+	// administrator for an organization's admin_only second-factor requirement
 	// (nil: any permission counts). Set via SetMemberPermissions.
 	memberPermissions []string
 	// regPolicy gates hosted self-registration and is the password check every
@@ -39,15 +39,15 @@ type Service struct {
 	// no password can be set). Set via SetRegistrationPolicy; an interface so
 	// auth doesn't import authpolicy.
 	regPolicy RegistrationPolicy
-	// methods decides which sign-in methods an organisation allows (nil = all).
+	// methods decides which sign-in methods an organization allows (nil = all).
 	methods MethodPolicy
-	// capture sends an address on a captured domain to its organisation's
+	// capture sends an address on a captured domain to its organization's
 	// identity provider (nil = none is). See capture.go.
 	capture DomainCapture
 	// anomaly receives security signals (nil = recording off). Set via
 	// SetAnomalyRecorder; an interface so auth doesn't import the threat package.
 	anomaly AnomalyRecorder
-	// devicePolicy reports whether a tenant has opted into adaptive MFA
+	// devicePolicy reports whether an organization has opted into adaptive MFA
 	// (trusted-device skip). nil = always-on MFA. Set via SetDevicePolicy.
 	devicePolicy DevicePolicy
 	// riskAssessor assesses every sign-in's risk (see risksignin.go). nil = no
@@ -59,8 +59,8 @@ type Service struct {
 	// loginHook is an optional synchronous policy gate run after credentials
 	// verify (nil = no gate). Set via SetLoginHook.
 	loginHook LoginHook
-	// addresses is the organisations' address rules, asked before any session
-	// in an organisation is issued or renewed (nil = no rules). See address.go.
+	// addresses is the organizations' address rules, asked before any session
+	// in an organization is issued or renewed (nil = no rules). See address.go.
 	addresses AddressPolicy
 	// signOutNotifier tells applications of a hosted sign-out (nil = none).
 	signOutNotifier SignOutNotifier
@@ -68,11 +68,11 @@ type Service struct {
 	// announces nothing). Set via SetSessionSignals.
 	signals *sessionsignal.Signaller
 	// lockout is the platform-wide sign-in lockout configuration, and
-	// lockoutSource the per-tenant settings (nil = the platform defaults for
+	// lockoutSource the per-organization settings (nil = the platform defaults for
 	// every sign-in). See lockout.go.
 	lockout       LockoutConfig
 	lockoutSource LockoutSource
-	// sessionMaxAge and sessionIdle bound a session whose organisation sets
+	// sessionMaxAge and sessionIdle bound a session whose organization sets
 	// no bounds of its own (zero = the platform defaults). See lifetime.go.
 	sessionMaxAge time.Duration
 	sessionIdle   time.Duration
@@ -117,8 +117,8 @@ type MFAEnroller interface {
 	// "recovery_code" or "otp"). It returns ("", nil) for a wrong code.
 	VerifyForLoginTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code string) (string, error)
 	// SendLoginCode sends a code to one of the user's confirmed email/SMS
-	// factors for a sign-in to tenantID (nil: none).
-	SendLoginCode(ctx context.Context, userID uuid.UUID, tenantID *uuid.UUID, factorID uuid.UUID) error
+	// factors for a sign-in to organizationID (nil: none).
+	SendLoginCode(ctx context.Context, userID uuid.UUID, organizationID *uuid.UUID, factorID uuid.UUID) error
 	// BeginLoginPasskey starts a passkey assertion for the user's own
 	// passkeys; FinishLoginPasskeyTx verifies one inside the challenge
 	// transaction (a domain error: not verified).
@@ -144,12 +144,12 @@ type MFAEnroller interface {
 func (s *Service) SetMFA(m MFAEnroller) { s.mfa = m }
 
 // RegistrationPolicy is the part of the auth-policy service this package needs:
-// the per-tenant self-registration switch and the password check run wherever a
-// password is set. A tenantID of uuid.Nil means the platform baseline.
+// the per-organization self-registration switch and the password check run wherever a
+// password is set. An organizationID of uuid.Nil means the platform baseline.
 // Satisfied by *authpolicy.Service.
 type RegistrationPolicy interface {
-	SelfRegistrationEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error)
-	ValidateForTenant(ctx context.Context, tenantID uuid.UUID, email, pw string) error
+	SelfRegistrationEnabled(ctx context.Context, organizationID uuid.UUID) (bool, error)
+	ValidateForOrganization(ctx context.Context, organizationID uuid.UUID, email, pw string) error
 }
 
 // SetRegistrationPolicy wires the hosted self-registration gate + password
@@ -157,9 +157,9 @@ type RegistrationPolicy interface {
 func (s *Service) SetRegistrationPolicy(p RegistrationPolicy) { s.regPolicy = p }
 
 // MethodPolicy is the slice of the authentication policy that decides whether
-// an organisation allows password sign-in. Satisfied by *authpolicy.Service.
+// an organization allows password sign-in. Satisfied by *authpolicy.Service.
 type MethodPolicy interface {
-	PasswordEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error)
+	PasswordEnabled(ctx context.Context, organizationID uuid.UUID) (bool, error)
 }
 
 // SetMethodPolicy wires the sign-in method policy (nil = every method allowed).
@@ -175,14 +175,14 @@ type AnomalyRecorder interface {
 // SetAnomalyRecorder wires the security-anomaly recorder.
 func (s *Service) SetAnomalyRecorder(a AnomalyRecorder) { s.anomaly = a }
 
-// DevicePolicy reports whether a tenant has opted into adaptive MFA (skipping
+// DevicePolicy reports whether an organization has opted into adaptive MFA (skipping
 // the second factor on a trusted device). Satisfied by *authpolicy.Service;
 // kept as an interface so auth doesn't import authpolicy.
 type DevicePolicy interface {
-	RememberDeviceEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error)
-	// RememberDevicePolicy adds how long a device the tenant remembers stays
+	RememberDeviceEnabled(ctx context.Context, organizationID uuid.UUID) (bool, error)
+	// RememberDevicePolicy adds how long a device the organization remembers stays
 	// remembered.
-	RememberDevicePolicy(ctx context.Context, tenantID uuid.UUID) (bool, time.Duration, error)
+	RememberDevicePolicy(ctx context.Context, organizationID uuid.UUID) (bool, time.Duration, error)
 }
 
 // SetDevicePolicy wires the adaptive-MFA (trusted-device) gate.
@@ -193,13 +193,13 @@ func (s *Service) SetDevicePolicy(d DevicePolicy) { s.devicePolicy = d }
 // (threat-detection/risk); kept as an interface so auth doesn't import that
 // package.
 type RiskAssessor interface {
-	// ShouldForceMFA reports whether the request's risk score exceeds the tenant's
+	// ShouldForceMFA reports whether the request's risk score exceeds the organization's
 	// force-MFA threshold. country is an ISO code, or empty when unknown. It fails
 	// open (false) on any error.
-	ShouldForceMFA(ctx context.Context, tenantID, userID uuid.UUID, ip, ua, country string) bool
+	ShouldForceMFA(ctx context.Context, organizationID, userID uuid.UUID, ip, ua, country string) bool
 	// RecordSignIn remembers a sign-in that got its session, as later
 	// assessments' history.
-	RecordSignIn(ctx context.Context, tenantID, userID uuid.UUID, ua, country string)
+	RecordSignIn(ctx context.Context, organizationID, userID uuid.UUID, ua, country string)
 }
 
 // SetRiskAssessor wires the sign-in risk assessment.
@@ -212,7 +212,7 @@ func (s *Service) SetSender(n notifier.Sender) { s.sender = n }
 // error refuses the sign-in; otherwise the returned map (possibly nil) holds
 // custom claims for the access token.
 type LoginHook interface {
-	Run(ctx context.Context, tenantID, userID uuid.UUID, email string) (map[string]any, error)
+	Run(ctx context.Context, organizationID, userID uuid.UUID, email string) (map[string]any, error)
 }
 
 // SetLoginHook wires the post-credential Actions/Hooks gate.
@@ -235,7 +235,7 @@ type MFAChallenge struct {
 	Factors []LoginFactor
 	// EnrollmentRequired: the account must have a second factor and holds
 	// none, so the challenge is met by setting up an authenticator app.
-	// EnrollmentDueAt, when set, is when the organisation's grace period
+	// EnrollmentDueAt, when set, is when the organization's grace period
 	// ends; until then the setup may be skipped. See mfapolicy.go.
 	EnrollmentRequired bool
 	EnrollmentDueAt    *time.Time
@@ -266,6 +266,6 @@ type TokenPair struct {
 	IdleExpiresAt    time.Time `json:"idle_expires_at"`
 	SessionID        uuid.UUID `json:"session_id"`
 	UserID           uuid.UUID `json:"user_id"`
-	// Tenant the token is scoped to; nil/omitted for a tenant-less session.
-	TenantID *uuid.UUID `json:"tenant_id,omitempty"`
+	// Organization the token is scoped to; nil/omitted for an organization-less session.
+	OrganizationID *uuid.UUID `json:"tenant_id,omitempty"`
 }

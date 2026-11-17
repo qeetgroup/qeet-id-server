@@ -1,7 +1,7 @@
 package saml
 
-// Who may sign in to an organisation's service provider. One set to assigned
-// people only (assignment_required) signs in the people of the organisation
+// Who may sign in to an organization's service provider. One set to assigned
+// people only (assignment_required) signs in the people of the organization
 // assigned to it, directly or through a group of it they belong to; any other
 // service provider signs in every one of them.
 
@@ -47,21 +47,21 @@ type SPGroupAssignment struct {
 }
 
 // assigned reports whether userID is assigned to sp, themselves or through a
-// group of sp's organisation.
+// group of sp's organization.
 func (i *IdP) assigned(ctx context.Context, sp *ServiceProvider, userID uuid.UUID) (bool, error) {
-	return i.q.IsAssignedToSamlSP(ctx, dbgen.IsAssignedToSamlSPParams{TenantID: sp.TenantID, SpID: sp.ID, UserID: userID})
+	return i.q.IsAssignedToSamlSP(ctx, dbgen.IsAssignedToSamlSPParams{OrganizationID: sp.OrganizationID, SpID: sp.ID, UserID: userID})
 }
 
-// ListAssignments returns who is assigned to the tenant's service provider spID.
-func (i *IdP) ListAssignments(ctx context.Context, tenantID, spID uuid.UUID) (*SPAssignments, error) {
-	if _, err := i.GetSP(ctx, spID, tenantID); err != nil {
+// ListAssignments returns who is assigned to the organization's service provider spID.
+func (i *IdP) ListAssignments(ctx context.Context, organizationID, spID uuid.UUID) (*SPAssignments, error) {
+	if _, err := i.GetSP(ctx, spID, organizationID); err != nil {
 		return nil, err
 	}
-	users, err := i.q.ListSamlSPUserAssignments(ctx, dbgen.ListSamlSPUserAssignmentsParams{TenantID: tenantID, SpID: spID})
+	users, err := i.q.ListSamlSPUserAssignments(ctx, dbgen.ListSamlSPUserAssignmentsParams{OrganizationID: organizationID, SpID: spID})
 	if err != nil {
 		return nil, err
 	}
-	groups, err := i.q.ListSamlSPGroupAssignments(ctx, dbgen.ListSamlSPGroupAssignmentsParams{TenantID: tenantID, SpID: spID})
+	groups, err := i.q.ListSamlSPGroupAssignments(ctx, dbgen.ListSamlSPGroupAssignmentsParams{OrganizationID: organizationID, SpID: spID})
 	if err != nil {
 		return nil, err
 	}
@@ -75,24 +75,24 @@ func (i *IdP) ListAssignments(ctx context.Context, tenantID, spID uuid.UUID) (*S
 	return out, nil
 }
 
-// requireSP is ErrNotFound unless spID is one of the tenant's service
+// requireSP is ErrNotFound unless spID is one of the organization's service
 // providers.
-func requireSP(ctx context.Context, q *dbgen.Queries, tenantID, spID uuid.UUID) error {
-	_, err := q.GetSamlSP(ctx, dbgen.GetSamlSPParams{ID: spID, TenantID: tenantID})
+func requireSP(ctx context.Context, q *dbgen.Queries, organizationID, spID uuid.UUID) error {
+	_, err := q.GetSamlSP(ctx, dbgen.GetSamlSPParams{ID: spID, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return errs.ErrNotFound
 	}
 	return err
 }
 
-// AssignUser assigns the person userID, whose home must be the tenant, to its
+// AssignUser assigns the person userID, whose home must be the organization, to its
 // service provider spID within tx, reporting whether they weren't already.
-func (i *IdP) AssignUser(ctx context.Context, tx pgx.Tx, tenantID, spID, userID uuid.UUID, by *uuid.UUID) (bool, error) {
+func (i *IdP) AssignUser(ctx context.Context, tx pgx.Tx, organizationID, spID, userID uuid.UUID, by *uuid.UUID) (bool, error) {
 	q := i.q.WithTx(tx)
-	if err := requireSP(ctx, q, tenantID, spID); err != nil {
+	if err := requireSP(ctx, q, organizationID, spID); err != nil {
 		return false, err
 	}
-	ok, err := q.IsSamlAssignableUser(ctx, dbgen.IsSamlAssignableUserParams{UserID: userID, TenantID: pgtype.UUID{Bytes: tenantID, Valid: true}})
+	ok, err := q.IsSamlAssignableUser(ctx, dbgen.IsSamlAssignableUserParams{UserID: userID, OrganizationID: pgtype.UUID{Bytes: organizationID, Valid: true}})
 	if err != nil {
 		return false, err
 	}
@@ -100,19 +100,19 @@ func (i *IdP) AssignUser(ctx context.Context, tx pgx.Tx, tenantID, spID, userID 
 		return false, errs.ErrSAMLAssigneeNotFound
 	}
 	n, err := q.InsertSamlSPUserAssignment(ctx, dbgen.InsertSamlSPUserAssignmentParams{
-		TenantID: tenantID, SpID: spID, UserID: userID, AssignedBy: pgUUID(by),
+		OrganizationID: organizationID, SpID: spID, UserID: userID, AssignedBy: pgUUID(by),
 	})
 	return n > 0, err
 }
 
-// UnassignUser removes the person userID's own assignment to the tenant's
+// UnassignUser removes the person userID's own assignment to the organization's
 // service provider spID within tx; one through a group stays.
-func (i *IdP) UnassignUser(ctx context.Context, tx pgx.Tx, tenantID, spID, userID uuid.UUID) error {
+func (i *IdP) UnassignUser(ctx context.Context, tx pgx.Tx, organizationID, spID, userID uuid.UUID) error {
 	q := i.q.WithTx(tx)
-	if err := requireSP(ctx, q, tenantID, spID); err != nil {
+	if err := requireSP(ctx, q, organizationID, spID); err != nil {
 		return err
 	}
-	n, err := q.DeleteSamlSPUserAssignment(ctx, dbgen.DeleteSamlSPUserAssignmentParams{TenantID: tenantID, SpID: spID, UserID: userID})
+	n, err := q.DeleteSamlSPUserAssignment(ctx, dbgen.DeleteSamlSPUserAssignmentParams{OrganizationID: organizationID, SpID: spID, UserID: userID})
 	if err != nil {
 		return err
 	}
@@ -122,14 +122,14 @@ func (i *IdP) UnassignUser(ctx context.Context, tx pgx.Tx, tenantID, spID, userI
 	return nil
 }
 
-// AssignGroup assigns the members of the tenant's group groupID to its service
+// AssignGroup assigns the members of the organization's group groupID to its service
 // provider spID within tx, reporting whether it wasn't already.
-func (i *IdP) AssignGroup(ctx context.Context, tx pgx.Tx, tenantID, spID, groupID uuid.UUID, by *uuid.UUID) (bool, error) {
+func (i *IdP) AssignGroup(ctx context.Context, tx pgx.Tx, organizationID, spID, groupID uuid.UUID, by *uuid.UUID) (bool, error) {
 	q := i.q.WithTx(tx)
-	if err := requireSP(ctx, q, tenantID, spID); err != nil {
+	if err := requireSP(ctx, q, organizationID, spID); err != nil {
 		return false, err
 	}
-	ok, err := q.IsSamlAssignableGroup(ctx, dbgen.IsSamlAssignableGroupParams{GroupID: groupID, TenantID: tenantID})
+	ok, err := q.IsSamlAssignableGroup(ctx, dbgen.IsSamlAssignableGroupParams{GroupID: groupID, OrganizationID: organizationID})
 	if err != nil {
 		return false, err
 	}
@@ -137,19 +137,19 @@ func (i *IdP) AssignGroup(ctx context.Context, tx pgx.Tx, tenantID, spID, groupI
 		return false, errs.ErrSAMLAssigneeNotFound
 	}
 	n, err := q.InsertSamlSPGroupAssignment(ctx, dbgen.InsertSamlSPGroupAssignmentParams{
-		TenantID: tenantID, SpID: spID, GroupID: groupID, AssignedBy: pgUUID(by),
+		OrganizationID: organizationID, SpID: spID, GroupID: groupID, AssignedBy: pgUUID(by),
 	})
 	return n > 0, err
 }
 
-// UnassignGroup removes the group groupID's assignment to the tenant's service
+// UnassignGroup removes the group groupID's assignment to the organization's service
 // provider spID within tx.
-func (i *IdP) UnassignGroup(ctx context.Context, tx pgx.Tx, tenantID, spID, groupID uuid.UUID) error {
+func (i *IdP) UnassignGroup(ctx context.Context, tx pgx.Tx, organizationID, spID, groupID uuid.UUID) error {
 	q := i.q.WithTx(tx)
-	if err := requireSP(ctx, q, tenantID, spID); err != nil {
+	if err := requireSP(ctx, q, organizationID, spID); err != nil {
 		return err
 	}
-	n, err := q.DeleteSamlSPGroupAssignment(ctx, dbgen.DeleteSamlSPGroupAssignmentParams{TenantID: tenantID, SpID: spID, GroupID: groupID})
+	n, err := q.DeleteSamlSPGroupAssignment(ctx, dbgen.DeleteSamlSPGroupAssignmentParams{OrganizationID: organizationID, SpID: spID, GroupID: groupID})
 	if err != nil {
 		return err
 	}
@@ -175,11 +175,11 @@ func pgUUID(v *uuid.UUID) pgtype.UUID {
 }
 
 // =====================================================================
-// Assignment admin handlers (user-JWT, tenant-scoped)
+// Assignment admin handlers (user-JWT, organization-scoped)
 // =====================================================================
 
 func (h *Handler) listSPAssignments(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -189,7 +189,7 @@ func (h *Handler) listSPAssignments(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrSAMLIDInvalid)
 		return
 	}
-	out, err := h.IdP.ListAssignments(r.Context(), tenantID, spID)
+	out, err := h.IdP.ListAssignments(r.Context(), organizationID, spID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -198,38 +198,38 @@ func (h *Handler) listSPAssignments(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) assignSPUser(w http.ResponseWriter, r *http.Request) {
-	h.changeAssignment(w, r, "userID", func(ctx context.Context, tx pgx.Tx, tenantID, spID, id uuid.UUID, by *uuid.UUID) (bool, error) {
-		return h.IdP.AssignUser(ctx, tx, tenantID, spID, id, by)
+	h.changeAssignment(w, r, "userID", func(ctx context.Context, tx pgx.Tx, organizationID, spID, id uuid.UUID, by *uuid.UUID) (bool, error) {
+		return h.IdP.AssignUser(ctx, tx, organizationID, spID, id, by)
 	}, "saml.sp_user_assigned", "user_id")
 }
 
 func (h *Handler) unassignSPUser(w http.ResponseWriter, r *http.Request) {
-	h.changeAssignment(w, r, "userID", func(ctx context.Context, tx pgx.Tx, tenantID, spID, id uuid.UUID, _ *uuid.UUID) (bool, error) {
-		return true, h.IdP.UnassignUser(ctx, tx, tenantID, spID, id)
+	h.changeAssignment(w, r, "userID", func(ctx context.Context, tx pgx.Tx, organizationID, spID, id uuid.UUID, _ *uuid.UUID) (bool, error) {
+		return true, h.IdP.UnassignUser(ctx, tx, organizationID, spID, id)
 	}, "saml.sp_user_unassigned", "user_id")
 }
 
 func (h *Handler) assignSPGroup(w http.ResponseWriter, r *http.Request) {
-	h.changeAssignment(w, r, "groupID", func(ctx context.Context, tx pgx.Tx, tenantID, spID, id uuid.UUID, by *uuid.UUID) (bool, error) {
-		return h.IdP.AssignGroup(ctx, tx, tenantID, spID, id, by)
+	h.changeAssignment(w, r, "groupID", func(ctx context.Context, tx pgx.Tx, organizationID, spID, id uuid.UUID, by *uuid.UUID) (bool, error) {
+		return h.IdP.AssignGroup(ctx, tx, organizationID, spID, id, by)
 	}, "saml.sp_group_assigned", "group_id")
 }
 
 func (h *Handler) unassignSPGroup(w http.ResponseWriter, r *http.Request) {
-	h.changeAssignment(w, r, "groupID", func(ctx context.Context, tx pgx.Tx, tenantID, spID, id uuid.UUID, _ *uuid.UUID) (bool, error) {
-		return true, h.IdP.UnassignGroup(ctx, tx, tenantID, spID, id)
+	h.changeAssignment(w, r, "groupID", func(ctx context.Context, tx pgx.Tx, organizationID, spID, id uuid.UUID, _ *uuid.UUID) (bool, error) {
+		return true, h.IdP.UnassignGroup(ctx, tx, organizationID, spID, id)
 	}, "saml.sp_group_unassigned", "group_id")
 }
 
 // assignmentChange makes one assignment change within tx, reporting whether it
 // changed anything.
-type assignmentChange func(ctx context.Context, tx pgx.Tx, tenantID, spID, id uuid.UUID, by *uuid.UUID) (bool, error)
+type assignmentChange func(ctx context.Context, tx pgx.Tx, organizationID, spID, id uuid.UUID, by *uuid.UUID) (bool, error)
 
 // changeAssignment applies change to the service provider and the person or
 // group the path's param names, auditing it as action when it changed
 // anything, and answers 204.
 func (h *Handler) changeAssignment(w http.ResponseWriter, r *http.Request, param string, change assignmentChange, action, metaKey string) {
-	tenantID, err := requirePathTenant(r)
+	organizationID, err := requirePathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -252,13 +252,13 @@ func (h *Handler) changeAssignment(w http.ResponseWriter, r *http.Request, param
 	}
 	defer tx.Rollback(ctx)
 	by, _ := audit.ActorOf(r).Identity()
-	changed, err := change(ctx, tx, tenantID, spID, id, by)
+	changed, err := change(ctx, tx, organizationID, spID, id, by)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	if changed {
-		if err := h.recordSPAudit(ctx, tx, r, tenantID, spID, action, map[string]any{metaKey: id}); err != nil {
+		if err := h.recordSPAudit(ctx, tx, r, organizationID, spID, action, map[string]any{metaKey: id}); err != nil {
 			httpx.WriteError(w, r, err)
 			return
 		}

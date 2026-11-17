@@ -14,11 +14,11 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
-// planGate includes SCIM in the plans of the tenants it holds.
+// planGate includes SCIM in the plans of the organizations it holds.
 type planGate map[uuid.UUID]bool
 
-func (g planGate) FeatureAllowed(_ context.Context, tenantID uuid.UUID, _ string) (bool, error) {
-	return g[tenantID], nil
+func (g planGate) FeatureAllowed(_ context.Context, organizationID uuid.UUID, _ string) (bool, error) {
+	return g[organizationID], nil
 }
 
 // TestLapsedPlanStopsSCIM checks that a SCIM token issued while the plan
@@ -26,27 +26,27 @@ func (g planGate) FeatureAllowed(_ context.Context, tenantID uuid.UUID, _ string
 func TestLapsedPlanStopsSCIM(t *testing.T) {
 	ctx := dbtest.Context(t)
 	f := newSCIMFixture(t, ctx)
-	plans := planGate{f.tenantID: true}
+	plans := planGate{f.organizationID: true}
 	f.svc.SetPlanGate(plans)
 	if rec := f.do(t, http.MethodGet, "/scim/v2/Users", nil); rec.Code != http.StatusOK {
 		t.Fatalf("SCIM on a plan with it: status %d", rec.Code)
 	}
 
-	delete(plans, f.tenantID) // the plan lapses
+	delete(plans, f.organizationID) // the plan lapses
 	rec := f.do(t, http.MethodPost, "/scim/v2/Users", map[string]any{
 		"schemas": []string{"urn:ietf:params:scim:schemas:core:2.0:User"}, "userName": dbtest.Unique("new") + "@example.test",
 	})
 	if rec.Code != http.StatusForbidden || decodeBody(t, rec)["schemas"] == nil {
 		t.Errorf("SCIM after the plan lapsed: status %d %s, want a SCIM 403", rec.Code, rec.Body.String())
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE tenant_id = $1`, f.tenantID); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE organization_id = $1`, f.organizationID); n != 0 {
 		t.Errorf("%d users provisioned after the plan lapsed, want none", n)
 	}
 }
 
-// TestSCIMUserReadsStayInTheirTenant checks that one tenant's SCIM token can
-// neither find, read nor delete another tenant's user.
-func TestSCIMUserReadsStayInTheirTenant(t *testing.T) {
+// TestSCIMUserReadsStayInTheirOrganization checks that one organization's SCIM token can
+// neither find, read nor delete another organization's user.
+func TestSCIMUserReadsStayInTheirOrganization(t *testing.T) {
 	ctx := dbtest.Context(t)
 	a := newSCIMFixture(t, ctx)
 	b := newSCIMFixture(t, ctx)
@@ -86,16 +86,16 @@ func TestSCIMAdoptingAnUnverifiedAccountRemovesItsCredentials(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	f := newSCIMFixture(t, ctx)
-	domain := dbtest.Domain(t, f.tenantID)
+	domain := dbtest.Domain(t, f.organizationID)
 	account := func(setup string) dbtest.Account {
 		t.Helper()
-		a := dbtest.UserAt(t, dbtest.Unique("alice")+"@"+domain, f.tenantID, f.tenantID)
+		a := dbtest.UserAt(t, dbtest.Unique("alice")+"@"+domain, f.organizationID, f.organizationID)
 		dbtest.SetPassword(t, a.ID, "Kx7mQ2vLp9Wz-squat")
 		for _, q := range []string{
 			`INSERT INTO auth.passkey_credentials (user_id, credential_id, public_key, name) SELECT id, convert_to(id::text, 'UTF8'), '\x00', 'Laptop' FROM account.users WHERE id = $1`,
 			`INSERT INTO auth.mfa_totp (user_id, secret_ct, secret_nonce, confirmed_at) VALUES ($1, '\x00', '\x00', NOW())`,
-			`INSERT INTO auth.api_keys (tenant_id, user_id, name, prefix, key_hash) SELECT tenant_id, id, 'laptop', left(md5(id::text), 12), 'hash' FROM account.users WHERE id = $1`,
-			`INSERT INTO auth.sessions (user_id, tenant_id) SELECT id, tenant_id FROM account.users WHERE id = $1`,
+			`INSERT INTO auth.api_keys (organization_id, user_id, name, prefix, key_hash) SELECT organization_id, id, 'laptop', left(md5(id::text), 12), 'hash' FROM account.users WHERE id = $1`,
+			`INSERT INTO auth.sessions (user_id, organization_id) SELECT id, organization_id FROM account.users WHERE id = $1`,
 			setup,
 		} {
 			if _, err := pool.Exec(ctx, q, a.ID); err != nil {
@@ -144,7 +144,7 @@ func TestSCIMAdoptingAnUnverifiedAccountRemovesItsCredentials(t *testing.T) {
 			t.Errorf("%s: an account nobody vouched for keeps %d of its 5 credentials and sessions, want none", way, n)
 		}
 		if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'auth.credentials_removed' AND resource_id = $1
-			AND tenant_id = $2 AND metadata->>'proof' = 'scim_adoption'`, squatted.ID, f.tenantID); n != 1 {
+			AND organization_id = $2 AND metadata->>'proof' = 'scim_adoption'`, squatted.ID, f.organizationID); n != 1 {
 			t.Errorf("%s: the removal was recorded %d times, want once", way, n)
 		}
 		for name, setup := range map[string]string{
@@ -161,13 +161,13 @@ func TestSCIMAdoptingAnUnverifiedAccountRemovesItsCredentials(t *testing.T) {
 }
 
 // TestSCIMDoesNotChangeAnAdministratorsAddress checks that the directory can't
-// move an account that administers the organisation to a new address, by PATCH
+// move an account that administers the organization to a new address, by PATCH
 // or by PUT, as single sign-on doesn't, so that account's password reset keeps
 // going to its holder; a member's address still moves.
 func TestSCIMDoesNotChangeAnAdministratorsAddress(t *testing.T) {
 	ctx := dbtest.Context(t)
 	f := newSCIMFixture(t, ctx)
-	domain := dbtest.Domain(t, f.tenantID)
+	domain := dbtest.Domain(t, f.organizationID)
 	provision := func() (string, string) {
 		t.Helper()
 		email := dbtest.Unique("asha") + "@" + domain
@@ -195,7 +195,7 @@ func TestSCIMDoesNotChangeAnAdministratorsAddress(t *testing.T) {
 	}
 
 	admin, adminEmail := provision()
-	dbtest.Assign(t, uuid.MustParse(admin), f.tenantID, dbtest.Role(t, f.tenantID, "user.write"))
+	dbtest.Assign(t, uuid.MustParse(admin), f.organizationID, dbtest.Role(t, f.organizationID, "user.write"))
 	for verb, change := range map[string]func(id, email string) int{"PATCH": patch, "PUT": put} {
 		if code := change(admin, dbtest.Unique("asha+x")+"@"+domain); code != http.StatusForbidden {
 			t.Errorf("%s an administrator's userName: %d, want 403", verb, code)
@@ -219,15 +219,15 @@ func TestSCIMDeprovisioningListsTheIntegrationsTheUserCreated(t *testing.T) {
 	ctx := dbtest.Context(t)
 	f := newSCIMFixture(t, ctx)
 	id := f.seedUser(t, ctx, dbtest.Unique("scim")+"@example.test")
-	if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO tenant.webhook_subscriptions (tenant_id, url, secret_ct, secret_nonce, created_by)
-		VALUES ($1, 'https://hooks.example.test/in', '\x00', '\x00', $2)`, f.tenantID, id); err != nil {
+	if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO organization.webhook_subscriptions (organization_id, url, secret_ct, secret_nonce, created_by)
+		VALUES ($1, 'https://hooks.example.test/in', '\x00', '\x00', $2)`, f.organizationID, id); err != nil {
 		t.Fatal(err)
 	}
 	if rec := f.do(t, http.MethodDelete, "/scim/v2/Users/"+id.String(), nil); rec.Code != http.StatusNoContent {
 		t.Fatalf("delete: %d %s", rec.Code, rec.Body.String())
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'user.integrations_left'
-		AND resource_id = $2 AND actor_type = 'scim' AND metadata->'integrations'->0->>'kind' = 'webhook'`, f.tenantID, id); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'user.integrations_left'
+		AND resource_id = $2 AND actor_type = 'scim' AND metadata->'integrations'->0->>'kind' = 'webhook'`, f.organizationID, id); n != 1 {
 		t.Errorf("%d events listing the deprovisioned user's webhook, want 1", n)
 	}
 }

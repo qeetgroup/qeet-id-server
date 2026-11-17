@@ -187,7 +187,7 @@ func TestPreviewIssuesCarryTheirCode(test *testing.T) {
 // rules refuse answers 422 validation_failed naming the field at fault and the
 // mapping code, before anything is written.
 func TestSaveRefusesAnInvalidMappingWithItsCode(test *testing.T) {
-	tenantID := uuid.New()
+	organizationID := uuid.New()
 	ldapID := uuid.New()
 	valid := Mapping{Source: "department", Target: "department", ValueType: "string", Transform: "none", Enabled: true}
 	with := func(change func(*Mapping)) Mapping {
@@ -195,8 +195,8 @@ func TestSaveRefusesAnInvalidMappingWithItsCode(test *testing.T) {
 		change(&mapping)
 		return mapping
 	}
-	scimPath := "/tenants/" + tenantID.String() + "/directory/connections/scim:" + tenantID.String() + "/mappings"
-	ldapPath := "/tenants/" + tenantID.String() + "/directory/connections/" + ldapID.String() + "/mappings"
+	scimPath := "/tenants/" + organizationID.String() + "/directory/connections/scim:" + organizationID.String() + "/mappings"
+	ldapPath := "/tenants/" + organizationID.String() + "/directory/connections/" + ldapID.String() + "/mappings"
 	cases := []struct {
 		name, method, path string
 		mapping            Mapping
@@ -213,7 +213,7 @@ func TestSaveRefusesAnInvalidMappingWithItsCode(test *testing.T) {
 	}
 	for _, scenario := range cases {
 		test.Run(scenario.name, func(test *testing.T) {
-			ldapSource := &ldapFixture{records: []ldap.Connection{{ID: ldapID, TenantID: tenantID, Name: "Corporate", Status: "active"}}}
+			ldapSource := &ldapFixture{records: []ldap.Connection{{ID: ldapID, OrganizationID: organizationID, Name: "Corporate", Status: "active"}}}
 			router := chi.NewRouter()
 			(&Handler{Service: NewService(&scimFixture{config: &scim.ConfigView{TokenSet: true}}, ldapSource)}).Mount(router)
 			raw, err := json.Marshal(scenario.mapping)
@@ -222,7 +222,7 @@ func TestSaveRefusesAnInvalidMappingWithItsCode(test *testing.T) {
 			}
 			request := httptest.NewRequest(scenario.method, scenario.path, bytes.NewReader(raw))
 			request.Header.Set("Content-Type", "application/json")
-			request = request.WithContext(httpx.WithPrincipal(request.Context(), &httpx.Principal{ActorType: "user", TenantID: &tenantID}))
+			request = request.WithContext(httpx.WithPrincipal(request.Context(), &httpx.Principal{ActorType: "user", OrganizationID: &organizationID}))
 			response := httptest.NewRecorder()
 			router.ServeHTTP(response, request)
 			var body struct {

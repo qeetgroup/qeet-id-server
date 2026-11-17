@@ -5,19 +5,19 @@
 -- ambiguous; correctness takes priority over coverage.
 
 -- name: GetUserForAnomaly :one
-SELECT id, tenant_id FROM account.users
-WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL AND tenant_id IS NOT NULL
+SELECT id, organization_id FROM account.users
+WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL AND organization_id IS NOT NULL
 LIMIT 1;
 
--- name: ListTenantsForEmails :many
--- The organisations the given (lowercased) addresses belong to.
-SELECT DISTINCT tenant_id::uuid AS tenant_id FROM account.users
-WHERE LOWER(email) = ANY(@emails::text[]) AND deleted_at IS NULL AND tenant_id IS NOT NULL;
+-- name: ListOrganizationsForEmails :many
+-- The organizations the given (lowercased) addresses belong to.
+SELECT DISTINCT organization_id::uuid AS organization_id FROM account.users
+WHERE LOWER(email) = ANY(@emails::text[]) AND deleted_at IS NULL AND organization_id IS NOT NULL;
 
--- name: ListTenantUsersForEmails :many
--- The accounts of one organisation among the given (lowercased) addresses.
+-- name: ListOrganizationUsersForEmails :many
+-- The accounts of one organization among the given (lowercased) addresses.
 SELECT id FROM account.users
-WHERE tenant_id = @tenant_id::uuid AND LOWER(email) = ANY(@emails::text[]) AND deleted_at IS NULL;
+WHERE organization_id = @organization_id::uuid AND LOWER(email) = ANY(@emails::text[]) AND deleted_at IS NULL;
 
 -- ListSecurityEvents is intentionally hand-written in threat.go because
 -- COALESCE(host(e.ip),'') causes sqlc to generate interface{} for the column,
@@ -33,20 +33,20 @@ SELECT
     COUNT(*) FILTER (WHERE resolved_at >= NOW() - INTERVAL '24 hours')                   AS resolved_24h,
     (SELECT count(DISTINCT account)::bigint FROM (
         SELECT open_event.user_id AS account FROM auth.security_events open_event
-        WHERE open_event.tenant_id = $1 AND open_event.resolved_at IS NULL AND open_event.user_id IS NOT NULL
+        WHERE open_event.organization_id = $1 AND open_event.resolved_at IS NULL AND open_event.user_id IS NOT NULL
         UNION ALL
         SELECT targeted.id::uuid FROM auth.security_events open_event,
                jsonb_array_elements_text(COALESCE(open_event.metadata->'targeted_user_ids', '[]'::jsonb)) AS targeted(id)
-        WHERE open_event.tenant_id = $1 AND open_event.resolved_at IS NULL
+        WHERE open_event.organization_id = $1 AND open_event.resolved_at IS NULL
     ) accounts)                                                                          AS affected_accounts,
     COUNT(*) FILTER (WHERE severity IN ('high', 'critical') AND created_at >= NOW() - INTERVAL '24 hours') AS high_severity_24h
 FROM auth.security_events
-WHERE tenant_id = $1;
+WHERE organization_id = $1;
 
 -- ResolveSecurityEvent returns what the resolved anomaly was, for its audit
 -- record.
 -- name: ResolveSecurityEvent :one
 UPDATE auth.security_events
 SET status = 'resolved', resolved_at = NOW(), resolved_by = sqlc.narg('resolved_by')
-WHERE id = @id AND tenant_id = @tenant_id AND resolved_at IS NULL
+WHERE id = @id AND organization_id = @organization_id AND resolved_at IS NULL
 RETURNING type, severity, user_id;

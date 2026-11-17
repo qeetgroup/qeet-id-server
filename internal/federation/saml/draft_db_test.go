@@ -17,13 +17,13 @@ import (
 // with a name alone, as a draft whose addresses and metadata go to the IdP
 // first, and that it is turned on only once the IdP's details are added.
 func TestAConnectionIsNamedBeforeItsIdP(t *testing.T) {
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
 	h := &Handler{Service: NewService(dbtest.Pool(t), nil, testAppBase), PublicBaseURL: testPublicBase}
-	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), h.Mount)
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)
 	public := chi.NewRouter()
 	h.MountPublic(public)
-	base := "/tenants/" + tenant.String() + "/saml"
+	base := "/tenants/" + organization.String() + "/saml"
 
 	if rec := dbtest.Do(t, asAdmin, http.MethodPost, base, map[string]any{"name": "Okta", "status": "active"}); !strings.Contains(rec.Body.String(), errs.CodeSAMLConnectionIncomplete) {
 		t.Errorf("create an active connection with no IdP: %d %s, want %s", rec.Code, rec.Body.String(), errs.CodeSAMLConnectionIncomplete)

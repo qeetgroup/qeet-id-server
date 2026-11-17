@@ -20,26 +20,28 @@ import (
 // helpdesk admin can reset a colleague but not take over an owner or an admin.
 func TestAdminsChangeOnlyPeopleTheyOutrank(t *testing.T) {
 	pool := dbtest.Pool(t)
-	tenant := dbtest.Tenant(t)
+	organization := dbtest.Organization(t)
 	person := func(perms ...string) uuid.UUID {
 		t.Helper()
-		u := dbtest.User(t, tenant)
-		dbtest.Assign(t, u.ID, tenant, dbtest.Role(t, tenant, perms...))
+		u := dbtest.User(t, organization)
+		dbtest.Assign(t, u.ID, organization, dbtest.Role(t, organization, perms...))
 		return u.ID
 	}
-	owner := dbtest.User(t, tenant).ID
+	owner := dbtest.User(t, organization).ID
 	var ownerRole uuid.UUID
 	if err := pool.QueryRow(context.Background(), `
-		INSERT INTO rbac.roles (tenant_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, tenant).Scan(&ownerRole); err != nil {
+		INSERT INTO rbac.roles (organization_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, organization).Scan(&ownerRole); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.Assign(t, owner, tenant, ownerRole)
+	dbtest.Assign(t, owner, organization, ownerRole)
 	helpdesk := person("user.read", "user.write")
 	admin := person("user.read", "user.write", "role.write")
 	colleague := person("user.read")
 
 	h := testHandler(t, &dbtest.Mailbox{})
-	as := func(caller uuid.UUID) http.Handler { return dbtest.Serve(dbtest.Principal(caller, tenant), h.Mount) }
+	as := func(caller uuid.UUID) http.Handler {
+		return dbtest.Serve(dbtest.Principal(caller, organization), h.Mount)
+	}
 	type call struct {
 		method, path string
 		body         any
@@ -69,8 +71,8 @@ func TestAdminsChangeOnlyPeopleTheyOutrank(t *testing.T) {
 	if rec := dbtest.Do(t, as(owner), http.MethodPost, "/users/"+admin.String()+"/password", map[string]any{"password": "Kx7mQ2vLp9Wz-new"}); rec.Code != http.StatusNoContent {
 		t.Errorf("an owner resets an admin's password: %d %s, want 204", rec.Code, rec.Body.String())
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = ANY($1) AND tenant_id = $2 AND status = 'active' AND deleted_at IS NULL`,
-		[]uuid.UUID{owner, admin}, tenant); n != 2 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = ANY($1) AND organization_id = $2 AND status = 'active' AND deleted_at IS NULL`,
+		[]uuid.UUID{owner, admin}, organization); n != 2 {
 		t.Errorf("%d of the owner and admin still active, want both", n)
 	}
 }

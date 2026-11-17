@@ -27,7 +27,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// Handler serves the tenant-scoped Live Activity endpoints: the SSE stream,
+// Handler serves the organization-scoped Live Activity endpoints: the SSE stream,
 // history, summary and related events.
 type Handler struct {
 	Hub  *Hub
@@ -74,14 +74,14 @@ func (h *Handler) Mount(r chi.Router) {
 // records themselves, each with its own id, so a live event can be opened and
 // related as a historical one. It replays the records newer than
 // Last-Event-ID, then follows the audit log, every streamPoll or as soon as
-// the hub says the organisation did something, until the client disconnects,
+// the hub says the organization did something, until the client disconnects,
 // the hub shuts down, the reader's credential expires or Access refuses them;
 // the query filters apply throughout. Delivery is at least once: a frame's
 // cursor is set back streamLag, so a reconnect may resend a record, and when
 // the client is too far behind, or the hub couldn't keep up with it, the
 // stream ends with a reconnect hint so the next connection catches up.
 func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
-	tenantID, _, ok := h.requireTenantUser(w, r)
+	organizationID, _, ok := h.requireOrganizationUser(w, r)
 	if !ok {
 		return
 	}
@@ -130,9 +130,9 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 	default:
 	}
 
-	// Subscribe before replaying, so the organisation's activity during the
+	// Subscribe before replaying, so the organization's activity during the
 	// replay wakes the tail at once rather than at the next poll.
-	evCh, lost, unsub := h.Hub.subscribe(tenantID)
+	evCh, lost, unsub := h.Hub.subscribe(organizationID)
 	defer unsub()
 
 	// On reconnect the client sends the ID of the last event it received; replay
@@ -140,7 +140,7 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 	// starts at the time it was opened.
 	tail := newAuditTail(time.Now().UTC())
 	if lastID := r.Header.Get("Last-Event-ID"); lastID != "" {
-		if !h.replayHistory(ctx, sse, tenantID, lastID, f, tail) {
+		if !h.replayHistory(ctx, sse, organizationID, lastID, f, tail) {
 			sse.retryLater()
 			return
 		}
@@ -174,12 +174,12 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 			sse.retryLater()
 			return
 		case <-evCh:
-			if !h.followLog(ctx, sse, tenantID, tail, f) {
+			if !h.followLog(ctx, sse, organizationID, tail, f) {
 				sse.retryLater()
 				return
 			}
 		case <-poll.C:
-			if !h.followLog(ctx, sse, tenantID, tail, f) {
+			if !h.followLog(ctx, sse, organizationID, tail, f) {
 				sse.retryLater()
 				return
 			}
@@ -206,10 +206,10 @@ func newAuditTail(from time.Time) *auditTail {
 	return &auditTail{floor: from, newest: from, sent: map[uuid.UUID]time.Time{}}
 }
 
-// followLog sends the tenant's audit records the tail hasn't, oldest first,
+// followLog sends the organization's audit records the tail hasn't, oldest first,
 // reading back streamLag before the newest it sent. It reports false when the
 // log can't be read.
-func (h *Handler) followLog(ctx context.Context, sse *sseWriter, tenantID uuid.UUID, t *auditTail, f StreamFilter) bool {
+func (h *Handler) followLog(ctx context.Context, sse *sseWriter, organizationID uuid.UUID, t *auditTail, f StreamFilter) bool {
 	q := dbgen.New(h.pool)
 	afterTs, afterID := t.newest.Add(-streamLag), uuid.Nil
 	if !afterTs.After(t.floor) {
@@ -217,9 +217,9 @@ func (h *Handler) followLog(ctx context.Context, sse *sseWriter, tenantID uuid.U
 	}
 	for {
 		rows, err := q.ReplayActivityHistory(ctx, dbgen.ReplayActivityHistoryParams{
-			TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
-			AfterTs:  afterTs,
-			AfterID:  afterID,
+			OrganizationID: pgtype.UUID{Bytes: organizationID, Valid: true},
+			AfterTs:        afterTs,
+			AfterID:        afterID,
 		})
 		if err != nil {
 			slog.Warn("activity: follow the audit log", "err", err)
@@ -290,7 +290,7 @@ func (h *Handler) stillAllowed(ctx context.Context, reader *httpx.Principal) boo
 // The cursor of a row the filters pass over is sent too, so a filtered backlog
 // is read only once. A lastEventID that does not decode skips the replay, so
 // the stream just starts live.
-func (h *Handler) replayHistory(ctx context.Context, sse *sseWriter, tenantID uuid.UUID, lastEventID string, f StreamFilter, t *auditTail) bool {
+func (h *Handler) replayHistory(ctx context.Context, sse *sseWriter, organizationID uuid.UUID, lastEventID string, f StreamFilter, t *auditTail) bool {
 	afterTs, afterID, err := decodeCursor(lastEventID)
 	if err != nil {
 		return true // invalid Last-Event-ID — skip replay rather than erroring
@@ -299,9 +299,9 @@ func (h *Handler) replayHistory(ctx context.Context, sse *sseWriter, tenantID uu
 	q := dbgen.New(h.pool)
 	for read := 0; ; {
 		rows, err := q.ReplayActivityHistory(ctx, dbgen.ReplayActivityHistoryParams{
-			TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
-			AfterTs:  afterTs,
-			AfterID:  afterID,
+			OrganizationID: pgtype.UUID{Bytes: organizationID, Valid: true},
+			AfterTs:        afterTs,
+			AfterID:        afterID,
 		})
 		if err != nil {
 			slog.Warn("activity: replay query", "err", err)
@@ -336,7 +336,7 @@ func (h *Handler) replayHistory(ctx context.Context, sse *sseWriter, tenantID uu
 // history serves GET /v1/activity: one cursor-paginated page of events from
 // the audit log.
 func (h *Handler) history(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.RequireTenant(r)
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -350,7 +350,7 @@ func (h *Handler) history(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	events, next, err := h.listHistory(r.Context(), tenantID, f, cursor, limit)
+	events, next, err := h.listHistory(r.Context(), organizationID, f, cursor, limit)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -358,7 +358,7 @@ func (h *Handler) history(w http.ResponseWriter, r *http.Request) {
 	if events == nil {
 		events = []ActivityEvent{}
 	}
-	total, err := dbgen.New(h.pool).CountActivityHistory(r.Context(), historyCountParams(tenantID, f))
+	total, err := dbgen.New(h.pool).CountActivityHistory(r.Context(), historyCountParams(organizationID, f))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -377,10 +377,10 @@ const maxCountedEvents = 10000
 
 // historyCountParams are f's filters for CountActivityHistory, counting one
 // past maxCountedEvents.
-func historyCountParams(tenantID uuid.UUID, f ListFilter) dbgen.CountActivityHistoryParams {
-	p := historyParams(tenantID, f)
+func historyCountParams(organizationID uuid.UUID, f ListFilter) dbgen.CountActivityHistoryParams {
+	p := historyParams(organizationID, f)
 	return dbgen.CountActivityHistoryParams{
-		TenantID: p.TenantID, Actions: p.Actions, ActorID: p.ActorID, Subject: p.Subject,
+		OrganizationID: p.OrganizationID, Actions: p.Actions, ActorID: p.ActorID, Subject: p.Subject,
 		FromTs: p.FromTs, ToTs: p.ToTs, Q: p.Q, QLike: p.QLike, ResourceTypes: p.ResourceTypes, ResourceID: p.ResourceID,
 		Ip: p.Ip, Categories: p.Categories, Severities: p.Severities, MinSeverity: p.MinSeverity,
 		CountCap: maxCountedEvents + 1,
@@ -390,14 +390,14 @@ func historyCountParams(tenantID uuid.UUID, f ListFilter) dbgen.CountActivityHis
 // historyParams are f's filters for ListActivityHistory, with no cursor or
 // limit. A zero-value pgtype (Valid=false) passes NULL, which the query treats
 // as "no filter on this dimension".
-func historyParams(tenantID uuid.UUID, f ListFilter) dbgen.ListActivityHistoryParams {
+func historyParams(organizationID uuid.UUID, f ListFilter) dbgen.ListActivityHistoryParams {
 	params := dbgen.ListActivityHistoryParams{
-		TenantID:      pgtype.UUID{Bytes: tenantID, Valid: true},
-		Actions:       f.Types, // nil slice → NULL → no filter
-		ResourceTypes: f.ResourceTypes,
-		Categories:    f.Categories,
-		Severities:    f.Severities,
-		Ip:            f.IP,
+		OrganizationID: pgtype.UUID{Bytes: organizationID, Valid: true},
+		Actions:        f.Types, // nil slice → NULL → no filter
+		ResourceTypes:  f.ResourceTypes,
+		Categories:     f.Categories,
+		Severities:     f.Severities,
+		Ip:             f.IP,
 	}
 	if f.MinSeverity != "" {
 		params.MinSeverity = &f.MinSeverity
@@ -427,11 +427,11 @@ func historyParams(tenantID uuid.UUID, f ListFilter) dbgen.ListActivityHistoryPa
 // listHistory returns a page of up to limit events (50 when limit is not in
 // 1..200) and the next page's cursor, or "" on the last page. Every filter is
 // applied in the query, so a page is full unless it is the last.
-func (h *Handler) listHistory(ctx context.Context, tenantID uuid.UUID, f ListFilter, cursor string, limit int) ([]ActivityEvent, string, error) {
+func (h *Handler) listHistory(ctx context.Context, organizationID uuid.UUID, f ListFilter, cursor string, limit int) ([]ActivityEvent, string, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	params := historyParams(tenantID, f)
+	params := historyParams(organizationID, f)
 	params.RowLimit = int32(limit + 1) // #nosec G115 -- at most 201
 	if cursor != "" {
 		cursorTs, cursorID, err := decodeCursor(cursor)
@@ -526,7 +526,7 @@ var (
 )
 
 // Summary window and bucket bounds. The window defaults to the last 24h and is
-// capped at a year and a day, so the per-tenant aggregates never scan
+// capped at a year and a day, so the per-organization aggregates never scan
 // unbounded history; a long window gets buckets of up to a week.
 const (
 	summaryDefaultWindow = 24 * time.Hour
@@ -582,7 +582,7 @@ type summaryWindow struct {
 // severity and category filters, because those are what it reports. The query
 // groups by action; severityOf and categoryOf fold the groups in Go.
 func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.RequireTenant(r)
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -634,9 +634,9 @@ func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
 	q := dbgen.New(h.pool)
 	ctx := r.Context()
 
-	p := historyParams(tenantID, f)
+	p := historyParams(organizationID, f)
 	byAction, err := q.SummarizeActivityByAction(ctx, dbgen.SummarizeActivityByActionParams{
-		TenantID: p.TenantID, Actions: p.Actions, ActorID: p.ActorID, Subject: p.Subject,
+		OrganizationID: p.OrganizationID, Actions: p.Actions, ActorID: p.ActorID, Subject: p.Subject,
 		FromTs: p.FromTs, ToTs: p.ToTs, Q: p.Q, QLike: p.QLike, ResourceTypes: p.ResourceTypes, ResourceID: p.ResourceID,
 		Ip: p.Ip, Categories: p.Categories, Severities: p.Severities, MinSeverity: p.MinSeverity,
 	})
@@ -646,7 +646,7 @@ func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	totals, err := q.SummarizeActivityTotals(ctx, dbgen.SummarizeActivityTotalsParams{
-		TenantID: p.TenantID, Actions: p.Actions, ActorID: p.ActorID, Subject: p.Subject,
+		OrganizationID: p.OrganizationID, Actions: p.Actions, ActorID: p.ActorID, Subject: p.Subject,
 		FromTs: p.FromTs, ToTs: p.ToTs, Q: p.Q, QLike: p.QLike, ResourceTypes: p.ResourceTypes, ResourceID: p.ResourceID,
 		Ip: p.Ip, Categories: p.Categories, Severities: p.Severities, MinSeverity: p.MinSeverity,
 	})
@@ -656,8 +656,8 @@ func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	series, err := q.SummarizeActivityTimeSeries(ctx, dbgen.SummarizeActivityTimeSeriesParams{
-		BucketSeconds: bucket,
-		TenantID:      p.TenantID, Actions: p.Actions, ActorID: p.ActorID, Subject: p.Subject,
+		BucketSeconds:  bucket,
+		OrganizationID: p.OrganizationID, Actions: p.Actions, ActorID: p.ActorID, Subject: p.Subject,
 		FromTs: p.FromTs, ToTs: p.ToTs, Q: p.Q, QLike: p.QLike, ResourceTypes: p.ResourceTypes, ResourceID: p.ResourceID,
 		Ip: p.Ip, Categories: p.Categories, Severities: p.Severities, MinSeverity: p.MinSeverity,
 	})
@@ -746,12 +746,12 @@ type activityRelatedSet struct {
 
 // related serves GET /v1/activity/{id}/related: the anchor event, the events
 // sharing its request_id, and the same actor's events within the time window.
-// An unknown or other-tenant id is a 404; no event appears in both lists.
+// An unknown or other-organization id is a 404; no event appears in both lists.
 // event serves GET /tenants/{tenantID}/activity/{id}: one of the
-// organisation's events, with its metadata, actor and browser. Another
-// organisation's id answers 404, like an unknown one.
+// organization's events, with its metadata, actor and browser. Another
+// organization's id answers 404, like an unknown one.
 func (h *Handler) event(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.PathTenant(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -762,8 +762,8 @@ func (h *Handler) event(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	row, err := dbgen.New(h.pool).GetActivityEventByID(r.Context(), dbgen.GetActivityEventByIDParams{
-		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
-		ID:       id,
+		OrganizationID: pgtype.UUID{Bytes: organizationID, Valid: true},
+		ID:             id,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		httpx.WriteError(w, r, errs.ErrNotFound)
@@ -777,7 +777,7 @@ func (h *Handler) event(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) related(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.RequireTenant(r)
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -793,8 +793,8 @@ func (h *Handler) related(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	anchorRow, err := q.GetActivityEventByID(ctx, dbgen.GetActivityEventByIDParams{
-		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
-		ID:       id,
+		OrganizationID: pgtype.UUID{Bytes: organizationID, Valid: true},
+		ID:             id,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -824,10 +824,10 @@ func (h *Handler) related(w http.ResponseWriter, r *http.Request) {
 	byRequest := []ActivityEvent{}
 	if anchorRow.RequestID != nil && *anchorRow.RequestID != "" {
 		rows, errR := q.ListRelatedByRequestID(ctx, dbgen.ListRelatedByRequestIDParams{
-			TenantID:  pgtype.UUID{Bytes: tenantID, Valid: true},
-			RequestID: anchorRow.RequestID,
-			ExcludeID: id,
-			RowLimit:  relatedRowLimit,
+			OrganizationID: pgtype.UUID{Bytes: organizationID, Valid: true},
+			RequestID:      anchorRow.RequestID,
+			ExcludeID:      id,
+			RowLimit:       relatedRowLimit,
 		})
 		if errR != nil {
 			httpx.WriteError(w, r, errR)
@@ -843,12 +843,12 @@ func (h *Handler) related(w http.ResponseWriter, r *http.Request) {
 	byActor := []ActivityEvent{}
 	if anchorRow.ActorUserID.Valid {
 		rows, errA := q.ListRelatedByActor(ctx, dbgen.ListRelatedByActorParams{
-			TenantID:  pgtype.UUID{Bytes: tenantID, Valid: true},
-			ActorID:   anchorRow.ActorUserID,
-			FromTs:    anchor.At.Add(-window),
-			ToTs:      anchor.At.Add(window),
-			ExcludeID: id,
-			RowLimit:  relatedRowLimit,
+			OrganizationID: pgtype.UUID{Bytes: organizationID, Valid: true},
+			ActorID:        anchorRow.ActorUserID,
+			FromTs:         anchor.At.Add(-window),
+			ToTs:           anchor.At.Add(window),
+			ExcludeID:      id,
+			RowLimit:       relatedRowLimit,
 		})
 		if errA != nil {
 			httpx.WriteError(w, r, errA)
@@ -907,16 +907,16 @@ func decodeCursor(cursor string) (time.Time, uuid.UUID, error) {
 // local auditRow type so that the shared mapAuditRow logic can be reused.
 func listRowToAuditRow(r dbgen.ListActivityHistoryRow) auditRow {
 	row := auditRow{
-		ID:           r.ID,
-		ActorType:    r.ActorType,
-		Action:       r.Action,
-		ResourceType: r.ResourceType,
-		UserAgent:    r.UserAgent,
-		RequestID:    r.RequestID,
-		ActorName:    firstNonEmpty(r.ActorDisplayName, r.ActorEmail),
-		CreatedAt:    r.CreatedAt,
-		Metadata:     r.Metadata,
-		TenantID:     uuid.UUID(r.TenantID.Bytes),
+		ID:             r.ID,
+		ActorType:      r.ActorType,
+		Action:         r.Action,
+		ResourceType:   r.ResourceType,
+		UserAgent:      r.UserAgent,
+		RequestID:      r.RequestID,
+		ActorName:      firstNonEmpty(r.ActorDisplayName, r.ActorEmail),
+		CreatedAt:      r.CreatedAt,
+		Metadata:       r.Metadata,
+		OrganizationID: uuid.UUID(r.OrganizationID.Bytes),
 	}
 	if r.ActorUserID.Valid {
 		uid := uuid.UUID(r.ActorUserID.Bytes)
@@ -936,16 +936,16 @@ func listRowToAuditRow(r dbgen.ListActivityHistoryRow) auditRow {
 // the local auditRow type so that the shared mapAuditRow logic can be reused.
 func replayRowToAuditRow(r dbgen.ReplayActivityHistoryRow) auditRow {
 	row := auditRow{
-		ID:           r.ID,
-		ActorType:    r.ActorType,
-		Action:       r.Action,
-		ResourceType: r.ResourceType,
-		UserAgent:    r.UserAgent,
-		RequestID:    r.RequestID,
-		ActorName:    firstNonEmpty(r.ActorDisplayName, r.ActorEmail),
-		CreatedAt:    r.CreatedAt,
-		Metadata:     r.Metadata,
-		TenantID:     uuid.UUID(r.TenantID.Bytes),
+		ID:             r.ID,
+		ActorType:      r.ActorType,
+		Action:         r.Action,
+		ResourceType:   r.ResourceType,
+		UserAgent:      r.UserAgent,
+		RequestID:      r.RequestID,
+		ActorName:      firstNonEmpty(r.ActorDisplayName, r.ActorEmail),
+		CreatedAt:      r.CreatedAt,
+		Metadata:       r.Metadata,
+		OrganizationID: uuid.UUID(r.OrganizationID.Bytes),
 	}
 	if r.ActorUserID.Valid {
 		uid := uuid.UUID(r.ActorUserID.Bytes)
@@ -965,16 +965,16 @@ func replayRowToAuditRow(r dbgen.ReplayActivityHistoryRow) auditRow {
 // into the local auditRow so mapAuditRow can be reused.
 func getRowToAuditRow(r dbgen.GetActivityEventByIDRow) auditRow {
 	row := auditRow{
-		ID:           r.ID,
-		ActorType:    r.ActorType,
-		Action:       r.Action,
-		ResourceType: r.ResourceType,
-		UserAgent:    r.UserAgent,
-		RequestID:    r.RequestID,
-		ActorName:    firstNonEmpty(r.ActorDisplayName, r.ActorEmail),
-		CreatedAt:    r.CreatedAt,
-		Metadata:     r.Metadata,
-		TenantID:     uuid.UUID(r.TenantID.Bytes),
+		ID:             r.ID,
+		ActorType:      r.ActorType,
+		Action:         r.Action,
+		ResourceType:   r.ResourceType,
+		UserAgent:      r.UserAgent,
+		RequestID:      r.RequestID,
+		ActorName:      firstNonEmpty(r.ActorDisplayName, r.ActorEmail),
+		CreatedAt:      r.CreatedAt,
+		Metadata:       r.Metadata,
+		OrganizationID: uuid.UUID(r.OrganizationID.Bytes),
 	}
 	if r.ActorUserID.Valid {
 		uid := uuid.UUID(r.ActorUserID.Bytes)
@@ -993,16 +993,16 @@ func getRowToAuditRow(r dbgen.GetActivityEventByIDRow) auditRow {
 // relatedRequestRowToAuditRow converts a ListRelatedByRequestIDRow into auditRow.
 func relatedRequestRowToAuditRow(r dbgen.ListRelatedByRequestIDRow) auditRow {
 	row := auditRow{
-		ID:           r.ID,
-		ActorType:    r.ActorType,
-		Action:       r.Action,
-		ResourceType: r.ResourceType,
-		UserAgent:    r.UserAgent,
-		RequestID:    r.RequestID,
-		ActorName:    firstNonEmpty(r.ActorDisplayName, r.ActorEmail),
-		CreatedAt:    r.CreatedAt,
-		Metadata:     r.Metadata,
-		TenantID:     uuid.UUID(r.TenantID.Bytes),
+		ID:             r.ID,
+		ActorType:      r.ActorType,
+		Action:         r.Action,
+		ResourceType:   r.ResourceType,
+		UserAgent:      r.UserAgent,
+		RequestID:      r.RequestID,
+		ActorName:      firstNonEmpty(r.ActorDisplayName, r.ActorEmail),
+		CreatedAt:      r.CreatedAt,
+		Metadata:       r.Metadata,
+		OrganizationID: uuid.UUID(r.OrganizationID.Bytes),
 	}
 	if r.ActorUserID.Valid {
 		uid := uuid.UUID(r.ActorUserID.Bytes)
@@ -1021,16 +1021,16 @@ func relatedRequestRowToAuditRow(r dbgen.ListRelatedByRequestIDRow) auditRow {
 // relatedActorRowToAuditRow converts a ListRelatedByActorRow into auditRow.
 func relatedActorRowToAuditRow(r dbgen.ListRelatedByActorRow) auditRow {
 	row := auditRow{
-		ID:           r.ID,
-		ActorType:    r.ActorType,
-		Action:       r.Action,
-		ResourceType: r.ResourceType,
-		UserAgent:    r.UserAgent,
-		RequestID:    r.RequestID,
-		ActorName:    firstNonEmpty(r.ActorDisplayName, r.ActorEmail),
-		CreatedAt:    r.CreatedAt,
-		Metadata:     r.Metadata,
-		TenantID:     uuid.UUID(r.TenantID.Bytes),
+		ID:             r.ID,
+		ActorType:      r.ActorType,
+		Action:         r.Action,
+		ResourceType:   r.ResourceType,
+		UserAgent:      r.UserAgent,
+		RequestID:      r.RequestID,
+		ActorName:      firstNonEmpty(r.ActorDisplayName, r.ActorEmail),
+		CreatedAt:      r.CreatedAt,
+		Metadata:       r.Metadata,
+		OrganizationID: uuid.UUID(r.OrganizationID.Bytes),
 	}
 	if r.ActorUserID.Valid {
 		uid := uuid.UUID(r.ActorUserID.Bytes)
@@ -1046,10 +1046,10 @@ func relatedActorRowToAuditRow(r dbgen.ListRelatedByActorRow) auditRow {
 	return row
 }
 
-// requireTenantUser returns the tenant and user of the authenticated principal.
+// requireOrganizationUser returns the organization and user of the authenticated principal.
 // If either is missing it writes the error response and returns ok=false.
-func (h *Handler) requireTenantUser(w http.ResponseWriter, r *http.Request) (tenantID uuid.UUID, userID uuid.UUID, ok bool) {
-	tenantID, err := httpx.RequireTenant(r)
+func (h *Handler) requireOrganizationUser(w http.ResponseWriter, r *http.Request) (organizationID uuid.UUID, userID uuid.UUID, ok bool) {
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return uuid.Nil, uuid.Nil, false
@@ -1059,7 +1059,7 @@ func (h *Handler) requireTenantUser(w http.ResponseWriter, r *http.Request) (ten
 		httpx.WriteError(w, r, err)
 		return uuid.Nil, uuid.Nil, false
 	}
-	return tenantID, userID, true
+	return organizationID, userID, true
 }
 
 // splitCSV splits a comma-separated query parameter into a []string, trimming

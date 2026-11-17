@@ -102,8 +102,8 @@ func userFromInsertRow(row dbgen.InsertUserRow) *User {
 		CreatedAt:       row.CreatedAt,
 		UpdatedAt:       row.UpdatedAt,
 	}
-	if tid := pgtypeToUUIDPtr(row.TenantID); tid != nil {
-		u.TenantID = *tid
+	if tid := pgtypeToUUIDPtr(row.OrganizationID); tid != nil {
+		u.OrganizationID = *tid
 	}
 	return u
 }
@@ -122,8 +122,8 @@ func userFromGetRow(row dbgen.GetUserByIDRow) *User {
 		CreatedAt:       row.CreatedAt,
 		UpdatedAt:       row.UpdatedAt,
 	}
-	if tid := pgtypeToUUIDPtr(row.TenantID); tid != nil {
-		u.TenantID = *tid
+	if tid := pgtypeToUUIDPtr(row.OrganizationID); tid != nil {
+		u.OrganizationID = *tid
 	}
 	return u
 }
@@ -132,7 +132,7 @@ func userFromGetRow(row dbgen.GetUserByIDRow) *User {
 // GetUserByEmailGlobalRow, to the domain User (avatar_url intentionally excluded).
 func userFromEmailRow(
 	id uuid.UUID,
-	tenantID pgtype.UUID,
+	organizationID pgtype.UUID,
 	email string,
 	emailVerifiedAt pgtype.Timestamptz,
 	phone *string,
@@ -154,34 +154,34 @@ func userFromEmailRow(
 		CreatedAt:       createdAt,
 		UpdatedAt:       updatedAt,
 	}
-	if tid := pgtypeToUUIDPtr(tenantID); tid != nil {
-		u.TenantID = *tid
+	if tid := pgtypeToUUIDPtr(organizationID); tid != nil {
+		u.OrganizationID = *tid
 	}
 	return u
 }
 
 // userCols is the column list Update returns, in scanUser's order.
-const userCols = `id, tenant_id, email, email_verified_at, phone, phone_verified_at,
+const userCols = `id, organization_id, email, email_verified_at, phone, phone_verified_at,
                   display_name, status, metadata, created_at, updated_at`
 
-// lastSeenCols are when and from where the person last used the organisation:
+// lastSeenCols are when and from where the person last used the organization:
 // their newest live session there, else their last sign-in to it in the audit
 // log, which outlasts the sessions the cleanup deletes.
 const lastSeenCols = `GREATEST(
 			    (SELECT s.last_seen_at FROM auth.sessions s
 			     WHERE s.user_id = account.users.id AND s.revoked_at IS NULL
-			       AND (s.tenant_id = $1 OR (s.tenant_id IS NULL AND account.users.tenant_id = $1))
+			       AND (s.organization_id = $1 OR (s.organization_id IS NULL AND account.users.organization_id = $1))
 			     ORDER BY s.last_seen_at DESC LIMIT 1),
 			    (SELECT e.created_at FROM audit.events e
-			     WHERE e.actor_user_id = account.users.id AND e.tenant_id = $1 AND e.action = 'auth.login_succeeded'
+			     WHERE e.actor_user_id = account.users.id AND e.organization_id = $1 AND e.action = 'auth.login_succeeded'
 			     ORDER BY e.created_at DESC LIMIT 1)) AS last_seen_at,
 			  COALESCE(
 			    (SELECT host(s.ip) FROM auth.sessions s
 			     WHERE s.user_id = account.users.id AND s.revoked_at IS NULL
-			       AND (s.tenant_id = $1 OR (s.tenant_id IS NULL AND account.users.tenant_id = $1))
+			       AND (s.organization_id = $1 OR (s.organization_id IS NULL AND account.users.organization_id = $1))
 			     ORDER BY s.last_seen_at DESC LIMIT 1),
 			    (SELECT host(e.ip) FROM audit.events e
-			     WHERE e.actor_user_id = account.users.id AND e.tenant_id = $1 AND e.action = 'auth.login_succeeded'
+			     WHERE e.actor_user_id = account.users.id AND e.organization_id = $1 AND e.action = 'auth.login_succeeded'
 			     ORDER BY e.created_at DESC LIMIT 1))::text AS last_seen_ip`
 
 // scanUser scans a userCols row (no avatar_url) into a User.
@@ -198,7 +198,7 @@ func scanUser(row pgx.Row) (*User, error) {
 		return nil, err
 	}
 	if tid != nil {
-		u.TenantID = *tid
+		u.OrganizationID = *tid
 	}
 	u.Metadata = parseUserMetadata(meta, u.ID)
 	return &u, nil
@@ -249,11 +249,11 @@ func (r *Repository) CreateWithCredentialTx(ctx context.Context, tx pgx.Tx, in C
 	// the user and auth bounded contexts.
 	q := r.q.WithTx(tx)
 	row, err := q.InsertUser(ctx, dbgen.InsertUserParams{
-		TenantID:    uuidToPgtype(in.TenantID),
-		Email:       strings.TrimSpace(in.Email),
-		Phone:       phone,
-		DisplayName: displayName,
-		Metadata:    metaJSON,
+		OrganizationID: uuidToPgtype(in.OrganizationID),
+		Email:          strings.TrimSpace(in.Email),
+		Phone:          phone,
+		DisplayName:    displayName,
+		Metadata:       metaJSON,
 	})
 	if err != nil {
 		if pgxerr.IsUnique(err) {
@@ -298,11 +298,11 @@ func getUser(ctx context.Context, q *dbgen.Queries, id uuid.UUID) (*User, error)
 	return userFromGetRow(row), nil
 }
 
-// StandingIn reports how a user relates to a tenant: home (the tenant manages
+// StandingIn reports how a user relates to an organization: home (the organization manages
 // the account) and member (they hold one of its roles). ErrNotFound for a
 // user that doesn't exist.
-func (r *Repository) StandingIn(ctx context.Context, id, tenantID uuid.UUID) (home, member bool, err error) {
-	row, err := r.q.GetUserStandingIn(ctx, dbgen.GetUserStandingInParams{ID: id, TenantID: tenantID})
+func (r *Repository) StandingIn(ctx context.Context, id, organizationID uuid.UUID) (home, member bool, err error) {
+	row, err := r.q.GetUserStandingIn(ctx, dbgen.GetUserStandingInParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, false, errs.ErrNotFound
 	}
@@ -312,33 +312,33 @@ func (r *Repository) StandingIn(ctx context.Context, id, tenantID uuid.UUID) (ho
 	return row.Home, row.Member, nil
 }
 
-// RemoveFromTenantTx removes a user from one tenant in tx: their roles and
+// RemoveFromOrganizationTx removes a user from one organization in tx: their roles and
 // groups there, and the application grants and API keys they hold there. It
-// returns how many roles were removed. Their account and other tenants are
+// returns how many roles were removed. Their account and other organizations are
 // untouched; OffboardTx withdraws what they issued there.
-func (r *Repository) RemoveFromTenantTx(ctx context.Context, tx pgx.Tx, userID, tenantID uuid.UUID) (int64, error) {
+func (r *Repository) RemoveFromOrganizationTx(ctx context.Context, tx pgx.Tx, userID, organizationID uuid.UUID) (int64, error) {
 	q := r.q.WithTx(tx)
-	roles, err := q.RemoveUserRolesInTenant(ctx, dbgen.RemoveUserRolesInTenantParams{UserID: userID, TenantID: tenantID})
+	roles, err := q.RemoveUserRolesInOrganization(ctx, dbgen.RemoveUserRolesInOrganizationParams{UserID: userID, OrganizationID: organizationID})
 	if err != nil {
 		return 0, err
 	}
-	if err := q.RemoveUserGroupsInTenant(ctx, dbgen.RemoveUserGroupsInTenantParams{UserID: userID, TenantID: tenantID}); err != nil {
+	if err := q.RemoveUserGroupsInOrganization(ctx, dbgen.RemoveUserGroupsInOrganizationParams{UserID: userID, OrganizationID: organizationID}); err != nil {
 		return 0, err
 	}
-	if err := q.RevokeUserAppGrantsInTenant(ctx, dbgen.RevokeUserAppGrantsInTenantParams{UserID: userID, TenantID: tenantID}); err != nil {
+	if err := q.RevokeUserAppGrantsInOrganization(ctx, dbgen.RevokeUserAppGrantsInOrganizationParams{UserID: userID, OrganizationID: organizationID}); err != nil {
 		return 0, err
 	}
-	if err := q.RevokeUserAPIKeysInTenant(ctx, dbgen.RevokeUserAPIKeysInTenantParams{UserID: uuidToPgtype(userID), TenantID: tenantID}); err != nil {
+	if err := q.RevokeUserAPIKeysInOrganization(ctx, dbgen.RevokeUserAPIKeysInOrganizationParams{UserID: uuidToPgtype(userID), OrganizationID: organizationID}); err != nil {
 		return 0, err
 	}
 	return roles, nil
 }
 
-// GetByEmail returns the tenant's user with this email.
-func (r *Repository) GetByEmail(ctx context.Context, tenantID uuid.UUID, email string) (*User, error) {
+// GetByEmail returns the organization's user with this email.
+func (r *Repository) GetByEmail(ctx context.Context, organizationID uuid.UUID, email string) (*User, error) {
 	row, err := r.q.GetUserByEmail(ctx, dbgen.GetUserByEmailParams{
-		TenantID: uuidToPgtype(tenantID),
-		Lower:    email,
+		OrganizationID: uuidToPgtype(organizationID),
+		Lower:          email,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
@@ -346,11 +346,11 @@ func (r *Repository) GetByEmail(ctx context.Context, tenantID uuid.UUID, email s
 	if err != nil {
 		return nil, err
 	}
-	return userFromEmailRow(row.ID, row.TenantID, row.Email, row.EmailVerifiedAt, row.Phone,
+	return userFromEmailRow(row.ID, row.OrganizationID, row.Email, row.EmailVerifiedAt, row.Phone,
 		row.PhoneVerifiedAt, row.DisplayName, row.Status, row.Metadata, row.CreatedAt, row.UpdatedAt), nil
 }
 
-// GetByEmailGlobal looks up a user by email across all tenants. Email is
+// GetByEmailGlobal looks up a user by email across all organizations. Email is
 // globally unique (migration 0022), so there is at most one match.
 func (r *Repository) GetByEmailGlobal(ctx context.Context, email string) (*User, error) {
 	row, err := r.q.GetUserByEmailGlobal(ctx, email)
@@ -360,7 +360,7 @@ func (r *Repository) GetByEmailGlobal(ctx context.Context, email string) (*User,
 	if err != nil {
 		return nil, err
 	}
-	return userFromEmailRow(row.ID, row.TenantID, row.Email, row.EmailVerifiedAt, row.Phone,
+	return userFromEmailRow(row.ID, row.OrganizationID, row.Email, row.EmailVerifiedAt, row.Phone,
 		row.PhoneVerifiedAt, row.DisplayName, row.Status, row.Metadata, row.CreatedAt, row.UpdatedAt), nil
 }
 
@@ -443,14 +443,14 @@ func (r *Repository) SoftDeleteByTx(ctx context.Context, tx pgx.Tx, id uuid.UUID
 	return d, nil
 }
 
-// ListDeleted returns a page of a tenant's soft-deleted users, most recent
+// ListDeleted returns a page of an organization's soft-deleted users, most recent
 // first, after the cursor when one is set (100 if limit is not in 1..200), and
 // the next page's cursor: empty on the last page.
-func (r *Repository) ListDeleted(ctx context.Context, tenantID uuid.UUID, limit int, after paging.Cursor) ([]DeletedUser, string, error) {
+func (r *Repository) ListDeleted(ctx context.Context, organizationID uuid.UUID, limit int, after paging.Cursor) ([]DeletedUser, string, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	params := dbgen.ListDeletedUsersParams{TenantID: uuidToPgtype(tenantID), RowLimit: int32(limit + 1)}
+	params := dbgen.ListDeletedUsersParams{OrganizationID: uuidToPgtype(organizationID), RowLimit: int32(limit + 1)}
 	if after.Set {
 		params.BeforeTs = pgtype.Timestamptz{Time: after.Time, Valid: true}
 		params.BeforeID = pgtype.UUID{Bytes: after.ID, Valid: true}

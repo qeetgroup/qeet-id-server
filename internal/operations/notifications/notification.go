@@ -1,6 +1,6 @@
 // Package notification is the in-app notification inbox behind the console's
-// header bell. Notifications belong to an account, not a tenant: their owner
-// reads them and marks them read in any organisation. Other packages call
+// header bell. Notifications belong to an account, not an organization: their owner
+// reads them and marks them read in any organization. Other packages call
 // Service.Notify through small interfaces, such as for a locked-account alert.
 package notification
 
@@ -43,21 +43,21 @@ type Notification struct {
 }
 
 // Notify appends a notification for a user; an empty kind means "info".
-// tenantID may be uuid.Nil. Callers should log and drop the error, so a failed
+// organizationID may be uuid.Nil. Callers should log and drop the error, so a failed
 // notification never breaks the action that caused it.
-func (s *Service) Notify(ctx context.Context, tenantID, userID uuid.UUID, kind, title, description, href string) error {
+func (s *Service) Notify(ctx context.Context, organizationID, userID uuid.UUID, kind, title, description, href string) error {
 	if kind == "" {
 		kind = "info"
 	}
-	// tenant_id is nullable; uuid.Nil is stored as NULL.
-	tid := pgtype.UUID{Bytes: tenantID, Valid: tenantID != uuid.Nil}
+	// organization_id is nullable; uuid.Nil is stored as NULL.
+	tid := pgtype.UUID{Bytes: organizationID, Valid: organizationID != uuid.Nil}
 	return s.q.InsertNotification(ctx, dbgen.InsertNotificationParams{
-		UserID:      userID,
-		TenantID:    tid,
-		Kind:        kind,
-		Title:       title,
-		Description: description,
-		Href:        href,
+		UserID:         userID,
+		OrganizationID: tid,
+		Kind:           kind,
+		Title:          title,
+		Description:    description,
+		Href:           href,
 	})
 }
 

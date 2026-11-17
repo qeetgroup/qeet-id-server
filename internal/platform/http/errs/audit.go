@@ -3,8 +3,8 @@ package errs
 // Audit log and anomaly detection error codes.
 const (
 	CodeAuditCursorInvalid         = "audit.cursor_invalid"
-	CodeAuditTenantInvalid         = "audit.tenant_invalid"
-	CodeAuditTenantMismatch        = "audit.tenant_mismatch"
+	CodeAuditOrganizationInvalid   = "audit.tenant_invalid"
+	CodeAuditOrganizationMismatch  = "audit.tenant_mismatch"
 	CodeAuditActorIDInvalid        = "audit.actor_id_invalid"
 	CodeAuditIDInvalid             = "audit.id_invalid"
 	CodeAuditAnomalyStatusInvalid  = "audit.anomaly_status_invalid"
@@ -15,8 +15,8 @@ const (
 
 var (
 	ErrAuditCursorInvalid         = New(CodeAuditCursorInvalid, "That pagination cursor is invalid.")
-	ErrAuditTenantInvalid         = New(CodeAuditTenantInvalid, "That tenant reference is invalid.")
-	ErrAuditTenantMismatch        = New(CodeAuditTenantMismatch, "You can't access another tenant's audit data.")
+	ErrAuditOrganizationInvalid   = New(CodeAuditOrganizationInvalid, "That tenant reference is invalid.")
+	ErrAuditOrganizationMismatch  = New(CodeAuditOrganizationMismatch, "You can't access another tenant's audit data.")
 	ErrAuditActorIDInvalid        = New(CodeAuditActorIDInvalid, "That actor reference is invalid.")
 	ErrAuditIDInvalid             = New(CodeAuditIDInvalid, "That reference is invalid.")
 	ErrAuditAnomalyStatusInvalid  = New(CodeAuditAnomalyStatusInvalid, `Choose a valid status: "open" or "resolved".`)

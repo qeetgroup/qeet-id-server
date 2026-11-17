@@ -21,9 +21,9 @@ func TestAHostedSignInReturnsToTheHostedLogin(t *testing.T) {
 	const accounts = "https://accounts.example.test"
 	sp.handler.Service.SetHostedLogin(accounts, testPublicBase)
 	idp := newUpstreamIdP(t)
-	tenant := dbtest.Tenant(t)
-	conn := sp.connect(t, tenant, idp)
-	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+dbtest.Domain(t, tenant), tenant, tenant)
+	organization := dbtest.Organization(t)
+	conn := sp.connect(t, organization, idp)
+	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+dbtest.Domain(t, organization), organization, organization)
 	verify(t, member.ID)
 	returnTo := testPublicBase + "/oauth/authorize?client_id=portal&state=s1"
 
@@ -67,9 +67,9 @@ func TestAFailedHostedSignInReturnsToTheHostedLogin(t *testing.T) {
 	const accounts = "https://accounts.example.test"
 	sp.handler.Service.SetHostedLogin(accounts, testPublicBase)
 	idp := newUpstreamIdP(t)
-	tenant := dbtest.Tenant(t)
-	conn := sp.connect(t, tenant, idp)
-	email := dbtest.Unique("asha") + "@" + dbtest.Domain(t, tenant)
+	organization := dbtest.Organization(t)
+	conn := sp.connect(t, organization, idp)
+	email := dbtest.Unique("asha") + "@" + dbtest.Domain(t, organization)
 	returnTo := testPublicBase + "/oauth/authorize?client_id=portal&state=s2"
 
 	rec := sp.send(httptest.NewRequestWithContext(dbtest.Context(t), http.MethodGet,

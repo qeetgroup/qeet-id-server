@@ -42,15 +42,15 @@ func TestTheDatabaseClassifiesActionsAsActivityDoes(t *testing.T) {
 // total is how many match.
 func TestHistoryFiltersInTheQueryAndCounts(t *testing.T) {
 	ctx := dbtest.Context(t)
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
 	target := uuid.New()
 	base := time.Now().Add(-time.Hour)
 	insert := func(action, resourceType string, resourceID *uuid.UUID, ip string, at time.Time) uuid.UUID {
 		t.Helper()
 		id := uuid.New()
-		if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO audit.events (id, tenant_id, actor_type, action, resource_type, resource_id, ip, created_at)
-			VALUES ($1, $2, 'system', $3, $4, $5, NULLIF($6, '')::inet, $7)`, id, tenant, action, resourceType, resourceID, ip, at); err != nil {
+		if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO audit.events (id, organization_id, actor_type, action, resource_type, resource_id, ip, created_at)
+			VALUES ($1, $2, 'system', $3, $4, $5, NULLIF($6, '')::inet, $7)`, id, organization, action, resourceType, resourceID, ip, at); err != nil {
 			t.Fatal(err)
 		}
 		return id
@@ -61,7 +61,7 @@ func TestHistoryFiltersInTheQueryAndCounts(t *testing.T) {
 	deleted := insert("group.deleted", "group", &target, "198.51.100.9", base.Add(time.Minute))
 	failed := insert("auth.sign_in_failed", "session", nil, "198.51.100.9", base.Add(2*time.Minute))
 
-	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount)
 	type page struct {
 		Events []struct {
 			ID uuid.UUID `json:"id"`

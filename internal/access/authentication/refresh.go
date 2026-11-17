@@ -44,51 +44,51 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 	defer tx.Rollback(ctx)
 
 	var (
-		id          uuid.UUID
-		sessionID   uuid.UUID
-		usedAt      *time.Time
-		expiresAt   time.Time
-		sessionRev  *time.Time
-		userID      uuid.UUID
-		tenantPtr   *uuid.UUID
-		userStatus  string
-		userDeleted *time.Time
-		hookClaims  []byte
-		sessionExp  time.Time
-		pastMaxAge  bool
-		pastIdle    bool
-		// tenantActive: the session's organisation is neither suspended nor
-		// deleted (true for a tenant-less session).
-		tenantActive bool
+		id              uuid.UUID
+		sessionID       uuid.UUID
+		usedAt          *time.Time
+		expiresAt       time.Time
+		sessionRev      *time.Time
+		userID          uuid.UUID
+		organizationPtr *uuid.UUID
+		userStatus      string
+		userDeleted     *time.Time
+		hookClaims      []byte
+		sessionExp      time.Time
+		pastMaxAge      bool
+		pastIdle        bool
+		// organizationActive: the session's organization is neither suspended nor
+		// deleted (true for an organization-less session).
+		organizationActive bool
 	)
 	// Whether the session had reached its maximum age or idle timeout by the
 	// time it ended — now, if it has not ended — is decided on the database's
 	// clock, as the bounds were set.
 	row := tx.QueryRow(ctx, `
 		SELECT rt.id, rt.session_id, rt.used_at, rt.expires_at,
-		       s.revoked_at, s.user_id, s.tenant_id, u.status, u.deleted_at, s.hook_claims,
+		       s.revoked_at, s.user_id, s.organization_id, u.status, u.deleted_at, s.hook_claims,
 		       s.expires_at,
 		       s.expires_at <= COALESCE(s.revoked_at, NOW()),
 		       s.last_seen_at + s.idle_timeout <= COALESCE(s.revoked_at, NOW()),
-		       s.tenant_id IS NULL OR (t.status = 'active' AND t.deleted_at IS NULL)
+		       s.organization_id IS NULL OR (t.status = 'active' AND t.deleted_at IS NULL)
 		FROM auth.refresh_tokens rt
 		JOIN auth.sessions s ON s.id = rt.session_id
 		JOIN account.users u ON u.id = s.user_id
-		LEFT JOIN tenant.tenants t ON t.id = s.tenant_id
+		LEFT JOIN organization.organizations t ON t.id = s.organization_id
 		WHERE rt.token_hash = $1
 		FOR UPDATE OF rt, s
 	`, hash)
-	if err := row.Scan(&id, &sessionID, &usedAt, &expiresAt, &sessionRev, &userID, &tenantPtr, &userStatus, &userDeleted, &hookClaims,
-		&sessionExp, &pastMaxAge, &pastIdle, &tenantActive); err != nil {
+	if err := row.Scan(&id, &sessionID, &usedAt, &expiresAt, &sessionRev, &userID, &organizationPtr, &userStatus, &userDeleted, &hookClaims,
+		&sessionExp, &pastMaxAge, &pastIdle, &organizationActive); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errs.ErrAuthRefreshTokenInvalid
 		}
 		return nil, err
 	}
-	// uuid.Nil = tenant-less session; preserved across refresh.
-	var tenantID uuid.UUID
-	if tenantPtr != nil {
-		tenantID = *tenantPtr
+	// uuid.Nil = organization-less session; preserved across refresh.
+	var organizationID uuid.UUID
+	if organizationPtr != nil {
+		organizationID = *organizationPtr
 	}
 	// A session past its maximum age or idle timeout has ended, whatever the
 	// client was told and whether or not it is the first renewal to notice.
@@ -99,7 +99,7 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 			if pastMaxAge {
 				reason = timedOutMaxAge
 			}
-			if err := s.endTimedOutSession(ctx, tx, userID, tenantID, sessionID, reason, in); err != nil {
+			if err := s.endTimedOutSession(ctx, tx, userID, organizationID, sessionID, reason, in); err != nil {
 				return nil, err
 			}
 			if err := tx.Commit(ctx); err != nil {
@@ -116,10 +116,10 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 	if userDeleted != nil || userStatus == "suspended" {
 		return nil, errs.ErrAuthAccountSuspended
 	}
-	// The same for the organisation: suspending or deleting it ends its
+	// The same for the organization: suspending or deleting it ends its
 	// sessions, and a refresh token that outlived that is refused.
-	if !tenantActive {
-		return nil, errs.ErrAuthTenantInactive
+	if !organizationActive {
+		return nil, errs.ErrAuthOrganizationInactive
 	}
 	if time.Now().After(expiresAt) {
 		return nil, errs.ErrAuthRefreshTokenInvalid
@@ -131,11 +131,11 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 			return nil, err
 		}
 		if ok {
-			return s.answerRetry(ctx, tx, pair, age, id, userID, tenantID, in)
+			return s.answerRetry(ctx, tx, pair, age, id, userID, organizationID, in)
 		}
 		// Any other reuse means theft: revoke the session and record the audit
 		// and outbox events atomically with the revocation.
-		if err := s.handleRefreshReuse(ctx, tx, userID, tenantID, sessionID, id, in); err != nil {
+		if err := s.handleRefreshReuse(ctx, tx, userID, organizationID, sessionID, id, in); err != nil {
 			return nil, err
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -144,11 +144,11 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 		return nil, errs.ErrAuthSessionRevoked
 	}
 
-	// A session renews only from an address its organisation still allows, so
+	// A session renews only from an address its organization still allows, so
 	// a newly blocked address stops renewing. The session itself stays: it
 	// renews again from an allowed address. Nothing else is written yet, so
 	// committing keeps only the refusal's record.
-	if err := s.checkAddressTx(ctx, tx, tenantID, userID, in.IP, "refresh"); err != nil {
+	if err := s.checkAddressTx(ctx, tx, organizationID, userID, in.IP, "refresh"); err != nil {
 		if errors.Is(err, errs.ErrAuthAddressNotAllowed) {
 			if cerr := tx.Commit(ctx); cerr != nil {
 				return nil, cerr
@@ -180,7 +180,7 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 	if err != nil {
 		return nil, err
 	}
-	if err := user.RecordActive(ctx, tx, tenantID, userID); err != nil {
+	if err := user.RecordActive(ctx, tx, organizationID, userID); err != nil {
 		return nil, err
 	}
 	// The hook ran when the session was opened; its claims stay with the session.
@@ -190,7 +190,7 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 			return nil, err
 		}
 	}
-	access, exp, err := s.tokens.IssueSessionAccess(userID, tenantID, sessionID, claims, sessionExp)
+	access, exp, err := s.tokens.IssueSessionAccess(userID, organizationID, sessionID, claims, sessionExp)
 	if err != nil {
 		return nil, err
 	}
@@ -203,7 +203,7 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 		IdleExpiresAt:    idleExp,
 		SessionID:        sessionID,
 		UserID:           userID,
-		TenantID:         tenantPtr,
+		OrganizationID:   organizationPtr,
 	}
 	if err := s.keepRotation(ctx, tx, id, pair); err != nil {
 		return nil, err
@@ -217,7 +217,7 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 // buildReuseEvents constructs the audit + outbox events emitted when a
 // refresh-token reuse is detected. Exported as a free function so tests
 // can verify the payload shape without a DB round-trip.
-func buildReuseEvents(userID, tenantID, sessionID, refreshID uuid.UUID, in RefreshInput) (audit.Event, outbox.Event) {
+func buildReuseEvents(userID, organizationID, sessionID, refreshID uuid.UUID, in RefreshInput) (audit.Event, outbox.Event) {
 	meta := map[string]any{
 		"session_id":       sessionID,
 		"refresh_token_id": refreshID,
@@ -230,25 +230,25 @@ func buildReuseEvents(userID, tenantID, sessionID, refreshID uuid.UUID, in Refre
 		meta["user_agent"] = in.UserAgent
 	}
 
-	// A session in no organisation is recorded as the platform's, not under the
+	// A session in no organization is recorded as the platform's, not under the
 	// nil UUID.
 	var tid *uuid.UUID
-	if tenantID != uuid.Nil {
-		tid = &tenantID
+	if organizationID != uuid.Nil {
+		tid = &organizationID
 	}
 	uid := userID
 	sid := sessionID
 	ae := audit.Event{
-		TenantID:     tid,
-		ActorUserID:  &uid,
-		ActorType:    "system",
-		Action:       "auth.token_reuse_detected",
-		ResourceType: "session",
-		ResourceID:   &sid,
-		IP:           in.IP,
-		UserAgent:    in.UserAgent,
-		RequestID:    in.RequestID,
-		Metadata:     meta,
+		OrganizationID: tid,
+		ActorUserID:    &uid,
+		ActorType:      "system",
+		Action:         "auth.token_reuse_detected",
+		ResourceType:   "session",
+		ResourceID:     &sid,
+		IP:             in.IP,
+		UserAgent:      in.UserAgent,
+		RequestID:      in.RequestID,
+		Metadata:       meta,
 	}
 	oe := outbox.Event{
 		AggregateID: sessionID,
@@ -270,15 +270,15 @@ func buildReuseEvents(userID, tenantID, sessionID, refreshID uuid.UUID, in Refre
 // inside a transaction that will be committed only if every step here
 // succeeds — leaving no half-state if e.g. the outbox insert fails.
 func (s *Service) handleRefreshReuse(ctx context.Context, tx pgx.Tx,
-	userID, tenantID, sessionID, refreshID uuid.UUID, in RefreshInput,
+	userID, organizationID, sessionID, refreshID uuid.UUID, in RefreshInput,
 ) error {
 	if err := s.q.WithTx(tx).RevokeSessionById(ctx, sessionID); err != nil {
 		return err
 	}
 	s.signals.Revoked(ctx, tx, sessionsignal.ReasonReuseDetected,
-		sessionsignal.Session{ID: sessionID, UserID: userID, TenantID: tenantID})
+		sessionsignal.Session{ID: sessionID, UserID: userID, OrganizationID: organizationID})
 
-	auditEvent, outboxEvent := buildReuseEvents(userID, tenantID, sessionID, refreshID, in)
+	auditEvent, outboxEvent := buildReuseEvents(userID, organizationID, sessionID, refreshID, in)
 	if err := audit.Record(ctx, tx, auditEvent); err != nil {
 		return err
 	}
@@ -288,7 +288,7 @@ func (s *Service) handleRefreshReuse(ctx context.Context, tx pgx.Tx,
 
 	slog.Warn("refresh token reuse — session revoked",
 		"user_id", userID,
-		"tenant_id", tenantID,
+		"tenant_id", organizationID,
 		"session_id", sessionID,
 		"ip", in.IP,
 	)

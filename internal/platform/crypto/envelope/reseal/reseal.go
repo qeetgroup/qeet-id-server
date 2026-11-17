@@ -24,16 +24,16 @@ import (
 // was sealed with. Every name and expression is SQL written in code, never
 // input.
 type Column struct {
-	Table      string   // schema-qualified table
-	Key        []string // the columns that identify a row, in index order
-	Ciphertext string   // the sealed value
-	Nonce      string   // its nonce
-	Tenant     string   // SQL for the context's tenant
-	Purpose    string   // the context's purpose
-	Resource   string   // SQL for the context's resource
-	// TenantOf turns Tenant's text into the context's tenant; nil parses it as
+	Table        string   // schema-qualified table
+	Key          []string // the columns that identify a row, in index order
+	Ciphertext   string   // the sealed value
+	Nonce        string   // its nonce
+	Organization string   // SQL for the context's organization
+	Purpose      string   // the context's purpose
+	Resource     string   // SQL for the context's resource
+	// OrganizationOf turns Organization's text into the context's organization; nil parses it as
 	// a UUID.
-	TenantOf func(string) uuid.UUID
+	OrganizationOf func(string) uuid.UUID
 }
 
 // Name is how logs and the metric refer to the column.
@@ -52,7 +52,7 @@ type Result struct {
 // what was read, so a run is safe beside the application's writes and another
 // run, and running it twice changes nothing more.
 func Run(ctx context.Context, pool *pgxpool.Pool, box *envelope.Cipher, columns []Column, batch int, budget time.Duration) (Result, error) {
-	ctx = postgres.AcrossTenants(ctx)
+	ctx = postgres.AcrossOrganizations(ctx)
 	deadline := time.Now().Add(budget)
 	var res Result
 	for _, c := range columns {
@@ -70,9 +70,9 @@ func Run(ctx context.Context, pool *pgxpool.Pool, box *envelope.Cipher, columns 
 
 // row is one stored value and what it was sealed with.
 type row struct {
-	key               []any
-	ciphertext, nonce []byte
-	tenant, resource  string
+	key                    []any
+	ciphertext, nonce      []byte
+	organization, resource string
 }
 
 // run reseals the column's values and reports whether it got through them
@@ -98,7 +98,7 @@ func (c Column) run(ctx context.Context, pool *pgxpool.Pool, box *envelope.Ciphe
 			return false, err
 		}
 		for _, r := range rows {
-			tenant, plaintext, err := c.open(box, r)
+			organization, plaintext, err := c.open(box, r)
 			if err != nil {
 				unreadable++
 				res.Unreadable++
@@ -107,7 +107,7 @@ func (c Column) run(ctx context.Context, pool *pgxpool.Pool, box *envelope.Ciphe
 				}
 				continue
 			}
-			resealed, err := c.store(ctx, pool, box, r, tenant, plaintext)
+			resealed, err := c.store(ctx, pool, box, r, organization, plaintext)
 			if err != nil {
 				return false, err
 			}
@@ -133,9 +133,9 @@ func (c Column) next(ctx context.Context, pool *pgxpool.Pool, prefix []byte, aft
 		args = append(args, after...)
 	}
 	// #nosec G201 -- the table, columns and expressions are the fixed list in code, never input.
-	query := fmt.Sprintf(`SELECT %s, %s, %s, (%s)::text AS context_tenant, (%s)::text AS context_resource
+	query := fmt.Sprintf(`SELECT %s, %s, %s, (%s)::text AS context_organization, (%s)::text AS context_resource
 		FROM %s WHERE %s ORDER BY %s LIMIT $2`,
-		keys, c.Ciphertext, c.Nonce, c.Tenant, c.Resource, c.Table, where, keys)
+		keys, c.Ciphertext, c.Nonce, c.Organization, c.Resource, c.Table, where, keys)
 	rows, err := pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -148,7 +148,7 @@ func (c Column) next(ctx context.Context, pool *pgxpool.Pool, prefix []byte, aft
 		for i := range r.key {
 			dest = append(dest, &r.key[i])
 		}
-		dest = append(dest, &r.ciphertext, &r.nonce, &r.tenant, &r.resource)
+		dest = append(dest, &r.ciphertext, &r.nonce, &r.organization, &r.resource)
 		if err := rows.Scan(dest...); err != nil {
 			return nil, err
 		}
@@ -159,20 +159,20 @@ func (c Column) next(ctx context.Context, pool *pgxpool.Pool, prefix []byte, aft
 
 // open decrypts one stored value under the context it was sealed with.
 func (c Column) open(box *envelope.Cipher, r row) (uuid.UUID, []byte, error) {
-	tenant := uuid.Nil
-	if c.TenantOf != nil {
-		tenant = c.TenantOf(r.tenant)
-	} else if id, err := uuid.Parse(r.tenant); err == nil {
-		tenant = id
+	organization := uuid.Nil
+	if c.OrganizationOf != nil {
+		organization = c.OrganizationOf(r.organization)
+	} else if id, err := uuid.Parse(r.organization); err == nil {
+		organization = id
 	}
-	plaintext, err := box.Open(tenant, c.Purpose, r.resource, r.ciphertext, r.nonce)
-	return tenant, plaintext, err
+	plaintext, err := box.Open(organization, c.Purpose, r.resource, r.ciphertext, r.nonce)
+	return organization, plaintext, err
 }
 
 // store replaces one value with plaintext sealed with the current key, unless
 // the row changed since it was read, and reports whether it did.
-func (c Column) store(ctx context.Context, pool *pgxpool.Pool, box *envelope.Cipher, r row, tenant uuid.UUID, plaintext []byte) (bool, error) {
-	ciphertext, nonce, err := box.Seal(tenant, c.Purpose, r.resource, plaintext)
+func (c Column) store(ctx context.Context, pool *pgxpool.Pool, box *envelope.Cipher, r row, organization uuid.UUID, plaintext []byte) (bool, error) {
+	ciphertext, nonce, err := box.Seal(organization, c.Purpose, r.resource, plaintext)
 	clear(plaintext)
 	if err != nil {
 		return false, err
@@ -219,7 +219,7 @@ func Count(ctx context.Context, pool *pgxpool.Pool, box *envelope.Cipher, column
 		// #nosec G201 -- the table and column are the fixed list in code, never input.
 		parts[i] = fmt.Sprintf("SELECT %d, count(*) FROM %s WHERE %s", i, c.Table, c.notCurrent(len(prefix)))
 	}
-	rows, err := pool.Query(postgres.AcrossTenants(ctx), strings.Join(parts, " UNION ALL "), prefix)
+	rows, err := pool.Query(postgres.AcrossOrganizations(ctx), strings.Join(parts, " UNION ALL "), prefix)
 	if err != nil {
 		return nil, err
 	}

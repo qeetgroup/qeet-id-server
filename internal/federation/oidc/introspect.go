@@ -16,9 +16,9 @@ import (
 )
 
 // mayIntrospect reports whether clientID may see an access token of its
-// tenant: it is the application the token was issued to (client_id claim), or
+// organization: it is the application the token was issued to (client_id claim), or
 // it serves one of the registered resources the token was issued for.
-func (s *Service) mayIntrospect(ctx context.Context, tenantID uuid.UUID, clientID string, claims *tokens.Claims) (bool, error) {
+func (s *Service) mayIntrospect(ctx context.Context, organizationID uuid.UUID, clientID string, claims *tokens.Claims) (bool, error) {
 	if claims.ClientID != "" && claims.ClientID == clientID {
 		return true, nil
 	}
@@ -26,19 +26,19 @@ func (s *Service) mayIntrospect(ctx context.Context, tenantID uuid.UUID, clientI
 	if len(res) == 0 {
 		return false, nil
 	}
-	return s.q.ResourceServedBy(ctx, dbgen.ResourceServedByParams{TenantID: tenantID, ClientID: &clientID, Identifiers: res})
+	return s.q.ResourceServedBy(ctx, dbgen.ResourceServedByParams{OrganizationID: organizationID, ClientID: &clientID, Identifiers: res})
 }
 
 // auditIntrospectionRefused records an application asking about a token it
 // doesn't own (owner "" for a token issued to no application).
-func (s *Service) auditIntrospectionRefused(ctx context.Context, tenantID uuid.UUID, caller, owner string) {
+func (s *Service) auditIntrospectionRefused(ctx context.Context, organizationID uuid.UUID, caller, owner string) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return
 	}
 	defer tx.Rollback(ctx)
 	if audit.Record(ctx, tx, audit.Event{
-		TenantID: &tenantID, ActorType: "client", Action: "oidc.introspection_refused",
+		OrganizationID: &organizationID, ActorType: "client", Action: "oidc.introspection_refused",
 		ResourceType: "oidc_client", IP: httpx.ClientIPFromContext(ctx),
 		Metadata: map[string]any{"client_id": caller, "token_client_id": owner, "outcome": "inactive"},
 	}) == nil {
@@ -79,14 +79,14 @@ func (s *Service) RevokeToken(ctx context.Context, clientID, clientSecret, token
 		return nil
 	}
 	first := ended[0]
-	tenantID, userID := first.TenantID, first.UserID
+	organizationID, userID := first.OrganizationID, first.UserID
 	var grantID *uuid.UUID
 	if first.GrantID.Valid {
 		g := uuid.UUID(first.GrantID.Bytes)
 		grantID = &g
 	}
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID: &tenantID, ActorUserID: &userID, ActorType: "client",
+		OrganizationID: &organizationID, ActorUserID: &userID, ActorType: "client",
 		Action: "oidc.grant_revoked", ResourceType: "oidc_grant", ResourceID: grantID,
 		IP: httpx.ClientIPFromContext(ctx),
 		Metadata: map[string]any{
@@ -116,7 +116,7 @@ func (s *Service) Introspect(ctx context.Context, clientID, clientSecret, token,
 	}
 
 	// RFC 7662 §2.1: the token must have been issued to the calling client, or this
-	// endpoint becomes a token oracle for other tenants. A mismatch returns
+	// endpoint becomes a token oracle for other organizations. A mismatch returns
 	// active: false, which reveals nothing.
 	caller, err := s.q.GetClientName(ctx, clientID)
 	if err != nil {
@@ -127,17 +127,17 @@ func (s *Service) Introspect(ctx context.Context, clientID, clientSecret, token,
 	// Whatever its audience: a token issued for a resource is still ours.
 	if hint != "refresh_token" {
 		if claims, err := s.issuer.VerifyAccessAnyAudience(token); err == nil {
-			if claims.TenantID != caller.TenantID {
+			if claims.OrganizationID != caller.OrganizationID {
 				return inactive, nil
 			}
 			// Only the application the token was issued to, or the service a
 			// registered resource it names says serves it, may see it.
-			allowed, err := s.mayIntrospect(ctx, caller.TenantID, clientID, claims)
+			allowed, err := s.mayIntrospect(ctx, caller.OrganizationID, clientID, claims)
 			if err != nil {
 				return nil, err
 			}
 			if !allowed {
-				s.auditIntrospectionRefused(ctx, caller.TenantID, clientID, claims.ClientID)
+				s.auditIntrospectionRefused(ctx, caller.OrganizationID, clientID, claims.ClientID)
 				return inactive, nil
 			}
 			// Introspection is authoritative on revocation: a token whose account,
@@ -170,8 +170,8 @@ func (s *Service) Introspect(ctx context.Context, clientID, clientSecret, token,
 			if claims.IssuedAt != nil {
 				out["iat"] = claims.IssuedAt.Unix()
 			}
-			if claims.TenantID != uuid.Nil {
-				out["tenant_id"] = claims.TenantID
+			if claims.OrganizationID != uuid.Nil {
+				out["tenant_id"] = claims.OrganizationID
 			}
 			if claims.SessionID != uuid.Nil {
 				out["sid"] = claims.SessionID
@@ -214,7 +214,7 @@ func (s *Service) Introspect(ctx context.Context, clientID, clientSecret, token,
 			"token_type": "refresh_token",
 			"client_id":  row.ClientID,
 			"sub":        row.UserID,
-			"tenant_id":  row.TenantID,
+			"tenant_id":  row.OrganizationID,
 			"scope":      strings.Join(row.Scopes, " "),
 			"iat":        row.IssuedAt.Unix(),
 			"exp":        row.ExpiresAt.Unix(),

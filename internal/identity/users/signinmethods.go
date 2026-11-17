@@ -14,7 +14,7 @@ import (
 )
 
 // An account must keep at least one way to sign in: its password and passkeys
-// (while its organisation allows each method) and each linked identity that can
+// (while its organization allows each method) and each linked identity that can
 // still sign in. A removal counts and removes in one transaction holding the
 // account's lock (LockSignInMethods), so two at once can't both succeed.
 
@@ -41,14 +41,14 @@ type querier interface {
 
 func countSignInMethods(ctx context.Context, q querier, userID uuid.UUID) (SignInMethods, error) {
 	var m SignInMethods
-	// A password or passkey counts only while the account's organisation
-	// allows signing in with it (no organisation: always).
+	// A password or passkey counts only while the account's organization
+	// allows signing in with it (no organization: always).
 	err := q.QueryRow(ctx, `
 		WITH allowed AS (
 		    SELECT COALESCE(ap.password_enabled, TRUE) AS password,
 		           COALESCE(ap.passkey_enabled, TRUE) AS passkey
 		    FROM account.users u
-		    LEFT JOIN tenant.auth_policy ap ON ap.tenant_id = u.tenant_id
+		    LEFT JOIN organization.auth_policy ap ON ap.organization_id = u.organization_id
 		    WHERE u.id = $1
 		)
 		SELECT EXISTS (SELECT 1 FROM auth.password_credentials WHERE user_id = $1)
@@ -59,10 +59,10 @@ func countSignInMethods(ctx context.Context, q querier, userID uuid.UUID) (SignI
 		       ((SELECT count(*) FROM account.external_identities ei
 		         WHERE ei.user_id = $1
 		           AND (ei.provider IN ('saml', 'ldap') OR EXISTS (
-		                SELECT 1 FROM tenant.oidc_connections oc
-		                WHERE ei.provider = 'oidc' AND oc.tenant_id = ei.tenant_id AND oc.id = ei.connection_id) OR EXISTS (
-		                SELECT 1 FROM tenant.social_providers sp
-		                WHERE sp.tenant_id = ei.tenant_id AND sp.provider = ei.provider AND sp.enabled)))
+		                SELECT 1 FROM organization.oidc_connections oc
+		                WHERE ei.provider = 'oidc' AND oc.organization_id = ei.organization_id AND oc.id = ei.connection_id) OR EXISTS (
+		                SELECT 1 FROM organization.social_providers sp
+		                WHERE sp.organization_id = ei.organization_id AND sp.provider = ei.provider AND sp.enabled)))
 		        + (SELECT count(*) FROM auth.platform_social_identities WHERE user_id = $1))::int`,
 		userID).Scan(&m.Password, &m.Passkeys, &m.LinkedIdentities)
 	return m, err
@@ -71,13 +71,13 @@ func countSignInMethods(ctx context.Context, q querier, userID uuid.UUID) (SignI
 // CountSignInMethods counts the account's ways to sign in, for display. A
 // removal decides with LockSignInMethods instead.
 func CountSignInMethods(ctx context.Context, pool *pgxpool.Pool, userID uuid.UUID) (SignInMethods, error) {
-	return countSignInMethods(postgres.AcrossTenants(ctx), pool, userID)
+	return countSignInMethods(postgres.AcrossOrganizations(ctx), pool, userID)
 }
 
 // LockSignInMethods takes the account's lock inside tx — the one session
 // revocations and password changes take — and counts its ways to sign in.
 // ErrNotFound for an account that does not exist. The methods span the
-// account's organisations, so tx must have begun with postgres.AcrossTenants.
+// account's organizations, so tx must have begun with postgres.AcrossOrganizations.
 func LockSignInMethods(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (SignInMethods, error) {
 	if err := tx.QueryRow(ctx, `SELECT id FROM account.users WHERE id = $1 FOR NO KEY UPDATE`, userID).Scan(&userID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -101,7 +101,7 @@ type Remover struct {
 // rolled back), that by was refused removing method (methodID) — "passkey" or
 // "linked_identity" — from userID's account as its last way to sign in, and
 // returns ErrAuthLastSignInMethod.
-func RefuseLastMethodRemoval(ctx context.Context, pool *pgxpool.Pool, userID uuid.UUID, tenantID *uuid.UUID, method string, methodID uuid.UUID, by Remover) error {
+func RefuseLastMethodRemoval(ctx context.Context, pool *pgxpool.Pool, userID uuid.UUID, organizationID *uuid.UUID, method string, methodID uuid.UUID, by Remover) error {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -109,16 +109,16 @@ func RefuseLastMethodRemoval(ctx context.Context, pool *pgxpool.Pool, userID uui
 	defer tx.Rollback(ctx)
 	uid := userID
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     tenantID,
-		ActorUserID:  by.UserID,
-		ActorType:    "user",
-		Action:       "auth.sign_in_method_removal_refused",
-		ResourceType: "user",
-		ResourceID:   &uid,
-		IP:           by.IP,
-		UserAgent:    by.UserAgent,
-		RequestID:    by.RequestID,
-		Metadata:     map[string]any{"method": method, "method_id": methodID, "reason": "last_sign_in_method"},
+		OrganizationID: organizationID,
+		ActorUserID:    by.UserID,
+		ActorType:      "user",
+		Action:         "auth.sign_in_method_removal_refused",
+		ResourceType:   "user",
+		ResourceID:     &uid,
+		IP:             by.IP,
+		UserAgent:      by.UserAgent,
+		RequestID:      by.RequestID,
+		Metadata:       map[string]any{"method": method, "method_id": methodID, "reason": "last_sign_in_method"},
 	}); err != nil {
 		return err
 	}

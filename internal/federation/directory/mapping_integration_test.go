@@ -19,13 +19,13 @@ import (
 func TestPreviewOfSavedMappingsReportsIssueCodes(test *testing.T) {
 	pool := dbtest.Pool(test)
 	ctx := dbtest.Context(test)
-	tenantID := dbtest.Tenant(test)
-	actor := dbtest.User(test, tenantID, tenantID)
+	organizationID := dbtest.Organization(test)
+	actor := dbtest.User(test, organizationID, organizationID)
 	service := NewService(&scimFixture{config: &scim.ConfigView{TokenSet: true}}, &ldapFixture{})
 	service.SetEventStore(pool)
-	router := dbtest.Serve(dbtest.Principal(actor.ID, tenantID), (&Handler{Service: service}).Mount)
-	connectionID := "scim:" + tenantID.String()
-	base := "/tenants/" + tenantID.String() + "/directory/connections/" + connectionID + "/mappings"
+	router := dbtest.Serve(dbtest.Principal(actor.ID, organizationID), (&Handler{Service: service}).Mount)
+	connectionID := "scim:" + organizationID.String()
+	base := "/tenants/" + organizationID.String() + "/directory/connections/" + connectionID + "/mappings"
 
 	var saved []Mapping
 	for _, rule := range []Mapping{
@@ -60,11 +60,11 @@ func TestPreviewOfSavedMappingsReportsIssueCodes(test *testing.T) {
 			test.Errorf("%s refused mapping: %d %s, want 422 source_attribute %s", save.method, response.Code, response.Body.String(), CodeMappingSourceCredential)
 		}
 	}
-	if count := dbtest.Count(test, `SELECT count(*) FROM tenant.directory_mappings WHERE tenant_id=$1 AND connection_id=$2 AND (source_attribute='userPassword' OR version<>1)`, tenantID, connectionID); count != 0 {
+	if count := dbtest.Count(test, `SELECT count(*) FROM organization.directory_mappings WHERE organization_id=$1 AND connection_id=$2 AND (source_attribute='userPassword' OR version<>1)`, organizationID, connectionID); count != 0 {
 		test.Fatalf("a refused save changed %d mappings", count)
 	}
 	// A saved rule that no longer passes validation is reported, not applied.
-	if _, err := pool.Exec(ctx, `INSERT INTO tenant.directory_mappings(id,tenant_id,connection_id,source_attribute,target_field,value_type,transform) VALUES($1,$2,$3,'title','title','array','none')`, uuid.New(), tenantID, connectionID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO organization.directory_mappings(id,organization_id,connection_id,source_attribute,target_field,value_type,transform) VALUES($1,$2,$3,'title','title','array','none')`, uuid.New(), organizationID, connectionID); err != nil {
 		test.Fatal(err)
 	}
 

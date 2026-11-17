@@ -31,35 +31,35 @@ func TestRoleGrantsTakeSeats(t *testing.T) {
 	seats.SetPlanLimiter(seatPlan(2))
 	svc := NewService(NewRepository(pool))
 	svc.SetSeatGuard(seats)
-	tenant := dbtest.Tenant(t)
-	role := dbtest.Role(t, tenant)
-	admin := dbtest.User(t, tenant, tenant)
-	first, second, third := dbtest.User(t, tenant), dbtest.User(t, tenant), dbtest.User(t, tenant)
+	organization := dbtest.Organization(t)
+	role := dbtest.Role(t, organization)
+	admin := dbtest.User(t, organization, organization)
+	first, second, third := dbtest.User(t, organization), dbtest.User(t, organization), dbtest.User(t, organization)
 	actor := audit.Actor{UserID: &admin.ID, Type: "user"}
 
-	if err := svc.AssignRole(ctx, first.ID, tenant, role, &admin.ID, actor); err != nil {
+	if err := svc.AssignRole(ctx, first.ID, organization, role, &admin.ID, actor); err != nil {
 		t.Fatalf("a first role for the last seat: %v", err)
 	}
-	if err := svc.AssignRole(ctx, second.ID, tenant, role, &admin.ID, actor); !errors.Is(err, errs.ErrPlanLimit) {
+	if err := svc.AssignRole(ctx, second.ID, organization, role, &admin.ID, actor); !errors.Is(err, errs.ErrPlanLimit) {
 		t.Errorf("a first role with no seat left: %v, want %v", err, errs.ErrPlanLimit)
 	}
-	if err := svc.AssignRole(ctx, first.ID, tenant, dbtest.Role(t, tenant), &admin.ID, actor); err != nil {
+	if err := svc.AssignRole(ctx, first.ID, organization, dbtest.Role(t, organization), &admin.ID, actor); err != nil {
 		t.Errorf("a second role for someone holding one: %v", err)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2`, second.ID, tenant); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM rbac.user_roles WHERE user_id = $1 AND organization_id = $2`, second.ID, organization); n != 0 {
 		t.Errorf("the refused role was granted")
 	}
 
 	var group uuid.UUID
-	if err := pool.QueryRow(ctx, `INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, 'Support') RETURNING id`, tenant).Scan(&group); err != nil {
+	if err := pool.QueryRow(ctx, `INSERT INTO organization.groups (organization_id, name) VALUES ($1, 'Support') RETURNING id`, organization).Scan(&group); err != nil {
 		t.Fatal(err)
 	}
 	for _, member := range []uuid.UUID{first.ID, third.ID} {
-		if _, err := pool.Exec(ctx, `INSERT INTO tenant.group_members (group_id, user_id, tenant_id) VALUES ($1, $2, $3)`, group, member, tenant); err != nil {
+		if _, err := pool.Exec(ctx, `INSERT INTO organization.group_members (group_id, user_id, organization_id) VALUES ($1, $2, $3)`, group, member, organization); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := svc.AssignRoleToGroup(ctx, group, tenant, role, &admin.ID, actor); !errors.Is(err, errs.ErrPlanLimit) {
+	if err := svc.AssignRoleToGroup(ctx, group, organization, role, &admin.ID, actor); !errors.Is(err, errs.ErrPlanLimit) {
 		t.Errorf("a role for a group with a member holding none and no seat left: %v, want %v", err, errs.ErrPlanLimit)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM rbac.group_roles WHERE group_id = $1`, group); n != 0 {
@@ -67,7 +67,7 @@ func TestRoleGrantsTakeSeats(t *testing.T) {
 	}
 
 	seats.SetPlanLimiter(seatPlan(-1)) // a plan without a seat limit
-	if err := svc.AssignRoleToGroup(ctx, group, tenant, role, &admin.ID, actor); err != nil {
+	if err := svc.AssignRoleToGroup(ctx, group, organization, role, &admin.ID, actor); err != nil {
 		t.Errorf("a group role on a plan without a seat limit: %v", err)
 	}
 }

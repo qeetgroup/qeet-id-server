@@ -274,7 +274,7 @@ func TestApplicationTokenRoutesStayNarrow(t *testing.T) {
 
 // sensitiveLooking matches paths of routes that change credentials, factors,
 // secrets, security policy, SSO, retention or authority, restore accounts, move
-// email addresses, or destroy accounts or organisations.
+// email addresses, or destroy accounts or organizations.
 var sensitiveLooking = regexp.MustCompile(`/mfa/|/passkeys|/api-keys|/service-principals|/agents|` +
 	`/roles|/permissions|/invites|/relation-tuples|/abac|/reactivate|/restore|/email|` +
 	`/oidc/clients|/scim/token|/credentials|/webhooks|/auth-hooks|/secrets|/vault/tokens|/provider-config|` +
@@ -451,9 +451,9 @@ func TestServerCallersPassTheCSRFCheck(t *testing.T) {
 	}
 }
 
-// tokenScopedRoutes are the organisation routes that take the organisation
+// tokenScopedRoutes are the organization routes that take the organization
 // from the caller's token alone, as they did before 1.0. The set is frozen: a
-// new organisation route names it in the path, /v1/tenants/{tenantID}/….
+// new organization route names it in the path, /v1/tenants/{tenantID}/….
 var tokenScopedRoutes = map[string]bool{
 	"GET /v1/activity":                                     true,
 	"GET /v1/activity/stream":                              true,
@@ -534,10 +534,10 @@ var tokenScopedRoutes = map[string]bool{
 	"POST /v1/webhooks/{id}/test":                          true,
 }
 
-// TestNewOrganisationRoutesNameTheTenant checks that every route needing a
-// permission, an organisation administration route, has {tenantID} in its path
+// TestNewOrganizationRoutesNameTheOrganization checks that every route needing a
+// permission, an organization administration route, has {tenantID} in its path
 // unless it is one of the frozen token-scoped routes.
-func TestNewOrganisationRoutesNameTheTenant(t *testing.T) {
+func TestNewOrganizationRoutesNameTheOrganization(t *testing.T) {
 	for route := range userPermissionMap() {
 		if !strings.Contains(route, "{tenantID}") && !tokenScopedRoutes[route] {
 			t.Errorf("%s: an organisation route names it in the path: /v1/tenants/{tenantID}/…", route)

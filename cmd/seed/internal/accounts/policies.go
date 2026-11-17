@@ -9,7 +9,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/retention"
 )
 
-// security is an organisation's security policy: how long
+// security is an organization's security policy: how long
 // sessions last and who must use a second factor.
 type security struct {
 	maxAge      time.Duration
@@ -19,7 +19,7 @@ type security struct {
 	methods     []string
 }
 
-// securityPolicies are the organisations that set their own security policy.
+// securityPolicies are the organizations that set their own security policy.
 // The MFA requirement and grace period come from each one's Features.
 var securityPolicies = map[string]security{
 	"qeet":      {maxAge: 7 * 24 * time.Hour, idle: 24 * time.Hour, stepUp: 10 * time.Minute},
@@ -30,7 +30,7 @@ var securityPolicies = map[string]security{
 	"kestrel":   {maxAge: 24 * time.Hour, idle: time.Hour, stepUp: 5 * time.Minute},
 }
 
-// signIn is how an organisation's people may sign in, beyond its Features.
+// signIn is how an organization's people may sign in, beyond its Features.
 type signIn struct {
 	minLength                 int
 	upper, number, symbol     bool
@@ -41,7 +41,7 @@ type signIn struct {
 	lockDuration              int // minutes
 }
 
-// signInPolicies are the organisations that set their own sign-in policy.
+// signInPolicies are the organizations that set their own sign-in policy.
 var signInPolicies = map[string]signIn{
 	"qeet":      {minLength: 12, upper: true, number: true, magicTTL: 30, remember: true, rememberDays: 30},
 	"northwind": {minLength: 14, upper: true, number: true, symbol: true, lockThreshold: 3, lockWindow: 15, lockDuration: 30},
@@ -52,7 +52,7 @@ var signInPolicies = map[string]signIn{
 	"kestrel":   {minLength: 10, number: true, remember: true, rememberDays: 7},
 }
 
-// retentionDays is how long each organisation keeps deleted accounts before
+// retentionDays is how long each organization keeps deleted accounts before
 // they are purged; 0 keeps them until someone purges them by hand. Every
 // window outlasts the oldest seeded deletion, so the API's hourly sweep
 // leaves the deleted accounts in place.
@@ -60,7 +60,7 @@ var retentionDays = map[string]int{
 	"qeet": 90, "northwind": 365, "meridian": 180, "lumen": 60, "kestrel": 90, "aster": 0, "cobalt": 0,
 }
 
-// policies sets the organisation's security, sign-in and retention policies
+// policies sets the organization's security, sign-in and retention policies
 // through the console's own requests, at the points its story puts them:
 // sign-in rules and MFA enforcement in the first days, a later tightening of
 // sessions at Northwind, retention once people started leaving.

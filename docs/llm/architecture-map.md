@@ -58,7 +58,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 
 | Concern | Path |
 |---|---|
-| **Auth middleware, principal, `EnforceTenantScope`, `RequireTenant`** | `internal/platform/http/httpx/auth.go` |
+| **Auth middleware, principal, `EnforceOrganizationScope`, `RequireOrganization`** | `internal/platform/http/httpx/auth.go` |
 | **CSRF double-submit** | `internal/platform/http/httpx/csrf.go` |
 | Security headers | `internal/platform/http/httpx/` |
 | **JWT issue/verify, ES256 or RS256, `kid`, rotation** | `internal/platform/crypto/tokens/jwt.go` |
@@ -95,7 +95,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | ReBAC (Zanzibar-style) | `internal/access/authorization/rebac/` |
 | AuthZEN PDP/PEP | `internal/access/authorization/authzen/` |
 | Access decision log | `internal/access/authorization/decisionlog/` |
-| Tenant security policy | `internal/access/authorization/policy/` |
+| Organization security policy | `internal/access/authorization/policy/` |
 | Password rules, login methods | `internal/access/authorization/authpolicy/` |
 | **Route → permission map** | `internal/bootstrap/permissions.go` |
 
@@ -103,8 +103,8 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 
 | Concern | Path |
 |---|---|
-| Tenants | `internal/identity/tenant/` |
-| Per-tenant branding | `internal/identity/tenant/branding/` |
+| Organizations | `internal/identity/organization/` |
+| Per-organization branding | `internal/identity/organization/branding/` |
 | Users, bulk import, IdP migration | `internal/identity/users/` |
 | Groups | `internal/identity/groups/` |
 | Invitations | `internal/identity/invitations/` |
@@ -155,7 +155,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | Live activity feed (SSE) | `internal/operations/activity/` |
 | In-app notifications | `internal/operations/notifications/` |
 | Plan entitlements | `internal/operations/entitlements/` |
-| Per-tenant rate-limit overrides | `internal/operations/ratelimits/` |
+| Per-organization rate-limit overrides | `internal/operations/ratelimits/` |
 | AI assistant | `internal/operations/qeetai/` |
 
 ## Data
@@ -193,7 +193,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | Build info | `internal/platform/observability/buildinfo/` |
 | Rate limiting | `internal/platform/cache/ratelimit/` |
 | Email templates / notifier | `internal/platform/messaging/` |
-| Email delivery records, suppression list, SES webhook | `internal/platform/messaging/delivery/` (tenant API: `internal/operations/email/delivery.go`) |
+| Email delivery records, suppression list, SES webhook | `internal/platform/messaging/delivery/` (organization API: `internal/operations/email/delivery.go`) |
 
 ## Contracts
 

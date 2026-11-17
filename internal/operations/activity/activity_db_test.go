@@ -27,14 +27,14 @@ type auditEvent struct {
 	at time.Time
 }
 
-// insertEvent writes an audit event for tenant at the given time.
-func insertEvent(t *testing.T, tenant uuid.UUID, action string, at time.Time) auditEvent {
+// insertEvent writes an audit event for organization at the given time.
+func insertEvent(t *testing.T, organization uuid.UUID, action string, at time.Time) auditEvent {
 	t.Helper()
 	e := auditEvent{id: uuid.New(), at: at.UTC().Truncate(time.Microsecond)}
 	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `
-		INSERT INTO audit.events (id, tenant_id, actor_type, action, resource_type, created_at)
+		INSERT INTO audit.events (id, organization_id, actor_type, action, resource_type, created_at)
 		VALUES ($1, $2, 'system', $3, 'user', $4)
-	`, e.id, tenant, action, e.at); err != nil {
+	`, e.id, organization, action, e.at); err != nil {
 		t.Fatalf("insert %s: %v", action, err)
 	}
 	return e
@@ -94,8 +94,8 @@ func allPages(t *testing.T, h http.Handler, query string) []uuid.UUID {
 // TestHistoryPagesThroughEveryEvent checks that following next_cursor returns
 // each event exactly once, in order, including events that share a time.
 func TestHistoryPagesThroughEveryEvent(t *testing.T) {
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
 	base := time.Now().Add(-time.Hour)
 	var events []auditEvent
 	for i := range 8 {
@@ -103,10 +103,10 @@ func TestHistoryPagesThroughEveryEvent(t *testing.T) {
 		if i < 4 {
 			at = base // a run of events at one time spans a page boundary
 		}
-		events = append(events, insertEvent(t, tenant, "user.updated", at))
+		events = append(events, insertEvent(t, organization, "user.updated", at))
 	}
 
-	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount)
 	if got, want := allPages(t, h, "limit=3"), newestFirst(events); !slices.Equal(got, want) {
 		t.Errorf("paged history = %v\nwant %v", got, want)
 	}
@@ -115,38 +115,38 @@ func TestHistoryPagesThroughEveryEvent(t *testing.T) {
 // TestFilteredHistoryReachesOlderMatches checks that a severity filter which
 // matches nothing in the newest rows still pages on to older matching events.
 func TestFilteredHistoryReachesOlderMatches(t *testing.T) {
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
 	base := time.Now().Add(-time.Hour)
 	var warnings []auditEvent
 	for i := range 2 {
-		warnings = append(warnings, insertEvent(t, tenant, "user.deleted", base.Add(time.Duration(i)*time.Second)))
+		warnings = append(warnings, insertEvent(t, organization, "user.deleted", base.Add(time.Duration(i)*time.Second)))
 	}
 	for i := range 10 {
-		insertEvent(t, tenant, "user.created", base.Add(time.Minute+time.Duration(i)*time.Second))
+		insertEvent(t, organization, "user.created", base.Add(time.Minute+time.Duration(i)*time.Second))
 	}
 
-	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount)
 	if got, want := allPages(t, h, "limit=1&min_severity=warning"), newestFirst(warnings); !slices.Equal(got, want) {
 		t.Errorf("filtered history = %v, want %v", got, want)
 	}
 }
 
 // TestStreamReplaysEventsAfterLastEventID checks that a stream opened with
-// Last-Event-ID first replays the tenant's newer events, oldest first, each
+// Last-Event-ID first replays the organization's newer events, oldest first, each
 // with an id a later reconnect can resume from.
 func TestStreamReplaysEventsAfterLastEventID(t *testing.T) {
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
 	base := time.Now().Add(-time.Hour)
-	seen := insertEvent(t, tenant, "user.created", base)
+	seen := insertEvent(t, organization, "user.created", base)
 	missed := []auditEvent{
-		insertEvent(t, tenant, "user.updated", base.Add(time.Second)),
-		insertEvent(t, tenant, "user.deleted", base.Add(2*time.Second)),
+		insertEvent(t, organization, "user.updated", base.Add(time.Second)),
+		insertEvent(t, organization, "user.deleted", base.Add(2*time.Second)),
 	}
 	insertEvent(t, other, "user.created", base.Add(time.Second))
 
-	srv := httptest.NewServer(dbtest.Serve(dbtest.Principal(admin.ID, tenant), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount))
+	srv := httptest.NewServer(dbtest.Serve(dbtest.Principal(admin.ID, organization), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount))
 	defer srv.Close()
 	ctx, cancel := context.WithCancel(dbtest.Context(t))
 	defer cancel()
@@ -234,13 +234,13 @@ func nextFrame(t *testing.T, frames <-chan [2]string) [2]string {
 // id, whether the hub wakes it or its poll does, a record committed late
 // included.
 func TestLiveFramesAreTheAuditRecords(t *testing.T) {
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
 	base := time.Now().Add(-time.Hour)
-	seen := insertEvent(t, tenant, "user.created", base)
-	missed := insertEvent(t, tenant, "user.updated", base.Add(time.Second))
+	seen := insertEvent(t, organization, "user.created", base)
+	missed := insertEvent(t, organization, "user.updated", base.Add(time.Second))
 	hub := NewHub(nil)
-	srv := httptest.NewServer(dbtest.Serve(dbtest.Principal(admin.ID, tenant), NewHandler(dbtest.Pool(t), hub).Mount))
+	srv := httptest.NewServer(dbtest.Serve(dbtest.Principal(admin.ID, organization), NewHandler(dbtest.Pool(t), hub).Mount))
 	defer srv.Close()
 
 	frames, stop := streamFrames(t, srv, encodeCursor(seen.at, seen.id))
@@ -248,13 +248,13 @@ func TestLiveFramesAreTheAuditRecords(t *testing.T) {
 	if f := nextFrame(t, frames); f[0] != missed.id.String() {
 		t.Fatalf("first frame %s, want the replayed %s", f[0], missed.id)
 	}
-	live := insertEvent(t, tenant, "user.deleted", time.Now())
-	hub.fanOut(tenant, newTestEvent("user.deleted", SeverityWarning)) // the outbox's word wakes the stream
+	live := insertEvent(t, organization, "user.deleted", time.Now())
+	hub.fanOut(organization, newTestEvent("user.deleted", SeverityWarning)) // the outbox's word wakes the stream
 	if f := nextFrame(t, frames); f[0] != live.id.String() {
 		t.Fatalf("live frame %s, want the audit record %s", f[0], live.id)
 	}
-	late := insertEvent(t, tenant, "user.updated", live.at.Add(-3*time.Second)) // committed after a later one
-	next := insertEvent(t, tenant, "group.created", time.Now())
+	late := insertEvent(t, organization, "user.updated", live.at.Add(-3*time.Second)) // committed after a later one
+	next := insertEvent(t, organization, "group.created", time.Now())
 	got := []string{nextFrame(t, frames)[0], nextFrame(t, frames)[0]}
 	slices.Sort(got)
 	want := []string{late.id.String(), next.id.String()}
@@ -273,29 +273,29 @@ func TestLiveFramesAreTheAuditRecords(t *testing.T) {
 // live frame's id replays an audit record stamped shortly before it but
 // committed after it was sent.
 func TestReconnectReplaysRecordsCommittedLate(t *testing.T) {
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
 	hub := NewHub(nil)
-	srv := httptest.NewServer(dbtest.Serve(dbtest.Principal(admin.ID, tenant), NewHandler(dbtest.Pool(t), hub).Mount))
+	srv := httptest.NewServer(dbtest.Serve(dbtest.Principal(admin.ID, organization), NewHandler(dbtest.Pool(t), hub).Mount))
 	defer srv.Close()
 
 	frames, stop := streamFrames(t, srv, "")
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
 		hub.mu.RLock()
-		n := len(hub.subs[tenant])
+		n := len(hub.subs[organization])
 		hub.mu.RUnlock()
 		if n == 1 {
 			break
 		}
 	}
 	time.Sleep(50 * time.Millisecond) // the stream starts following from when it opened
-	live := insertEvent(t, tenant, "user.updated", time.Now())
+	live := insertEvent(t, organization, "user.updated", time.Now())
 	frame := nextFrame(t, frames)
 	stop()
 	if frame[0] != live.id.String() {
 		t.Fatalf("live frame %s, want %s", frame[0], live.id)
 	}
-	lagged := insertEvent(t, tenant, "user.created", live.at.Add(-3*time.Second))
+	lagged := insertEvent(t, organization, "user.created", live.at.Add(-3*time.Second))
 
 	frames, stop = streamFrames(t, srv, frame[1])
 	defer stop()
@@ -308,15 +308,15 @@ func TestReconnectReplaysRecordsCommittedLate(t *testing.T) {
 // summary include events about another resource that name them in
 // metadata.user_id, such as being added to a group, and not someone else's.
 func TestSubjectIncludesEventsNamingThePerson(t *testing.T) {
-	tenant := dbtest.Tenant(t)
-	admin, person, other := dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	admin, person, other := dbtest.User(t, organization, organization), dbtest.User(t, organization, organization), dbtest.User(t, organization, organization)
 	at := time.Now().Add(-time.Hour).UTC().Truncate(time.Microsecond)
 	insert := func(userID string) uuid.UUID {
 		id := uuid.New()
 		if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `
-			INSERT INTO audit.events (id, tenant_id, actor_user_id, actor_type, action, resource_type, resource_id, metadata, created_at)
+			INSERT INTO audit.events (id, organization_id, actor_user_id, actor_type, action, resource_type, resource_id, metadata, created_at)
 			VALUES ($1, $2, $3, 'user', 'group.member_added', 'group', $4, jsonb_build_object('user_id', $5::text), $6)
-		`, id, tenant, admin.ID, uuid.New(), userID, at); err != nil {
+		`, id, organization, admin.ID, uuid.New(), userID, at); err != nil {
 			t.Fatal(err)
 		}
 		return id
@@ -325,7 +325,7 @@ func TestSubjectIncludesEventsNamingThePerson(t *testing.T) {
 	insert(other.ID.String())
 	insert("not-a-uuid") // a malformed value doesn't break the filter
 
-	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount)
 	if got := allPages(t, h, "subject="+person.ID.String()); !slices.Equal(got, []uuid.UUID{added}) {
 		t.Errorf("the person's timeline = %v, want their group membership %v", got, added)
 	}
@@ -338,22 +338,22 @@ func TestSubjectIncludesEventsNamingThePerson(t *testing.T) {
 	}
 }
 
-// TestOneEventByID checks that an organisation's event is fetched by its id
-// with its metadata, and that another organisation's id answers 404.
+// TestOneEventByID checks that an organization's event is fetched by its id
+// with its metadata, and that another organization's id answers 404.
 func TestOneEventByID(t *testing.T) {
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
 	mine, theirs := uuid.New(), uuid.New()
-	for id, owner := range map[uuid.UUID]uuid.UUID{mine: tenant, theirs: other} {
+	for id, owner := range map[uuid.UUID]uuid.UUID{mine: organization, theirs: other} {
 		if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `
-			INSERT INTO audit.events (id, tenant_id, actor_user_id, actor_type, action, resource_type, user_agent, metadata, created_at)
+			INSERT INTO audit.events (id, organization_id, actor_user_id, actor_type, action, resource_type, user_agent, metadata, created_at)
 			VALUES ($1, $2, $3, 'user', 'user.updated', 'user', 'Mozilla/5.0', '{"fields": ["name"]}', NOW())
 		`, id, owner, admin.ID); err != nil {
 			t.Fatal(err)
 		}
 	}
-	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount)
-	base := "/tenants/" + tenant.String() + "/activity/"
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount)
+	base := "/tenants/" + organization.String() + "/activity/"
 
 	rec := dbtest.Do(t, h, http.MethodGet, base+mine.String(), nil)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), mine.String()) || !strings.Contains(rec.Body.String(), `"fields"`) {
@@ -412,16 +412,16 @@ func replayed(t *testing.T, srv *httptest.Server, path, lastID string, want int)
 // it missed, a page of the audit log after another, and that a filtered
 // backlog is read through to the events the filter keeps.
 func TestReplayCatchesUpPastOnePage(t *testing.T) {
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
 	base := time.Now().Add(-time.Hour)
-	seen := insertEvent(t, tenant, "user.created", base)
+	seen := insertEvent(t, organization, "user.created", base)
 	var missed []uuid.UUID
 	for i := range 151 {
-		missed = append(missed, insertEvent(t, tenant, "user.updated", base.Add(time.Duration(i+1)*time.Millisecond)).id)
+		missed = append(missed, insertEvent(t, organization, "user.updated", base.Add(time.Duration(i+1)*time.Millisecond)).id)
 	}
-	wanted := insertEvent(t, tenant, "user.deleted", base.Add(time.Second))
-	srv := httptest.NewServer(dbtest.Serve(dbtest.Principal(admin.ID, tenant), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount))
+	wanted := insertEvent(t, organization, "user.deleted", base.Add(time.Second))
+	srv := httptest.NewServer(dbtest.Serve(dbtest.Principal(admin.ID, organization), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount))
 	defer srv.Close()
 
 	ids, _, reconnect := replayed(t, srv, "/activity/stream", encodeCursor(seen.at, seen.id), 152)
@@ -441,15 +441,15 @@ func TestReplayCatchesUpPastOnePage(t *testing.T) {
 func TestReplayBeyondItsBoundCarriesOn(t *testing.T) {
 	maxReplayRows = 100
 	t.Cleanup(func() { maxReplayRows = 1000 })
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
 	base := time.Now().Add(-time.Hour)
-	seen := insertEvent(t, tenant, "user.created", base)
+	seen := insertEvent(t, organization, "user.created", base)
 	var missed []uuid.UUID
 	for i := range 250 {
-		missed = append(missed, insertEvent(t, tenant, "user.updated", base.Add(time.Duration(i+1)*time.Millisecond)).id)
+		missed = append(missed, insertEvent(t, organization, "user.updated", base.Add(time.Duration(i+1)*time.Millisecond)).id)
 	}
-	srv := httptest.NewServer(dbtest.Serve(dbtest.Principal(admin.ID, tenant), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount))
+	srv := httptest.NewServer(dbtest.Serve(dbtest.Principal(admin.ID, organization), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount))
 	defer srv.Close()
 
 	var all []uuid.UUID
@@ -489,23 +489,23 @@ func TestReplayBeyondItsBoundCarriesOn(t *testing.T) {
 // TestHistorySearchTakesWildcardsLiterally checks that _ and % in a search for
 // an actor match only themselves.
 func TestHistorySearchTakesWildcardsLiterally(t *testing.T) {
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
 	events := map[string]uuid.UUID{}
 	for _, name := range []string{"qa_b", "qaXb", "100%"} {
-		actor := dbtest.User(t, tenant, tenant)
+		actor := dbtest.User(t, organization, organization)
 		id := uuid.New()
 		if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `UPDATE account.users SET display_name = $2 WHERE id = $1`, actor.ID, name); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `
-			INSERT INTO audit.events (id, tenant_id, actor_type, actor_user_id, action, resource_type) VALUES ($1, $2, 'user', $3, 'user.updated', 'user')
-		`, id, tenant, actor.ID); err != nil {
+			INSERT INTO audit.events (id, organization_id, actor_type, actor_user_id, action, resource_type) VALUES ($1, $2, 'user', $3, 'user.updated', 'user')
+		`, id, organization, actor.ID); err != nil {
 			t.Fatal(err)
 		}
 		events[name] = id
 	}
-	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount)
 	for q, want := range map[string]string{"qa_b": "qa_b", "%": "100%"} {
 		if got := allPages(t, h, "q="+url.QueryEscape(q)); !slices.Equal(got, []uuid.UUID{events[want]}) {
 			t.Errorf("search %q: %v, want only the event of %q", q, got, want)

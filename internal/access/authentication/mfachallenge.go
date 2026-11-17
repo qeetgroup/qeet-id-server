@@ -38,12 +38,12 @@ const (
 // challengeSignIn records a short-lived, single-use pending sign-in that the MFA
 // step later exchanges for a session, and audits why it was challenged. claims
 // are hook claims carried across the MFA step.
-func (s *Service) challengeSignIn(ctx context.Context, userID, tenantID uuid.UUID, claims map[string]any, gate mfaGate, firstFactor, ip, ua string) (MFAChallenge, error) {
+func (s *Service) challengeSignIn(ctx context.Context, userID, organizationID uuid.UUID, claims map[string]any, gate mfaGate, firstFactor, ip, ua string) (MFAChallenge, error) {
 	var tid any
-	var tenantPtr *uuid.UUID
-	if tenantID != uuid.Nil {
-		tid = tenantID
-		tenantPtr = &tenantID
+	var organizationPtr *uuid.UUID
+	if organizationID != uuid.Nil {
+		tid = organizationID
+		organizationPtr = &organizationID
 	}
 	var claimsArg any
 	if len(claims) > 0 {
@@ -67,7 +67,7 @@ func (s *Service) challengeSignIn(ctx context.Context, userID, tenantID uuid.UUI
 	defer tx.Rollback(ctx)
 	var id uuid.UUID
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO auth.mfa_login_challenges (user_id, tenant_id, expires_at, claims, enrollment, first_factor)
+		INSERT INTO auth.mfa_login_challenges (user_id, organization_id, expires_at, claims, enrollment, first_factor)
 		VALUES ($1, $2, $3, $4, $5, $6) RETURNING id
 	`, userID, tid, time.Now().UTC().Add(mfaChallengeTTL), claimsArg, challenge.EnrollmentRequired, firstFactor).Scan(&id); err != nil {
 		return MFAChallenge{}, err
@@ -78,15 +78,15 @@ func (s *Service) challengeSignIn(ctx context.Context, userID, tenantID uuid.UUI
 		meta["grace_until"] = challenge.EnrollmentDueAt
 	}
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     tenantPtr,
-		ActorUserID:  &userID,
-		ActorType:    "user",
-		Action:       "auth.mfa_challenged",
-		ResourceType: "user",
-		ResourceID:   &userID,
-		IP:           ip,
-		UserAgent:    ua,
-		Metadata:     meta,
+		OrganizationID: organizationPtr,
+		ActorUserID:    &userID,
+		ActorType:      "user",
+		Action:         "auth.mfa_challenged",
+		ResourceType:   "user",
+		ResourceID:     &userID,
+		IP:             ip,
+		UserAgent:      ua,
+		Metadata:       meta,
 	}); err != nil {
 		return MFAChallenge{}, err
 	}
@@ -100,9 +100,9 @@ func (s *Service) challengeSignIn(ctx context.Context, userID, tenantID uuid.UUI
 // metChallenge is a sign-in challenge met and consumed.
 type metChallenge struct {
 	userID uuid.UUID
-	// tenantID is uuid.Nil for a tenant-less challenge.
-	tenantID uuid.UUID
-	claims   map[string]any
+	// organizationID is uuid.Nil for an organization-less challenge.
+	organizationID uuid.UUID
+	claims         map[string]any
 	// recoveryCodes are minted when the challenge was met by setting up an
 	// authenticator app; shown once.
 	recoveryCodes []string
@@ -131,7 +131,7 @@ func (m metChallenge) method() string {
 }
 
 // verifyAndConsumeMFAChallenge checks a pending MFA challenge and its proof. A
-// valid proof consumes the challenge and returns the user, tenant and claims. A
+// valid proof consumes the challenge and returns the user, organization and claims. A
 // wrong proof is recorded as a failed sign-in and leaves the challenge for a
 // retry.
 func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken string, proof MFAProof, ip, ua string) (metChallenge, error) {
@@ -143,7 +143,7 @@ func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken str
 		return metChallenge{}, errs.ErrAuthSessionInvalid
 	}
 	var userID uuid.UUID
-	var tenantID *uuid.UUID
+	var organizationID *uuid.UUID
 	var expiresAt time.Time
 	var rawClaims []byte
 	var challengeFailures int16
@@ -158,12 +158,12 @@ func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken str
 	}
 	defer tx.Rollback(ctx)
 	err = tx.QueryRow(ctx, `
-		SELECT user_id, tenant_id, expires_at, claims, failed_attempts, passkey_session_id, push_challenge_id,
+		SELECT user_id, organization_id, expires_at, claims, failed_attempts, passkey_session_id, push_challenge_id,
 		       enrollment, enrollment_started, first_factor, risk_email, email_code_hash, email_code_expires_at
 		FROM auth.mfa_login_challenges
 		WHERE id = $1
 		FOR UPDATE
-	`, id).Scan(&userID, &tenantID, &expiresAt, &rawClaims, &challengeFailures, &passkeySession, &pushChallenge,
+	`, id).Scan(&userID, &organizationID, &expiresAt, &rawClaims, &challengeFailures, &passkeySession, &pushChallenge,
 		&enrollment, &enrollmentStarted, &firstFactor, &riskEmail, &emailCodeHash, &emailCodeExpires)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return metChallenge{}, errs.ErrAuthMFAChallengeExpired
@@ -181,8 +181,8 @@ func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken str
 		return metChallenge{}, errs.ErrAuthMFAChallengeExpired
 	}
 	met := metChallenge{userID: userID, firstFactor: firstFactor}
-	if tenantID != nil {
-		met.tenantID = *tenantID
+	if organizationID != nil {
+		met.organizationID = *organizationID
 	}
 	if len(rawClaims) > 0 {
 		_ = json.Unmarshal(rawClaims, &met.claims)
@@ -252,7 +252,7 @@ func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken str
 	if !ok {
 		lockNow := streak.Failures >= maxMFAFailureStreak
 		if lockNow {
-			if err := s.lockMFASignIn(ctx, tx, userID, tenantID, int(streak.Failures)); err != nil {
+			if err := s.lockMFASignIn(ctx, tx, userID, organizationID, int(streak.Failures)); err != nil {
 				return metChallenge{}, err
 			}
 		}
@@ -273,8 +273,8 @@ func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken str
 		failure := SignInFailure{UserID: userID, Method: "mfa", Reason: FailureCodeInvalid, IP: ip, UserAgent: ua,
 			Metadata: map[string]any{"proof": metProofKind(proof, enrollment, riskEmail), "first_factor": firstFactor,
 				"remaining_attempts": max(min(remaining, accountRemaining), 0)}}
-		if tenantID != nil {
-			failure.TenantID = *tenantID
+		if organizationID != nil {
+			failure.OrganizationID = *organizationID
 		}
 		s.RecordSignInFailure(ctx, failure)
 		if lockNow {
@@ -300,13 +300,13 @@ func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken str
 	}
 	if enrollment {
 		if err := audit.Record(ctx, tx, audit.Event{
-			TenantID:     tenantID,
-			ActorUserID:  &userID,
-			ActorType:    "user",
-			Action:       "mfa.totp_enrolled",
-			ResourceType: "user",
-			ResourceID:   &userID,
-			Metadata:     map[string]any{"recovery_codes_minted": len(met.recoveryCodes), "via": "sign_in"},
+			OrganizationID: organizationID,
+			ActorUserID:    &userID,
+			ActorType:      "user",
+			Action:         "mfa.totp_enrolled",
+			ResourceType:   "user",
+			ResourceID:     &userID,
+			Metadata:       map[string]any{"recovery_codes_minted": len(met.recoveryCodes), "via": "sign_in"},
 		}); err != nil {
 			return metChallenge{}, err
 		}
@@ -314,13 +314,13 @@ func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken str
 	// The sign-in met its second factor: recorded for both sign-in flows, so
 	// the trail says which first factor it followed.
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     tenantID,
-		ActorUserID:  &userID,
-		ActorType:    "user",
-		Action:       metAction(riskEmail),
-		ResourceType: "user",
-		ResourceID:   &userID,
-		Metadata:     map[string]any{"first_factor": firstFactor, "proof": metProofKind(proof, enrollment, riskEmail)},
+		OrganizationID: organizationID,
+		ActorUserID:    &userID,
+		ActorType:      "user",
+		Action:         metAction(riskEmail),
+		ResourceType:   "user",
+		ResourceID:     &userID,
+		Metadata:       map[string]any{"first_factor": firstFactor, "proof": metProofKind(proof, enrollment, riskEmail)},
 	}); err != nil {
 		return metChallenge{}, err
 	}
@@ -334,29 +334,29 @@ func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken str
 // period runs, and audits it. Refused (ErrMFAEnrollmentRequired) once the
 // account must set up a factor now; refusing costs no attempt.
 func (s *Service) deferEnrollment(ctx context.Context, tx pgx.Tx, id uuid.UUID, met metChallenge) (metChallenge, error) {
-	graceUntil, err := s.mayDeferEnrollment(ctx, tx, met.userID, met.tenantID)
+	graceUntil, err := s.mayDeferEnrollment(ctx, tx, met.userID, met.organizationID)
 	if err != nil {
 		return metChallenge{}, err
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM auth.mfa_login_challenges WHERE id = $1`, id); err != nil {
 		return metChallenge{}, err
 	}
-	var tenantPtr *uuid.UUID
-	if met.tenantID != uuid.Nil {
-		tenantPtr = &met.tenantID
+	var organizationPtr *uuid.UUID
+	if met.organizationID != uuid.Nil {
+		organizationPtr = &met.organizationID
 	}
 	meta := map[string]any{"first_factor": met.firstFactor}
 	if graceUntil != nil {
 		meta["grace_until"] = graceUntil
 	}
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     tenantPtr,
-		ActorUserID:  &met.userID,
-		ActorType:    "user",
-		Action:       "auth.mfa_enrollment_deferred",
-		ResourceType: "user",
-		ResourceID:   &met.userID,
-		Metadata:     meta,
+		OrganizationID: organizationPtr,
+		ActorUserID:    &met.userID,
+		ActorType:      "user",
+		Action:         "auth.mfa_enrollment_deferred",
+		ResourceType:   "user",
+		ResourceID:     &met.userID,
+		Metadata:       meta,
 	}); err != nil {
 		return metChallenge{}, err
 	}
@@ -377,18 +377,18 @@ const (
 
 // lockMFASignIn locks userID's second-factor sign-in inside tx, at the end of
 // a run of failures wrong answers, and audits it.
-func (s *Service) lockMFASignIn(ctx context.Context, tx pgx.Tx, userID uuid.UUID, tenantID *uuid.UUID, failures int) error {
+func (s *Service) lockMFASignIn(ctx context.Context, tx pgx.Tx, userID uuid.UUID, organizationID *uuid.UUID, failures int) error {
 	if err := dbgen.New(tx).LockMFASignIn(ctx, userID); err != nil {
 		return err
 	}
 	return audit.Record(ctx, tx, audit.Event{
-		TenantID:     tenantID,
-		ActorUserID:  &userID,
-		ActorType:    "user",
-		Action:       "auth.mfa_locked",
-		ResourceType: "user",
-		ResourceID:   &userID,
-		Metadata:     map[string]any{"failures": failures},
+		OrganizationID: organizationID,
+		ActorUserID:    &userID,
+		ActorType:      "user",
+		Action:         "auth.mfa_locked",
+		ResourceType:   "user",
+		ResourceID:     &userID,
+		Metadata:       map[string]any{"failures": failures},
 	})
 }
 
@@ -474,7 +474,7 @@ func (s *Service) CompleteMFALoginWith(ctx context.Context, mfaToken string, pro
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := s.refuseSignIn(ctx, met.userID, met.tenantID, met.method(), ip, ua); err != nil {
+	if err := s.refuseSignIn(ctx, met.userID, met.organizationID, met.method(), ip, ua); err != nil {
 		return nil, nil, err
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -482,7 +482,7 @@ func (s *Service) CompleteMFALoginWith(ctx context.Context, mfaToken string, pro
 		return nil, nil, err
 	}
 	defer tx.Rollback(ctx)
-	pair, err := s.issuePairTx(ctx, tx, met.userID, met.tenantID, ip, ua, met.method(), met.claims, nil, time.Time{})
+	pair, err := s.issuePairTx(ctx, tx, met.userID, met.organizationID, ip, ua, met.method(), met.claims, nil, time.Time{})
 	if err != nil {
 		return nil, nil, s.signInFailed(ctx, tx, err)
 	}
@@ -496,7 +496,7 @@ func (s *Service) CompleteMFALoginWith(ctx context.Context, mfaToken string, pro
 	if err := tx.Commit(ctx); err != nil {
 		return nil, nil, err
 	}
-	s.recordSignIn(ctx, met.userID, met.tenantID, ua, httpx.GeoCountry(ctx))
+	s.recordSignIn(ctx, met.userID, met.organizationID, ua, httpx.GeoCountry(ctx))
 	return pair, met.recoveryCodes, nil
 }
 
@@ -505,24 +505,24 @@ func (s *Service) CompleteMFALoginWith(ctx context.Context, mfaToken string, pro
 // when the challenge was met by setting up an authenticator app.
 type MFALoginSession struct {
 	UserID uuid.UUID
-	// TenantID is uuid.Nil when tenant-less.
-	TenantID      uuid.UUID
-	RawCookie     string
-	RecoveryCodes []string
+	// OrganizationID is uuid.Nil when organization-less.
+	OrganizationID uuid.UUID
+	RawCookie      string
+	RecoveryCodes  []string
 	// Deferred: an enrolment challenge skipped in the grace period. No
 	// factor was met, so the device must not be remembered.
 	Deferred bool
 }
 
 // CompleteMFALoginSession verifies the second-factor code for a pending
-// hosted-login challenge and returns the user ID, the tenant ID (uuid.Nil if
+// hosted-login challenge and returns the user ID, the organization ID (uuid.Nil if
 // none) and the SSO session cookie value.
 func (s *Service) CompleteMFALoginSession(ctx context.Context, mfaToken, code, ip, ua string) (uuid.UUID, uuid.UUID, string, error) {
 	res, err := s.CompleteMFALoginSessionWith(ctx, mfaToken, MFAProof{Code: code}, ip, ua)
 	if err != nil {
 		return uuid.Nil, uuid.Nil, "", err
 	}
-	return res.UserID, res.TenantID, res.RawCookie, nil
+	return res.UserID, res.OrganizationID, res.RawCookie, nil
 }
 
 // CompleteMFALoginSessionWith is CompleteMFALoginSession met by any proof
@@ -538,12 +538,12 @@ func (s *Service) CompleteMFALoginSessionWith(ctx context.Context, mfaToken stri
 	if !met.deferred && !met.riskVerified {
 		factor = secondFactorMFA
 	}
-	raw, err := s.createLoginSession(ctx, met.userID, met.tenantID, ip, ua, met.method(), factor)
+	raw, err := s.createLoginSession(ctx, met.userID, met.organizationID, ip, ua, met.method(), factor)
 	if err != nil {
 		return nil, err
 	}
-	s.recordSignIn(ctx, met.userID, met.tenantID, ua, httpx.GeoCountry(ctx))
+	s.recordSignIn(ctx, met.userID, met.organizationID, ua, httpx.GeoCountry(ctx))
 	// A confirmed risky sign-in met no factor either, so earns no remembered device.
-	return &MFALoginSession{UserID: met.userID, TenantID: met.tenantID, RawCookie: raw,
+	return &MFALoginSession{UserID: met.userID, OrganizationID: met.organizationID, RawCookie: raw,
 		RecoveryCodes: met.recoveryCodes, Deferred: met.deferred || met.riskVerified}, nil
 }

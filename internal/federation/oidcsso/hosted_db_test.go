@@ -14,14 +14,14 @@ import (
 
 // TestAHostedSignInTheProviderRefusesReturnsToTheHostedLogin checks that a sign-in the hosted
 // login began, which the provider then refuses, goes back to the hosted login's sign-in page with
-// a generic error and its return address, and is still recorded for the organisation.
+// a generic error and its return address, and is still recorded for the organization.
 func TestAHostedSignInTheProviderRefusesReturnsToTheHostedLogin(t *testing.T) {
 	s := newRP(t)
 	const accounts = "https://accounts.example.test"
 	s.svc.SetHostedLogin(accounts, testPublicBase)
 	idp := newFakeIdP(t)
-	tenant := dbtest.Tenant(t)
-	conn := s.connect(t, tenant, idp, nil)
+	organization := dbtest.Organization(t)
+	conn := s.connect(t, organization, idp, nil)
 	returnTo := testPublicBase + "/oauth/authorize?client_id=portal&state=s1"
 
 	rec := s.send(httptest.NewRequestWithContext(dbtest.Context(t), http.MethodGet,
@@ -34,7 +34,7 @@ func TestAHostedSignInTheProviderRefusesReturnsToTheHostedLogin(t *testing.T) {
 	if got := answered.Header().Get("Location"); answered.Code != http.StatusFound || got != want {
 		t.Fatalf("callback: %d %s %s, want the hosted login's sign-in with the error", answered.Code, got, answered.Body.String())
 	}
-	if n := failures(t, tenant, errs.CodeOIDCSSOProviderRefused); n != 1 {
+	if n := failures(t, organization, errs.CodeOIDCSSOProviderRefused); n != 1 {
 		t.Errorf("%d refusals recorded, want 1", n)
 	}
 }

@@ -126,37 +126,37 @@ func classifyOperation(operation string, status int) (outcome, category, code, m
 // Operation is one provisioning or directory operation to record. Reason,
 // Params, Subject and UserID are as on Event.
 type Operation struct {
-	TenantID     uuid.UUID
-	ConnectionID string
-	Operation    string
-	ResourceType string
-	ResourceID   string
-	Status       int
-	Started      time.Time
-	Duration     time.Duration
-	Reason       string
-	Params       map[string]string
-	Subject      string
-	UserID       *uuid.UUID
+	OrganizationID uuid.UUID
+	ConnectionID   string
+	Operation      string
+	ResourceType   string
+	ResourceID     string
+	Status         int
+	Started        time.Time
+	Duration       time.Duration
+	Reason         string
+	Params         map[string]string
+	Subject        string
+	UserID         *uuid.UUID
 }
 
 // RecordOperation records one provisioning operation of a connection.
-func (service *Service) RecordOperation(ctx context.Context, tenantID uuid.UUID, connectionID, operation, resourceType, resourceID string, status int, started time.Time, duration time.Duration) error {
-	return service.Record(ctx, Operation{TenantID: tenantID, ConnectionID: connectionID, Operation: operation,
+func (service *Service) RecordOperation(ctx context.Context, organizationID uuid.UUID, connectionID, operation, resourceType, resourceID string, status int, started time.Time, duration time.Duration) error {
+	return service.Record(ctx, Operation{OrganizationID: organizationID, ConnectionID: connectionID, Operation: operation,
 		ResourceType: resourceType, ResourceID: resourceID, Status: status, Started: started, Duration: duration})
 }
 
 // RecordLDAPOperation records an LDAP connection's operation.
 func (service *Service) RecordLDAPOperation(ctx context.Context, op ldap.Operation) error {
-	return service.Record(ctx, Operation{TenantID: op.TenantID, ConnectionID: op.ConnectionID.String(), Operation: op.Operation,
+	return service.Record(ctx, Operation{OrganizationID: op.OrganizationID, ConnectionID: op.ConnectionID.String(), Operation: op.Operation,
 		ResourceType: op.Resource, Status: op.Status, Started: op.Started, Duration: op.Duration,
 		Reason: op.Reason, Params: op.Params, Subject: op.Subject, UserID: op.UserID})
 }
 
-// RecordSCIMOperation records a change an organisation's identity provider
+// RecordSCIMOperation records a change an organization's identity provider
 // sent over SCIM.
 func (service *Service) RecordSCIMOperation(ctx context.Context, op scim.Operation) error {
-	return service.Record(ctx, Operation{TenantID: op.TenantID, ConnectionID: "scim:" + op.TenantID.String(), Operation: op.Operation,
+	return service.Record(ctx, Operation{OrganizationID: op.OrganizationID, ConnectionID: "scim:" + op.OrganizationID.String(), Operation: op.Operation,
 		ResourceType: op.Resource, ResourceID: op.ResourceID, Status: op.Status, Started: op.Started, Duration: op.Duration,
 		Reason: op.Reason})
 }
@@ -169,9 +169,9 @@ func (service *Service) Record(ctx context.Context, op Operation) error {
 	if service.pool == nil {
 		return nil
 	}
-	tenantID, connectionID, operation, resourceType, resourceID := op.TenantID, op.ConnectionID, op.Operation, op.ResourceType, op.ResourceID
+	organizationID, connectionID, operation, resourceType, resourceID := op.OrganizationID, op.ConnectionID, op.Operation, op.ResourceType, op.ResourceID
 	status, started, duration := op.Status, op.Started, op.Duration
-	if tenantID == uuid.Nil || !validConnectionID(tenantID, connectionID) || status < 100 || status > 599 {
+	if organizationID == uuid.Nil || !validConnectionID(organizationID, connectionID) || status < 100 || status > 599 {
 		return errs.ErrBadRequest
 	}
 	if resourceType != "user" && resourceType != "group" && resourceType != "connection" {
@@ -203,19 +203,19 @@ func (service *Service) Record(ctx context.Context, op Operation) error {
 		groups = 1
 	}
 	_, err := service.pool.Exec(ctx, `
-		INSERT INTO tenant.directory_events
-		(id,tenant_id,connection_id,operation,trigger_type,resource_type,resource_id,started_at,duration_ms,http_status,status,users_synced,groups_synced,error_code,message,category,severity,retry_of,reason,params,subject,user_id)
+		INSERT INTO organization.directory_events
+		(id,organization_id,connection_id,operation,trigger_type,resource_type,resource_id,started_at,duration_ms,http_status,status,users_synced,groups_synced,error_code,message,category,severity,retry_of,reason,params,subject,user_id)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
-		uuid.New(), tenantID, connectionID, operation, trigger, resourceType, resourceID, started.UTC(), max(0, duration.Milliseconds()), status, outcome, users, groups, code, message, category, severity, ctx.Value(retryContextKey{}),
+		uuid.New(), organizationID, connectionID, operation, trigger, resourceType, resourceID, started.UTC(), max(0, duration.Milliseconds()), status, outcome, users, groups, code, message, category, severity, ctx.Value(retryContextKey{}),
 		op.Reason, params, subject, op.UserID)
 	if err != nil {
 		return err
 	}
 	if outcome == "failed" {
-		return service.notifyAlerts(ctx, tenantID, connectionID)
+		return service.notifyAlerts(ctx, organizationID, connectionID)
 	}
 	if outcome == "success" {
-		return service.resolveConnectionFailures(ctx, tenantID, connectionID)
+		return service.resolveConnectionFailures(ctx, organizationID, connectionID)
 	}
 	return nil
 }
@@ -224,14 +224,14 @@ func (service *Service) Record(ctx context.Context, op Operation) error {
 // success disproves, the directory unreachable or refusing the connection's
 // own credentials, resolved by the system, and audits it once. A failure being
 // retried is left for its retry to settle.
-func (service *Service) resolveConnectionFailures(ctx context.Context, tenantID uuid.UUID, connectionID string) error {
+func (service *Service) resolveConnectionFailures(ctx context.Context, organizationID uuid.UUID, connectionID string) error {
 	retrying, _ := ctx.Value(retryContextKey{}).(uuid.UUID)
-	const open = `tenant_id=$1 AND connection_id=$2 AND status='failed' AND resolution='open'
+	const open = `organization_id=$1 AND connection_id=$2 AND status='failed' AND resolution='open'
 		  AND category IN ('connection','permission') AND id <> $3`
 	// Most successes find nothing to resolve; only then is a transaction opened.
 	var found bool
-	if err := service.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM tenant.directory_events WHERE `+open+`)`,
-		tenantID, connectionID, retrying).Scan(&found); err != nil || !found {
+	if err := service.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM organization.directory_events WHERE `+open+`)`,
+		organizationID, connectionID, retrying).Scan(&found); err != nil || !found {
 		return err
 	}
 	tx, err := service.pool.Begin(ctx)
@@ -239,8 +239,8 @@ func (service *Service) resolveConnectionFailures(ctx context.Context, tenantID 
 		return err
 	}
 	defer tx.Rollback(ctx)
-	rows, err := tx.Query(ctx, `UPDATE tenant.directory_events SET resolution='resolved', resolved_at=NOW(), resolved_by=NULL
-		WHERE `+open+` RETURNING id`, tenantID, connectionID, retrying)
+	rows, err := tx.Query(ctx, `UPDATE organization.directory_events SET resolution='resolved', resolved_at=NOW(), resolved_by=NULL
+		WHERE `+open+` RETURNING id`, organizationID, connectionID, retrying)
 	if err != nil {
 		return err
 	}
@@ -260,15 +260,15 @@ func (service *Service) resolveConnectionFailures(ctx context.Context, tenantID 
 	if len(resolved) == 0 {
 		return nil
 	}
-	if err := audit.Record(ctx, tx, audit.Event{TenantID: &tenantID, ActorType: "system", Action: "directory.errors_resolved",
+	if err := audit.Record(ctx, tx, audit.Event{OrganizationID: &organizationID, ActorType: "system", Action: "directory.errors_resolved",
 		ResourceType: "directory_connection", Metadata: map[string]any{"connection_id": connectionID, "events": resolved, "reason": "a later operation succeeded"}}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
 
-func validConnectionID(tenantID uuid.UUID, connectionID string) bool {
-	if connectionID == "scim:"+tenantID.String() {
+func validConnectionID(organizationID uuid.UUID, connectionID string) bool {
+	if connectionID == "scim:"+organizationID.String() {
 		return true
 	}
 	parsed, err := uuid.Parse(connectionID)
@@ -310,7 +310,7 @@ func parseEventFilter(request *http.Request) (eventFilter, error) {
 }
 
 const eventColumns = `id,connection_id,operation,trigger_type,resource_type,resource_id,started_at,duration_ms,http_status,status,users_synced,groups_synced,error_code,message,category,severity,resolution,resolved_at,retry_of,reason,params,subject,user_id`
-const eventWhere = `tenant_id=$1 AND started_at >= $2 AND ($3='' OR connection_id=$3) AND ($4='' OR status=$4) AND ($5='' OR operation ILIKE '%'||$5||'%' OR message ILIKE '%'||$5||'%' OR error_code ILIKE '%'||$5||'%' OR reason ILIKE '%'||$5||'%' OR subject ILIKE '%'||$5||'%')`
+const eventWhere = `organization_id=$1 AND started_at >= $2 AND ($3='' OR connection_id=$3) AND ($4='' OR status=$4) AND ($5='' OR operation ILIKE '%'||$5||'%' OR message ILIKE '%'||$5||'%' OR error_code ILIKE '%'||$5||'%' OR reason ILIKE '%'||$5||'%' OR subject ILIKE '%'||$5||'%')`
 
 func scanEvent(row pgx.Row) (Event, error) {
 	var event Event
@@ -323,19 +323,19 @@ func scanEvent(row pgx.Row) (Event, error) {
 	return event, err
 }
 
-// Events returns one page of the tenant's provisioning events.
-func (service *Service) Events(ctx context.Context, tenantID uuid.UUID, filter eventFilter) (EventPage, error) {
+// Events returns one page of the organization's provisioning events.
+func (service *Service) Events(ctx context.Context, organizationID uuid.UUID, filter eventFilter) (EventPage, error) {
 	page := EventPage{Items: []Event{}, Volume: []VolumePoint{}, Limit: filter.Limit}
-	if tenantID == uuid.Nil || service.pool == nil {
+	if organizationID == uuid.Nil || service.pool == nil {
 		return page, errs.ErrUnauthorized
 	}
-	arguments := []any{tenantID, filter.Since, filter.ConnectionID, filter.Status, postgres.EscapeLike(filter.Search)}
-	err := service.pool.QueryRow(ctx, `SELECT count(*),count(*) FILTER(WHERE status='success'),count(*) FILTER(WHERE status='warning'),count(*) FILTER(WHERE status='failed'),round(avg(duration_ms))::bigint FROM tenant.directory_events WHERE `+eventWhere, arguments...).Scan(&page.Summary.Total, &page.Summary.Successful, &page.Summary.Warnings, &page.Summary.Failed, &page.Summary.AverageDurationMS)
+	arguments := []any{organizationID, filter.Since, filter.ConnectionID, filter.Status, postgres.EscapeLike(filter.Search)}
+	err := service.pool.QueryRow(ctx, `SELECT count(*),count(*) FILTER(WHERE status='success'),count(*) FILTER(WHERE status='warning'),count(*) FILTER(WHERE status='failed'),round(avg(duration_ms))::bigint FROM organization.directory_events WHERE `+eventWhere, arguments...).Scan(&page.Summary.Total, &page.Summary.Successful, &page.Summary.Warnings, &page.Summary.Failed, &page.Summary.AverageDurationMS)
 	if err != nil {
 		return page, err
 	}
 	page.Total = page.Summary.Total
-	rows, err := service.pool.Query(ctx, `SELECT `+eventColumns+` FROM tenant.directory_events WHERE `+eventWhere+` AND (NOT $7::boolean OR (started_at,id) < ($8::timestamptz,$9::uuid)) ORDER BY started_at DESC,id DESC LIMIT $6`, append(arguments, filter.Limit+1, filter.After.Set, filter.After.Time, filter.After.ID)...)
+	rows, err := service.pool.Query(ctx, `SELECT `+eventColumns+` FROM organization.directory_events WHERE `+eventWhere+` AND (NOT $7::boolean OR (started_at,id) < ($8::timestamptz,$9::uuid)) ORDER BY started_at DESC,id DESC LIMIT $6`, append(arguments, filter.Limit+1, filter.After.Set, filter.After.Time, filter.After.ID)...)
 	if err != nil {
 		return page, err
 	}
@@ -352,7 +352,7 @@ func (service *Service) Events(ctx context.Context, tenantID uuid.UUID, filter e
 	}
 	rows.Close()
 	page.Items, page.NextCursor = paging.Next(page.Items, filter.Limit, eventKey)
-	volume, err := service.pool.Query(ctx, `SELECT to_char(started_at AT TIME ZONE 'UTC','YYYY-MM-DD'),sum(users_synced),sum(groups_synced) FROM tenant.directory_events WHERE `+eventWhere+` GROUP BY 1 ORDER BY 1`, arguments...)
+	volume, err := service.pool.Query(ctx, `SELECT to_char(started_at AT TIME ZONE 'UTC','YYYY-MM-DD'),sum(users_synced),sum(groups_synced) FROM organization.directory_events WHERE `+eventWhere+` GROUP BY 1 ORDER BY 1`, arguments...)
 	if err != nil {
 		return page, err
 	}
@@ -368,7 +368,7 @@ func (service *Service) Events(ctx context.Context, tenantID uuid.UUID, filter e
 }
 
 func (handler *Handler) events(response http.ResponseWriter, request *http.Request) {
-	tenantID, err := requireTenant(request)
+	organizationID, err := requireOrganization(request)
 	if err != nil {
 		httpx.WriteError(response, request, err)
 		return
@@ -378,7 +378,7 @@ func (handler *Handler) events(response http.ResponseWriter, request *http.Reque
 		httpx.WriteError(response, request, err)
 		return
 	}
-	page, err := handler.Service.Events(request.Context(), tenantID, filter)
+	page, err := handler.Service.Events(request.Context(), organizationID, filter)
 	if err != nil {
 		httpx.WriteError(response, request, err)
 		return
@@ -417,9 +417,9 @@ func scanAlert(row pgx.Row) (Alert, error) {
 	return a, err
 }
 
-// knownConnection reports whether id is one of the tenant's connections.
-func (handler *Handler) knownConnection(ctx context.Context, tenantID uuid.UUID, id string) (bool, error) {
-	connections, err := handler.Service.List(ctx, tenantID)
+// knownConnection reports whether id is one of the organization's connections.
+func (handler *Handler) knownConnection(ctx context.Context, organizationID uuid.UUID, id string) (bool, error) {
+	connections, err := handler.Service.List(ctx, organizationID)
 	if err != nil {
 		return false, err
 	}
@@ -431,20 +431,20 @@ func (handler *Handler) knownConnection(ctx context.Context, tenantID uuid.UUID,
 	return false, nil
 }
 
-// recordAlertAudit records an alert change in the tenant's audit log, on tx.
-func recordAlertAudit(ctx context.Context, tx pgx.Tx, request *http.Request, tenantID, alertID uuid.UUID, action string, meta map[string]any) error {
-	return audit.Record(ctx, tx, audit.ActorOf(request).Event(tenantID, action, "directory_alert", alertID, meta))
+// recordAlertAudit records an alert change in the organization's audit log, on tx.
+func recordAlertAudit(ctx context.Context, tx pgx.Tx, request *http.Request, organizationID, alertID uuid.UUID, action string, meta map[string]any) error {
+	return audit.Record(ctx, tx, audit.ActorOf(request).Event(organizationID, action, "directory_alert", alertID, meta))
 }
 
 // listAlerts serves GET /tenants/{tenantID}/directory/alerts: every alert of
-// the organisation, newest first, with who it notifies.
+// the organization, newest first, with who it notifies.
 func (handler *Handler) listAlerts(response http.ResponseWriter, request *http.Request) {
-	tenantID, err := requireTenant(request)
+	organizationID, err := requireOrganization(request)
 	if err != nil {
 		httpx.WriteError(response, request, err)
 		return
 	}
-	rows, err := handler.Service.pool.Query(request.Context(), `SELECT `+alertColumns+` FROM tenant.directory_alerts WHERE tenant_id=$1 ORDER BY created_at DESC, id LIMIT 1001`, tenantID)
+	rows, err := handler.Service.pool.Query(request.Context(), `SELECT `+alertColumns+` FROM organization.directory_alerts WHERE organization_id=$1 ORDER BY created_at DESC, id LIMIT 1001`, organizationID)
 	if err != nil {
 		httpx.WriteError(response, request, err)
 		return
@@ -468,7 +468,7 @@ func (handler *Handler) listAlerts(response http.ResponseWriter, request *http.R
 
 // updateAlert serves PATCH /tenants/{tenantID}/directory/alerts/{alertID}.
 func (handler *Handler) updateAlert(response http.ResponseWriter, request *http.Request) {
-	tenantID, err := requireTenant(request)
+	organizationID, err := requireOrganization(request)
 	if err != nil {
 		httpx.WriteError(response, request, err)
 		return
@@ -493,7 +493,7 @@ func (handler *Handler) updateAlert(response http.ResponseWriter, request *http.
 	}
 	ctx := request.Context()
 	if in.ConnectionID != nil && *in.ConnectionID != "" {
-		known, err := handler.knownConnection(ctx, tenantID, *in.ConnectionID)
+		known, err := handler.knownConnection(ctx, organizationID, *in.ConnectionID)
 		if err != nil {
 			httpx.WriteError(response, request, err)
 			return
@@ -509,13 +509,13 @@ func (handler *Handler) updateAlert(response http.ResponseWriter, request *http.
 		return
 	}
 	defer tx.Rollback(ctx)
-	alert, err := scanAlert(tx.QueryRow(ctx, `UPDATE tenant.directory_alerts SET
+	alert, err := scanAlert(tx.QueryRow(ctx, `UPDATE organization.directory_alerts SET
 		name = COALESCE($3, name),
 		connection_id = CASE WHEN $4::boolean THEN NULLIF($5, '') ELSE connection_id END,
 		threshold = COALESCE($6, threshold),
 		enabled = COALESCE($7, enabled)
-		WHERE tenant_id=$1 AND id=$2 RETURNING `+alertColumns,
-		tenantID, alertID, in.Name, in.ConnectionID != nil, in.ConnectionID, in.Threshold, in.Enabled))
+		WHERE organization_id=$1 AND id=$2 RETURNING `+alertColumns,
+		organizationID, alertID, in.Name, in.ConnectionID != nil, in.ConnectionID, in.Threshold, in.Enabled))
 	if errors.Is(err, pgx.ErrNoRows) {
 		httpx.WriteError(response, request, errs.ErrNotFound)
 		return
@@ -524,7 +524,7 @@ func (handler *Handler) updateAlert(response http.ResponseWriter, request *http.
 		httpx.WriteError(response, request, err)
 		return
 	}
-	if err := recordAlertAudit(ctx, tx, request, tenantID, alertID, "directory.alert_updated", map[string]any{
+	if err := recordAlertAudit(ctx, tx, request, organizationID, alertID, "directory.alert_updated", map[string]any{
 		"name": alert.Name, "connection_id": alert.ConnectionID, "threshold": alert.Threshold, "enabled": alert.Enabled,
 	}); err != nil {
 		httpx.WriteError(response, request, err)
@@ -539,7 +539,7 @@ func (handler *Handler) updateAlert(response http.ResponseWriter, request *http.
 
 // deleteAlert serves DELETE /tenants/{tenantID}/directory/alerts/{alertID}.
 func (handler *Handler) deleteAlert(response http.ResponseWriter, request *http.Request) {
-	tenantID, err := requireTenant(request)
+	organizationID, err := requireOrganization(request)
 	if err != nil {
 		httpx.WriteError(response, request, err)
 		return
@@ -556,7 +556,7 @@ func (handler *Handler) deleteAlert(response http.ResponseWriter, request *http.
 		return
 	}
 	defer tx.Rollback(ctx)
-	tag, err := tx.Exec(ctx, `DELETE FROM tenant.directory_alerts WHERE tenant_id=$1 AND id=$2`, tenantID, alertID)
+	tag, err := tx.Exec(ctx, `DELETE FROM organization.directory_alerts WHERE organization_id=$1 AND id=$2`, organizationID, alertID)
 	if err != nil {
 		httpx.WriteError(response, request, err)
 		return
@@ -565,7 +565,7 @@ func (handler *Handler) deleteAlert(response http.ResponseWriter, request *http.
 		httpx.WriteError(response, request, errs.ErrNotFound)
 		return
 	}
-	if err := recordAlertAudit(ctx, tx, request, tenantID, alertID, "directory.alert_deleted", nil); err != nil {
+	if err := recordAlertAudit(ctx, tx, request, organizationID, alertID, "directory.alert_deleted", nil); err != nil {
 		httpx.WriteError(response, request, err)
 		return
 	}
@@ -577,7 +577,7 @@ func (handler *Handler) deleteAlert(response http.ResponseWriter, request *http.
 }
 
 func (handler *Handler) createAlert(response http.ResponseWriter, request *http.Request) {
-	tenantID, err := requireTenant(request)
+	organizationID, err := requireOrganization(request)
 	if err != nil {
 		httpx.WriteError(response, request, err)
 		return
@@ -599,7 +599,7 @@ func (handler *Handler) createAlert(response http.ResponseWriter, request *http.
 	}
 	ctx := request.Context()
 	if alert.ConnectionID != nil {
-		known, err := handler.knownConnection(ctx, tenantID, *alert.ConnectionID)
+		known, err := handler.knownConnection(ctx, organizationID, *alert.ConnectionID)
 		if err != nil {
 			httpx.WriteError(response, request, err)
 			return
@@ -615,13 +615,13 @@ func (handler *Handler) createAlert(response http.ResponseWriter, request *http.
 		return
 	}
 	defer tx.Rollback(ctx)
-	created, err := scanAlert(tx.QueryRow(ctx, `INSERT INTO tenant.directory_alerts(id,tenant_id,user_id,name,connection_id,threshold,enabled)
-		VALUES($1,$2,$3,$4,$5,$6,true) RETURNING `+alertColumns, uuid.New(), tenantID, userID, alert.Name, alert.ConnectionID, alert.Threshold))
+	created, err := scanAlert(tx.QueryRow(ctx, `INSERT INTO organization.directory_alerts(id,organization_id,user_id,name,connection_id,threshold,enabled)
+		VALUES($1,$2,$3,$4,$5,$6,true) RETURNING `+alertColumns, uuid.New(), organizationID, userID, alert.Name, alert.ConnectionID, alert.Threshold))
 	if err != nil {
 		httpx.WriteError(response, request, err)
 		return
 	}
-	if err := recordAlertAudit(ctx, tx, request, tenantID, created.ID, "directory.alert_created", map[string]any{
+	if err := recordAlertAudit(ctx, tx, request, organizationID, created.ID, "directory.alert_created", map[string]any{
 		"name": created.Name, "connection_id": created.ConnectionID, "threshold": created.Threshold,
 	}); err != nil {
 		httpx.WriteError(response, request, err)
@@ -634,25 +634,25 @@ func (handler *Handler) createAlert(response http.ResponseWriter, request *http.
 	httpx.WriteJSON(response, http.StatusCreated, created)
 }
 
-func (service *Service) notifyAlerts(ctx context.Context, tenantID uuid.UUID, connectionID string) error {
+func (service *Service) notifyAlerts(ctx context.Context, organizationID uuid.UUID, connectionID string) error {
 	_, err := service.pool.Exec(ctx, `WITH notified AS (
-		UPDATE tenant.directory_alerts SET last_notified_at=NOW()
-		WHERE tenant_id=$1 AND enabled AND (connection_id IS NULL OR connection_id=$2)
+		UPDATE organization.directory_alerts SET last_notified_at=NOW()
+		WHERE organization_id=$1 AND enabled AND (connection_id IS NULL OR connection_id=$2)
 		AND (last_notified_at IS NULL OR last_notified_at < NOW()-INTERVAL '15 minutes')
-		AND threshold <= (SELECT count(*) FROM tenant.directory_events WHERE tenant_id=$1 AND status = 'failed' AND started_at >= NOW()-INTERVAL '15 minutes' AND (directory_alerts.connection_id IS NULL OR connection_id=directory_alerts.connection_id))
+		AND threshold <= (SELECT count(*) FROM organization.directory_events WHERE organization_id=$1 AND status = 'failed' AND started_at >= NOW()-INTERVAL '15 minutes' AND (directory_alerts.connection_id IS NULL OR connection_id=directory_alerts.connection_id))
 		RETURNING user_id,name
-	) INSERT INTO auth.notifications(user_id,tenant_id,kind,title,description,href)
-	SELECT user_id,$1,'warning',name,$3,'/directory/sync-errors' FROM notified`, tenantID, connectionID, "Directory failures reached your alert threshold in the last 15 minutes.")
+	) INSERT INTO auth.notifications(user_id,organization_id,kind,title,description,href)
+	SELECT user_id,$1,'warning',name,$3,'/directory/sync-errors' FROM notified`, organizationID, connectionID, "Directory failures reached your alert threshold in the last 15 minutes.")
 	return err
 }
 
-func (service *Service) enrichConnections(ctx context.Context, tenantID uuid.UUID, records []Connection) error {
+func (service *Service) enrichConnections(ctx context.Context, organizationID uuid.UUID, records []Connection) error {
 	if service.pool == nil {
 		return nil
 	}
 	rows, err := service.pool.Query(ctx, `SELECT DISTINCT ON(connection_id) connection_id,status,started_at,
-		(SELECT max(success.started_at) FROM tenant.directory_events success WHERE success.tenant_id=$1 AND success.connection_id=latest.connection_id AND success.status='success' AND success.resource_type <> 'connection')
-		FROM tenant.directory_events latest WHERE tenant_id=$1 ORDER BY connection_id,started_at DESC,id DESC`, tenantID)
+		(SELECT max(success.started_at) FROM organization.directory_events success WHERE success.organization_id=$1 AND success.connection_id=latest.connection_id AND success.status='success' AND success.resource_type <> 'connection')
+		FROM organization.directory_events latest WHERE organization_id=$1 ORDER BY connection_id,started_at DESC,id DESC`, organizationID)
 	if err != nil {
 		return err
 	}

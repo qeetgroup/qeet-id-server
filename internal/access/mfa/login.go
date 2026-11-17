@@ -18,7 +18,7 @@ import (
 
 // Sign-in second factors (auth.MFAEnroller). Any confirmed factor can be
 // challenged: an authenticator app with its recovery codes, email and SMS
-// codes, passkeys where the organisation allows them, and push devices.
+// codes, passkeys where the organization allows them, and push devices.
 
 // SetWebAuthn sets the passkey verifier for sign-in second factors (nil:
 // passkeys are not offered as one).
@@ -68,9 +68,9 @@ func (s *Service) loginFactors(ctx context.Context, q *dbgen.Queries, userID uui
 }
 
 // SendLoginCode sends a sign-in code to one of the user's confirmed email or
-// SMS factors, for a sign-in to tenantID (nil: none), whose plan decides SMS.
-func (s *Service) SendLoginCode(ctx context.Context, userID uuid.UUID, tenantID *uuid.UUID, factorID uuid.UUID) error {
-	return s.challengeOTP(ctx, userID, tenantID, factorID, "sign_in")
+// SMS factors, for a sign-in to organizationID (nil: none), whose plan decides SMS.
+func (s *Service) SendLoginCode(ctx context.Context, userID uuid.UUID, organizationID *uuid.UUID, factorID uuid.UUID) error {
+	return s.challengeOTP(ctx, userID, organizationID, factorID, "sign_in")
 }
 
 // verifyLoginOTP consumes a sign-in code sent to one of the user's email or

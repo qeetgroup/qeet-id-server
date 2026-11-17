@@ -36,12 +36,12 @@ const (
 
 // MagicLinkRequest is a request for a sign-in link.
 type MagicLinkRequest struct {
-	Email     string    // the address to send the link to
-	TenantID  uuid.UUID // organisation whose sign-in page asked; uuid.Nil for the console
-	App       string    // MagicLinkHostedLogin, or anything else for the console
-	ReturnTo  string    // hosted login only: where the journey continues, checked by the caller
-	Caller    string    // requester's IP, for the per-caller bound
-	UserAgent string    // requester's User-Agent, for the audit record
+	Email          string    // the address to send the link to
+	OrganizationID uuid.UUID // organization whose sign-in page asked; uuid.Nil for the console
+	App            string    // MagicLinkHostedLogin, or anything else for the console
+	ReturnTo       string    // hosted login only: where the journey continues, checked by the caller
+	Caller         string    // requester's IP, for the per-caller bound
+	UserAgent      string    // requester's User-Agent, for the audit record
 }
 
 // Limiter bounds how often something may happen per key. Satisfied by
@@ -77,19 +77,19 @@ func (s *Service) magicLinkAllowed(ctx context.Context, req MagicLinkRequest) bo
 // RequestMagicLink emails a sign-in link to the account holding req.Email, if
 // any, storing and sending it after it returns (see afterAnswer), so it answers
 // alike either way. It returns ErrTooManyRequests past the bounds,
-// ErrAuthMethodDisabled when the asking organisation has magic links off, and
-// ErrAuthSSORequired for an address whose organisation requires single sign-on.
-// The account's own organisation decides whether a link is sent and how long it
-// lasts, whichever organisation asked.
+// ErrAuthMethodDisabled when the asking organization has magic links off, and
+// ErrAuthSSORequired for an address whose organization requires single sign-on.
+// The account's own organization decides whether a link is sent and how long it
+// lasts, whichever organization asked.
 func (s *Service) RequestMagicLink(ctx context.Context, req MagicLinkRequest) error {
 	req.Email = strings.TrimSpace(req.Email)
 	if req.Email == "" {
 		return errs.ErrAuthEmailRequired
 	}
-	// An organisation that has magic links off refuses before anything is
+	// An organization that has magic links off refuses before anything is
 	// counted; its setting is no secret (its sign-in page omits the option).
-	if req.TenantID != uuid.Nil {
-		if _, err := s.magicLinkTTL(ctx, req.TenantID); err != nil {
+	if req.OrganizationID != uuid.Nil {
+		if _, err := s.magicLinkTTL(ctx, req.OrganizationID); err != nil {
 			return err
 		}
 	}
@@ -115,10 +115,10 @@ func (s *Service) RequestMagicLink(ctx context.Context, req MagicLinkRequest) er
 }
 
 // sendMagicLink stores and emails a link for account, requested by req. The
-// asking organisation brands the message and sees the request only when the
+// asking organization brands the message and sees the request only when the
 // account belongs to it; to anyone else's account it is the console's link.
 func (s *Service) sendMagicLink(ctx context.Context, req MagicLinkRequest, account dbgen.GetMagicLinkAccountRow) error {
-	home := uuid.UUID(account.TenantID.Bytes)
+	home := uuid.UUID(account.OrganizationID.Bytes)
 	ttl, err := s.magicLinkTTL(ctx, home)
 	if errors.Is(err, errs.ErrAuthMethodDisabled) {
 		return nil
@@ -126,13 +126,13 @@ func (s *Service) sendMagicLink(ctx context.Context, req MagicLinkRequest, accou
 	if err != nil {
 		return err
 	}
-	if req.TenantID != uuid.Nil {
-		belongs, err := s.q.AccountBelongsTo(ctx, dbgen.AccountBelongsToParams{UserID: account.ID, TenantID: req.TenantID})
+	if req.OrganizationID != uuid.Nil {
+		belongs, err := s.q.AccountBelongsTo(ctx, dbgen.AccountBelongsToParams{UserID: account.ID, OrganizationID: req.OrganizationID})
 		if err != nil {
 			return err
 		}
 		if !belongs {
-			req.TenantID = uuid.Nil
+			req.OrganizationID = uuid.Nil
 		}
 	}
 	app := MagicLinkConsole
@@ -155,24 +155,24 @@ func (s *Service) sendMagicLink(ctx context.Context, req MagicLinkRequest, accou
 		return err
 	}
 	if err := s.q.InsertMagicLink(ctx, dbgen.InsertMagicLinkParams{
-		TenantID:  pgtype.UUID{Bytes: req.TenantID, Valid: req.TenantID != uuid.Nil},
-		Email:     account.Email,
-		TokenHash: hash,
-		ExpiresAt: time.Now().UTC().Add(ttl),
-		App:       app,
-		ReturnTo:  returnTo,
+		OrganizationID: pgtype.UUID{Bytes: req.OrganizationID, Valid: req.OrganizationID != uuid.Nil},
+		Email:          account.Email,
+		TokenHash:      hash,
+		ExpiresAt:      time.Now().UTC().Add(ttl),
+		App:            app,
+		ReturnTo:       returnTo,
 	}); err != nil {
 		return err
 	}
 	magicURL := s.magicLink(raw, app, req.ReturnTo)
-	tenant := ""
-	if req.TenantID != uuid.Nil {
-		tenant = req.TenantID.String()
+	organization := ""
+	if req.OrganizationID != uuid.Nil {
+		organization = req.OrganizationID.String()
 	}
 	if err := s.sender.Send(ctx, notifier.Message{
 		TemplateKey:       "magic_link",
 		TemplateVariables: map[string]string{"magic_url": magicURL},
-		TenantID:          tenant,
+		OrganizationID:    organization,
 		Channel:           "email",
 		To:                account.Email,
 		Subject:           "Your sign-in link",
@@ -186,7 +186,7 @@ func (s *Service) sendMagicLink(ctx context.Context, req MagicLinkRequest, accou
 	}); err != nil {
 		return err
 	}
-	s.recordRequest(ctx, "auth.magic_link_requested", account.ID, []uuid.UUID{home, req.TenantID}, AuditCtx{IP: req.Caller, UserAgent: req.UserAgent}, map[string]any{"app": app})
+	s.recordRequest(ctx, "auth.magic_link_requested", account.ID, []uuid.UUID{home, req.OrganizationID}, AuditCtx{IP: req.Caller, UserAgent: req.UserAgent}, map[string]any{"app": app})
 	return nil
 }
 
@@ -220,8 +220,8 @@ func (s *Service) ResendMagicLink(ctx context.Context, rawToken, caller string) 
 		return err
 	}
 	req := MagicLinkRequest{Email: row.Email, App: row.App, Caller: caller}
-	if row.TenantID.Valid {
-		req.TenantID = uuid.UUID(row.TenantID.Bytes)
+	if row.OrganizationID.Valid {
+		req.OrganizationID = uuid.UUID(row.OrganizationID.Bytes)
 	}
 	if row.ReturnTo != nil {
 		req.ReturnTo = *row.ReturnTo
@@ -231,14 +231,14 @@ func (s *Service) ResendMagicLink(ctx context.Context, rawToken, caller string) 
 
 // MagicLinkResult is what consuming a magic link signs in.
 type MagicLinkResult struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
 	// ReturnTo is where a hosted-login journey continues ("" for none).
 	ReturnTo string
 }
 
 // ConsumeMagicLink exchanges a console link: it marks the link used and
-// returns the account to sign in, with its own organisation (uuid.Nil for
+// returns the account to sign in, with its own organization (uuid.Nil for
 // none).
 func (s *Service) ConsumeMagicLink(ctx context.Context, rawToken string, ac AuditCtx) (*MagicLinkResult, error) {
 	return s.consumeMagicLink(ctx, rawToken, MagicLinkConsole, ac)
@@ -256,13 +256,13 @@ func (s *Service) consumeMagicLink(ctx context.Context, rawToken, app string, ac
 	if err != nil {
 		return nil, err
 	}
-	// A link issued before the account's organisation switched magic links off
+	// A link issued before the account's organization switched magic links off
 	// stops working too; it stays unused. The policy is read before the
 	// transaction, and the link checked again under lock inside it.
-	if _, err := s.magicLinkTTL(ctx, uuid.UUID(account.TenantID.Bytes)); err != nil {
+	if _, err := s.magicLinkTTL(ctx, uuid.UUID(account.OrganizationID.Bytes)); err != nil {
 		return nil, err
 	}
-	// So does a link to an address whose organisation now requires single
+	// So does a link to an address whose organization now requires single
 	// sign-on.
 	if err := s.refuseCaptured(ctx, ml.Email); err != nil {
 		return nil, err
@@ -281,9 +281,9 @@ func (s *Service) consumeMagicLink(ctx context.Context, rawToken, app string, ac
 	}
 	res := &MagicLinkResult{UserID: account.ID}
 	var home *uuid.UUID
-	if account.TenantID.Valid {
-		res.TenantID = uuid.UUID(account.TenantID.Bytes)
-		home = &res.TenantID
+	if account.OrganizationID.Valid {
+		res.OrganizationID = uuid.UUID(account.OrganizationID.Bytes)
+		home = &res.OrganizationID
 	}
 	// The link proves the address as a reset does. Its first proof leaves
 	// nothing set up before it, password included, and no session open.
@@ -299,21 +299,21 @@ func (s *Service) consumeMagicLink(ctx context.Context, rawToken, app string, ac
 	if ml.ReturnTo != nil {
 		res.ReturnTo = *ml.ReturnTo
 	}
-	// Recorded for the account's organisation, and for the one that asked,
+	// Recorded for the account's organization, and for the one that asked,
 	// which the link names only when the account belongs to it.
 	target := account.ID
-	for _, org := range auditOrgs([]uuid.UUID{res.TenantID, uuid.UUID(ml.TenantID.Bytes)}) {
+	for _, org := range auditOrgs([]uuid.UUID{res.OrganizationID, uuid.UUID(ml.OrganizationID.Bytes)}) {
 		if err := audit.Record(ctx, tx, audit.Event{
-			TenantID:     org,
-			ActorUserID:  &target,
-			ActorType:    "system",
-			Action:       "auth.magic_link_consumed",
-			ResourceType: "user",
-			ResourceID:   &target,
-			IP:           ac.IP,
-			UserAgent:    ac.UserAgent,
-			RequestID:    ac.RequestID,
-			Metadata:     map[string]any{"app": ml.App},
+			OrganizationID: org,
+			ActorUserID:    &target,
+			ActorType:      "system",
+			Action:         "auth.magic_link_consumed",
+			ResourceType:   "user",
+			ResourceID:     &target,
+			IP:             ac.IP,
+			UserAgent:      ac.UserAgent,
+			RequestID:      ac.RequestID,
+			Metadata:       map[string]any{"app": ml.App},
 		}); err != nil {
 			return nil, err
 		}

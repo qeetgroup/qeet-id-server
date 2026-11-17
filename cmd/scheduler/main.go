@@ -76,7 +76,7 @@ func main() {
 		os.Exit(code)
 	}
 	// Sessions the cleanup removes that were never ended are announced
-	// (session.revoked, reason expired) to the organisations' subscribers.
+	// (session.revoked, reason expired) to the organizations' subscribers.
 	sessionSignals := sessionsignal.New(webhook.NewService(pool).EnqueueTx)
 
 	// The re-encryption job needs the same data keys as the API.

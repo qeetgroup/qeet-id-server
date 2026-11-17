@@ -54,7 +54,7 @@ type Credential struct {
 // whether an organization permits passkeys (nil: no restriction); invitations
 // lets an invited person found an account on a passkey (nil: that path is off);
 // sender emails the account holder when one is added or removed (nil: no one);
-// capture refuses passkey sign-in and sign-up to an address whose organisation
+// capture refuses passkey sign-in and sign-up to an address whose organization
 // requires single sign-on (nil: none is refused).
 type Service struct {
 	pool        *pgxpool.Pool
@@ -79,10 +79,10 @@ func (s *Service) SetSender(sender notifier.Sender) { s.sender = sender }
 // MethodPolicy says whether an organization permits passkeys. It is satisfied
 // by *authpolicy.Service without this package importing it.
 type MethodPolicy interface {
-	PasskeyEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error)
+	PasskeyEnabled(ctx context.Context, organizationID uuid.UUID) (bool, error)
 }
 
-// SetMethodPolicy wires the tenant's passkey on/off setting.
+// SetMethodPolicy wires the organization's passkey on/off setting.
 func (s *Service) SetMethodPolicy(p MethodPolicy) { s.policy = p }
 
 // SetDomainCapture wires domain capture into passkey sign-in and sign-up.
@@ -97,13 +97,13 @@ func (s *Service) refuseCaptured(ctx context.Context, email string) error {
 	return s.capture.RefuseCaptured(ctx, email)
 }
 
-// passkeysAllowed returns ErrPasskeyDisabled if tenantID's policy switches
+// passkeysAllowed returns ErrPasskeyDisabled if organizationID's policy switches
 // passkeys off. uuid.Nil (a user without an organization) is not restricted.
-func (s *Service) passkeysAllowed(ctx context.Context, tenantID uuid.UUID) error {
-	if tenantID == uuid.Nil || s.policy == nil {
+func (s *Service) passkeysAllowed(ctx context.Context, organizationID uuid.UUID) error {
+	if organizationID == uuid.Nil || s.policy == nil {
 		return nil
 	}
-	enabled, err := s.policy.PasskeyEnabled(ctx, tenantID)
+	enabled, err := s.policy.PasskeyEnabled(ctx, organizationID)
 	if err != nil {
 		return err
 	}
@@ -123,11 +123,11 @@ func (s *Service) EnrolmentAllowed(ctx context.Context, userID uuid.UUID) (bool,
 	if err != nil {
 		return false, err
 	}
-	var tenantID uuid.UUID
-	if row.TenantID.Valid {
-		tenantID = uuid.UUID(row.TenantID.Bytes)
+	var organizationID uuid.UUID
+	if row.OrganizationID.Valid {
+		organizationID = uuid.UUID(row.OrganizationID.Bytes)
 	}
-	err = s.passkeysAllowed(ctx, tenantID)
+	err = s.passkeysAllowed(ctx, organizationID)
 	if errors.Is(err, errs.ErrPasskeyDisabled) {
 		return false, nil
 	}
@@ -164,24 +164,24 @@ func credentialFromRow(m dbgen.ListPasskeyCredentialsRow) Credential {
 }
 
 // Requester is who changes a passkey, for its audit record: the account
-// holder's request, and the organisation their session is in (nil: none).
+// holder's request, and the organization their session is in (nil: none).
 type Requester struct {
-	Actor    audit.Actor
-	TenantID *uuid.UUID
+	Actor          audit.Actor
+	OrganizationID *uuid.UUID
 }
 
 // event returns the audit event of action on userID's account.
 func (r Requester) event(action string, userID uuid.UUID, metadata map[string]any) audit.Event {
 	e := r.Actor.PlatformEvent(action, "user", userID, metadata)
-	e.TenantID = r.TenantID
+	e.OrganizationID = r.OrganizationID
 	return e
 }
 
 // requesterOf is the signed-in caller of r.
 func requesterOf(r *http.Request) Requester {
 	who := Requester{Actor: audit.ActorOf(r)}
-	if p := httpx.PrincipalFromCtx(r.Context()); p != nil && p.TenantID != nil && *p.TenantID != uuid.Nil {
-		who.TenantID = p.TenantID
+	if p := httpx.PrincipalFromCtx(r.Context()); p != nil && p.OrganizationID != nil && *p.OrganizationID != uuid.Nil {
+		who.OrganizationID = p.OrganizationID
 	}
 	return who
 }
@@ -231,8 +231,8 @@ func (s *Service) Rename(ctx context.Context, id, userID uuid.UUID, name string,
 // deleted; removing the account's only way to sign in is refused with
 // ErrAuthLastSignInMethod, and the refusal recorded.
 func (s *Service) Delete(ctx context.Context, id, userID uuid.UUID, who Requester) error {
-	// The account's other ways to sign in span its organisations.
-	ctx = postgres.AcrossTenants(ctx)
+	// The account's other ways to sign in span its organizations.
+	ctx = postgres.AcrossOrganizations(ctx)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -255,7 +255,7 @@ func (s *Service) Delete(ctx context.Context, id, userID uuid.UUID, who Requeste
 	if methods.Total() <= 1 {
 		_ = tx.Rollback(ctx)
 		by := user.Remover{UserID: who.Actor.UserID, IP: who.Actor.IP, UserAgent: who.Actor.UserAgent, RequestID: who.Actor.RequestID}
-		return user.RefuseLastMethodRemoval(ctx, s.pool, userID, who.TenantID, "passkey", id, by)
+		return user.RefuseLastMethodRemoval(ctx, s.pool, userID, who.OrganizationID, "passkey", id, by)
 	}
 	if err := audit.Record(ctx, tx, who.event("passkey.deleted", userID,
 		map[string]any{"passkey_id": id, "name": nameOf(name)})); err != nil {
@@ -305,8 +305,8 @@ func (s *Service) tellPasskeyChange(ctx context.Context, userID uuid.UUID, chang
 		note = "If you didn't remove it, contact your organization's administrator right away."
 	}
 	msg := notifier.Message{Channel: "email", To: account.Email, Subject: subject, Body: intro + " " + note, HTML: emailtmpl.Notice(subject, intro, note)}
-	if account.TenantID.Valid {
-		msg.TenantID = uuid.UUID(account.TenantID.Bytes).String()
+	if account.OrganizationID.Valid {
+		msg.OrganizationID = uuid.UUID(account.OrganizationID.Bytes).String()
 	}
 	if err := s.sender.Send(ctx, msg); err != nil {
 		slog.Warn("passkey change notice not sent", "err", err, "user_id", userID)
@@ -331,7 +331,7 @@ func (u *webauthnUser) WebAuthnCredentials() []webauthn.Credential {
 }
 
 // loadUser builds a webauthnUser (with stored credentials), read through q,
-// and returns the user's tenant id (uuid.Nil when tenant-less).
+// and returns the user's organization id (uuid.Nil when organization-less).
 func loadUser(ctx context.Context, q *dbgen.Queries, userID uuid.UUID) (*webauthnUser, uuid.UUID, error) {
 	row, err := q.GetUserForWebAuthn(ctx, userID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -349,8 +349,8 @@ func loadUser(ctx context.Context, q *dbgen.Queries, userID uuid.UUID) (*webauth
 		dn = *row.DisplayName
 	}
 	var tid uuid.UUID
-	if row.TenantID.Valid {
-		tid = uuid.UUID(row.TenantID.Bytes)
+	if row.OrganizationID.Valid {
+		tid = uuid.UUID(row.OrganizationID.Bytes)
 	}
 	return &webauthnUser{id: userID, name: row.Email, displayName: dn, creds: creds}, tid, nil
 }
@@ -425,11 +425,11 @@ func takeSession(ctx context.Context, q *dbgen.Queries, id uuid.UUID) (kind stri
 // BeginRegister starts a registration ceremony for an authenticated user,
 // unless their organization has passkeys switched off.
 func (s *Service) BeginRegister(ctx context.Context, userID uuid.UUID) (uuid.UUID, *protocol.CredentialCreation, error) {
-	u, tenantID, err := loadUser(ctx, s.q, userID)
+	u, organizationID, err := loadUser(ctx, s.q, userID)
 	if err != nil {
 		return uuid.Nil, nil, err
 	}
-	if err := s.passkeysAllowed(ctx, tenantID); err != nil {
+	if err := s.passkeysAllowed(ctx, organizationID); err != nil {
 		return uuid.Nil, nil, err
 	}
 	// Discoverable credentials, so usernameless sign-in can find them. UV is
@@ -463,11 +463,11 @@ func (s *Service) FinishRegister(ctx context.Context, userID, sessionID uuid.UUI
 	if err != nil {
 		return err
 	}
-	u, tenantID, err := loadUser(ctx, s.q, userID)
+	u, organizationID, err := loadUser(ctx, s.q, userID)
 	if err != nil {
 		return err
 	}
-	if err := s.passkeysAllowed(ctx, tenantID); err != nil {
+	if err := s.passkeysAllowed(ctx, organizationID); err != nil {
 		return err
 	}
 	kind, sessUser, sessionData, err := takeSession(ctx, s.q, sessionID)
@@ -542,18 +542,18 @@ func (s *Service) insertCredential(ctx context.Context, userID uuid.UUID, cred *
 // signupSession is a decoded pending-signup ceremony. inviteID is the
 // invitation it accepts (uuid.Nil for an ordinary sign-up).
 type signupSession struct {
-	subjectID   uuid.UUID
-	email       string
-	displayName string
-	tenantID    uuid.UUID
-	inviteID    uuid.UUID
-	data        *webauthn.SessionData
+	subjectID      uuid.UUID
+	email          string
+	displayName    string
+	organizationID uuid.UUID
+	inviteID       uuid.UUID
+	data           *webauthn.SessionData
 }
 
 // storeSignupSession persists an in-flight pre-account registration ceremony.
-// tenantID is uuid.Nil for a tenant-less signup, and inviteID when it accepts
+// organizationID is uuid.Nil for an organization-less signup, and inviteID when it accepts
 // no invitation.
-func (s *Service) storeSignupSession(ctx context.Context, subjectID uuid.UUID, email, displayName string, tenantID, inviteID uuid.UUID, data *webauthn.SessionData) (uuid.UUID, error) {
+func (s *Service) storeSignupSession(ctx context.Context, subjectID uuid.UUID, email, displayName string, organizationID, inviteID uuid.UUID, data *webauthn.SessionData) (uuid.UUID, error) {
 	raw, err := json.Marshal(data)
 	if err != nil {
 		return uuid.Nil, err
@@ -562,18 +562,18 @@ func (s *Service) storeSignupSession(ctx context.Context, subjectID uuid.UUID, e
 	if displayName != "" {
 		dnPtr = &displayName
 	}
-	tenantPG := pgtype.UUID{}
-	if tenantID != uuid.Nil {
-		tenantPG = pgtype.UUID{Bytes: tenantID, Valid: true}
+	organizationPG := pgtype.UUID{}
+	if organizationID != uuid.Nil {
+		organizationPG = pgtype.UUID{Bytes: organizationID, Valid: true}
 	}
 	return s.q.InsertSignupWebAuthnSession(ctx, dbgen.InsertSignupWebAuthnSessionParams{
-		Data:               raw,
-		ExpiresAt:          time.Now().UTC().Add(sessionTTL),
-		SubjectID:          pgtype.UUID{Bytes: subjectID, Valid: true},
-		PendingEmail:       &email,
-		PendingDisplayName: dnPtr,
-		PendingTenantID:    tenantPG,
-		InviteID:           pgtype.UUID{Bytes: inviteID, Valid: inviteID != uuid.Nil},
+		Data:                  raw,
+		ExpiresAt:             time.Now().UTC().Add(sessionTTL),
+		SubjectID:             pgtype.UUID{Bytes: subjectID, Valid: true},
+		PendingEmail:          &email,
+		PendingDisplayName:    dnPtr,
+		PendingOrganizationID: organizationPG,
+		InviteID:              pgtype.UUID{Bytes: inviteID, Valid: inviteID != uuid.Nil},
 	})
 }
 
@@ -604,8 +604,8 @@ func (s *Service) takeSignupSession(ctx context.Context, id uuid.UUID) (*signupS
 	if row.PendingDisplayName != nil {
 		sess.displayName = *row.PendingDisplayName
 	}
-	if row.PendingTenantID.Valid {
-		sess.tenantID = uuid.UUID(row.PendingTenantID.Bytes)
+	if row.PendingOrganizationID.Valid {
+		sess.organizationID = uuid.UUID(row.PendingOrganizationID.Bytes)
 	}
 	if row.PendingInviteID.Valid {
 		sess.inviteID = uuid.UUID(row.PendingInviteID.Bytes)
@@ -614,42 +614,42 @@ func (s *Service) takeSignupSession(ctx context.Context, id uuid.UUID) (*signupS
 }
 
 // BeginSignup starts a passkey-founded registration ceremony for a brand-new,
-// tenant-less account — the passwordless counterpart to auth.Service.Signup.
+// organization-less account — the passwordless counterpart to auth.Service.Signup.
 func (s *Service) BeginSignup(ctx context.Context, email, displayName string) (uuid.UUID, *protocol.CredentialCreation, error) {
 	return s.beginSignup(ctx, uuid.Nil, email, displayName)
 }
 
-// BeginTenantSignup starts the same ceremony for a tenant's hosted signup, the
-// passwordless auth.Service.RegisterInTenant. It is refused unless the tenant
+// BeginOrganizationSignup starts the same ceremony for an organization's hosted signup, the
+// passwordless auth.Service.RegisterInOrganization. It is refused unless the organization
 // allows self-registration and passkeys.
-func (s *Service) BeginTenantSignup(ctx context.Context, tenantID uuid.UUID, email, displayName string) (uuid.UUID, *protocol.CredentialCreation, error) {
-	enabled, err := s.auth.SelfRegistrationEnabled(ctx, tenantID)
+func (s *Service) BeginOrganizationSignup(ctx context.Context, organizationID uuid.UUID, email, displayName string) (uuid.UUID, *protocol.CredentialCreation, error) {
+	enabled, err := s.auth.SelfRegistrationEnabled(ctx, organizationID)
 	if err != nil {
 		return uuid.Nil, nil, err
 	}
 	if !enabled {
 		return uuid.Nil, nil, errs.ErrAuthSelfRegistrationDisabled
 	}
-	if err := s.passkeysAllowed(ctx, tenantID); err != nil {
+	if err := s.passkeysAllowed(ctx, organizationID); err != nil {
 		return uuid.Nil, nil, err
 	}
-	return s.beginSignup(ctx, tenantID, email, displayName)
+	return s.beginSignup(ctx, organizationID, email, displayName)
 }
 
-func (s *Service) beginSignup(ctx context.Context, tenantID uuid.UUID, email, displayName string) (uuid.UUID, *protocol.CredentialCreation, error) {
-	return s.beginSignupFor(ctx, tenantID, uuid.Nil, email, displayName)
+func (s *Service) beginSignup(ctx context.Context, organizationID uuid.UUID, email, displayName string) (uuid.UUID, *protocol.CredentialCreation, error) {
+	return s.beginSignupFor(ctx, organizationID, uuid.Nil, email, displayName)
 }
 
-// beginSignupFor starts a passkey sign-up ceremony for email in tenantID,
+// beginSignupFor starts a passkey sign-up ceremony for email in organizationID,
 // accepting inviteID (uuid.Nil: none). It answers alike whether or not the
 // address has an account and claims nothing: a taken address, and one on a
-// domain another organisation manages, are refused when the ceremony finishes.
-func (s *Service) beginSignupFor(ctx context.Context, tenantID, inviteID uuid.UUID, email, displayName string) (uuid.UUID, *protocol.CredentialCreation, error) {
+// domain another organization manages, are refused when the ceremony finishes.
+func (s *Service) beginSignupFor(ctx context.Context, organizationID, inviteID uuid.UUID, email, displayName string) (uuid.UUID, *protocol.CredentialCreation, error) {
 	email = strings.TrimSpace(email)
 	if email == "" {
 		return uuid.Nil, nil, errs.ErrAuthEmailRequired
 	}
-	// An address whose organisation requires single sign-on gets its account
+	// An address whose organization requires single sign-on gets its account
 	// from the identity provider; an invitation was checked when it was opened.
 	if inviteID == uuid.Nil {
 		if err := s.refuseCaptured(ctx, email); err != nil {
@@ -675,14 +675,14 @@ func (s *Service) beginSignupFor(ctx context.Context, tenantID, inviteID uuid.UU
 	if err != nil {
 		return uuid.Nil, nil, errs.ErrPasskeyCeremonyFailed.Wrap(err)
 	}
-	id, err := s.storeSignupSession(ctx, subjectID, email, displayName, tenantID, inviteID, sessionData)
+	id, err := s.storeSignupSession(ctx, subjectID, email, displayName, organizationID, inviteID, sessionData)
 	if err != nil {
 		return uuid.Nil, nil, err
 	}
 	return id, options, nil
 }
 
-// FinishSignup verifies the attestation, creates the tenant-less user with the
+// FinishSignup verifies the attestation, creates the organization-less user with the
 // passkey as its founding credential (no password), and signs them in. The
 // passkey is named as in FinishRegister.
 func (s *Service) FinishSignup(ctx context.Context, sessionID uuid.UUID, credential json.RawMessage, name, ip, ua string) (*auth.TokenPair, uuid.UUID, error) {
@@ -699,7 +699,7 @@ func (s *Service) FinishSignup(ctx context.Context, sessionID uuid.UUID, credent
 	if sess.inviteID != uuid.Nil {
 		return nil, uuid.Nil, errs.ErrPasskeySessionInvalid
 	}
-	if err := domainverify.CheckNewAccount(ctx, s.pool, sess.tenantID, sess.email); err != nil {
+	if err := domainverify.CheckNewAccount(ctx, s.pool, sess.organizationID, sess.email); err != nil {
 		return nil, uuid.Nil, err
 	}
 	userID, err := s.createUserFromSignup(ctx, sess, cred, name, nil)
@@ -713,10 +713,10 @@ func (s *Service) FinishSignup(ctx context.Context, sessionID uuid.UUID, credent
 	return pair, userID, nil
 }
 
-// FinishTenantSignup is FinishSignup for a tenant's hosted signup: it creates
-// the user in sess's tenant and returns a hosted-login SSO cookie value instead
-// of a token pair, as auth.Service.RegisterInTenant does.
-func (s *Service) FinishTenantSignup(ctx context.Context, sessionID uuid.UUID, credential json.RawMessage, name, ip, ua string) (uuid.UUID, string, error) {
+// FinishOrganizationSignup is FinishSignup for an organization's hosted signup: it creates
+// the user in sess's organization and returns a hosted-login SSO cookie value instead
+// of a token pair, as auth.Service.RegisterInOrganization does.
+func (s *Service) FinishOrganizationSignup(ctx context.Context, sessionID uuid.UUID, credential json.RawMessage, name, ip, ua string) (uuid.UUID, string, error) {
 	name, err := enrolmentName(name, ua)
 	if err != nil {
 		return uuid.Nil, "", err
@@ -725,15 +725,15 @@ func (s *Service) FinishTenantSignup(ctx context.Context, sessionID uuid.UUID, c
 	if err != nil {
 		return uuid.Nil, "", err
 	}
-	if sess.tenantID == uuid.Nil || sess.inviteID != uuid.Nil {
+	if sess.organizationID == uuid.Nil || sess.inviteID != uuid.Nil {
 		return uuid.Nil, "", errs.ErrPasskeySessionInvalid
 	}
-	// The organisation may have switched passkeys off since the ceremony began.
-	if err := s.passkeysAllowed(ctx, sess.tenantID); err != nil {
+	// The organization may have switched passkeys off since the ceremony began.
+	if err := s.passkeysAllowed(ctx, sess.organizationID); err != nil {
 		return uuid.Nil, "", err
 	}
-	// On a domain another organisation manages, only it creates accounts.
-	if err := domainverify.CheckNewAccount(ctx, s.pool, sess.tenantID, sess.email); err != nil {
+	// On a domain another organization manages, only it creates accounts.
+	if err := domainverify.CheckNewAccount(ctx, s.pool, sess.organizationID, sess.email); err != nil {
 		return uuid.Nil, "", err
 	}
 	userID, err := s.createUserFromSignup(ctx, sess, cred, name, nil)
@@ -783,19 +783,19 @@ func (s *Service) createUserFromSignup(ctx context.Context, sess *signupSession,
 
 	qtx := s.q.WithTx(tx)
 
-	tenantPG := pgtype.UUID{}
-	if sess.tenantID != uuid.Nil {
-		tenantPG = pgtype.UUID{Bytes: sess.tenantID, Valid: true}
+	organizationPG := pgtype.UUID{}
+	if sess.organizationID != uuid.Nil {
+		organizationPG = pgtype.UUID{Bytes: sess.organizationID, Valid: true}
 	}
 	var dnPtr *string
 	if sess.displayName != "" {
 		dnPtr = &sess.displayName
 	}
 	userID, err := qtx.InsertUserFromSignup(ctx, dbgen.InsertUserFromSignupParams{
-		ID:          sess.subjectID,
-		TenantID:    tenantPG,
-		Email:       sess.email,
-		DisplayName: dnPtr,
+		ID:             sess.subjectID,
+		OrganizationID: organizationPG,
+		Email:          sess.email,
+		DisplayName:    dnPtr,
 	})
 	if err != nil {
 		if pgxerr.IsUnique(err) {
@@ -845,7 +845,7 @@ func (s *Service) createUserFromSignup(ctx context.Context, sess *signupSession,
 // BeginLogin starts a login ceremony. Every ceremony is discoverable, so the
 // answer is the same whether or not email has an account or a passkey; with an
 // email, only a passkey of that account can finish it. An email whose
-// organisation requires single sign-on is refused before it is looked up; a
+// organization requires single sign-on is refused before it is looked up; a
 // passkey of such an account is refused when it finishes (verifyLogin).
 func (s *Service) BeginLogin(ctx context.Context, email string) (uuid.UUID, *protocol.CredentialAssertion, error) {
 	kind, owner := "login_discoverable", (*uuid.UUID)(nil)
@@ -878,24 +878,24 @@ func (s *Service) BeginLogin(ctx context.Context, email string) (uuid.UUID, *pro
 // FinishLogin verifies the assertion, updates the sign counter, and issues a
 // Qeet session token pair for the authenticated user.
 func (s *Service) FinishLogin(ctx context.Context, sessionID uuid.UUID, credential json.RawMessage, ip, ua string) (*auth.TokenPair, error) {
-	userID, tenantID, err := s.verifyLogin(ctx, sessionID, credential)
+	userID, organizationID, err := s.verifyLogin(ctx, sessionID, credential)
 	if err != nil {
-		s.recordFailure(ctx, userID, tenantID, ip, ua, err)
+		s.recordFailure(ctx, userID, organizationID, ip, ua, err)
 		return nil, err
 	}
-	return s.auth.IssuePair(ctx, userID, tenantID, ip, ua, "passkey")
+	return s.auth.IssuePair(ctx, userID, organizationID, ip, ua, "passkey")
 }
 
 // recordFailure records a passkey sign-in refused for its ceremony or
 // assertion as a failed sign-in, naming the account when it was identified.
 // Errors that aren't a refusal (the store failing) aren't recorded.
-func (s *Service) recordFailure(ctx context.Context, userID, tenantID uuid.UUID, ip, ua string, err error) {
+func (s *Service) recordFailure(ctx context.Context, userID, organizationID uuid.UUID, ip, ua string, err error) {
 	refusal := errs.As(err)
 	if refusal == nil || s.auth == nil {
 		return
 	}
 	s.auth.RecordSignInFailure(ctx, auth.SignInFailure{
-		TenantID: tenantID, UserID: userID, Method: "passkey", Reason: refusal.Code, IP: ip, UserAgent: ua,
+		OrganizationID: organizationID, UserID: userID, Method: "passkey", Reason: refusal.Code, IP: ip, UserAgent: ua,
 	})
 }
 
@@ -903,9 +903,9 @@ func (s *Service) recordFailure(ctx context.Context, userID, tenantID uuid.UUID,
 // opens a hosted-login SSO session for the authenticated user instead of
 // issuing a token pair: it returns the user and the raw cookie value to set.
 func (s *Service) FinishLoginSession(ctx context.Context, sessionID uuid.UUID, credential json.RawMessage, ip, ua string) (uuid.UUID, string, error) {
-	userID, tenantID, err := s.verifyLogin(ctx, sessionID, credential)
+	userID, organizationID, err := s.verifyLogin(ctx, sessionID, credential)
 	if err != nil {
-		s.recordFailure(ctx, userID, tenantID, ip, ua, err)
+		s.recordFailure(ctx, userID, organizationID, ip, ua, err)
 		return uuid.Nil, "", err
 	}
 	raw, err := s.auth.CreatePasskeyLoginSession(ctx, userID, ip, ua)
@@ -917,7 +917,7 @@ func (s *Service) FinishLoginSession(ctx context.Context, sessionID uuid.UUID, c
 
 // verifyLogin takes the login ceremony, verifies the assertion against it and
 // updates the credential's sign counter, returning who signed in. On failure
-// it returns the account (and its organisation) when the ceremony or the
+// it returns the account (and its organization) when the ceremony or the
 // assertion identified one.
 func (s *Service) verifyLogin(ctx context.Context, sessionID uuid.UUID, credential json.RawMessage) (uuid.UUID, uuid.UUID, error) {
 	kind, sessUser, sessionData, err := takeSession(ctx, s.q, sessionID)
@@ -933,7 +933,7 @@ func (s *Service) verifyLogin(ctx context.Context, sessionID uuid.UUID, credenti
 		return uuid.Nil, uuid.Nil, errs.ErrPasskeySessionInvalid
 	}
 	var resolved *webauthnUser
-	var resolvedTenant uuid.UUID
+	var resolvedOrganization uuid.UUID
 	var refused error
 	// go-webauthn resolves the user before it checks the signature, so a
 	// refusal here means the assertion is never verified. A ceremony begun for
@@ -950,7 +950,7 @@ func (s *Service) verifyLogin(ctx context.Context, sessionID uuid.UUID, credenti
 		if err != nil {
 			return nil, err
 		}
-		resolved, resolvedTenant = u, tid
+		resolved, resolvedOrganization = u, tid
 		if refused = s.passkeysAllowed(ctx, tid); refused != nil {
 			return nil, refused
 		}
@@ -960,17 +960,17 @@ func (s *Service) verifyLogin(ctx context.Context, sessionID uuid.UUID, credenti
 		return u, nil
 	}
 	cred, err := s.wa.ValidateDiscoverableLogin(handler, *sessionData, parsed)
-	var who, whoTenant uuid.UUID
+	var who, whoOrganization uuid.UUID
 	if resolved != nil {
-		who, whoTenant = resolved.id, resolvedTenant
+		who, whoOrganization = resolved.id, resolvedOrganization
 	}
 	if refused != nil {
-		return who, whoTenant, refused
+		return who, whoOrganization, refused
 	}
 	if err != nil || resolved == nil {
-		return who, whoTenant, errs.ErrPasskeyLoginFailed
+		return who, whoOrganization, errs.ErrPasskeyLoginFailed
 	}
-	loginUserID, tenantID := resolved.id, resolvedTenant
+	loginUserID, organizationID := resolved.id, resolvedOrganization
 
 	// A sign counter that failed to advance may mean a cloned authenticator.
 	// go-webauthn flags it and leaves the response to the RP (WebAuthn L2 §6.1.1
@@ -978,11 +978,11 @@ func (s *Service) verifyLogin(ctx context.Context, sessionID uuid.UUID, credenti
 	if cred.Authenticator.CloneWarning {
 		slog.Error("passkey signature counter regressed — possible cloned authenticator",
 			"user_id", loginUserID,
-			"tenant_id", tenantID,
+			"tenant_id", organizationID,
 			"credential_id", base64.RawURLEncoding.EncodeToString(cred.ID),
 			"asserted_sign_count", cred.Authenticator.SignCount,
 		)
-		return loginUserID, tenantID, errs.ErrPasskeyCloneDetected
+		return loginUserID, organizationID, errs.ErrPasskeyCloneDetected
 	}
 	if err := s.q.UpdatePasskeySignCount(ctx, dbgen.UpdatePasskeySignCountParams{
 		SignCount:    int64(cred.Authenticator.SignCount),
@@ -991,7 +991,7 @@ func (s *Service) verifyLogin(ctx context.Context, sessionID uuid.UUID, credenti
 	}); err != nil {
 		return uuid.Nil, uuid.Nil, err
 	}
-	return loginUserID, tenantID, nil
+	return loginUserID, organizationID, nil
 }
 
 // --- WebAuthn as a second factor ---
@@ -1105,8 +1105,8 @@ func (h *Handler) MountPublic(r chi.Router) {
 	r.Post("/passkeys/login/session", h.loginSession)
 	r.Post("/signup/passkey/begin", h.signupBegin)
 	r.Post("/signup/passkey/finish", h.signupFinish)
-	r.Post("/register/passkey/begin", h.tenantSignupBegin)
-	r.Post("/register/passkey/finish", h.tenantSignupFinish)
+	r.Post("/register/passkey/begin", h.organizationSignupBegin)
+	r.Post("/register/passkey/finish", h.organizationSignupFinish)
 	r.Post("/invites/accept/passkey/begin", h.inviteSignupBegin)
 	r.Post("/invites/accept/passkey/finish", h.inviteSignupFinish)
 }
@@ -1303,7 +1303,7 @@ type signupBeginInput struct {
 	DisplayName string `json:"display_name"`
 }
 
-// signupBegin starts a tenant-less passkey-first signup, the passwordless
+// signupBegin starts an organization-less passkey-first signup, the passwordless
 // POST /auth/signup. Like the password endpoints it answers no sooner than
 // 250ms and reports errors through writeSignupError.
 func (h *Handler) signupBegin(w http.ResponseWriter, r *http.Request) {
@@ -1354,29 +1354,29 @@ func (h *Handler) signupFinish(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-type tenantSignupBeginInput struct {
-	TenantID    uuid.UUID `json:"tenant_id"`
-	Email       string    `json:"email"`
-	DisplayName string    `json:"display_name"`
+type organizationSignupBeginInput struct {
+	OrganizationID uuid.UUID `json:"tenant_id"`
+	Email          string    `json:"email"`
+	DisplayName    string    `json:"display_name"`
 }
 
-// tenantSignupBegin starts a tenant-scoped passkey-first signup — the
+// organizationSignupBegin starts an organization-scoped passkey-first signup — the
 // passwordless counterpart to POST /auth/register (hosted self-registration).
-func (h *Handler) tenantSignupBegin(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) organizationSignupBegin(w http.ResponseWriter, r *http.Request) {
 	const signupFloor = 250 * time.Millisecond
 	start := time.Now()
 	defer httpx.ConstantTimeFloor(r.Context(), start, signupFloor)
 
-	var in tenantSignupBeginInput
+	var in organizationSignupBeginInput
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if in.TenantID == uuid.Nil {
+	if in.OrganizationID == uuid.Nil {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("tenant_id is required"))
 		return
 	}
-	sessionID, options, err := h.Service.BeginTenantSignup(r.Context(), in.TenantID, in.Email, in.DisplayName)
+	sessionID, options, err := h.Service.BeginOrganizationSignup(r.Context(), in.OrganizationID, in.Email, in.DisplayName)
 	if err != nil {
 		writeSignupError(w, r, err)
 		return
@@ -1387,13 +1387,13 @@ func (h *Handler) tenantSignupBegin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *Handler) tenantSignupFinish(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) organizationSignupFinish(w http.ResponseWriter, r *http.Request) {
 	var in signupFinishInput
 	if err := httpx.DecodeStrictJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	userID, raw, err := h.Service.FinishTenantSignup(r.Context(), in.SessionID, in.Credential, in.Name, httpx.ClientIP(r), r.UserAgent())
+	userID, raw, err := h.Service.FinishOrganizationSignup(r.Context(), in.SessionID, in.Credential, in.Name, httpx.ClientIP(r), r.UserAgent())
 	if err != nil {
 		writeSignupError(w, r, err)
 		return

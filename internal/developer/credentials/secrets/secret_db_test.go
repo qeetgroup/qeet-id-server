@@ -17,23 +17,23 @@ import (
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
 
-// TestSecretsStayInTheirTenant checks that one tenant can neither reveal nor
-// change another tenant's secret, and that a vault read by name finds only its
+// TestSecretsStayInTheirOrganization checks that one organization can neither reveal nor
+// change another organization's secret, and that a vault read by name finds only its
 // own secret of that name.
-func TestSecretsStayInTheirTenant(t *testing.T) {
+func TestSecretsStayInTheirOrganization(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := NewService(dbtest.Pool(t), testService(t, 7).box)
-	tenantA, tenantB := dbtest.Tenant(t), dbtest.Tenant(t)
-	adminB := dbtest.User(t, tenantB, tenantB)
-	secretA, err := svc.Create(ctx, tenantA, "stripe", "", "sk_live_tenant_a", nil)
+	organizationA, organizationB := dbtest.Organization(t), dbtest.Organization(t)
+	adminB := dbtest.User(t, organizationB, organizationB)
+	secretA, err := svc.Create(ctx, organizationA, "stripe", "", "sk_live_tenant_a", nil)
 	if err != nil {
 		t.Fatalf("create secret in A: %v", err)
 	}
 
-	principal := dbtest.Principal(adminB.ID, tenantB)
+	principal := dbtest.Principal(adminB.ID, organizationB)
 	principal.Scopes = []string{"vault:read"}
 	asB := dbtest.Serve(principal, (&Handler{Service: svc}).Mount)
-	inB := "/tenants/" + tenantB.String() + "/secrets/" + secretA.ID.String()
+	inB := "/tenants/" + organizationB.String() + "/secrets/" + secretA.ID.String()
 	for _, tc := range []struct {
 		method, path string
 		body         any
@@ -44,17 +44,17 @@ func TestSecretsStayInTheirTenant(t *testing.T) {
 		{http.MethodPatch, inB, map[string]any{"scope": "agents"}, http.StatusNotFound},
 		{http.MethodDelete, inB, nil, http.StatusNotFound},
 		{http.MethodGet, "/vault/stripe", nil, http.StatusNotFound},
-		{http.MethodGet, "/tenants/" + tenantA.String() + "/secrets", nil, http.StatusForbidden},
+		{http.MethodGet, "/tenants/" + organizationA.String() + "/secrets", nil, http.StatusForbidden},
 	} {
 		if rec := dbtest.Do(t, asB, tc.method, tc.path, tc.body); rec.Code != tc.want {
 			t.Errorf("tenant B %s %s: status %d, want %d (%s)", tc.method, tc.path, rec.Code, tc.want, rec.Body.String())
 		}
 	}
-	if ids := dbtest.IDs(t, dbtest.Do(t, asB, http.MethodGet, "/tenants/"+tenantB.String()+"/secrets", nil)); slices.Contains(ids, secretA.ID) {
+	if ids := dbtest.IDs(t, dbtest.Do(t, asB, http.MethodGet, "/tenants/"+organizationB.String()+"/secrets", nil)); slices.Contains(ids, secretA.ID) {
 		t.Error("tenant B's secret list includes tenant A's")
 	}
 
-	if _, err := svc.Create(ctx, tenantB, "stripe", "", "sk_live_tenant_b", nil); err != nil {
+	if _, err := svc.Create(ctx, organizationB, "stripe", "", "sk_live_tenant_b", nil); err != nil {
 		t.Fatalf("create secret in B: %v", err)
 	}
 	var vault struct {
@@ -64,27 +64,27 @@ func TestSecretsStayInTheirTenant(t *testing.T) {
 	if vault.Value != "sk_live_tenant_b" {
 		t.Errorf("tenant B's vault read returned %q, want its own secret", vault.Value)
 	}
-	if _, value, err := svc.Reveal(ctx, tenantA, secretA.ID); err != nil || value != "sk_live_tenant_a" {
+	if _, value, err := svc.Reveal(ctx, organizationA, secretA.ID); err != nil || value != "sk_live_tenant_a" {
 		t.Errorf("tenant A's secret after tenant B's calls: %q, %v", value, err)
 	}
 }
 
-// TestSecretListIsCapped checks that a tenant with more secrets than one list
+// TestSecretListIsCapped checks that an organization with more secrets than one list
 // answers holds gets the first paging.MaxListItems of them, marked truncated.
 func TestSecretListIsCapped(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := NewService(dbtest.Pool(t), testService(t, 7).box)
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
 	if _, err := dbtest.Pool(t).Exec(ctx, `
-		INSERT INTO tenant.secrets (tenant_id, name, ciphertext, nonce)
+		INSERT INTO organization.secrets (organization_id, name, ciphertext, nonce)
 		SELECT $1, 'secret-' || n, '\x00', '\x00' FROM generate_series(1, $2::int) AS n
-	`, tenant, paging.MaxListItems+1); err != nil {
+	`, organization, paging.MaxListItems+1); err != nil {
 		t.Fatal(err)
 	}
-	principal := dbtest.Principal(admin.ID, tenant)
+	principal := dbtest.Principal(admin.ID, organization)
 	principal.Scopes = []string{"vault:read"}
-	rec := dbtest.Do(t, dbtest.Serve(principal, (&Handler{Service: svc}).Mount), http.MethodGet, "/tenants/"+tenant.String()+"/secrets", nil)
+	rec := dbtest.Do(t, dbtest.Serve(principal, (&Handler{Service: svc}).Mount), http.MethodGet, "/tenants/"+organization.String()+"/secrets", nil)
 	var body struct {
 		Items     []json.RawMessage `json:"items"`
 		Truncated bool              `json:"truncated"`
@@ -104,10 +104,10 @@ func TestSecretListIsCapped(t *testing.T) {
 func TestSecretRevealAndRotation(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := NewService(dbtest.Pool(t), testService(t, 7).box)
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: svc}).Mount)
-	base := "/tenants/" + tenant.String() + "/secrets"
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: svc}).Mount)
+	base := "/tenants/" + organization.String() + "/secrets"
 
 	decode := func(code int, body []byte, want int) Secret {
 		t.Helper()
@@ -147,7 +147,7 @@ func TestSecretRevealAndRotation(t *testing.T) {
 		t.Errorf("after a person's reveal: %+v, by %+v", got, got.LastRevealedBy)
 	}
 
-	key := &httpx.Principal{UserID: &admin.ID, TenantID: &tenant, ActorType: "api_key", Subject: "key-1234"}
+	key := &httpx.Principal{UserID: &admin.ID, OrganizationID: &organization, ActorType: "api_key", Subject: "key-1234"}
 	if rec := dbtest.Do(t, dbtest.Serve(key, (&Handler{Service: svc}).Mount), http.MethodPost, item+"/reveal", nil); rec.Code != http.StatusOK {
 		t.Fatalf("reveal with a key: %d %s", rec.Code, rec.Body.String())
 	}
@@ -156,7 +156,7 @@ func TestSecretRevealAndRotation(t *testing.T) {
 	}
 
 	long := time.Now().Add(-40 * 24 * time.Hour)
-	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE tenant.secrets SET value_changed_at = $3 WHERE id = $1 AND tenant_id = $2`, sec.ID, tenant, long); err != nil {
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE organization.secrets SET value_changed_at = $3 WHERE id = $1 AND organization_id = $2`, sec.ID, organization, long); err != nil {
 		t.Fatal(err)
 	}
 	rec = dbtest.Do(t, asAdmin, http.MethodPatch, item, map[string]any{"scope": "billing"})

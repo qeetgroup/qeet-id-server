@@ -1,6 +1,6 @@
 // Package audit records mutations to audit.events inside the caller's
 // transaction, so each row commits with the change it describes. Each row's
-// SHA-256 hash chains to the previous row of its chain, its tenant's or one of
+// SHA-256 hash chains to the previous row of its chain, its organization's or one of
 // the PlatformChainShards platform chains: deleting, editing or reordering a
 // row breaks the chain, which Verifier detects.
 package audit
@@ -30,7 +30,7 @@ import (
 const chainSeed = "0000000000000000000000000000000000000000000000000000000000000000"
 
 // PlatformChainShards is how many platform chains there are, numbered from 0,
-// so writers of events with no tenant don't all queue on one chain's lock.
+// so writers of events with no organization don't all queue on one chain's lock.
 // Changing it leaves rows outside the range, which verification reports.
 const PlatformChainShards = 16
 
@@ -42,19 +42,19 @@ var platformShard = func(tx pgx.Tx) int16 {
 	return int16(tx.Conn().PgConn().PID() % PlatformChainShards) // #nosec G115 -- below PlatformChainShards
 }
 
-// Event is an audit row to record. A nil TenantID puts it on a platform
+// Event is an audit row to record. A nil OrganizationID puts it on a platform
 // chain, and an empty ActorType means "user".
 type Event struct {
-	TenantID     *uuid.UUID
-	ActorUserID  *uuid.UUID
-	ActorType    string
-	Action       string
-	ResourceType string
-	ResourceID   *uuid.UUID
-	IP           string
-	UserAgent    string
-	RequestID    string
-	Metadata     map[string]any
+	OrganizationID *uuid.UUID
+	ActorUserID    *uuid.UUID
+	ActorType      string
+	Action         string
+	ResourceType   string
+	ResourceID     *uuid.UUID
+	IP             string
+	UserAgent      string
+	RequestID      string
+	Metadata       map[string]any
 }
 
 // Actor is the request's provenance (who and from where) that a service
@@ -85,16 +85,16 @@ func ActorOf(r *http.Request) Actor {
 // ActorUserID and ActorType.
 func (a Actor) Identity() (*uuid.UUID, string) { return a.UserID, a.Type }
 
-// Event returns an audit Event of a tenant-scoped action by a.
-func (a Actor) Event(tenantID uuid.UUID, action, resourceType string, resourceID uuid.UUID, metadata map[string]any) Event {
+// Event returns an audit Event of an organization-scoped action by a.
+func (a Actor) Event(organizationID uuid.UUID, action, resourceType string, resourceID uuid.UUID, metadata map[string]any) Event {
 	e := a.PlatformEvent(action, resourceType, resourceID, metadata)
-	tid := tenantID
-	e.TenantID = &tid
+	tid := organizationID
+	e.OrganizationID = &tid
 	return e
 }
 
-// PlatformEvent returns an audit Event on the platform chain, not scoped to a
-// tenant.
+// PlatformEvent returns an audit Event on the platform chain, not scoped to an
+// organization.
 func (a Actor) PlatformEvent(action, resourceType string, resourceID uuid.UUID, metadata map[string]any) Event {
 	rid := resourceID
 	return Event{
@@ -125,40 +125,40 @@ func Changes(before, after map[string]any) map[string]any {
 // canonicalRow is the serialisation each row's hash covers; its field order is
 // fixed by this declaration. Changing it breaks every existing chain, so add a
 // chain-version column first. ChainShard is left out at 0, so a row of an
-// organisation's chain or of platform chain 0 hashes as it always has.
+// organization's chain or of platform chain 0 hashes as it always has.
 type canonicalRow struct {
-	ID           string          `json:"id"`
-	TenantID     string          `json:"tenant_id"`
-	ActorUserID  string          `json:"actor_user_id"`
-	ActorType    string          `json:"actor_type"`
-	Action       string          `json:"action"`
-	ResourceType string          `json:"resource_type"`
-	ResourceID   string          `json:"resource_id"`
-	IP           string          `json:"ip"`
-	UserAgent    string          `json:"user_agent"`
-	RequestID    string          `json:"request_id"`
-	Metadata     json.RawMessage `json:"metadata"`
-	CreatedAt    string          `json:"created_at"`
-	PrevHash     string          `json:"prev_hash"`
-	ChainShard   int16           `json:"chain_shard,omitempty"`
+	ID             string          `json:"id"`
+	OrganizationID string          `json:"tenant_id"`
+	ActorUserID    string          `json:"actor_user_id"`
+	ActorType      string          `json:"actor_type"`
+	Action         string          `json:"action"`
+	ResourceType   string          `json:"resource_type"`
+	ResourceID     string          `json:"resource_id"`
+	IP             string          `json:"ip"`
+	UserAgent      string          `json:"user_agent"`
+	RequestID      string          `json:"request_id"`
+	Metadata       json.RawMessage `json:"metadata"`
+	CreatedAt      string          `json:"created_at"`
+	PrevHash       string          `json:"prev_hash"`
+	ChainShard     int16           `json:"chain_shard,omitempty"`
 }
 
 func canonicalize(e Event, shard int16, id uuid.UUID, createdAt time.Time, metaJSON []byte, prevHash string) ([]byte, error) {
 	return json.Marshal(canonicalRow{
-		ID:           id.String(),
-		TenantID:     uuidStr(e.TenantID),
-		ActorUserID:  uuidStr(e.ActorUserID),
-		ActorType:    e.ActorType,
-		Action:       e.Action,
-		ResourceType: e.ResourceType,
-		ResourceID:   uuidStr(e.ResourceID),
-		IP:           e.IP,
-		UserAgent:    e.UserAgent,
-		RequestID:    e.RequestID,
-		Metadata:     metaJSON,
-		CreatedAt:    createdAt.UTC().Format(time.RFC3339Nano),
-		PrevHash:     prevHash,
-		ChainShard:   shard,
+		ID:             id.String(),
+		OrganizationID: uuidStr(e.OrganizationID),
+		ActorUserID:    uuidStr(e.ActorUserID),
+		ActorType:      e.ActorType,
+		Action:         e.Action,
+		ResourceType:   e.ResourceType,
+		ResourceID:     uuidStr(e.ResourceID),
+		IP:             e.IP,
+		UserAgent:      e.UserAgent,
+		RequestID:      e.RequestID,
+		Metadata:       metaJSON,
+		CreatedAt:      createdAt.UTC().Format(time.RFC3339Nano),
+		PrevHash:       prevHash,
+		ChainShard:     shard,
 	})
 }
 
@@ -191,11 +191,11 @@ func strRef(s string) *string { return &s }
 var clock = time.Now
 
 // labelQueries read the name of a role, group or ABAC policy by its id in
-// the event's tenant.
+// the event's organization.
 var labelQueries = map[string]string{
-	"role":        `SELECT name FROM rbac.roles WHERE id = $1 AND tenant_id = $2`,
-	"group":       `SELECT name FROM tenant.groups WHERE id = $1 AND tenant_id = $2`,
-	"abac_policy": `SELECT name FROM auth.abac_policies WHERE id = $1 AND tenant_id = $2`,
+	"role":        `SELECT name FROM rbac.roles WHERE id = $1 AND organization_id = $2`,
+	"group":       `SELECT name FROM organization.groups WHERE id = $1 AND organization_id = $2`,
+	"abac_policy": `SELECT name FROM auth.abac_policies WHERE id = $1 AND organization_id = $2`,
 }
 
 // labelled is e's metadata with the names of the roles, groups and ABAC
@@ -210,7 +210,7 @@ func labelled(ctx context.Context, tx pgx.Tx, e Event) (map[string]any, error) {
 		meta[k] = v
 	}
 	if _, named := labelQueries[e.ResourceType]; named && meta["target_name"] == nil && e.ResourceID != nil {
-		name, err := label(ctx, tx, e.ResourceType, *e.ResourceID, e.TenantID)
+		name, err := label(ctx, tx, e.ResourceType, *e.ResourceID, e.OrganizationID)
 		if err != nil {
 			return nil, err
 		}
@@ -226,7 +226,7 @@ func labelled(ctx context.Context, tx pgx.Tx, e Event) (map[string]any, error) {
 		if _, named := meta[kind+"_name"]; !ok || named {
 			continue
 		}
-		name, err := label(ctx, tx, kind, id, e.TenantID)
+		name, err := label(ctx, tx, kind, id, e.OrganizationID)
 		if err != nil {
 			return nil, err
 		}
@@ -239,13 +239,13 @@ func labelled(ctx context.Context, tx pgx.Tx, e Event) (map[string]any, error) {
 
 // label is the name of the kind of thing id is, or "" for a kind without one
 // or an id not found.
-func label(ctx context.Context, tx pgx.Tx, kind string, id uuid.UUID, tenantID *uuid.UUID) (string, error) {
+func label(ctx context.Context, tx pgx.Tx, kind string, id uuid.UUID, organizationID *uuid.UUID) (string, error) {
 	q, ok := labelQueries[kind]
 	if !ok {
 		return "", nil
 	}
 	var name string
-	err := tx.QueryRow(ctx, q, id, pgUUIDNullable(tenantID)).Scan(&name)
+	err := tx.QueryRow(ctx, q, id, pgUUIDNullable(organizationID)).Scan(&name)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
@@ -270,8 +270,8 @@ func idOf(v any) (uuid.UUID, bool) {
 }
 
 // Record writes one audit row in tx, as the next link of its chain, with the
-// names of what it is about (see labelled): its tenant's chain, or with no
-// tenant the platform chain of tx's connection. A per-chain advisory lock
+// names of what it is about (see labelled): its organization's chain, or with no
+// organization the platform chain of tx's connection. A per-chain advisory lock
 // serialises concurrent writers until tx ends.
 func Record(ctx context.Context, tx pgx.Tx, e Event) error {
 	if e.ActorType == "" {
@@ -303,20 +303,20 @@ func Record(ctx context.Context, tx pgx.Tx, e Event) error {
 	}
 	e.Metadata = labels
 	var shard int16
-	if e.TenantID == nil {
+	if e.OrganizationID == nil {
 		shard = platformShard(tx)
 	}
 	return appendEvent(ctx, tx, e, shard)
 }
 
-// lockChain takes the advisory lock of a chain, held until tx ends: a
-// tenant's, or with no tenant platform chain shard. Chain 0's key is the one
+// lockChain takes the advisory lock of a chain, held until tx ends: an
+// organization's, or with no organization platform chain shard. Chain 0's key is the one
 // the single platform chain had.
-func lockChain(ctx context.Context, tx pgx.Tx, tenantID *uuid.UUID, shard int16) error {
+func lockChain(ctx context.Context, tx pgx.Tx, organizationID *uuid.UUID, shard int16) error {
 	key := "audit:platform"
 	switch {
-	case tenantID != nil:
-		key = "audit:" + tenantID.String()
+	case organizationID != nil:
+		key = "audit:" + organizationID.String()
 	case shard != 0:
 		key += ":" + strconv.Itoa(int(shard))
 	}
@@ -325,8 +325,8 @@ func lockChain(ctx context.Context, tx pgx.Tx, tenantID *uuid.UUID, shard int16)
 	return err
 }
 
-// appendEvent writes e in tx as the next link of its tenant's chain, or with no
-// tenant of platform chain shard.
+// appendEvent writes e in tx as the next link of its organization's chain, or with no
+// organization of platform chain shard.
 func appendEvent(ctx context.Context, tx pgx.Tx, e Event, shard int16) error {
 	meta, err := json.Marshal(e.Metadata)
 	if err != nil {
@@ -335,7 +335,7 @@ func appendEvent(ctx context.Context, tx pgx.Tx, e Event, shard int16) error {
 	if len(meta) == 0 || string(meta) == "null" {
 		meta = []byte("{}")
 	}
-	if err := lockChain(ctx, tx, e.TenantID, shard); err != nil {
+	if err := lockChain(ctx, tx, e.OrganizationID, shard); err != nil {
 		return err
 	}
 
@@ -343,7 +343,7 @@ func appendEvent(ctx context.Context, tx pgx.Tx, e Event, shard int16) error {
 
 	prevHash := chainSeed
 	createdAt := clock().UTC().Truncate(time.Microsecond)
-	tip, err := q.GetAuditChainTip(ctx, dbgen.GetAuditChainTipParams{TenantID: pgUUIDNullable(e.TenantID), ChainShard: shard})
+	tip, err := q.GetAuditChainTip(ctx, dbgen.GetAuditChainTipParams{OrganizationID: pgUUIDNullable(e.OrganizationID), ChainShard: shard})
 	switch {
 	case err == nil:
 		prevHash = strings.TrimSpace(*tip.RowHash)
@@ -367,21 +367,21 @@ func appendEvent(ctx context.Context, tx pgx.Tx, e Event, shard int16) error {
 	rowHash := hashHex(canonical)
 
 	return q.InsertAuditEvent(ctx, dbgen.InsertAuditEventParams{
-		ID:           id,
-		TenantID:     pgUUIDNullable(e.TenantID),
-		ActorUserID:  pgUUIDNullable(e.ActorUserID),
-		ActorType:    e.ActorType,
-		Action:       e.Action,
-		ResourceType: e.ResourceType,
-		ResourceID:   pgUUIDNullable(e.ResourceID),
-		Ip:           e.IP, // NULLIF($8,'')::inet in the SQL handles empty→NULL
-		UserAgent:    strRef(e.UserAgent),
-		RequestID:    strRef(e.RequestID),
-		Metadata:     meta,
-		CreatedAt:    createdAt,
-		PrevHash:     strRef(prevHash),
-		RowHash:      strRef(rowHash),
-		ChainShard:   shard,
+		ID:             id,
+		OrganizationID: pgUUIDNullable(e.OrganizationID),
+		ActorUserID:    pgUUIDNullable(e.ActorUserID),
+		ActorType:      e.ActorType,
+		Action:         e.Action,
+		ResourceType:   e.ResourceType,
+		ResourceID:     pgUUIDNullable(e.ResourceID),
+		Ip:             e.IP, // NULLIF($8,'')::inet in the SQL handles empty→NULL
+		UserAgent:      strRef(e.UserAgent),
+		RequestID:      strRef(e.RequestID),
+		Metadata:       meta,
+		CreatedAt:      createdAt,
+		PrevHash:       strRef(prevHash),
+		RowHash:        strRef(rowHash),
+		ChainShard:     shard,
 	})
 }
 

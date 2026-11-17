@@ -37,16 +37,16 @@ var errUnsupportedKey = errors.New("a signing key must be EC P-256 (ES256) or RS
 
 // Claims is the payload of a Qeet ID access token.
 type Claims struct {
-	UserID        uuid.UUID      `json:"user_id"`                  // the subject user
-	TenantID      uuid.UUID      `json:"tenant_id"`                // the user's organisation
-	SessionID     uuid.UUID      `json:"sid"`                      // the session the token belongs to
-	Scope         string         `json:"scope,omitempty"`          // granted scopes
-	ActorType     string         `json:"actor_type,omitempty"`     // "service" or "agent"; empty on user tokens
-	AgentID       string         `json:"agent_id,omitempty"`       // set on agent tokens
-	Act           *ActClaim      `json:"act,omitempty"`            // RFC 8693 actor, on delegated tokens only
-	ClientID      string         `json:"client_id,omitempty"`      // RFC 9068 client; the management API refuses such tokens
-	ExchangeDepth int            `json:"exchange_depth,omitempty"` // RFC 8693 exchanges that produced the token
-	Custom        map[string]any `json:"claims,omitempty"`         // Auth Hook claims, nested so they can't shadow registered ones
+	UserID         uuid.UUID      `json:"user_id"`                  // the subject user
+	OrganizationID uuid.UUID      `json:"tenant_id"`                // the user's organization
+	SessionID      uuid.UUID      `json:"sid"`                      // the session the token belongs to
+	Scope          string         `json:"scope,omitempty"`          // granted scopes
+	ActorType      string         `json:"actor_type,omitempty"`     // "service" or "agent"; empty on user tokens
+	AgentID        string         `json:"agent_id,omitempty"`       // set on agent tokens
+	Act            *ActClaim      `json:"act,omitempty"`            // RFC 8693 actor, on delegated tokens only
+	ClientID       string         `json:"client_id,omitempty"`      // RFC 9068 client; the management API refuses such tokens
+	ExchangeDepth  int            `json:"exchange_depth,omitempty"` // RFC 8693 exchanges that produced the token
+	Custom         map[string]any `json:"claims,omitempty"`         // Auth Hook claims, nested so they can't shadow registered ones
 
 	jwt.RegisteredClaims
 }
@@ -300,55 +300,55 @@ func (i *Issuer) replaceKeyring(activePrivatePEM string, verificationKeys []veri
 
 // IssueAccess mints a first-party access token for the platform audience and
 // returns it with its expiry.
-func (i *Issuer) IssueAccess(userID, tenantID, sessionID uuid.UUID, scopes string) (string, time.Time, error) {
-	return i.issueAccess(userID, tenantID, sessionID, scopes, nil, "", nil, "", time.Time{}, 0)
+func (i *Issuer) IssueAccess(userID, organizationID, sessionID uuid.UUID, scopes string) (string, time.Time, error) {
+	return i.issueAccess(userID, organizationID, sessionID, scopes, nil, "", nil, "", time.Time{}, 0)
 }
 
 // IssueAccessActor mints an access token like IssueAccess but with an RFC 8693
 // actor (act) claim, marking it a delegated token: the subject's authority is
 // being exercised by actorSubject (e.g. an AI agent acting for a user).
-func (i *Issuer) IssueAccessActor(userID, tenantID, sessionID uuid.UUID, scopes, actorSubject string) (string, time.Time, error) {
-	return i.issueAccess(userID, tenantID, sessionID, scopes, &ActClaim{Subject: actorSubject}, "", nil, "", time.Time{}, 0)
+func (i *Issuer) IssueAccessActor(userID, organizationID, sessionID uuid.UUID, scopes, actorSubject string) (string, time.Time, error) {
+	return i.issueAccess(userID, organizationID, sessionID, scopes, &ActClaim{Subject: actorSubject}, "", nil, "", time.Time{}, 0)
 }
 
 // IssueAccessResource mints an access token whose audience is the RFC 8707
 // resource alone, so this server's API and every other service refuse it. An
 // empty resource behaves like IssueAccess.
-func (i *Issuer) IssueAccessResource(userID, tenantID, sessionID uuid.UUID, scopes, resource string) (string, time.Time, error) {
-	return i.issueAccess(userID, tenantID, sessionID, scopes, nil, resource, nil, "", time.Time{}, 0)
+func (i *Issuer) IssueAccessResource(userID, organizationID, sessionID uuid.UUID, scopes, resource string) (string, time.Time, error) {
+	return i.issueAccess(userID, organizationID, sessionID, scopes, nil, resource, nil, "", time.Time{}, 0)
 }
 
 // IssueAccessClaims mints an access token like IssueAccess but with additional
-// tenant-supplied custom claims (see Claims.Custom), sourced from a post-login
+// organization-supplied custom claims (see Claims.Custom), sourced from a post-login
 // Auth Hook. A nil/empty map behaves like IssueAccess.
-func (i *Issuer) IssueAccessClaims(userID, tenantID, sessionID uuid.UUID, scopes string, custom map[string]any) (string, time.Time, error) {
-	return i.issueAccess(userID, tenantID, sessionID, scopes, nil, "", custom, "", time.Time{}, 0)
+func (i *Issuer) IssueAccessClaims(userID, organizationID, sessionID uuid.UUID, scopes string, custom map[string]any) (string, time.Time, error) {
+	return i.issueAccess(userID, organizationID, sessionID, scopes, nil, "", custom, "", time.Time{}, 0)
 }
 
 // IssueSessionAccess mints the access token of a first-party session, like
 // IssueAccessClaims, but never past sessionEnd: a token issued shortly before
 // its session's maximum age ends with the session instead of outliving it.
-func (i *Issuer) IssueSessionAccess(userID, tenantID, sessionID uuid.UUID, custom map[string]any, sessionEnd time.Time) (string, time.Time, error) {
-	return i.issueAccess(userID, tenantID, sessionID, "", nil, "", custom, "", sessionEnd, 0)
+func (i *Issuer) IssueSessionAccess(userID, organizationID, sessionID uuid.UUID, custom map[string]any, sessionEnd time.Time) (string, time.Time, error) {
+	return i.issueAccess(userID, organizationID, sessionID, "", nil, "", custom, "", sessionEnd, 0)
 }
 
 // IssueAccessActorResource combines IssueAccessActor and IssueAccessResource: a
 // delegated (RFC 8693 act) token whose audience is one RFC 8707 resource, such
 // as an agent's token for a single MCP server.
-func (i *Issuer) IssueAccessActorResource(userID, tenantID, sessionID uuid.UUID, scopes, actorSubject, resource string) (string, time.Time, error) {
-	return i.issueAccess(userID, tenantID, sessionID, scopes, &ActClaim{Subject: actorSubject}, resource, nil, "", time.Time{}, 0)
+func (i *Issuer) IssueAccessActorResource(userID, organizationID, sessionID uuid.UUID, scopes, actorSubject, resource string) (string, time.Time, error) {
+	return i.issueAccess(userID, organizationID, sessionID, scopes, &ActClaim{Subject: actorSubject}, resource, nil, "", time.Time{}, 0)
 }
 
 // ClientAccess describes an access token issued to an application on a
 // user's behalf (see IssueClientAccess).
 type ClientAccess struct {
-	UserID, TenantID, SessionID uuid.UUID // the token's subject, organisation and session
-	Scopes                      string    // granted scopes
-	ActorSubject                string    // if set, adds an RFC 8693 act claim
-	Resource                    string    // if set, the RFC 8707 resource that is the audience
-	ClientID                    string    // the application the token is issued to
-	NotAfter                    time.Time // if set, the latest expiry; an exchanged token never outlives its source
-	ExchangeDepth               int       // token exchanges that produced this token (0: none)
+	UserID, OrganizationID, SessionID uuid.UUID // the token's subject, organization and session
+	Scopes                            string    // granted scopes
+	ActorSubject                      string    // if set, adds an RFC 8693 act claim
+	Resource                          string    // if set, the RFC 8707 resource that is the audience
+	ClientID                          string    // the application the token is issued to
+	NotAfter                          time.Time // if set, the latest expiry; an exchanged token never outlives its source
+	ExchangeDepth                     int       // token exchanges that produced this token (0: none)
 }
 
 // IssueClientAccess mints the access token an application receives from the
@@ -359,10 +359,10 @@ func (i *Issuer) IssueClientAccess(in ClientAccess) (string, time.Time, error) {
 	if in.ActorSubject != "" {
 		act = &ActClaim{Subject: in.ActorSubject}
 	}
-	return i.issueAccess(in.UserID, in.TenantID, in.SessionID, in.Scopes, act, in.Resource, nil, in.ClientID, in.NotAfter, in.ExchangeDepth)
+	return i.issueAccess(in.UserID, in.OrganizationID, in.SessionID, in.Scopes, act, in.Resource, nil, in.ClientID, in.NotAfter, in.ExchangeDepth)
 }
 
-func (i *Issuer) issueAccess(userID, tenantID, sessionID uuid.UUID, scopes string, act *ActClaim, resource string, custom map[string]any, clientID string, notAfter time.Time, exchangeDepth int) (string, time.Time, error) {
+func (i *Issuer) issueAccess(userID, organizationID, sessionID uuid.UUID, scopes string, act *ActClaim, resource string, custom map[string]any, clientID string, notAfter time.Time, exchangeDepth int) (string, time.Time, error) {
 	now := time.Now().UTC()
 	exp := now.Add(i.accessTTL)
 	if !notAfter.IsZero() && notAfter.Before(exp) {
@@ -376,13 +376,13 @@ func (i *Issuer) issueAccess(userID, tenantID, sessionID uuid.UUID, scopes strin
 		aud = jwt.ClaimStrings{resource}
 	}
 	claims := Claims{
-		UserID:    userID,
-		TenantID:  tenantID,
-		SessionID: sessionID,
-		Scope:     scopes,
-		Act:       act,
-		Custom:    custom,
-		ClientID:  clientID,
+		UserID:         userID,
+		OrganizationID: organizationID,
+		SessionID:      sessionID,
+		Scope:          scopes,
+		Act:            act,
+		Custom:         custom,
+		ClientID:       clientID,
 		// How many exchanges deep the token is, so a chain can be bounded.
 		ExchangeDepth: exchangeDepth,
 		RegisteredClaims: jwt.RegisteredClaims{

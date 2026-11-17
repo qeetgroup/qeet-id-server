@@ -21,7 +21,7 @@ const (
 
 	// Email-change flow: the requested new address already belongs to an account.
 	CodeEmailTaken = "verification.email_taken"
-	// Email-change flow: an organisation holds the address or its domain.
+	// Email-change flow: an organization holds the address or its domain.
 	CodeVerifyEmailManaged = "verification.email_managed"
 )
 
@@ -42,8 +42,8 @@ var (
 
 	ErrEmailNotVerified = New(CodeEmailNotVerified, "Verify your email address before creating an organization.")
 	ErrEmailTaken       = New(CodeEmailTaken, "That email address is already in use by another account.")
-	// ErrVerifyEmailManaged refuses an email change an organisation decides; each
+	// ErrVerifyEmailManaged refuses an email change an organization decides; each
 	// refusal says which (an address its directory or single sign-on provides,
-	// one on its domains, or a new one on another organisation's domain).
+	// one on its domains, or a new one on another organization's domain).
 	ErrVerifyEmailManaged = New(CodeVerifyEmailManaged, "Your organization manages this email address, so it can't be changed here.")
 )

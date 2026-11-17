@@ -4,9 +4,9 @@
 -- NULLIF($2,'')::inet — the inet cast makes sqlc parameter-type inference
 -- ambiguous; correctness takes priority over coverage.
 
--- name: GetUserTenantByEmail :one
-SELECT id, tenant_id FROM account.users
-WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL AND tenant_id IS NOT NULL
+-- name: GetUserOrganizationByEmail :one
+SELECT id, organization_id FROM account.users
+WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL AND organization_id IS NOT NULL
 LIMIT 1;
 
 -- ListBotEvents is intentionally hand-written in bot.go because COALESCE(host(ip),'')
@@ -17,23 +17,23 @@ LIMIT 1;
 SELECT
     COUNT(*) FILTER (WHERE verdict = 'blocked'   AND created_at >= NOW() - INTERVAL '24 hours') AS blocked_24h,
     COUNT(*) FILTER (WHERE verdict = 'challenged' AND created_at >= NOW() - INTERVAL '24 hours') AS challenged_24h
-FROM auth.bot_events WHERE tenant_id = $1;
+FROM auth.bot_events WHERE organization_id = $1;
 
 -- name: GetBotSettings :one
 SELECT ua_check, honeypot, captcha, signature, score_threshold
-FROM auth.bot_settings WHERE tenant_id = $1;
+FROM auth.bot_settings WHERE organization_id = $1;
 
 -- LockBotSettings is GetBotSettings holding the row until the update that
 -- replaces it commits.
 -- name: LockBotSettings :one
 SELECT ua_check, honeypot, captcha, signature, score_threshold
-FROM auth.bot_settings WHERE tenant_id = $1
+FROM auth.bot_settings WHERE organization_id = $1
 FOR UPDATE;
 
 -- name: UpsertBotSettings :exec
-INSERT INTO auth.bot_settings (tenant_id, ua_check, honeypot, captcha, signature, score_threshold, updated_at)
+INSERT INTO auth.bot_settings (organization_id, ua_check, honeypot, captcha, signature, score_threshold, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, NOW())
-ON CONFLICT (tenant_id) DO UPDATE SET
+ON CONFLICT (organization_id) DO UPDATE SET
     ua_check        = EXCLUDED.ua_check,
     honeypot        = EXCLUDED.honeypot,
     captcha         = EXCLUDED.captcha,

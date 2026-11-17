@@ -1,6 +1,6 @@
 -- Queries for the activity domain.
 -- Static queries against audit.events; compiled by sqlc into ./dbgen.
--- All queries are scoped by tenant_id (multi-tenancy).
+-- All queries are scoped by organization_id (multi-tenancy).
 
 -- name: ListActivityHistory :many
 -- Cursor-paginated history, newest first. Optional filters: action type array,
@@ -22,11 +22,11 @@
 -- console can show a human actor name instead of a bare UUID (nullable: system/
 -- service actors have no user row).
 SELECT e.id, e.actor_user_id, e.actor_type, e.action, e.resource_type, e.resource_id,
-       COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.tenant_id,
+       COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.organization_id,
        u.display_name AS actor_display_name, u.email AS actor_email
 FROM audit.events e
-LEFT JOIN account.users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
-WHERE e.tenant_id = @tenant_id
+LEFT JOIN account.users u ON u.id = e.actor_user_id AND u.organization_id = e.organization_id
+WHERE e.organization_id = @organization_id
   AND (sqlc.narg('actions')::text[] IS NULL OR e.action = ANY(sqlc.narg('actions')))
   AND (sqlc.narg('actor_id')::uuid IS NULL OR e.actor_user_id = sqlc.narg('actor_id'))
   AND (sqlc.narg('subject')::uuid IS NULL OR e.actor_user_id = sqlc.narg('subject') OR (e.resource_type = 'user' AND e.resource_id = sqlc.narg('subject')) OR e.metadata->>'user_id' = sqlc.narg('subject')::uuid::text)
@@ -35,7 +35,7 @@ WHERE e.tenant_id = @tenant_id
   AND (sqlc.narg('q')::text IS NULL OR e.search_vector @@ audit.search_query(sqlc.narg('q'))
        OR e.actor_user_id IN (SELECT su.id FROM account.users su
            WHERE (su.email ILIKE sqlc.narg('q_like')::text || '%' OR su.display_name ILIKE '%' || sqlc.narg('q_like')::text || '%')
-             AND (su.tenant_id = @tenant_id OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = @tenant_id))))
+             AND (su.organization_id = @organization_id OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.organization_id = @organization_id))))
   AND (sqlc.narg('resource_types')::text[] IS NULL OR e.resource_type = ANY(sqlc.narg('resource_types')))
   AND (sqlc.narg('resource_id')::uuid IS NULL OR e.resource_id = sqlc.narg('resource_id'))
   AND (sqlc.narg('ip')::inet IS NULL OR e.ip = sqlc.narg('ip'))
@@ -50,10 +50,10 @@ LIMIT @row_limit;
 
 -- name: CountActivityHistory :one
 -- How many events ListActivityHistory's filters match, counted up to
--- count_cap: a count of an organisation's whole history would read all of it.
+-- count_cap: a count of an organization's whole history would read all of it.
 SELECT count(*)::bigint FROM (
     SELECT 1 FROM audit.events e
-    WHERE e.tenant_id = @tenant_id
+    WHERE e.organization_id = @organization_id
       AND (sqlc.narg('actions')::text[] IS NULL OR e.action = ANY(sqlc.narg('actions')))
       AND (sqlc.narg('actor_id')::uuid IS NULL OR e.actor_user_id = sqlc.narg('actor_id'))
       AND (sqlc.narg('subject')::uuid IS NULL OR e.actor_user_id = sqlc.narg('subject') OR (e.resource_type = 'user' AND e.resource_id = sqlc.narg('subject')) OR e.metadata->>'user_id' = sqlc.narg('subject')::uuid::text)
@@ -62,7 +62,7 @@ SELECT count(*)::bigint FROM (
       AND (sqlc.narg('q')::text IS NULL OR e.search_vector @@ audit.search_query(sqlc.narg('q'))
        OR e.actor_user_id IN (SELECT su.id FROM account.users su
            WHERE (su.email ILIKE sqlc.narg('q_like')::text || '%' OR su.display_name ILIKE '%' || sqlc.narg('q_like')::text || '%')
-             AND (su.tenant_id = @tenant_id OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = @tenant_id))))
+             AND (su.organization_id = @organization_id OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.organization_id = @organization_id))))
       AND (sqlc.narg('resource_types')::text[] IS NULL OR e.resource_type = ANY(sqlc.narg('resource_types')))
       AND (sqlc.narg('resource_id')::uuid IS NULL OR e.resource_id = sqlc.narg('resource_id'))
       AND (sqlc.narg('ip')::inet IS NULL OR e.ip = sqlc.narg('ip'))
@@ -80,11 +80,11 @@ SELECT count(*)::bigint FROM (
 -- comparison (created_at, id) > (after_ts, after_id) is expanded — the #1
 -- sqlc gotcha with row-value predicates.
 SELECT e.id, e.actor_user_id, e.actor_type, e.action, e.resource_type, e.resource_id,
-       COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.tenant_id,
+       COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.organization_id,
        u.display_name AS actor_display_name, u.email AS actor_email
 FROM audit.events e
-LEFT JOIN account.users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
-WHERE e.tenant_id = @tenant_id
+LEFT JOIN account.users u ON u.id = e.actor_user_id AND u.organization_id = e.organization_id
+WHERE e.organization_id = @organization_id
   AND (e.created_at > @after_ts OR (e.created_at = @after_ts AND e.id > @after_id))
 ORDER BY e.created_at ASC, e.id ASC
 LIMIT 100;
@@ -96,7 +96,7 @@ LIMIT 100;
 -- so aggregation by severity cannot be a plain GROUP BY on a column.
 SELECT action, count(*)::bigint AS count
 FROM audit.events
-WHERE audit.events.tenant_id = @tenant_id
+WHERE audit.events.organization_id = @organization_id
   AND (sqlc.narg('actions')::text[] IS NULL OR action = ANY(sqlc.narg('actions')))
   AND (sqlc.narg('actor_id')::uuid IS NULL OR actor_user_id = sqlc.narg('actor_id'))
   AND (sqlc.narg('subject')::uuid IS NULL OR actor_user_id = sqlc.narg('subject') OR (resource_type = 'user' AND resource_id = sqlc.narg('subject')) OR metadata->>'user_id' = sqlc.narg('subject')::uuid::text)
@@ -105,7 +105,7 @@ WHERE audit.events.tenant_id = @tenant_id
   AND (sqlc.narg('q')::text IS NULL OR search_vector @@ audit.search_query(sqlc.narg('q'))
        OR actor_user_id IN (SELECT su.id FROM account.users su
            WHERE (su.email ILIKE sqlc.narg('q_like')::text || '%' OR su.display_name ILIKE '%' || sqlc.narg('q_like')::text || '%')
-             AND (su.tenant_id = @tenant_id OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = @tenant_id))))
+             AND (su.organization_id = @organization_id OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.organization_id = @organization_id))))
   AND (sqlc.narg('resource_types')::text[] IS NULL OR resource_type = ANY(sqlc.narg('resource_types')))
   AND (sqlc.narg('resource_id')::uuid IS NULL OR resource_id = sqlc.narg('resource_id'))
   AND (sqlc.narg('ip')::inet IS NULL OR ip = sqlc.narg('ip'))
@@ -127,7 +127,7 @@ SELECT count(*)::bigint AS total,
        count(DISTINCT metadata->>'actor_id') FILTER (WHERE actor_type = 'agent')::bigint AS unique_agents,
        count(DISTINCT metadata->>'actor_id') FILTER (WHERE actor_type = 'service')::bigint AS unique_services
 FROM audit.events
-WHERE audit.events.tenant_id = @tenant_id
+WHERE audit.events.organization_id = @organization_id
   AND (sqlc.narg('actions')::text[] IS NULL OR action = ANY(sqlc.narg('actions')))
   AND (sqlc.narg('actor_id')::uuid IS NULL OR actor_user_id = sqlc.narg('actor_id'))
   AND (sqlc.narg('subject')::uuid IS NULL OR actor_user_id = sqlc.narg('subject') OR (resource_type = 'user' AND resource_id = sqlc.narg('subject')) OR metadata->>'user_id' = sqlc.narg('subject')::uuid::text)
@@ -136,7 +136,7 @@ WHERE audit.events.tenant_id = @tenant_id
   AND (sqlc.narg('q')::text IS NULL OR search_vector @@ audit.search_query(sqlc.narg('q'))
        OR actor_user_id IN (SELECT su.id FROM account.users su
            WHERE (su.email ILIKE sqlc.narg('q_like')::text || '%' OR su.display_name ILIKE '%' || sqlc.narg('q_like')::text || '%')
-             AND (su.tenant_id = @tenant_id OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = @tenant_id))))
+             AND (su.organization_id = @organization_id OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.organization_id = @organization_id))))
   AND (sqlc.narg('resource_types')::text[] IS NULL OR resource_type = ANY(sqlc.narg('resource_types')))
   AND (sqlc.narg('resource_id')::uuid IS NULL OR resource_id = sqlc.narg('resource_id'))
   AND (sqlc.narg('ip')::inet IS NULL OR ip = sqlc.narg('ip'))
@@ -155,7 +155,7 @@ SELECT (to_timestamp(floor(extract(epoch FROM created_at) / @bucket_seconds::big
        action,
        count(*)::bigint AS count
 FROM audit.events
-WHERE audit.events.tenant_id = @tenant_id
+WHERE audit.events.organization_id = @organization_id
   AND (sqlc.narg('actions')::text[] IS NULL OR action = ANY(sqlc.narg('actions')))
   AND (sqlc.narg('actor_id')::uuid IS NULL OR actor_user_id = sqlc.narg('actor_id'))
   AND (sqlc.narg('subject')::uuid IS NULL OR actor_user_id = sqlc.narg('subject') OR (resource_type = 'user' AND resource_id = sqlc.narg('subject')) OR metadata->>'user_id' = sqlc.narg('subject')::uuid::text)
@@ -164,7 +164,7 @@ WHERE audit.events.tenant_id = @tenant_id
   AND (sqlc.narg('q')::text IS NULL OR search_vector @@ audit.search_query(sqlc.narg('q'))
        OR actor_user_id IN (SELECT su.id FROM account.users su
            WHERE (su.email ILIKE sqlc.narg('q_like')::text || '%' OR su.display_name ILIKE '%' || sqlc.narg('q_like')::text || '%')
-             AND (su.tenant_id = @tenant_id OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = @tenant_id))))
+             AND (su.organization_id = @organization_id OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.organization_id = @organization_id))))
   AND (sqlc.narg('resource_types')::text[] IS NULL OR resource_type = ANY(sqlc.narg('resource_types')))
   AND (sqlc.narg('resource_id')::uuid IS NULL OR resource_id = sqlc.narg('resource_id'))
   AND (sqlc.narg('ip')::inet IS NULL OR ip = sqlc.narg('ip'))
@@ -177,25 +177,25 @@ GROUP BY bucket, action
 ORDER BY bucket ASC;
 
 -- name: GetActivityEventByID :one
--- Anchor lookup for related-events correlation, tenant-scoped. Returns
--- pgx.ErrNoRows when the id is unknown OR belongs to another tenant, so a
--- cross-tenant fetch surfaces as 404 (never a leak).
+-- Anchor lookup for related-events correlation, organization-scoped. Returns
+-- pgx.ErrNoRows when the id is unknown OR belongs to another organization, so a
+-- cross-organization fetch surfaces as 404 (never a leak).
 SELECT e.id, e.actor_user_id, e.actor_type, e.action, e.resource_type, e.resource_id,
-       COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.tenant_id,
+       COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.organization_id,
        u.display_name AS actor_display_name, u.email AS actor_email
 FROM audit.events e
-LEFT JOIN account.users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
-WHERE e.tenant_id = @tenant_id AND e.id = @id;
+LEFT JOIN account.users u ON u.id = e.actor_user_id AND u.organization_id = e.organization_id
+WHERE e.organization_id = @organization_id AND e.id = @id;
 
 -- name: ListRelatedByRequestID :many
 -- Other events sharing the anchor's request_id. Caller only runs this when the
 -- anchor's request_id is non-empty.
 SELECT e.id, e.actor_user_id, e.actor_type, e.action, e.resource_type, e.resource_id,
-       COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.tenant_id,
+       COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.organization_id,
        u.display_name AS actor_display_name, u.email AS actor_email
 FROM audit.events e
-LEFT JOIN account.users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
-WHERE e.tenant_id = @tenant_id
+LEFT JOIN account.users u ON u.id = e.actor_user_id AND u.organization_id = e.organization_id
+WHERE e.organization_id = @organization_id
   AND e.request_id = @request_id
   AND e.id <> @exclude_id
 ORDER BY e.created_at ASC, e.id ASC
@@ -205,11 +205,11 @@ LIMIT @row_limit;
 -- Same actor within [@from_ts, @to_ts] (a symmetric window around the anchor),
 -- excluding the anchor. Ordered newest-first for parity with history.
 SELECT e.id, e.actor_user_id, e.actor_type, e.action, e.resource_type, e.resource_id,
-       COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.tenant_id,
+       COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.organization_id,
        u.display_name AS actor_display_name, u.email AS actor_email
 FROM audit.events e
-LEFT JOIN account.users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
-WHERE e.tenant_id = @tenant_id
+LEFT JOIN account.users u ON u.id = e.actor_user_id AND u.organization_id = e.organization_id
+WHERE e.organization_id = @organization_id
   AND e.actor_user_id = @actor_id
   AND e.created_at BETWEEN @from_ts AND @to_ts
   AND e.id <> @exclude_id

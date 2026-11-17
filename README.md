@@ -13,7 +13,7 @@ Passkeys first, standards throughout (OpenID Connect, SAML, SCIM, WebAuthn), Pos
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![OpenAPI](https://img.shields.io/badge/OpenAPI-3.1-6BA539?logo=openapiinitiative&logoColor=white)](./api/openapi/)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)](./Dockerfile)
-[![Tenant isolation](https://img.shields.io/badge/tenant%20isolation-row--level%20security-7C3AED?logo=postgresql&logoColor=white)](./docs/llm/boundaries.md)
+[![Organization isolation](https://img.shields.io/badge/organization%20isolation-row--level%20security-7C3AED?logo=postgresql&logoColor=white)](./docs/llm/boundaries.md)
 
 **[Website](https://id.qeet.in) &middot; [Documentation](https://docs.qeet.in) &middot; [API](./api/openapi/)**
 
@@ -32,8 +32,8 @@ The backend is a Go modular monolith backed by PostgreSQL. Five bounded contexts
 | Area | Implemented capabilities |
 | :--- | :--- |
 | **Authentication** | WebAuthn/passkeys, passwords, email verification, magic links, MFA, session management |
-| **Authorization** | RBAC, ABAC, ReBAC, tenant policies, explainable permission checks, AuthZEN evaluation API |
-| **Identity** | Multi-tenant organizations, users, groups, invitations, imports, branding, email templates, DNS domain verification |
+| **Authorization** | RBAC, ABAC, ReBAC, organization policies, explainable permission checks, AuthZEN evaluation API |
+| **Identity** | Organizations, users, groups, invitations, imports, branding, email templates, DNS domain verification |
 | **Federation** | OAuth 2.0/OpenID Connect, SAML 2.0, SCIM 2.0, LDAP/Active Directory, social login |
 | **Developer & machine identity** | API keys, service principals, agent identities, verifiable credentials, secrets and token vaults, auth hooks, signed webhooks |
 | **Operations** | Tamper-evident audit logs, analytics, GDPR workflows, retention jobs, SIEM sinks, notifications, rate limits, billing and entitlements |
@@ -90,7 +90,7 @@ flowchart TB
 ### Architecture Principles
 
 - **Modular monolith** with explicit boundaries across five domain contexts.
-- **PostgreSQL as the source of truth** with tenant-scoped persistence.
+- **PostgreSQL as the source of truth** with organization-scoped persistence.
 - **Single API artifact** with embedded workers and separate worker/scheduler entrypoints.
 - **Transactional outbox** for durable events, with optional NATS fan-out.
 
@@ -101,7 +101,7 @@ cmd/          api · worker · scheduler · migrate · seed   (five entrypoints)
 internal/
   bootstrap/  composition root — every dependency, route and worker is wired here
   access/     authentication · authorization · mfa · passkeys · recovery · risk · threat
-  identity/   tenant · users · groups · invitations · verification · domainverify
+  identity/   organization · users · groups · invitations · verification · domainverify
   federation/ oidc · saml · scim · ldap · social · adminportal
   developer/  api-keys · principal · agents · webhooks · auth-hooks · credentials
   operations/ audit · billing · analytics · gdpr · retention · siem · notifications · qeetai · …
@@ -152,7 +152,7 @@ make dev      # generates .secrets/, applies migrations, serves http://localhost
 ```bash
 curl localhost:4001/healthz
 curl localhost:4001/readyz
-make seed     # demo tenants, users, API keys, OIDC clients
+make seed     # demo organizations, users, API keys, OIDC clients
 ```
 
 That is the whole setup. Everything else on this page is reference.
@@ -171,11 +171,11 @@ That is the whole setup. Everything else on this page is reference.
   separate migrate step to remember.
 - **`make seed`** loads fictional, production-shaped demo data in about a minute, so every console
   and hosted-login screen has something to show:
-  - Ten organisations: Qeet Group, whose own products (Qeet Pay, Qeet People, Qeet Notify, Qeet Logs,
+  - Ten organizations: Qeet Group, whose own products (Qeet Pay, Qeet People, Qeet Notify, Qeet Logs,
     Qeet AI and the Qeet Circle staff console) are its applications, and customers on every plan
     and stage (Enterprise on Okta or Microsoft Entra with SCIM, a Pro trial, a past-due Starter, a
     cancelled one, a brand-new Free one).
-  - About 300 people with roles, teams and managers, and the organisations' SSO (SAML and OpenID
+  - About 300 people with roles, teams and managers, and the organizations' SSO (SAML and OpenID
     Connect, with group mappings and break-glass members), SCIM, LDAP, social sign-in (Google,
     Microsoft, GitHub, Apple, Discord, Facebook and X), applications, API keys, webhooks, agents,
     policies, access requests and compliance owners and audits.
@@ -183,7 +183,7 @@ That is the whole setup. Everything else on this page is reference.
 
   It needs `SECRETS_KEY` set, so the API can read what it encrypts. **It prints what you need to
   test, so read its output**: test accounts for each role, TOTP secrets, hosted sign-in URLs for each
-  organisation's app, API keys and invitation links. `make seed-reset` empties the database first.
+  organization's app, API keys and invitation links. `make seed-reset` empties the database first.
   The kit's DEV runs the same seed with `bash macos/dev/seed.sh`. To add a feature to it, see
   [docs/llm/workflows.md](docs/llm/workflows.md#add-a-feature-to-the-demo-data).
 
@@ -268,9 +268,9 @@ other Go test suites or sqlc/gosec gates.
 
 Three things reliably surprise newcomers:
 
-1. **Tenant scope comes from the authenticated principal**, via `httpx.RequireTenant(r)` — never
-   from a path, body, query or header. Row-level security backs it up on organisation-owned tables
-   in organisation-administration requests only; elsewhere a missing `WHERE tenant_id = $1` is a cross-tenant data
+1. **Organization scope comes from the authenticated principal**, via `httpx.RequireOrganization(r)` — never
+   from a path, body, query or header. Row-level security backs it up on organization-owned tables
+   in organization-administration requests only; elsewhere a missing `WHERE organization_id = $1` is a cross-organization data
    exposure rather than an error the database catches.
 2. **Migrations are immutable once applied.** Add a new `.up.sql`/`.down.sql` pair; never edit an
    existing one.
@@ -301,9 +301,9 @@ environment.
 - Passwords and MFA recovery codes use Argon2id, with transparent verification and upgrade of legacy bcrypt hashes; random machine secrets (API keys, service-principal, agent and OAuth client secrets) are stored as their SHA-256.
 - Passkeys use `go-webauthn`; access and ID tokens are signed ES256 (an EC P-256 key) or RS256 (an RSA key), with `kid`-based JWKS verification and retired-key support.
 - The secrets vault uses AES-GCM with a static key or AWS KMS-backed data-key provider. Every stored value names the data key that sealed it, so the key can be rotated: previous keys stay readable (`SECRETS_PREVIOUS_KEYS`) while a background job moves stored values to the current one (steps on `SecretsKey` in `internal/platform/config/config.go`).
-- Tenant routes are checked against the authenticated principal and persistence queries carry tenant scope.
-- Audit events are transactionally recorded in per-tenant SHA-256 hash chains; webhooks use HMAC-SHA256 signatures.
-- CSRF/origin checks, security headers, login lockout, and per-IP/principal/tenant rate limits provide request-layer defenses.
+- Organization routes are checked against the authenticated principal and persistence queries carry organization scope.
+- Audit events are transactionally recorded in per-organization SHA-256 hash chains; webhooks use HMAC-SHA256 signatures.
+- CSRF/origin checks, security headers, login lockout, and per-IP/principal/organization rate limits provide request-layer defenses.
 
 Report vulnerabilities privately according to [SECURITY.md](./SECURITY.md). Please do not open a public issue for a suspected vulnerability.
 

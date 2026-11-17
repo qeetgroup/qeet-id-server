@@ -14,19 +14,19 @@ import (
 )
 
 const consumeSocialLoginCode = `-- name: ConsumeSocialLoginCode :one
-SELECT lc.user_id, p.tenant_id, lc.expires_at, lc.used_at, p.enabled
+SELECT lc.user_id, p.organization_id, lc.expires_at, lc.used_at, p.enabled
 FROM auth.login_codes lc
-JOIN tenant.social_providers p ON p.tenant_id = lc.tenant_id AND p.provider = lc.provider
+JOIN organization.social_providers p ON p.organization_id = lc.organization_id AND p.provider = lc.provider
 WHERE lc.code_hash = $1 AND lc.kind = 'social'
 FOR UPDATE OF lc
 `
 
 type ConsumeSocialLoginCodeRow struct {
-	UserID    uuid.UUID
-	TenantID  uuid.UUID
-	ExpiresAt time.Time
-	UsedAt    pgtype.Timestamptz
-	Enabled   bool
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
+	ExpiresAt      time.Time
+	UsedAt         pgtype.Timestamptz
+	Enabled        bool
 }
 
 // With whether the provider that issued the code is on: one since deleted finds no row.
@@ -35,7 +35,7 @@ func (q *Queries) ConsumeSocialLoginCode(ctx context.Context, codeHash string) (
 	var i ConsumeSocialLoginCodeRow
 	err := row.Scan(
 		&i.UserID,
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.ExpiresAt,
 		&i.UsedAt,
 		&i.Enabled,
@@ -45,25 +45,25 @@ func (q *Queries) ConsumeSocialLoginCode(ctx context.Context, codeHash string) (
 
 const consumeSocialOAuthState = `-- name: ConsumeSocialOAuthState :one
 DELETE FROM auth.oauth_states WHERE state_hash = $1 AND kind = 'social'
-RETURNING tenant_id::uuid AS tenant_id, provider::text AS provider, code_verifier, redirect_uri,
+RETURNING organization_id::uuid AS organization_id, provider::text AS provider, code_verifier, redirect_uri,
           COALESCE(return_to, '')::text AS return_to, expires_at, nonce_hash
 `
 
 type ConsumeSocialOAuthStateRow struct {
-	TenantID     uuid.UUID
-	Provider     string
-	CodeVerifier string
-	RedirectUri  string
-	ReturnTo     string
-	ExpiresAt    time.Time
-	NonceHash    *string
+	OrganizationID uuid.UUID
+	Provider       string
+	CodeVerifier   string
+	RedirectUri    string
+	ReturnTo       string
+	ExpiresAt      time.Time
+	NonceHash      *string
 }
 
 func (q *Queries) ConsumeSocialOAuthState(ctx context.Context, stateHash string) (ConsumeSocialOAuthStateRow, error) {
 	row := q.db.QueryRow(ctx, consumeSocialOAuthState, stateHash)
 	var i ConsumeSocialOAuthStateRow
 	err := row.Scan(
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.Provider,
 		&i.CodeVerifier,
 		&i.RedirectUri,
@@ -75,16 +75,16 @@ func (q *Queries) ConsumeSocialOAuthState(ctx context.Context, stateHash string)
 }
 
 const deleteExternalIdentity = `-- name: DeleteExternalIdentity :execrows
-DELETE FROM account.external_identities WHERE id = $1 AND tenant_id = $2
+DELETE FROM account.external_identities WHERE id = $1 AND organization_id = $2
 `
 
 type DeleteExternalIdentityParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) DeleteExternalIdentity(ctx context.Context, arg DeleteExternalIdentityParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteExternalIdentity, arg.ID, arg.TenantID)
+	result, err := q.db.Exec(ctx, deleteExternalIdentity, arg.ID, arg.OrganizationID)
 	if err != nil {
 		return 0, err
 	}
@@ -100,7 +100,7 @@ type DeleteExternalIdentityForUserParams struct {
 	UserID uuid.UUID
 }
 
-// DeleteExternalIdentityForUser unlinks scoped to the owner (not a tenant), so
+// DeleteExternalIdentityForUser unlinks scoped to the owner (not an organization), so
 // a user can remove their own social login before joining any org.
 func (q *Queries) DeleteExternalIdentityForUser(ctx context.Context, arg DeleteExternalIdentityForUserParams) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteExternalIdentityForUser, arg.ID, arg.UserID)
@@ -128,12 +128,12 @@ func (q *Queries) DeletePlatformSocialIdentityForUser(ctx context.Context, arg D
 }
 
 const enabledSocialProviderNames = `-- name: EnabledSocialProviderNames :many
-SELECT provider FROM tenant.social_providers
-WHERE tenant_id = $1 AND enabled ORDER BY provider
+SELECT provider FROM organization.social_providers
+WHERE organization_id = $1 AND enabled ORDER BY provider
 `
 
-func (q *Queries) EnabledSocialProviderNames(ctx context.Context, tenantID uuid.UUID) ([]string, error) {
-	rows, err := q.db.Query(ctx, enabledSocialProviderNames, tenantID)
+func (q *Queries) EnabledSocialProviderNames(ctx context.Context, organizationID uuid.UUID) ([]string, error) {
+	rows, err := q.db.Query(ctx, enabledSocialProviderNames, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -155,14 +155,14 @@ func (q *Queries) EnabledSocialProviderNames(ctx context.Context, tenantID uuid.
 const getExternalIdentityUser = `-- name: GetExternalIdentityUser :one
 
 SELECT user_id FROM account.external_identities
-WHERE tenant_id = $1 AND provider = $2 AND subject = $3
+WHERE organization_id = $1 AND provider = $2 AND subject = $3
   AND connection_id IS NULL
 `
 
 type GetExternalIdentityUserParams struct {
-	TenantID uuid.UUID
-	Provider string
-	Subject  string
+	OrganizationID uuid.UUID
+	Provider       string
+	Subject        string
 }
 
 // ==========================================================================
@@ -171,10 +171,21 @@ type GetExternalIdentityUserParams struct {
 // A social identity names no connection; a single sign-on connection's links,
 // whose provider a social one could be named after, are not looked at.
 func (q *Queries) GetExternalIdentityUser(ctx context.Context, arg GetExternalIdentityUserParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, getExternalIdentityUser, arg.TenantID, arg.Provider, arg.Subject)
+	row := q.db.QueryRow(ctx, getExternalIdentityUser, arg.OrganizationID, arg.Provider, arg.Subject)
 	var user_id uuid.UUID
 	err := row.Scan(&user_id)
 	return user_id, err
+}
+
+const getOrganizationIDBySlug = `-- name: GetOrganizationIDBySlug :one
+SELECT id FROM organization.organizations WHERE slug = $1
+`
+
+func (q *Queries) GetOrganizationIDBySlug(ctx context.Context, slug string) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, getOrganizationIDBySlug, slug)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const getPlatformSocialIdentityOwner = `-- name: GetPlatformSocialIdentityOwner :one
@@ -196,17 +207,6 @@ func (q *Queries) GetPlatformSocialIdentityOwner(ctx context.Context, arg GetPla
 	return user_id, err
 }
 
-const getTenantIDBySlug = `-- name: GetTenantIDBySlug :one
-SELECT id FROM tenant.tenants WHERE slug = $1
-`
-
-func (q *Queries) GetTenantIDBySlug(ctx context.Context, slug string) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, getTenantIDBySlug, slug)
-	var id uuid.UUID
-	err := row.Scan(&id)
-	return id, err
-}
-
 const getUserByEmail = `-- name: GetUserByEmail :one
 SELECT id FROM account.users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL
 `
@@ -219,23 +219,23 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (uuid.UUID, 
 }
 
 const insertSocialLoginCode = `-- name: InsertSocialLoginCode :exec
-INSERT INTO auth.login_codes (code_hash, kind, user_id, tenant_id, provider, expires_at)
+INSERT INTO auth.login_codes (code_hash, kind, user_id, organization_id, provider, expires_at)
 VALUES ($1, 'social', $2, $3::uuid, $4::text, $5)
 `
 
 type InsertSocialLoginCodeParams struct {
-	CodeHash  string
-	UserID    uuid.UUID
-	TenantID  uuid.UUID
-	Provider  string
-	ExpiresAt time.Time
+	CodeHash       string
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
+	Provider       string
+	ExpiresAt      time.Time
 }
 
 func (q *Queries) InsertSocialLoginCode(ctx context.Context, arg InsertSocialLoginCodeParams) error {
 	_, err := q.db.Exec(ctx, insertSocialLoginCode,
 		arg.CodeHash,
 		arg.UserID,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Provider,
 		arg.ExpiresAt,
 	)
@@ -244,26 +244,26 @@ func (q *Queries) InsertSocialLoginCode(ctx context.Context, arg InsertSocialLog
 
 const insertSocialOAuthState = `-- name: InsertSocialOAuthState :exec
 INSERT INTO auth.oauth_states
-    (state_hash, kind, tenant_id, provider, code_verifier, redirect_uri, return_to, expires_at, nonce_hash)
+    (state_hash, kind, organization_id, provider, code_verifier, redirect_uri, return_to, expires_at, nonce_hash)
 VALUES ($1, 'social', $2::uuid, $3::text, $4, $5,
         NULLIF($6::text, ''), $7, $8)
 `
 
 type InsertSocialOAuthStateParams struct {
-	StateHash    string
-	TenantID     uuid.UUID
-	Provider     string
-	CodeVerifier string
-	RedirectUri  string
-	ReturnTo     string
-	ExpiresAt    time.Time
-	NonceHash    *string
+	StateHash      string
+	OrganizationID uuid.UUID
+	Provider       string
+	CodeVerifier   string
+	RedirectUri    string
+	ReturnTo       string
+	ExpiresAt      time.Time
+	NonceHash      *string
 }
 
 func (q *Queries) InsertSocialOAuthState(ctx context.Context, arg InsertSocialOAuthStateParams) error {
 	_, err := q.db.Exec(ctx, insertSocialOAuthState,
 		arg.StateHash,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Provider,
 		arg.CodeVerifier,
 		arg.RedirectUri,
@@ -275,42 +275,42 @@ func (q *Queries) InsertSocialOAuthState(ctx context.Context, arg InsertSocialOA
 }
 
 const insertUserWithEmail = `-- name: InsertUserWithEmail :one
-INSERT INTO account.users (tenant_id, email, email_verified_at, display_name, status)
+INSERT INTO account.users (organization_id, email, email_verified_at, display_name, status)
 VALUES ($1, $2, NOW(), $3, 'active')
 RETURNING id
 `
 
 type InsertUserWithEmailParams struct {
-	TenantID    pgtype.UUID
-	Email       string
-	DisplayName *string
+	OrganizationID pgtype.UUID
+	Email          string
+	DisplayName    *string
 }
 
 func (q *Queries) InsertUserWithEmail(ctx context.Context, arg InsertUserWithEmailParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, insertUserWithEmail, arg.TenantID, arg.Email, arg.DisplayName)
+	row := q.db.QueryRow(ctx, insertUserWithEmail, arg.OrganizationID, arg.Email, arg.DisplayName)
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
 }
 
 const linkExternalIdentity = `-- name: LinkExternalIdentity :exec
-INSERT INTO account.external_identities (user_id, tenant_id, provider, subject, email)
+INSERT INTO account.external_identities (user_id, organization_id, provider, subject, email)
 VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (tenant_id, provider, connection_id, subject) DO NOTHING
+ON CONFLICT (organization_id, provider, connection_id, subject) DO NOTHING
 `
 
 type LinkExternalIdentityParams struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
-	Provider string
-	Subject  string
-	Email    *string
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
+	Provider       string
+	Subject        string
+	Email          *string
 }
 
 func (q *Queries) LinkExternalIdentity(ctx context.Context, arg LinkExternalIdentityParams) error {
 	_, err := q.db.Exec(ctx, linkExternalIdentity,
 		arg.UserID,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Provider,
 		arg.Subject,
 		arg.Email,
@@ -319,30 +319,30 @@ func (q *Queries) LinkExternalIdentity(ctx context.Context, arg LinkExternalIden
 }
 
 const listExternalIdentities = `-- name: ListExternalIdentities :many
-SELECT ei.id, ei.user_id, ei.tenant_id, ei.provider, ei.subject, ei.email, ei.linked_at
+SELECT ei.id, ei.user_id, ei.organization_id, ei.provider, ei.subject, ei.email, ei.linked_at
 FROM account.external_identities ei
 JOIN account.users u ON u.id = ei.user_id
-WHERE ei.user_id = $1 AND ei.tenant_id = $2 AND u.deleted_at IS NULL
+WHERE ei.user_id = $1 AND ei.organization_id = $2 AND u.deleted_at IS NULL
 ORDER BY ei.linked_at DESC
 `
 
 type ListExternalIdentitiesParams struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 type ListExternalIdentitiesRow struct {
-	ID       uuid.UUID
-	UserID   uuid.UUID
-	TenantID uuid.UUID
-	Provider string
-	Subject  string
-	Email    *string
-	LinkedAt time.Time
+	ID             uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
+	Provider       string
+	Subject        string
+	Email          *string
+	LinkedAt       time.Time
 }
 
 func (q *Queries) ListExternalIdentities(ctx context.Context, arg ListExternalIdentitiesParams) ([]ListExternalIdentitiesRow, error) {
-	rows, err := q.db.Query(ctx, listExternalIdentities, arg.UserID, arg.TenantID)
+	rows, err := q.db.Query(ctx, listExternalIdentities, arg.UserID, arg.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -353,7 +353,7 @@ func (q *Queries) ListExternalIdentities(ctx context.Context, arg ListExternalId
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.Provider,
 			&i.Subject,
 			&i.Email,
@@ -370,7 +370,7 @@ func (q *Queries) ListExternalIdentities(ctx context.Context, arg ListExternalId
 }
 
 const listExternalIdentitiesForUser = `-- name: ListExternalIdentitiesForUser :many
-SELECT ei.id, ei.user_id, ei.tenant_id, ei.provider, ei.subject, ei.email, ei.linked_at
+SELECT ei.id, ei.user_id, ei.organization_id, ei.provider, ei.subject, ei.email, ei.linked_at
 FROM account.external_identities ei
 JOIN account.users u ON u.id = ei.user_id
 WHERE ei.user_id = $1 AND u.deleted_at IS NULL
@@ -378,17 +378,17 @@ ORDER BY ei.linked_at DESC
 `
 
 type ListExternalIdentitiesForUserRow struct {
-	ID       uuid.UUID
-	UserID   uuid.UUID
-	TenantID uuid.UUID
-	Provider string
-	Subject  string
-	Email    *string
-	LinkedAt time.Time
+	ID             uuid.UUID
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
+	Provider       string
+	Subject        string
+	Email          *string
+	LinkedAt       time.Time
 }
 
 // ListExternalIdentitiesForUser is the self-service variant: scoped to the
-// caller's own user id across every tenant, so an org-less user can still see
+// caller's own user id across every organization, so an org-less user can still see
 // the social logins linked to their account.
 func (q *Queries) ListExternalIdentitiesForUser(ctx context.Context, userID uuid.UUID) ([]ListExternalIdentitiesForUserRow, error) {
 	rows, err := q.db.Query(ctx, listExternalIdentitiesForUser, userID)
@@ -402,7 +402,7 @@ func (q *Queries) ListExternalIdentitiesForUser(ctx context.Context, userID uuid
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.Provider,
 			&i.Subject,
 			&i.Email,
@@ -454,28 +454,28 @@ func (q *Queries) ListPlatformSocialIdentitiesForUser(ctx context.Context, userI
 
 const listSocialProviders = `-- name: ListSocialProviders :many
 
-SELECT id, tenant_id, provider, client_id, discovery_url, enabled, created_at, apple_team_id, apple_key_id
-FROM tenant.social_providers WHERE tenant_id = $1 ORDER BY provider
+SELECT id, organization_id, provider, client_id, discovery_url, enabled, created_at, apple_team_id, apple_key_id
+FROM organization.social_providers WHERE organization_id = $1 ORDER BY provider
 LIMIT 1001
 `
 
 type ListSocialProvidersRow struct {
-	ID           uuid.UUID
-	TenantID     uuid.UUID
-	Provider     string
-	ClientID     string
-	DiscoveryUrl *string
-	Enabled      bool
-	CreatedAt    time.Time
-	AppleTeamID  *string
-	AppleKeyID   *string
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	Provider       string
+	ClientID       string
+	DiscoveryUrl   *string
+	Enabled        bool
+	CreatedAt      time.Time
+	AppleTeamID    *string
+	AppleKeyID     *string
 }
 
 // Queries for the social domain.
 // All queries are STATIC and compiled by sqlc into ./dbgen.
 // At most paging.MaxListItems+1 rows: the API truncates the rest.
-func (q *Queries) ListSocialProviders(ctx context.Context, tenantID uuid.UUID) ([]ListSocialProvidersRow, error) {
-	rows, err := q.db.Query(ctx, listSocialProviders, tenantID)
+func (q *Queries) ListSocialProviders(ctx context.Context, organizationID uuid.UUID) ([]ListSocialProvidersRow, error) {
+	rows, err := q.db.Query(ctx, listSocialProviders, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -485,7 +485,7 @@ func (q *Queries) ListSocialProviders(ctx context.Context, tenantID uuid.UUID) (
 		var i ListSocialProvidersRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.TenantID,
+			&i.OrganizationID,
 			&i.Provider,
 			&i.ClientID,
 			&i.DiscoveryUrl,
@@ -505,16 +505,16 @@ func (q *Queries) ListSocialProviders(ctx context.Context, tenantID uuid.UUID) (
 }
 
 const markSocialLoginCodeUsed = `-- name: MarkSocialLoginCodeUsed :exec
-UPDATE auth.login_codes SET used_at = NOW() WHERE code_hash = $1 AND tenant_id = $2::uuid
+UPDATE auth.login_codes SET used_at = NOW() WHERE code_hash = $1 AND organization_id = $2::uuid
 `
 
 type MarkSocialLoginCodeUsedParams struct {
-	CodeHash string
-	TenantID uuid.UUID
+	CodeHash       string
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) MarkSocialLoginCodeUsed(ctx context.Context, arg MarkSocialLoginCodeUsedParams) error {
-	_, err := q.db.Exec(ctx, markSocialLoginCodeUsed, arg.CodeHash, arg.TenantID)
+	_, err := q.db.Exec(ctx, markSocialLoginCodeUsed, arg.CodeHash, arg.OrganizationID)
 	return err
 }
 
@@ -532,7 +532,7 @@ type UpsertPlatformSocialIdentityParams struct {
 	Email    *string
 }
 
-// ---- Platform (tenant-less) connected social accounts ----
+// ---- Platform (organization-less) connected social accounts ----
 // UpsertPlatformSocialIdentity records the identity for a console account. On
 // conflict the identity already belongs to a user (ownership never changes here
 // — the link path checks ownership first); we just refresh the email.

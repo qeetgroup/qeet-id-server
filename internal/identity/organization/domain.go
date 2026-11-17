@@ -1,7 +1,7 @@
-// Package tenant manages organisations (tenants): creating one with its owner,
-// listing the organisations a user belongs to, and updating, suspending or
+// Package organization manages organizations: creating one with its owner,
+// listing the organizations a user belongs to, and updating, suspending or
 // deleting one.
-package tenant
+package organization
 
 import (
 	"time"
@@ -9,8 +9,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// Tenant is an organisation.
-type Tenant struct {
+// Organization is an organization as the API returns it.
+type Organization struct {
 	ID        uuid.UUID      `json:"id"`
 	Slug      string         `json:"slug"`
 	Name      string         `json:"name"`
@@ -23,7 +23,7 @@ type Tenant struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 	// DeletionDueAt is when a scheduled deletion takes effect; nil: none.
 	DeletionDueAt *time.Time `json:"deletion_due_at"`
-	// List-only enrichment (populated by List; nil on single-tenant fetches):
+	// List-only enrichment (populated by List; nil on single-organization fetches):
 	// per-org member counts for the Organizations admin table.
 	MemberCount     *int64 `json:"member_count,omitempty"`
 	MFAEnabledCount *int64 `json:"mfa_enabled_count,omitempty"`
@@ -41,9 +41,9 @@ type CreateInput struct {
 	Metadata map[string]any `json:"metadata"`
 }
 
-// UpdateInput is a partial tenant update. It has no Plan: the plan changes only
+// UpdateInput is a partial organization update. It has no Plan: the plan changes only
 // through billing (billing.Service.ChangePlan), so an admin can't move their
-// tenant onto a paid tier for free.
+// organization onto a paid tier for free.
 type UpdateInput struct {
 	Name     *string        `json:"name,omitempty" validate:"omitempty,min=1,max=200"`
 	Status   *string        `json:"status,omitempty" validate:"omitempty,oneof=active suspended"`

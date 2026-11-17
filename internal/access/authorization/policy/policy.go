@@ -1,4 +1,4 @@
-// Package policy stores per-tenant security policy. Which addresses may sign
+// Package policy stores per-organization security policy. Which addresses may sign
 // in is not part of it: that is the address rules (internal/access/risk/ipallow).
 package policy
 
@@ -22,11 +22,11 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// Policy is a tenant's security policy. Session and step-up settings left
+// Policy is an organization's security policy. Session and step-up settings left
 // zero on update take the defaults; session settings apply to sessions opened
 // after they are set.
 type Policy struct {
-	TenantID uuid.UUID `json:"tenant_id"`
+	OrganizationID uuid.UUID `json:"tenant_id"`
 
 	// Deprecated: accepted and ignored, and never returned. Password rules are
 	// the auth policy's (PUT /v1/tenants/{tenantID}/auth-policy).
@@ -100,7 +100,7 @@ var (
 	stepUpMethods       = map[string]bool{"totp": true, "recovery_code": true, "otp": true, "webauthn": true, "push": true}
 )
 
-// The bounds of a step-up window, and the window of an organisation that sets
+// The bounds of a step-up window, and the window of an organization that sets
 // none (the column default).
 const (
 	stepUpWindowMin     = time.Minute
@@ -109,7 +109,7 @@ const (
 )
 
 // Repository stores security policies. sessionMaxAge and sessionIdle are the
-// session bounds of an organisation that sets none (SESSION_MAX_AGE and
+// session bounds of an organization that sets none (SESSION_MAX_AGE and
 // SESSION_IDLE_TIMEOUT, via SetSessionDefaults).
 type Repository struct {
 	pool          *pgxpool.Pool
@@ -122,7 +122,7 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool, sessionMaxAge: 30 * 24 * time.Hour, sessionIdle: 24 * time.Hour}
 }
 
-// SetSessionDefaults sets the session bounds reported for an organisation that
+// SetSessionDefaults sets the session bounds reported for an organization that
 // has not set its own, and stored for one that saves its policy without them.
 func (r *Repository) SetSessionDefaults(maxAge, idle time.Duration) {
 	r.sessionMaxAge, r.sessionIdle = maxAge, idle
@@ -187,9 +187,9 @@ func (r *Repository) normalize(p *Policy) []errs.FieldError {
 // Pool returns the connection pool, for handlers that run their own transaction.
 func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
-// Get returns the tenant's security policy, or the defaults when it has none.
-func (r *Repository) Get(ctx context.Context, tenantID uuid.UUID) (*Policy, error) {
-	return r.get(ctx, r.pool, tenantID)
+// Get returns the organization's security policy, or the defaults when it has none.
+func (r *Repository) Get(ctx context.Context, organizationID uuid.UUID) (*Policy, error) {
+	return r.get(ctx, r.pool, organizationID)
 }
 
 // rowQuerier is a pool or a transaction.
@@ -197,31 +197,31 @@ type rowQuerier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
-// lockForChange takes, on tx, the tenant's policy lock, so a change based on
+// lockForChange takes, on tx, the organization's policy lock, so a change based on
 // the stored policy can't lose one made meanwhile.
-func lockForChange(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) error {
-	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('security_policy:' || $1::text, 0))`, tenantID)
+func lockForChange(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID) error {
+	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('security_policy:' || $1::text, 0))`, organizationID)
 	return err
 }
 
-func (r *Repository) get(ctx context.Context, q rowQuerier, tenantID uuid.UUID) (*Policy, error) {
+func (r *Repository) get(ctx context.Context, q rowQuerier, organizationID uuid.UUID) (*Policy, error) {
 	var p Policy
 	var settings []byte
 	var sessionAge, sessionIdle, stepUpWindow int64
 	err := q.QueryRow(ctx, `
-		SELECT tenant_id,
+		SELECT organization_id,
 		       EXTRACT(EPOCH FROM session_max_age)::bigint,
 		       EXTRACT(EPOCH FROM session_idle_timeout)::bigint,
 		       max_sessions, session_limit_action,
 		       mfa_enforcement, mfa_grace_days, mfa_enforced_since,
 		       EXTRACT(EPOCH FROM step_up_window)::bigint, step_up_methods, settings
-		FROM tenant.security_policies WHERE tenant_id = $1
-	`, tenantID).Scan(&p.TenantID,
+		FROM organization.security_policies WHERE organization_id = $1
+	`, organizationID).Scan(&p.OrganizationID,
 		&sessionAge, &sessionIdle, &p.MaxSessions, &p.SessionLimitAction, &p.MFAEnforcement,
 		&p.MFAGraceDays, &p.MFAEnforcedSince, &stepUpWindow, &p.StepUpMethods, &settings)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return &Policy{
-			TenantID:           tenantID,
+			OrganizationID:     organizationID,
 			SessionMaxAge:      Duration(r.sessionMaxAge),
 			SessionIdleTimeout: Duration(r.sessionIdle),
 			SessionLimitAction: "evict_oldest",
@@ -252,8 +252,8 @@ func (r *Repository) Upsert(ctx context.Context, tx pgx.Tx, p Policy) (*time.Tim
 	}
 	var enforcedSince *time.Time
 	err := tx.QueryRow(ctx, `
-		INSERT INTO tenant.security_policies (
-			tenant_id,
+		INSERT INTO organization.security_policies (
+			organization_id,
 			session_max_age, session_idle_timeout, mfa_enforcement, settings,
 			max_sessions, session_limit_action, mfa_grace_days, mfa_enforced_since,
 			step_up_window, step_up_methods
@@ -262,7 +262,7 @@ func (r *Repository) Upsert(ctx context.Context, tx pgx.Tx, p Policy) (*time.Tim
 		         COALESCE(NULLIF($5::jsonb,'null'::jsonb), '{}'::jsonb), $6, COALESCE(NULLIF($7, ''), 'evict_oldest'),
 		         $8, CASE WHEN $4 = 'optional' THEN NULL ELSE NOW() END,
 		         make_interval(secs => $9::bigint), $10::text[])
-		ON CONFLICT (tenant_id) DO UPDATE SET
+		ON CONFLICT (organization_id) DO UPDATE SET
 			session_max_age = EXCLUDED.session_max_age,
 			session_idle_timeout = EXCLUDED.session_idle_timeout,
 			max_sessions = EXCLUDED.max_sessions,
@@ -279,7 +279,7 @@ func (r *Repository) Upsert(ctx context.Context, tx pgx.Tx, p Policy) (*time.Tim
 			settings = EXCLUDED.settings,
 			updated_at = NOW()
 		RETURNING mfa_enforced_since
-	`, p.TenantID, int64(time.Duration(p.SessionMaxAge).Seconds()),
+	`, p.OrganizationID, int64(time.Duration(p.SessionMaxAge).Seconds()),
 		int64(time.Duration(p.SessionIdleTimeout).Seconds()), p.MFAEnforcement, settings,
 		p.MaxSessions, p.SessionLimitAction, p.MFAGraceDays,
 		int64(stepUpWindow.Seconds()), p.StepUpMethods).Scan(&enforcedSince)
@@ -391,7 +391,7 @@ func (h *Handler) patch(w http.ResponseWriter, r *http.Request) {
 	h.save(w, r, tx, tid, body)
 }
 
-// save validates body, stores it as the tenant's policy on tx, audits it,
+// save validates body, stores it as the organization's policy on tx, audits it,
 // commits and answers with it.
 func (h *Handler) save(w http.ResponseWriter, r *http.Request, tx pgx.Tx, tid uuid.UUID, body policyUpdate) {
 	ctx := r.Context()
@@ -400,7 +400,7 @@ func (h *Handler) save(w http.ResponseWriter, r *http.Request, tx pgx.Tx, tid uu
 		return
 	}
 	in := body.Policy
-	in.TenantID = tid
+	in.OrganizationID = tid
 	if bad := h.Repo.normalize(&in); len(bad) > 0 {
 		httpx.WriteError(w, r, errs.ErrValidationFailed.WithFields(bad))
 		return
@@ -413,15 +413,15 @@ func (h *Handler) save(w http.ResponseWriter, r *http.Request, tx pgx.Tx, tid uu
 	actorID, actorType := audit.ActorOf(r).Identity()
 	target := tid
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     &target,
-		ActorUserID:  actorID,
-		ActorType:    actorType,
-		Action:       "security_policy.updated",
-		ResourceType: "tenant",
-		ResourceID:   &target,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
+		OrganizationID: &target,
+		ActorUserID:    actorID,
+		ActorType:      actorType,
+		Action:         "security_policy.updated",
+		ResourceType:   "tenant",
+		ResourceID:     &target,
+		IP:             httpx.ClientIP(r),
+		UserAgent:      r.UserAgent(),
+		RequestID:      httpx.RequestID(r),
 		Metadata: map[string]any{
 			"mfa_enforcement":      in.MFAEnforcement,
 			"mfa_grace_days":       in.MFAGraceDays,

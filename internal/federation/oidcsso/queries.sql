@@ -1,4 +1,4 @@
--- Queries for the oidcsso domain: an organisation's own OpenID Connect
+-- Queries for the oidcsso domain: an organization's own OpenID Connect
 -- identity providers, their sign-in states and one-time login codes, and the
 -- identities they link. All queries are STATIC.
 
@@ -7,42 +7,42 @@
 -- ==========================================================================
 
 -- name: InsertOidcConnection :one
-INSERT INTO tenant.oidc_connections
-    (id, tenant_id, name, issuer, discovery_url, client_id, client_secret_ct, client_secret_nonce,
+INSERT INTO organization.oidc_connections
+    (id, organization_id, name, issuer, discovery_url, client_id, client_secret_ct, client_secret_nonce,
      scopes, allowed_idp_tenant_ids, email_claim, name_claim, given_name_claim, family_name_claim,
      groups_claim, status)
-VALUES (@id, @tenant_id, @name, @issuer, @discovery_url, @client_id, @client_secret_ct, @client_secret_nonce,
+VALUES (@id, @organization_id, @name, @issuer, @discovery_url, @client_id, @client_secret_ct, @client_secret_nonce,
         @scopes, @allowed_idp_tenant_ids, @email_claim, @name_claim, @given_name_claim, @family_name_claim,
         @groups_claim, @status)
-RETURNING id, tenant_id, name, issuer, discovery_url, client_id, scopes, allowed_idp_tenant_ids,
+RETURNING id, organization_id, name, issuer, discovery_url, client_id, scopes, allowed_idp_tenant_ids,
           email_claim, name_claim, given_name_claim, family_name_claim, groups_claim, status,
           created_at, updated_at, last_login_at;
 
 -- name: ListOidcConnections :many
 -- At most paging.MaxListItems+1 rows: the API truncates the rest.
-SELECT id, tenant_id, name, issuer, discovery_url, client_id, scopes, allowed_idp_tenant_ids,
+SELECT id, organization_id, name, issuer, discovery_url, client_id, scopes, allowed_idp_tenant_ids,
        email_claim, name_claim, given_name_claim, family_name_claim, groups_claim, status,
        created_at, updated_at, last_login_at
-FROM tenant.oidc_connections WHERE tenant_id = @tenant_id ORDER BY created_at DESC
+FROM organization.oidc_connections WHERE organization_id = @organization_id ORDER BY created_at DESC
 LIMIT 1001;
 
 -- name: GetOidcConnection :one
-SELECT id, tenant_id, name, issuer, discovery_url, client_id, scopes, allowed_idp_tenant_ids,
+SELECT id, organization_id, name, issuer, discovery_url, client_id, scopes, allowed_idp_tenant_ids,
        email_claim, name_claim, given_name_claim, family_name_claim, groups_claim, status,
        created_at, updated_at, last_login_at
-FROM tenant.oidc_connections WHERE id = @id AND tenant_id = @tenant_id;
+FROM organization.oidc_connections WHERE id = @id AND organization_id = @organization_id;
 
 -- GetOidcConnectionForSignIn loads a connection and its sealed secret by ID
 -- alone: the public sign-in endpoints name it in the path, and it names the
--- organisation.
+-- organization.
 -- name: GetOidcConnectionForSignIn :one
-SELECT id, tenant_id, name, issuer, discovery_url, client_id, scopes, allowed_idp_tenant_ids,
+SELECT id, organization_id, name, issuer, discovery_url, client_id, scopes, allowed_idp_tenant_ids,
        email_claim, name_claim, given_name_claim, family_name_claim, groups_claim, status,
        created_at, updated_at, last_login_at, client_secret_ct, client_secret_nonce
-FROM tenant.oidc_connections WHERE id = @id;
+FROM organization.oidc_connections WHERE id = @id;
 
 -- name: UpdateOidcConnection :one
-UPDATE tenant.oidc_connections SET
+UPDATE organization.oidc_connections SET
     name                   = COALESCE(sqlc.narg('name'), name),
     issuer                 = COALESCE(sqlc.narg('issuer'), issuer),
     discovery_url          = COALESCE(sqlc.narg('discovery_url'), discovery_url),
@@ -58,16 +58,16 @@ UPDATE tenant.oidc_connections SET
     groups_claim           = COALESCE(sqlc.narg('groups_claim'), groups_claim),
     status                 = COALESCE(sqlc.narg('status'), status),
     updated_at             = NOW()
-WHERE id = @id AND tenant_id = @tenant_id
-RETURNING id, tenant_id, name, issuer, discovery_url, client_id, scopes, allowed_idp_tenant_ids,
+WHERE id = @id AND organization_id = @organization_id
+RETURNING id, organization_id, name, issuer, discovery_url, client_id, scopes, allowed_idp_tenant_ids,
           email_claim, name_claim, given_name_claim, family_name_claim, groups_claim, status,
           created_at, updated_at, last_login_at;
 
 -- name: DeleteOidcConnection :execrows
-DELETE FROM tenant.oidc_connections WHERE id = @id AND tenant_id = @tenant_id;
+DELETE FROM organization.oidc_connections WHERE id = @id AND organization_id = @organization_id;
 
 -- name: TouchOidcConnectionLastLogin :exec
-UPDATE tenant.oidc_connections SET last_login_at = NOW() WHERE id = @id AND tenant_id = @tenant_id;
+UPDATE organization.oidc_connections SET last_login_at = NOW() WHERE id = @id AND organization_id = @organization_id;
 
 -- ==========================================================================
 -- Sign-in states and login codes (signin.go)
@@ -75,8 +75,8 @@ UPDATE tenant.oidc_connections SET last_login_at = NOW() WHERE id = @id AND tena
 
 -- name: InsertOidcConnectionState :exec
 INSERT INTO auth.oauth_states
-    (state_hash, kind, tenant_id, connection_id, code_verifier, nonce_hash, redirect_uri, expires_at, return_to)
-VALUES (@state_hash, 'oidc_connection', @tenant_id::uuid, @connection_id::uuid, @code_verifier, @nonce_hash::text,
+    (state_hash, kind, organization_id, connection_id, code_verifier, nonce_hash, redirect_uri, expires_at, return_to)
+VALUES (@state_hash, 'oidc_connection', @organization_id::uuid, @connection_id::uuid, @code_verifier, @nonce_hash::text,
         @redirect_uri, @expires_at, sqlc.narg(return_to));
 
 -- ConsumeOidcConnectionState spends a state the connection issued as it reads
@@ -84,22 +84,22 @@ VALUES (@state_hash, 'oidc_connection', @tenant_id::uuid, @connection_id::uuid, 
 -- name: ConsumeOidcConnectionState :one
 DELETE FROM auth.oauth_states
 WHERE state_hash = @state_hash AND kind = 'oidc_connection'
-  AND tenant_id = @tenant_id::uuid AND connection_id = @connection_id::uuid
+  AND organization_id = @organization_id::uuid AND connection_id = @connection_id::uuid
 RETURNING code_verifier, nonce_hash::text AS nonce_hash, redirect_uri, expires_at, return_to;
 
 -- name: InsertOidcConnectionLoginCode :exec
-INSERT INTO auth.login_codes (code_hash, kind, user_id, tenant_id, connection_id, expires_at)
-VALUES (@code_hash, 'oidc_connection', @user_id, @tenant_id::uuid, @connection_id::uuid, @expires_at);
+INSERT INTO auth.login_codes (code_hash, kind, user_id, organization_id, connection_id, expires_at)
+VALUES (@code_hash, 'oidc_connection', @user_id, @organization_id::uuid, @connection_id::uuid, @expires_at);
 
 -- name: ConsumeOidcConnectionLoginCode :one
-SELECT lc.user_id, lc.expires_at, lc.used_at, c.tenant_id, c.status
+SELECT lc.user_id, lc.expires_at, lc.used_at, c.organization_id, c.status
 FROM auth.login_codes lc
-JOIN tenant.oidc_connections c ON c.tenant_id = lc.tenant_id AND c.id = lc.connection_id
+JOIN organization.oidc_connections c ON c.organization_id = lc.organization_id AND c.id = lc.connection_id
 WHERE lc.code_hash = @code_hash AND lc.kind = 'oidc_connection'
 FOR UPDATE OF lc;
 
 -- name: MarkOidcConnectionLoginCodeUsed :exec
-UPDATE auth.login_codes SET used_at = NOW() WHERE code_hash = @code_hash AND tenant_id = @tenant_id::uuid;
+UPDATE auth.login_codes SET used_at = NOW() WHERE code_hash = @code_hash AND organization_id = @organization_id::uuid;
 
 -- ==========================================================================
 -- findOrCreateUser — the same rules as saml and ldap
@@ -107,21 +107,21 @@ UPDATE auth.login_codes SET used_at = NOW() WHERE code_hash = @code_hash AND ten
 
 -- name: GetExternalIdentityUser :one
 SELECT user_id FROM account.external_identities
-WHERE tenant_id = @tenant_id AND provider = @provider AND connection_id = @connection_id::uuid
+WHERE organization_id = @organization_id AND provider = @provider AND connection_id = @connection_id::uuid
   AND subject = @subject;
 
 -- name: GetUserByEmail :one
 SELECT id FROM account.users WHERE LOWER(email) = LOWER(@email) AND deleted_at IS NULL;
 
 -- name: InsertUserWithEmail :one
-INSERT INTO account.users (tenant_id, email, email_verified_at, display_name, status)
-VALUES (@tenant_id, @email, NOW(), sqlc.narg('display_name'), 'active')
+INSERT INTO account.users (organization_id, email, email_verified_at, display_name, status)
+VALUES (@organization_id, @email, NOW(), sqlc.narg('display_name'), 'active')
 RETURNING id;
 
 -- LinkExternalIdentity links the subject to the connection, or refreshes the
 -- profile an existing link holds.
 -- name: LinkExternalIdentity :exec
-INSERT INTO account.external_identities (user_id, tenant_id, provider, connection_id, subject, email, metadata)
-VALUES (@user_id, @tenant_id, @provider, @connection_id::uuid, @subject, @email, @metadata)
-ON CONFLICT (tenant_id, provider, connection_id, subject)
+INSERT INTO account.external_identities (user_id, organization_id, provider, connection_id, subject, email, metadata)
+VALUES (@user_id, @organization_id, @provider, @connection_id::uuid, @subject, @email, @metadata)
+ON CONFLICT (organization_id, provider, connection_id, subject)
 DO UPDATE SET email = EXCLUDED.email, metadata = EXCLUDED.metadata;

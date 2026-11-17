@@ -52,7 +52,7 @@ func (p *upstreamIdP) der(t *testing.T) string {
 // dueForRefresh makes connID's metadata look last fetched long ago.
 func dueForRefresh(t *testing.T, connID uuid.UUID) {
 	t.Helper()
-	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `UPDATE tenant.saml_connections SET metadata_checked_at = NOW() - INTERVAL '7 hours' WHERE id = $1`, connID); err != nil {
+	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `UPDATE organization.saml_connections SET metadata_checked_at = NOW() - INTERVAL '7 hours' WHERE id = $1`, connID); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -62,17 +62,17 @@ func dueForRefresh(t *testing.T, connID uuid.UUID) {
 // adds the IdP's next certificate and drops the one the metadata no longer
 // lists, keeping one an administrator added; that metadata that can't be
 // fetched or names another IdP changes nothing and says why; and that another
-// organisation can neither import into nor apply metadata to this one's.
+// organization can neither import into nor apply metadata to this one's.
 func TestSAMLMetadataImportAndRefresh(t *testing.T) {
 	ctx := dbtest.Context(t)
 	sp := newSPSide(t)
 	sp.handler.Service.SetEgressPolicy(egress.DevelopmentPolicy())
 	idp, next, manual := newUpstreamIdP(t), newUpstreamIdP(t), newUpstreamIdP(t)
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	member := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, tenant), tenant, tenant)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	member := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, organization), organization, organization)
 	verify(t, member.ID)
-	admin, outsider := sp.asAdmin(t, tenant), sp.asAdmin(t, other)
-	base := "/tenants/" + tenant.String() + "/saml"
+	admin, outsider := sp.asAdmin(t, organization), sp.asAdmin(t, other)
+	base := "/tenants/" + organization.String() + "/saml"
 	metadata := newMetadataServer(t)
 	metadata.serve(http.StatusOK, idpEntity(idp.entityID, upstreamSSO, map[string][]string{"signing": {idp.der(t)}}))
 
@@ -127,7 +127,7 @@ func TestSAMLMetadataImportAndRefresh(t *testing.T) {
 	if rec := sp.post(t, conn.ID, idp.respond(t, conn.ID, a)); !strings.Contains(rec.Body.String(), errs.CodeSAMLAssertionInvalid) {
 		t.Errorf("an assertion signed with the retired certificate: %d %s, want %s", rec.Code, rec.Body.String(), errs.CodeSAMLAssertionInvalid)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND resource_id = $2 AND action = 'saml.metadata_refreshed' AND actor_type = 'system'`, tenant, conn.ID); n != 2 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND resource_id = $2 AND action = 'saml.metadata_refreshed' AND actor_type = 'system'`, organization, conn.ID); n != 2 {
 		t.Errorf("%d refreshes recorded, want the addition and the removal", n)
 	}
 
@@ -183,7 +183,7 @@ func TestSAMLMetadataImportNeedsSSOInThePlan(t *testing.T) {
 	sp := newSPSide(t)
 	sp.handler.Service.SetEgressPolicy(egress.DevelopmentPolicy())
 	idp := newUpstreamIdP(t)
-	paid, free := dbtest.Tenant(t), dbtest.Tenant(t)
+	paid, free := dbtest.Organization(t), dbtest.Organization(t)
 	sp.handler.Service.SetPlanGate(poolGate{pool: dbtest.Pool(t), allowed: map[uuid.UUID]bool{paid: true}})
 	metadata := newMetadataServer(t)
 	metadata.serve(http.StatusOK, idpEntity(idp.entityID, upstreamSSO, map[string][]string{"signing": {idp.der(t)}}))
@@ -193,7 +193,7 @@ func TestSAMLMetadataImportNeedsSSOInThePlan(t *testing.T) {
 	if rec.Code != http.StatusPaymentRequired || !strings.Contains(rec.Body.String(), errs.CodeUpgradeRequired) {
 		t.Errorf("import on a plan without SSO: %d %s, want 402 %s", rec.Code, rec.Body.String(), errs.CodeUpgradeRequired)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.saml_connections WHERE tenant_id = $1`, free); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM organization.saml_connections WHERE organization_id = $1`, free); n != 0 {
 		t.Errorf("%d connections imported on a plan without SSO, want none", n)
 	}
 	rec = dbtest.Do(t, sp.asAdmin(t, paid), http.MethodPost, "/tenants/"+paid.String()+"/saml/import", body)

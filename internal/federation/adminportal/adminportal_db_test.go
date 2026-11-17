@@ -33,7 +33,7 @@ import (
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
 
-// branded is an organisation's login branding with only a primary colour.
+// branded is an organization's login branding with only a primary colour.
 type branded struct{}
 
 func (branded) LoginBranding(context.Context, uuid.UUID) (string, string, string, string) {
@@ -74,24 +74,24 @@ func portal(t *testing.T, h http.Handler, method, path, bearer, session string, 
 }
 
 // TestPortalLinkConfiguresOnlyWhatItGrants checks that an administrator's link
-// is redeemed once for a short session, which manages the organisation's SAML
+// is redeemed once for a short session, which manages the organization's SAML
 // connections and SCIM token as far as the link allows and no further, and
 // that revoking the link or signing out ends it at once.
 func TestPortalLinkConfiguresOnlyWhatItGrants(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
 	users := user.NewRepository(pool)
 	h := &Handler{
 		Service: NewService(pool, branded{}, "https://login.example.test"),
 		SAML:    saml.NewService(pool, auth.NewService(pool, users, dbtest.Issuer(t)), "https://id.example.test"),
 		SCIM:    scim.NewService(pool, users),
 	}
-	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), h.Mount)
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)
 	public := chi.NewRouter()
 	public.Route("/v1", h.MountPublic)
-	links := "/tenants/" + tenant.String() + "/admin-portal/links"
+	links := "/tenants/" + organization.String() + "/admin-portal/links"
 
 	generate := func(capabilities ...string) (uuid.UUID, string) {
 		t.Helper()
@@ -138,7 +138,7 @@ func TestPortalLinkConfiguresOnlyWhatItGrants(t *testing.T) {
 	}
 	var pc PortalContext
 	dbtest.Decode(t, portal(t, public, http.MethodGet, "/admin-portal/context", "", session, nil), &pc)
-	if len(pc.Capabilities) != 1 || pc.Capabilities[0] != "saml" || pc.TenantName == "" || pc.Branding == nil || pc.Branding.PrimaryColor != "#123456" {
+	if len(pc.Capabilities) != 1 || pc.Capabilities[0] != "saml" || pc.OrganizationName == "" || pc.Branding == nil || pc.Branding.PrimaryColor != "#123456" {
 		t.Errorf("portal context %+v; want the organisation, its branding and SAML only", pc)
 	}
 
@@ -198,7 +198,7 @@ func TestPortalLinkConfiguresOnlyWhatItGrants(t *testing.T) {
 		t.Errorf("delete the connection: %d", rec.Code)
 	}
 	var actions []string
-	rows, err := pool.Query(ctx, `SELECT action FROM audit.events WHERE tenant_id = $1 AND actor_type = 'admin_portal' ORDER BY created_at`, tenant)
+	rows, err := pool.Query(ctx, `SELECT action FROM audit.events WHERE organization_id = $1 AND actor_type = 'admin_portal' ORDER BY created_at`, organization)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestPortalLinkConfiguresOnlyWhatItGrants(t *testing.T) {
 		}
 	}
 	_, token = generate("scim")
-	if _, err := pool.Exec(ctx, `UPDATE tenant.admin_portal_links SET expires_at = now() - interval '1 minute' WHERE token_hash = (SELECT token_hash FROM tenant.admin_portal_links WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT 1)`, tenant); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE organization.admin_portal_links SET expires_at = now() - interval '1 minute' WHERE token_hash = (SELECT token_hash FROM organization.admin_portal_links WHERE organization_id = $1 ORDER BY created_at DESC LIMIT 1)`, organization); err != nil {
 		t.Fatal(err)
 	}
 	if rec := portal(t, public, http.MethodPost, "/admin-portal/session", token, "", nil); !strings.Contains(rec.Body.String(), errs.CodeAdminPortalLinkExpired) {
@@ -277,13 +277,13 @@ func (r txtRecords) LookupTXT(context.Context, string) ([]string, error) { retur
 
 // TestPortalFinishesAnSSOSetup checks that the portal gives the IT admin the
 // addresses their IdP needs, begins and reads a test sign-in, and claims and
-// verifies domains, as far as the link allows and only for its organisation:
-// a domain another organisation verified stays theirs.
+// verifies domains, as far as the link allows and only for its organization:
+// a domain another organization verified stays theirs.
 func TestPortalFinishesAnSSOSetup(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
 	users := user.NewRepository(pool)
 	samlService := saml.NewService(pool, auth.NewService(pool, users, dbtest.Issuer(t)), "https://id.example.test")
 	domains := domainverify.NewService(pool)
@@ -296,7 +296,7 @@ func TestPortalFinishesAnSSOSetup(t *testing.T) {
 		Domains:       domains,
 		PublicBaseURL: api,
 	}
-	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), h.Mount)
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)
 	public := chi.NewRouter()
 	public.Route("/v1", h.MountPublic)
 	session := func(capabilities ...string) string {
@@ -304,7 +304,7 @@ func TestPortalFinishesAnSSOSetup(t *testing.T) {
 		var out struct {
 			Token string `json:"token"`
 		}
-		dbtest.Decode(t, dbtest.Do(t, asAdmin, http.MethodPost, "/tenants/"+tenant.String()+"/admin-portal/links", map[string]any{"capabilities": capabilities}), &out)
+		dbtest.Decode(t, dbtest.Do(t, asAdmin, http.MethodPost, "/tenants/"+organization.String()+"/admin-portal/links", map[string]any{"capabilities": capabilities}), &out)
 		for _, c := range portal(t, public, http.MethodPost, "/admin-portal/session", out.Token, "", nil).Result().Cookies() {
 			if c.Name == portalSessionCookie {
 				return c.Value
@@ -323,7 +323,7 @@ func TestPortalFinishesAnSSOSetup(t *testing.T) {
 	}
 	pc = PortalContext{}
 	dbtest.Decode(t, portal(t, public, http.MethodGet, "/admin-portal/context", "", samlOnly, nil), &pc)
-	if pc.SCIMBaseURL != "" || pc.TenantName == "" {
+	if pc.SCIMBaseURL != "" || pc.OrganizationName == "" {
 		t.Errorf("a SAML-only link's context %+v; want no SCIM base URL", pc)
 	}
 
@@ -385,7 +385,7 @@ func TestPortalFinishesAnSSOSetup(t *testing.T) {
 		t.Errorf("a test sign-in through a SCIM-only link: %d %s", rec.Code, rec.Body.String())
 	}
 
-	// Another organisation's connection and its tests are out of reach.
+	// Another organization's connection and its tests are out of reach.
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -417,7 +417,7 @@ func TestPortalFinishesAnSSOSetup(t *testing.T) {
 		}
 	}
 
-	// Domains: only with the capability, and only the organisation's own.
+	// Domains: only with the capability, and only the organization's own.
 	if rec := portal(t, public, http.MethodGet, "/admin-portal/domains", "", samlOnly, nil); !strings.Contains(rec.Body.String(), errs.CodeAdminPortalCapabilityNotGranted) {
 		t.Errorf("domains through a SAML-only link: %d %s", rec.Code, rec.Body.String())
 	}
@@ -473,15 +473,15 @@ func TestPortalFinishesAnSSOSetup(t *testing.T) {
 	if len(mine.Items) != 2 {
 		t.Errorf("listed %d domains, want the organisation's two", len(mine.Items))
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.domains WHERE id = $1 AND verified_at IS NULL`, elsewhere.ID); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM organization.domains WHERE id = $1 AND verified_at IS NULL`, elsewhere.ID); n != 1 {
 		t.Error("the portal verified another organisation's domain")
 	}
 
 	for action, want := range map[string]int{"saml.test_sign_in_started": 1, "domain.created": 2, "domain.verified": 1} {
 		if n := dbtest.Count(t, `
 			SELECT count(*) FROM audit.events
-			WHERE tenant_id = $1 AND action = $2 AND actor_type = 'admin_portal' AND actor_user_id = $3
-		`, tenant, action, admin.ID); n != want {
+			WHERE organization_id = $1 AND action = $2 AND actor_type = 'admin_portal' AND actor_user_id = $3
+		`, organization, action, admin.ID); n != want {
 			t.Errorf("%d %s events recorded as the portal, want %d", n, action, want)
 		}
 	}
@@ -493,19 +493,19 @@ type noSSO struct{}
 func (noSSO) FeatureAllowed(context.Context, uuid.UUID, string) (bool, error) { return false, nil }
 
 // TestPortalSAMLNeedsSSOInThePlan checks that the portal sets up no SAML
-// connection for an organisation whose plan doesn't include SSO.
+// connection for an organization whose plan doesn't include SSO.
 func TestPortalSAMLNeedsSSOInThePlan(t *testing.T) {
 	pool := dbtest.Pool(t)
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
 	samlService := saml.NewService(pool, auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t)), "https://id.example.test")
 	samlService.SetPlanGate(noSSO{})
 	h := &Handler{Service: NewService(pool, branded{}, "https://login.example.test"), SAML: samlService}
 	public := chi.NewRouter()
 	public.Route("/v1", h.MountPublic)
 
-	rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(admin.ID, tenant), h.Mount), http.MethodPost,
-		"/tenants/"+tenant.String()+"/admin-portal/links", map[string]any{"capabilities": []string{"saml"}})
+	rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount), http.MethodPost,
+		"/tenants/"+organization.String()+"/admin-portal/links", map[string]any{"capabilities": []string{"saml"}})
 	var out struct {
 		Token string `json:"token"`
 	}
@@ -528,7 +528,7 @@ func TestPortalSAMLNeedsSSOInThePlan(t *testing.T) {
 	if rec.Code != http.StatusPaymentRequired || !strings.Contains(rec.Body.String(), errs.CodeUpgradeRequired) {
 		t.Errorf("SAML connection on a plan without SSO: %d %s, want 402 %s", rec.Code, rec.Body.String(), errs.CodeUpgradeRequired)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.saml_connections WHERE tenant_id = $1`, tenant); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM organization.saml_connections WHERE organization_id = $1`, organization); n != 0 {
 		t.Errorf("%d connections created, want none", n)
 	}
 }
@@ -540,8 +540,8 @@ func TestPortalSAMLNeedsSSOInThePlan(t *testing.T) {
 // through.
 func TestPortalCantChangeTrustOnceAnAdministratorIsLinked(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
 	users := user.NewRepository(pool)
 	h := &Handler{
 		Service: NewService(pool, branded{}, "https://login.example.test"),
@@ -549,7 +549,7 @@ func TestPortalCantChangeTrustOnceAnAdministratorIsLinked(t *testing.T) {
 	}
 	public := chi.NewRouter()
 	public.Route("/v1", h.MountPublic)
-	rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(admin.ID, tenant), h.Mount), http.MethodPost, "/tenants/"+tenant.String()+"/admin-portal/links",
+	rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount), http.MethodPost, "/tenants/"+organization.String()+"/admin-portal/links",
 		map[string]any{"capabilities": []string{"saml"}, "ttl_seconds": 900})
 	var link struct {
 		Token string `json:"token"`
@@ -576,13 +576,13 @@ func TestPortalCantChangeTrustOnceAnAdministratorIsLinked(t *testing.T) {
 	}
 
 	var ownerRole uuid.UUID
-	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, tenant).Scan(&ownerRole); err != nil {
+	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (organization_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, organization).Scan(&ownerRole); err != nil {
 		t.Fatal(err)
 	}
-	owner := dbtest.User(t, tenant, tenant)
-	dbtest.Assign(t, owner.ID, tenant, ownerRole)
-	if _, err := pool.Exec(ctx, `INSERT INTO account.external_identities (user_id, tenant_id, provider, connection_id, subject) VALUES ($1, $2, 'saml', $3, 'okta|owner')`,
-		owner.ID, tenant, conn.ID); err != nil {
+	owner := dbtest.User(t, organization, organization)
+	dbtest.Assign(t, owner.ID, organization, ownerRole)
+	if _, err := pool.Exec(ctx, `INSERT INTO account.external_identities (user_id, organization_id, provider, connection_id, subject) VALUES ($1, $2, 'saml', $3, 'okta|owner')`,
+		owner.ID, organization, conn.ID); err != nil {
 		t.Fatal(err)
 	}
 	if rec := portal(t, public, http.MethodPatch, path, "", session, map[string]string{"idp_certificate": idpCertificate(t)}); rec.Code != http.StatusForbidden ||

@@ -24,9 +24,9 @@ import (
 // and never show a failure's cause.
 func TestBulkImportRowErrorsCarryCodes(t *testing.T) {
 	pool := dbtest.Pool(t)
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	existing := dbtest.User(t, tenant, tenant)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	existing := dbtest.User(t, organization, organization)
 	const policyCause = "dial tcp 10.0.0.5:5432: connection refused"
 	h := &Handler{
 		Repo:     NewRepository(pool),
@@ -41,7 +41,7 @@ func TestBulkImportRowErrorsCarryCodes(t *testing.T) {
 			return nil
 		},
 	}
-	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), h.Mount)
+	as := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)
 	created := dbtest.Unique("bulk") + "@example.test"
 	noSymbol := dbtest.Unique("nosymbol") + "@example.test"
 	policyDown := dbtest.Unique("down") + "@example.test"
@@ -78,7 +78,7 @@ func TestBulkImportRowErrorsCarryCodes(t *testing.T) {
 			t.Errorf("errors[%d] = %+v, want %+v", i, res.Errors[i], w)
 		}
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE tenant_id = $1 AND email = $2`, tenant, created); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE organization_id = $1 AND email = $2`, organization, created); n != 1 {
 		t.Errorf("the valid row created %d users, want 1", n)
 	}
 
@@ -143,29 +143,29 @@ type fakeRoles struct{ refuse error }
 
 func (f fakeRoles) CheckGrant(*http.Request, uuid.UUID, uuid.UUID) (int, error) { return -1, f.refuse }
 
-func (fakeRoles) Assign(ctx context.Context, tx pgx.Tx, userID, tenantID, roleID uuid.UUID, grantedBy *uuid.UUID, _ int) error {
-	_, err := tx.Exec(ctx, `INSERT INTO rbac.user_roles (user_id, tenant_id, role_id, granted_by) VALUES ($1, $2, $3, $4)`, userID, tenantID, roleID, grantedBy)
+func (fakeRoles) Assign(ctx context.Context, tx pgx.Tx, userID, organizationID, roleID uuid.UUID, grantedBy *uuid.UUID, _ int) error {
+	_, err := tx.Exec(ctx, `INSERT INTO rbac.user_roles (user_id, organization_id, role_id, granted_by) VALUES ($1, $2, $3, $4)`, userID, organizationID, roleID, grantedBy)
 	return err
 }
 
 // TestBulkImportGivesARoleAndReturnsIDs checks that a bulk import gives the
 // role it names to every user it makes, with them in one transaction, returns
 // their ids, and is refused whole when the role can't be given or isn't the
-// organisation's.
+// organization's.
 func TestBulkImportGivesARoleAndReturnsIDs(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
 	var role, foreign uuid.UUID
-	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name) VALUES ($1, 'Member') RETURNING id`, tenant).Scan(&role); err != nil {
+	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (organization_id, name) VALUES ($1, 'Member') RETURNING id`, organization).Scan(&role); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name) VALUES ($1, 'Elsewhere') RETURNING id`, other).Scan(&foreign); err != nil {
+	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (organization_id, name) VALUES ($1, 'Elsewhere') RETURNING id`, other).Scan(&foreign); err != nil {
 		t.Fatal(err)
 	}
 	serve := func(roles RoleGranter) http.Handler {
-		return dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Repo: NewRepository(pool), Validate: jsonNamedValidator(), Roles: roles}).Mount)
+		return dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Repo: NewRepository(pool), Validate: jsonNamedValidator(), Roles: roles}).Mount)
 	}
 	rows := func(n int) []map[string]any {
 		out := []map[string]any{}
@@ -182,22 +182,22 @@ func TestBulkImportGivesARoleAndReturnsIDs(t *testing.T) {
 		t.Fatalf("import with a role: %d %+v; want both created with their ids", rec.Code, res)
 	}
 	for _, u := range res.Created {
-		if n := dbtest.Count(t, `SELECT count(*) FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2 AND role_id = $3`, u.ID, tenant, role); n != 1 {
+		if n := dbtest.Count(t, `SELECT count(*) FROM rbac.user_roles WHERE user_id = $1 AND organization_id = $2 AND role_id = $3`, u.ID, organization, role); n != 1 {
 			t.Errorf("%s has %d grants of the role, want 1", u.Email, n)
 		}
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'role.assigned' AND metadata->>'source' = 'bulk_import'`, tenant); n != 2 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'role.assigned' AND metadata->>'source' = 'bulk_import'`, organization); n != 2 {
 		t.Errorf("%d role grants audited, want 2", n)
 	}
 
-	before := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE tenant_id = $1`, tenant)
+	before := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE organization_id = $1`, organization)
 	if rec := dbtest.Do(t, serve(fakeRoles{refuse: errs.ErrRBACGrantExceedsCaller}), http.MethodPost, "/users/bulk", map[string]any{"users": rows(1), "role_id": role}); rec.Code != http.StatusForbidden {
 		t.Errorf("a role the caller can't give: %d, want 403", rec.Code)
 	}
 	if rec := dbtest.Do(t, serve(fakeRoles{}), http.MethodPost, "/users/bulk", map[string]any{"users": rows(1), "role_id": foreign}); rec.Code != http.StatusNotFound {
 		t.Errorf("another organisation's role: %d, want 404", rec.Code)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE tenant_id = $1`, tenant); n != before {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE organization_id = $1`, organization); n != before {
 		t.Errorf("refused imports made %d users", n-before)
 	}
 	dbtest.Decode(t, dbtest.Do(t, serve(nil), http.MethodPost, "/users/bulk", map[string]any{"users": rows(1)}), &res)

@@ -34,7 +34,7 @@ var (
 		"connection.read", "connection.write", "policy.read", "policy.write"}
 )
 
-// keys are each organisation's API keys. Free plans stay within their two.
+// keys are each organization's API keys. Free plans stay within their two.
 var keys = map[string][]keySpec{
 	"qeet": {
 		{name: "Terraform — qeet-infra (prod)", scopes: manageInfra, by: []who{both(team("Site Reliability"), builders), both(dept("Engineering"), builders)}, created: 320, used: 0.13},
@@ -89,7 +89,7 @@ var keys = map[string][]keySpec{
 	},
 }
 
-// apiKeys creates the organisation's API keys through the API key service,
+// apiKeys creates the organization's API keys through the API key service,
 // then stamps how each has been used, and revokes the ones that were.
 func (d *dev) apiKeys(o *world.Org) {
 	w := d.w
@@ -98,7 +98,7 @@ func (d *dev) apiKeys(o *world.Org) {
 		at := d.when(o, days)
 		by := d.issuer(o, at, k.scopes, k.by...)
 		at = d.when(o, days, by)
-		in := apikey.CreateInput{TenantID: o.ID, Name: k.name, Scopes: k.scopes, Actor: d.as(by)}
+		in := apikey.CreateInput{OrganizationID: o.ID, Name: k.name, Scopes: k.scopes, Actor: d.as(by)}
 		if k.personal {
 			in.UserID = &by.ID
 		}
@@ -118,7 +118,7 @@ func (d *dev) apiKeys(o *world.Org) {
 			if used.Before(at) {
 				used = at.Add(time.Hour)
 			}
-			w.Exec("API key last used", `UPDATE auth.api_keys SET last_used_at = $3 WHERE id = $1 AND tenant_id = $2`, key.ID, o.ID, used)
+			w.Exec("API key last used", `UPDATE auth.api_keys SET last_used_at = $3 WHERE id = $1 AND organization_id = $2`, key.ID, o.ID, used)
 		}
 		if k.revoked > 0 {
 			rt := d.when(o, k.revoked, by)
@@ -136,7 +136,7 @@ func (d *dev) apiKeys(o *world.Org) {
 	d.offboardedKey(o)
 }
 
-// offboardedKey gives an organisation's developer who left a personal key
+// offboardedKey gives an organization's developer who left a personal key
 // made while they were there, revoked by an administrator the day they went.
 func (d *dev) offboardedKey(o *world.Org) {
 	w := d.w
@@ -152,11 +152,11 @@ func (d *dev) offboardedKey(o *world.Org) {
 	var key *apikey.Key
 	w.At(created, func() {
 		var err error
-		key, _, err = w.Deps.APIKey.Service.Create(w.Ctx, apikey.CreateInput{TenantID: o.ID, UserID: &p.ID,
+		key, _, err = w.Deps.APIKey.Service.Create(w.Ctx, apikey.CreateInput{OrganizationID: o.ID, UserID: &p.ID,
 			Name: p.First + " " + p.Last + " — Postman workspace", Scopes: readDirectory, Actor: d.as(p)})
 		w.Check(err, "leaver's API key")
 	})
-	w.Exec("API key last used", `UPDATE auth.api_keys SET last_used_at = $3 WHERE id = $1 AND tenant_id = $2`,
+	w.Exec("API key last used", `UPDATE auth.api_keys SET last_used_at = $3 WHERE id = $1 AND organization_id = $2`,
 		key.ID, o.ID, p.Since.Add(-26*time.Hour))
 	by := person(o, p.Since, role(world.RoleAdmin), role(world.RoleOwner))
 	w.At(p.Since.Add(40*time.Minute), func() {
@@ -182,7 +182,7 @@ type principalSpec struct {
 	print             bool
 }
 
-// principals are each organisation's service principals.
+// principals are each organization's service principals.
 var principals = map[string][]principalSpec{
 	"qeet": {
 		{name: "qeet-pay-reconciler (v1)", description: "Nightly settlement reconciler — replaced by qeet-pay-api", scopes: []string{"user.read"}, by: []who{email("diego@qeet.in")}, created: 300, disabled: 34},
@@ -213,7 +213,7 @@ var principals = map[string][]principalSpec{
 	},
 }
 
-// principals creates the organisation's service principals, audited as the
+// principals creates the organization's service principals, audited as the
 // console does, and disables the retired ones.
 func (d *dev) principals(o *world.Org) {
 	w := d.w
@@ -228,7 +228,7 @@ func (d *dev) principals(o *world.Org) {
 			w.Tx("service principal "+s.name, func(tx pgx.Tx) error {
 				var err error
 				p, secret, err = w.Deps.Principal.Service.Create(w.Ctx, tx, principal.CreateInput{
-					TenantID: o.ID, Name: s.name, Description: s.description, Scopes: s.scopes})
+					OrganizationID: o.ID, Name: s.name, Description: s.description, Scopes: s.scopes})
 				if err != nil {
 					return err
 				}

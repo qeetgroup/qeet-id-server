@@ -23,9 +23,9 @@ type otpFactor struct {
 func (h *history) emit(s *session) {
 	w := h.w
 	p, o, t := s.p, s.org, s.created
-	tenant := ptr(o.ID)
+	organization := ptr(o.ID)
 	if s.first == "tenant_switch" {
-		h.audit(t, audit.Event{TenantID: tenant, ActorUserID: ptr(p.ID), ActorType: "user", Action: "auth.login_succeeded",
+		h.audit(t, audit.Event{OrganizationID: organization, ActorUserID: ptr(p.ID), ActorType: "user", Action: "auth.login_succeeded",
 			ResourceType: "session", ResourceID: ptr(s.id), IP: s.dev.IP, UserAgent: s.dev.UserAgent,
 			Metadata: map[string]any{"method": "tenant_switch", "previous_session_id": s.previous.id, "second_factor": s.factor}})
 		return
@@ -45,18 +45,18 @@ func (h *history) emit(s *session) {
 			app = "hosted_login"
 		}
 		asked := proved.Add(-jitter(w, 0.5, 3))
-		h.audit(asked, audit.Event{TenantID: ptr(p.Org.ID), ActorType: "anonymous", Action: "auth.magic_link_requested",
+		h.audit(asked, audit.Event{OrganizationID: ptr(p.Org.ID), ActorType: "anonymous", Action: "auth.magic_link_requested",
 			ResourceType: "user", ResourceID: ptr(p.ID), IP: s.dev.IP, UserAgent: s.dev.UserAgent, Metadata: map[string]any{"app": app}})
-		h.mail(tenant, p.Email, "magic_link", asked.Add(time.Second))
-		h.audit(proved, audit.Event{TenantID: tenant, ActorUserID: ptr(p.ID), ActorType: "system", Action: "auth.magic_link_consumed",
+		h.mail(organization, p.Email, "magic_link", asked.Add(time.Second))
+		h.audit(proved, audit.Event{OrganizationID: organization, ActorUserID: ptr(p.ID), ActorType: "system", Action: "auth.magic_link_consumed",
 			ResourceType: "user", ResourceID: ptr(p.ID), IP: s.dev.IP, UserAgent: s.dev.UserAgent, Metadata: map[string]any{"app": app}})
 	}
 	if c := h.challenge(o, p, s); c != nil {
-		h.audit(proved.Add(time.Second), audit.Event{TenantID: tenant, ActorUserID: ptr(p.ID), ActorType: "user",
+		h.audit(proved.Add(time.Second), audit.Event{OrganizationID: organization, ActorUserID: ptr(p.ID), ActorType: "user",
 			Action: "auth.mfa_challenged", ResourceType: "user", ResourceID: ptr(p.ID), IP: s.dev.IP, UserAgent: s.dev.UserAgent,
 			Metadata: c})
 		if f, ok := h.otp[p.ID]; ok && strings.HasSuffix(s.method, "_mfa") && !p.HasFactor("totp") {
-			h.audit(proved.Add(2*time.Second), audit.Event{TenantID: tenant, ActorUserID: ptr(p.ID), ActorType: "user",
+			h.audit(proved.Add(2*time.Second), audit.Event{OrganizationID: organization, ActorUserID: ptr(p.ID), ActorType: "user",
 				Action: "mfa.otp_sent", ResourceType: "mfa_factor", ResourceID: ptr(f.id),
 				Metadata: map[string]any{"channel": f.channel, "destination": maskDestination(f.channel, f.destination), "purpose": "sign_in"}})
 			if f.channel == "email" {
@@ -67,10 +67,10 @@ func (h *history) emit(s *session) {
 			h.failure(o, p, s.dev, t.Add(-jitter(w, 0.1, 0.3)), "mfa", "code_invalid")
 		}
 	}
-	h.audit(t, audit.Event{TenantID: tenant, ActorUserID: ptr(p.ID), ActorType: "user", Action: "auth.login_succeeded",
+	h.audit(t, audit.Event{OrganizationID: organization, ActorUserID: ptr(p.ID), ActorType: "user", Action: "auth.login_succeeded",
 		ResourceType: "session", ResourceID: ptr(s.id), IP: s.dev.IP, UserAgent: s.dev.UserAgent,
 		Metadata: map[string]any{"method": s.method}})
-	h.contexts = append(h.contexts, signInContext{tenant: o.ID, user: p.ID, deviceKey: deviceKey(s.dev.UserAgent), country: s.dev.Country, seen: t})
+	h.contexts = append(h.contexts, signInContext{organization: o.ID, user: p.ID, deviceKey: deviceKey(s.dev.UserAgent), country: s.dev.Country, seen: t})
 }
 
 // challenge is the metadata of the second-factor challenge a sign-in met, or

@@ -10,8 +10,8 @@ import (
 	"github.com/google/uuid"
 )
 
-type TenantAuthPolicy struct {
-	TenantID                 uuid.UUID
+type OrganizationAuthPolicy struct {
+	OrganizationID           uuid.UUID
 	PasswordEnabled          bool
 	PasswordMinLength        int32
 	PasswordRequireUppercase bool

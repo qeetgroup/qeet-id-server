@@ -5,12 +5,12 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/organization"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 )
 
-// OrgSpec describes a seeded organisation: who it is and how it uses Qeet ID.
-// Every step reads it, so the organisations stay consistent across screens.
+// OrgSpec describes a seeded organization: who it is and how it uses Qeet ID.
+// Every step reads it, so the organizations stay consistent across screens.
 type OrgSpec struct {
 	Slug, Name string
 	Domain     string // email domain; never resolves, so nothing seeded reaches a real host
@@ -25,28 +25,28 @@ type OrgSpec struct {
 	// canceled (a lapsed paid plan, now free).
 	Billing  string
 	Annual   bool
-	Since    time.Time // when the organisation signed up
-	Size     int       // people whose home is the organisation, owner included
+	Since    time.Time // when the organization signed up
+	Size     int       // people whose home is the organization, owner included
 	Locales  []Locale  // where its people come from, weighted by repetition
 	Brand    Brand
 	Features Features
 	Depts    []Dept
-	Story    string // one line on the organisation, for the summary
+	Story    string // one line on the organization, for the summary
 }
 
-// Brand is an organisation's look on the hosted pages.
+// Brand is an organization's look on the hosted pages.
 type Brand struct {
 	Primary, Secondary, Background string // #rrggbb
 }
 
-// Features is how an organisation signs its people in and connects its
+// Features is how an organization signs its people in and connects its
 // systems. A feature its plan lacks is never set.
 type Features struct {
 	SSO         string   // SAML identity provider: okta, entra, google, onelogin, or "" for none
 	SSOStatus   string   // active | draft
 	SCIM        bool     // users provisioned from the identity provider
 	LDAP        bool     // an on-premises directory
-	Social      []string // tenant social providers: google, microsoft
+	Social      []string // organization social providers: google, microsoft
 	MagicLink   bool
 	Passkeys    bool
 	SelfSignup  bool   // hosted self-registration
@@ -67,21 +67,21 @@ type Dept struct {
 	Role   string   // the role its people hold
 }
 
-// Org is a seeded organisation.
+// Org is a seeded organization.
 type Org struct {
-	Spec   OrgSpec
-	ID     uuid.UUID
-	Tenant *tenant.Tenant
-	Owner  *Person
-	People []*Person // home members, owner first
-	Guests []*Person // members whose home is another organisation
-	Roles  map[string]uuid.UUID
-	Groups map[string]uuid.UUID // department and team names
+	Spec         OrgSpec
+	ID           uuid.UUID
+	Organization *organization.Organization
+	Owner        *Person
+	People       []*Person // home members, owner first
+	Guests       []*Person // members whose home is another organization
+	Roles        map[string]uuid.UUID
+	Groups       map[string]uuid.UUID // department and team names
 	// Loc is the headquarters' time zone.
 	Loc *time.Location
 }
 
-// Has reports whether the organisation's plan includes a paid feature.
+// Has reports whether the organization's plan includes a paid feature.
 func (o *Org) Has(plan string) bool {
 	rank := map[string]int{"free": 0, "starter": 1, "pro": 2, "enterprise": 3}
 	effective := o.Spec.Plan
@@ -91,7 +91,7 @@ func (o *Org) Has(plan string) bool {
 	return rank[effective] >= rank[plan]
 }
 
-// Members is everyone holding a role in the organisation: its people who
+// Members is everyone holding a role in the organization: its people who
 // are still members, then its guests.
 func (o *Org) Members() []*Person {
 	var out []*Person
@@ -103,7 +103,7 @@ func (o *Org) Members() []*Person {
 	return append(out, o.Guests...)
 }
 
-// Active is the organisation's people who can sign in today.
+// Active is the organization's people who can sign in today.
 func (o *Org) Active() []*Person {
 	var out []*Person
 	for _, p := range o.People {
@@ -114,7 +114,7 @@ func (o *Org) Active() []*Person {
 	return out
 }
 
-// WithRole is the organisation's active people holding role.
+// WithRole is the organization's active people holding role.
 func (o *Org) WithRole(role string) []*Person {
 	var out []*Person
 	for _, p := range o.Active() {
@@ -125,7 +125,7 @@ func (o *Org) WithRole(role string) []*Person {
 	return out
 }
 
-// Admins is the active people who can administer the organisation: its owner
+// Admins is the active people who can administer the organization: its owner
 // and every Admin.
 func (o *Org) Admins() []*Person {
 	var out []*Person
@@ -137,7 +137,7 @@ func (o *Org) Admins() []*Person {
 	return out
 }
 
-// InDept is the organisation's active people in dept.
+// InDept is the organization's active people in dept.
 func (o *Org) InDept(dept string) []*Person {
 	var out []*Person
 	for _, p := range o.Active() {
@@ -148,7 +148,7 @@ func (o *Org) InDept(dept string) []*Person {
 	return out
 }
 
-// Person returns the organisation's person with email, or nil.
+// Person returns the organization's person with email, or nil.
 func (o *Org) Person(email string) *Person {
 	for _, p := range o.People {
 		if p.Email == email {
@@ -158,7 +158,7 @@ func (o *Org) Person(email string) *Person {
 	return nil
 }
 
-// Role names every organisation on a paid plan has. Free plans allow no custom
+// Role names every organization on a paid plan has. Free plans allow no custom
 // role, so their people all hold the system owner role.
 const (
 	RoleOwner     = "owner"
@@ -195,9 +195,9 @@ type Person struct {
 	Phone      string // E.164 from a fictional range; empty for some
 	EmployeeID string
 	Manager    *Person
-	Role       string // role in the home organisation
+	Role       string // role in the home organization
 	Joined     time.Time
-	// Guest roles held in other organisations.
+	// Guest roles held in other organizations.
 	GuestOf []GuestRole
 
 	// Status is the account's state today. Since is when it left active.
@@ -225,7 +225,7 @@ type Person struct {
 	Login string
 }
 
-// GuestRole is a role a person holds in an organisation other than their own.
+// GuestRole is a role a person holds in an organization other than their own.
 type GuestRole struct {
 	Org   *Org
 	Role  string

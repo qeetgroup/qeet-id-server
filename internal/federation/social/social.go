@@ -1,7 +1,7 @@
-// Package social manages each organisation's external identity providers
+// Package social manages each organization's external identity providers
 // (Google, Microsoft, Okta, …) and the identities linked through them, and runs
-// the OAuth 2.0 / OIDC sign-in with them, both per organisation and for the
-// console's own tenant-less sign-in (platform.go).
+// the OAuth 2.0 / OIDC sign-in with them, both per organization and for the
+// console's own organization-less sign-in (platform.go).
 package social
 
 import (
@@ -36,35 +36,35 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
-// Provider is a tenant's social identity provider, without its secret. Kind is
+// Provider is an organization's social identity provider, without its secret. Kind is
 // oidc, found by DiscoveryURL, or the adapter its name picks (github,
 // facebook, x, discord or apple); Apple's names its team and key.
 type Provider struct {
-	ID           uuid.UUID `json:"id"`
-	TenantID     uuid.UUID `json:"tenant_id"`
-	Provider     string    `json:"provider"`
-	Kind         string    `json:"kind"`
-	ClientID     string    `json:"client_id"`
-	DiscoveryURL *string   `json:"discovery_url"`
-	AppleTeamID  *string   `json:"apple_team_id,omitempty"`
-	AppleKeyID   *string   `json:"apple_key_id,omitempty"`
-	Enabled      bool      `json:"enabled"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID             uuid.UUID `json:"id"`
+	OrganizationID uuid.UUID `json:"tenant_id"`
+	Provider       string    `json:"provider"`
+	Kind           string    `json:"kind"`
+	ClientID       string    `json:"client_id"`
+	DiscoveryURL   *string   `json:"discovery_url"`
+	AppleTeamID    *string   `json:"apple_team_id,omitempty"`
+	AppleKeyID     *string   `json:"apple_key_id,omitempty"`
+	Enabled        bool      `json:"enabled"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 // ExternalIdentity is a social account linked to a user.
 type ExternalIdentity struct {
-	ID       uuid.UUID `json:"id"`
-	UserID   uuid.UUID `json:"user_id"`
-	TenantID uuid.UUID `json:"tenant_id"`
-	Provider string    `json:"provider"`
-	Subject  string    `json:"subject"`
-	Email    *string   `json:"email"`
-	LinkedAt time.Time `json:"linked_at"`
+	ID             uuid.UUID `json:"id"`
+	UserID         uuid.UUID `json:"user_id"`
+	OrganizationID uuid.UUID `json:"tenant_id"`
+	Provider       string    `json:"provider"`
+	Subject        string    `json:"subject"`
+	Email          *string   `json:"email"`
+	LinkedAt       time.Time `json:"linked_at"`
 }
 
 // Service manages social providers and runs social sign-in. platform holds the
-// console's env-configured tenant-less providers (platform.go); returnOrigins is
+// console's env-configured organization-less providers (platform.go); returnOrigins is
 // the return_to allowlist, keyed by normalized "scheme://host[:port]".
 type Service struct {
 	pool          *pgxpool.Pool
@@ -80,7 +80,7 @@ type Service struct {
 }
 
 // SetDomainCapture sets the check that keeps a provider from creating an
-// account on a domain whose organisation requires single sign-on (nil: no
+// account on a domain whose organization requires single sign-on (nil: no
 // address is captured).
 func (s *Service) SetDomainCapture(c auth.DomainCapture) { s.capture = c }
 
@@ -155,21 +155,21 @@ func NewService(pool *pgxpool.Pool, authSvc *auth.Service, appBaseURL string, po
 }
 
 // CreateProviderInput adds a provider, or replaces the settings of one the
-// organisation already has. Replacing keeps whether it is switched on, and an
+// organization already has. Replacing keeps whether it is switched on, and an
 // empty ClientSecret keeps the stored secret (a new provider needs one).
 // DiscoveryURL is an OpenID Connect provider's alone. For Apple, ClientID is
 // the Services ID and ClientSecret the .p8 private key, with AppleTeamID and
 // AppleKeyID; the client secret is signed from them for each sign-in.
 // ChangedBy is who saved it, for the audit record.
 type CreateProviderInput struct {
-	TenantID     uuid.UUID `json:"tenant_id"`
-	Provider     string    `json:"provider"`
-	ClientID     string    `json:"client_id"`
-	ClientSecret string    `json:"client_secret"`
-	DiscoveryURL string    `json:"discovery_url"`
-	AppleTeamID  string    `json:"apple_team_id"`
-	AppleKeyID   string    `json:"apple_key_id"`
-	ChangedBy    ChangedBy `json:"-"`
+	OrganizationID uuid.UUID `json:"tenant_id"`
+	Provider       string    `json:"provider"`
+	ClientID       string    `json:"client_id"`
+	ClientSecret   string    `json:"client_secret"`
+	DiscoveryURL   string    `json:"discovery_url"`
+	AppleTeamID    string    `json:"apple_team_id"`
+	AppleKeyID     string    `json:"apple_key_id"`
+	ChangedBy      ChangedBy `json:"-"`
 }
 
 // checkAppleKey refuses an Apple private key, team ID and key ID that can't
@@ -183,7 +183,7 @@ func checkAppleKey(servicesID, teamID, keyID, privateKey string) error {
 	return nil
 }
 
-// UpsertProvider adds or updates one of the tenant's social providers.
+// UpsertProvider adds or updates one of the organization's social providers.
 func (s *Service) UpsertProvider(ctx context.Context, in CreateProviderInput) (*Provider, error) {
 	kind := adapterKind(in.Provider)
 	if kind == kindOIDC {
@@ -217,7 +217,7 @@ func (s *Service) UpsertProvider(ctx context.Context, in CreateProviderInput) (*
 	var ciphertext, nonce []byte
 	if replaceSecret {
 		var err error
-		if ciphertext, nonce, err = s.sealSecret(in.TenantID, in.Provider, in.ClientSecret); err != nil {
+		if ciphertext, nonce, err = s.sealSecret(in.OrganizationID, in.Provider, in.ClientSecret); err != nil {
 			return nil, err
 		}
 	}
@@ -228,8 +228,8 @@ func (s *Service) UpsertProvider(ctx context.Context, in CreateProviderInput) (*
 	defer tx.Rollback(ctx)
 	var existingID uuid.UUID
 	err = tx.QueryRow(ctx, `
-		SELECT id FROM tenant.social_providers WHERE tenant_id = $1 AND provider = $2 FOR UPDATE`,
-		in.TenantID, in.Provider).Scan(&existingID)
+		SELECT id FROM organization.social_providers WHERE organization_id = $1 AND provider = $2 FOR UPDATE`,
+		in.OrganizationID, in.Provider).Scan(&existingID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
@@ -241,7 +241,7 @@ func (s *Service) UpsertProvider(ctx context.Context, in CreateProviderInput) (*
 	}
 	var r struct {
 		ID                      uuid.UUID
-		TenantID                uuid.UUID
+		OrganizationID          uuid.UUID
 		Provider, ClientID      string
 		DiscoveryURL            *string
 		AppleTeamID, AppleKeyID *string
@@ -252,27 +252,27 @@ func (s *Service) UpsertProvider(ctx context.Context, in CreateProviderInput) (*
 		// Replacing keeps whether the provider is switched on, and the stored
 		// secret when none is given.
 		err = tx.QueryRow(ctx, `
-			UPDATE tenant.social_providers SET
+			UPDATE organization.social_providers SET
 			    client_id = $3,
 			    discovery_url = NULLIF($6, ''),
 			    client_secret_ct = CASE WHEN $7::boolean THEN $4 ELSE client_secret_ct END,
 			    client_secret_nonce = CASE WHEN $7::boolean THEN $5 ELSE client_secret_nonce END,
 			    apple_team_id = NULLIF($8, ''),
 			    apple_key_id = NULLIF($9, '')
-			WHERE tenant_id = $1 AND provider = $2
-			RETURNING id, tenant_id, provider, client_id, discovery_url, enabled, created_at, apple_team_id, apple_key_id
-		`, in.TenantID, in.Provider, in.ClientID, ciphertext, nonce, in.DiscoveryURL, replaceSecret, in.AppleTeamID, in.AppleKeyID).Scan(
-			&r.ID, &r.TenantID, &r.Provider, &r.ClientID, &r.DiscoveryURL, &r.Enabled, &r.CreatedAt, &r.AppleTeamID, &r.AppleKeyID,
+			WHERE organization_id = $1 AND provider = $2
+			RETURNING id, organization_id, provider, client_id, discovery_url, enabled, created_at, apple_team_id, apple_key_id
+		`, in.OrganizationID, in.Provider, in.ClientID, ciphertext, nonce, in.DiscoveryURL, replaceSecret, in.AppleTeamID, in.AppleKeyID).Scan(
+			&r.ID, &r.OrganizationID, &r.Provider, &r.ClientID, &r.DiscoveryURL, &r.Enabled, &r.CreatedAt, &r.AppleTeamID, &r.AppleKeyID,
 		)
 	} else {
 		err = tx.QueryRow(ctx, `
-			INSERT INTO tenant.social_providers
-			    (tenant_id, provider, client_id, client_secret_ct, client_secret_nonce,
+			INSERT INTO organization.social_providers
+			    (organization_id, provider, client_id, client_secret_ct, client_secret_nonce,
 			     discovery_url, apple_team_id, apple_key_id)
 			VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), NULLIF($7, ''), NULLIF($8, ''))
-			RETURNING id, tenant_id, provider, client_id, discovery_url, enabled, created_at, apple_team_id, apple_key_id
-		`, in.TenantID, in.Provider, in.ClientID, ciphertext, nonce, in.DiscoveryURL, in.AppleTeamID, in.AppleKeyID).Scan(
-			&r.ID, &r.TenantID, &r.Provider, &r.ClientID, &r.DiscoveryURL, &r.Enabled, &r.CreatedAt, &r.AppleTeamID, &r.AppleKeyID,
+			RETURNING id, organization_id, provider, client_id, discovery_url, enabled, created_at, apple_team_id, apple_key_id
+		`, in.OrganizationID, in.Provider, in.ClientID, ciphertext, nonce, in.DiscoveryURL, in.AppleTeamID, in.AppleKeyID).Scan(
+			&r.ID, &r.OrganizationID, &r.Provider, &r.ClientID, &r.DiscoveryURL, &r.Enabled, &r.CreatedAt, &r.AppleTeamID, &r.AppleKeyID,
 		)
 		if pgxerr.IsUnique(err) {
 			// Added by a concurrent save; this one is a replacement after all.
@@ -288,58 +288,58 @@ func (s *Service) UpsertProvider(ctx context.Context, in CreateProviderInput) (*
 		meta["fields"] = []string{"client_id", "discovery_url"}
 		meta["secret_replaced"] = replaceSecret
 	}
-	if err := s.recordProviderChange(ctx, tx, in.ChangedBy, in.TenantID, r.ID, action, meta); err != nil {
+	if err := s.recordProviderChange(ctx, tx, in.ChangedBy, in.OrganizationID, r.ID, action, meta); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	p := Provider{
-		ID:           r.ID,
-		TenantID:     r.TenantID,
-		Provider:     r.Provider,
-		Kind:         kind,
-		ClientID:     r.ClientID,
-		DiscoveryURL: r.DiscoveryURL,
-		AppleTeamID:  r.AppleTeamID,
-		AppleKeyID:   r.AppleKeyID,
-		Enabled:      r.Enabled,
-		CreatedAt:    r.CreatedAt,
+		ID:             r.ID,
+		OrganizationID: r.OrganizationID,
+		Provider:       r.Provider,
+		Kind:           kind,
+		ClientID:       r.ClientID,
+		DiscoveryURL:   r.DiscoveryURL,
+		AppleTeamID:    r.AppleTeamID,
+		AppleKeyID:     r.AppleKeyID,
+		Enabled:        r.Enabled,
+		CreatedAt:      r.CreatedAt,
 	}
 	return &p, nil
 }
 
-// ListProviders returns the tenant's social providers.
-func (s *Service) ListProviders(ctx context.Context, tenantID uuid.UUID) ([]Provider, error) {
-	rows, err := s.q.ListSocialProviders(ctx, tenantID)
+// ListProviders returns the organization's social providers.
+func (s *Service) ListProviders(ctx context.Context, organizationID uuid.UUID) ([]Provider, error) {
+	rows, err := s.q.ListSocialProviders(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]Provider, len(rows))
 	for i, r := range rows {
 		out[i] = Provider{
-			ID:           r.ID,
-			TenantID:     r.TenantID,
-			Provider:     r.Provider,
-			Kind:         adapterKind(r.Provider),
-			ClientID:     r.ClientID,
-			DiscoveryURL: r.DiscoveryUrl,
-			AppleTeamID:  r.AppleTeamID,
-			AppleKeyID:   r.AppleKeyID,
-			Enabled:      r.Enabled,
-			CreatedAt:    r.CreatedAt,
+			ID:             r.ID,
+			OrganizationID: r.OrganizationID,
+			Provider:       r.Provider,
+			Kind:           adapterKind(r.Provider),
+			ClientID:       r.ClientID,
+			DiscoveryURL:   r.DiscoveryUrl,
+			AppleTeamID:    r.AppleTeamID,
+			AppleKeyID:     r.AppleKeyID,
+			Enabled:        r.Enabled,
+			CreatedAt:      r.CreatedAt,
 		}
 	}
 	return out, nil
 }
 
-// ListIdentities returns the social accounts linked to the user in the tenant.
-func (s *Service) ListIdentities(ctx context.Context, userID, tenantID uuid.UUID) ([]ExternalIdentity, error) {
-	// Tenant-scoped so one tenant can't read another's linked identities;
+// ListIdentities returns the social accounts linked to the user in the organization.
+func (s *Service) ListIdentities(ctx context.Context, userID, organizationID uuid.UUID) ([]ExternalIdentity, error) {
+	// Organization-scoped so one organization can't read another's linked identities;
 	// the deleted_at join keeps soft-deleted users out of admin lookups.
 	rows, err := s.q.ListExternalIdentities(ctx, dbgen.ListExternalIdentitiesParams{
-		UserID:   userID,
-		TenantID: tenantID,
+		UserID:         userID,
+		OrganizationID: organizationID,
 	})
 	if err != nil {
 		return nil, err
@@ -347,29 +347,29 @@ func (s *Service) ListIdentities(ctx context.Context, userID, tenantID uuid.UUID
 	out := make([]ExternalIdentity, len(rows))
 	for i, r := range rows {
 		out[i] = ExternalIdentity{
-			ID:       r.ID,
-			UserID:   r.UserID,
-			TenantID: r.TenantID,
-			Provider: r.Provider,
-			Subject:  r.Subject,
-			Email:    r.Email,
-			LinkedAt: r.LinkedAt,
+			ID:             r.ID,
+			UserID:         r.UserID,
+			OrganizationID: r.OrganizationID,
+			Provider:       r.Provider,
+			Subject:        r.Subject,
+			Email:          r.Email,
+			LinkedAt:       r.LinkedAt,
 		}
 	}
 	return out, nil
 }
 
 // Unlink is an administrator removing an identity linked to an account in
-// their organisation: tenant-scoped, so an identity can only be removed within
-// its tenant. Refused when mayChange refuses the account (it runs before the
+// their organization: organization-scoped, so an identity can only be removed within
+// its organization. Refused when mayChange refuses the account (it runs before the
 // transaction opens), and, recorded, when it is the account's only way to sign
 // in.
-func (s *Service) Unlink(ctx context.Context, id, tenantID uuid.UUID, by user.Remover, mayChange func(owner uuid.UUID) error) error {
-	// The account's other ways to sign in span its organisations.
-	ctx = postgres.AcrossTenants(ctx)
+func (s *Service) Unlink(ctx context.Context, id, organizationID uuid.UUID, by user.Remover, mayChange func(owner uuid.UUID) error) error {
+	// The account's other ways to sign in span its organizations.
+	ctx = postgres.AcrossOrganizations(ctx)
 	var owner uuid.UUID
-	if err := s.pool.QueryRow(ctx, `SELECT user_id FROM account.external_identities WHERE id = $1 AND tenant_id = $2`,
-		id, tenantID).Scan(&owner); errors.Is(err, pgx.ErrNoRows) {
+	if err := s.pool.QueryRow(ctx, `SELECT user_id FROM account.external_identities WHERE id = $1 AND organization_id = $2`,
+		id, organizationID).Scan(&owner); errors.Is(err, pgx.ErrNoRows) {
 		return errs.ErrNotFound
 	} else if err != nil {
 		return err
@@ -387,8 +387,8 @@ func (s *Service) Unlink(ctx context.Context, id, tenantID uuid.UUID, by user.Re
 		return err
 	}
 	n, err := s.q.WithTx(tx).DeleteExternalIdentity(ctx, dbgen.DeleteExternalIdentityParams{
-		ID:       id,
-		TenantID: tenantID,
+		ID:             id,
+		OrganizationID: organizationID,
 	})
 	if err != nil {
 		return err
@@ -398,15 +398,15 @@ func (s *Service) Unlink(ctx context.Context, id, tenantID uuid.UUID, by user.Re
 	}
 	if methods.Total() <= 1 {
 		_ = tx.Rollback(ctx)
-		tid := tenantID
+		tid := organizationID
 		return user.RefuseLastMethodRemoval(ctx, s.pool, owner, &tid, "linked_identity", id, by)
 	}
 	return tx.Commit(ctx)
 }
 
 // ListIdentitiesForUser returns the caller's connected social accounts. Console
-// accounts are tenant-less, so this reads the platform identities table (which
-// platform sign-in and the link flow populate) rather than the tenant-scoped
+// accounts are organization-less, so this reads the platform identities table (which
+// platform sign-in and the link flow populate) rather than the organization-scoped
 // account.external_identities.
 func (s *Service) ListIdentitiesForUser(ctx context.Context, userID uuid.UUID) ([]ExternalIdentity, error) {
 	rows, err := s.q.ListPlatformSocialIdentitiesForUser(ctx, userID)
@@ -431,8 +431,8 @@ func (s *Service) ListIdentitiesForUser(ctx context.Context, userID uuid.UUID) (
 // accounts. ErrNotFound when it is not theirs (nothing is removed); refused,
 // and recorded, when it is their account's only way to sign in.
 func (s *Service) UnlinkForUser(ctx context.Context, id, userID uuid.UUID, by user.Remover) error {
-	// The account's other ways to sign in span its organisations.
-	ctx = postgres.AcrossTenants(ctx)
+	// The account's other ways to sign in span its organizations.
+	ctx = postgres.AcrossOrganizations(ctx)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -479,17 +479,17 @@ type providerConfig struct {
 	privateKey   string
 }
 
-// resolveTenant maps a tenant id (uuid) or slug to a tenant id.
-func (s *Service) resolveTenant(ctx context.Context, ref string) (uuid.UUID, error) {
+// resolveOrganization maps an organization id (uuid) or slug to an organization id.
+func (s *Service) resolveOrganization(ctx context.Context, ref string) (uuid.UUID, error) {
 	if ref == "" {
-		return uuid.Nil, errs.ErrSocialTenantRequired
+		return uuid.Nil, errs.ErrSocialOrganizationRequired
 	}
 	if id, err := uuid.Parse(ref); err == nil {
 		return id, nil
 	}
-	id, err := s.q.GetTenantIDBySlug(ctx, ref)
+	id, err := s.q.GetOrganizationIDBySlug(ctx, ref)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, errs.ErrSocialTenantNotFound
+		return uuid.Nil, errs.ErrSocialOrganizationNotFound
 	}
 	if err != nil {
 		return uuid.Nil, err
@@ -497,9 +497,9 @@ func (s *Service) resolveTenant(ctx context.Context, ref string) (uuid.UUID, err
 	return id, nil
 }
 
-// loadProvider returns a tenant's enabled provider config: discovery-based for
+// loadProvider returns an organization's enabled provider config: discovery-based for
 // OpenID Connect, or for the adapter the provider's name picks.
-func (s *Service) loadProvider(ctx context.Context, tenantID uuid.UUID, provider string) (providerConfig, error) {
+func (s *Service) loadProvider(ctx context.Context, organizationID uuid.UUID, provider string) (providerConfig, error) {
 	var pc providerConfig
 	var enabled bool
 	var clientID string
@@ -508,9 +508,9 @@ func (s *Service) loadProvider(ctx context.Context, tenantID uuid.UUID, provider
 	err := s.pool.QueryRow(ctx, `
 		SELECT client_id, client_secret_ct, client_secret_nonce,
 		       discovery_url, enabled, apple_team_id, apple_key_id
-		FROM tenant.social_providers
-		WHERE tenant_id = $1 AND provider = $2
-	`, tenantID, provider).Scan(&clientID, &ciphertext, &nonce, &discoveryURL, &enabled, &teamID, &keyID)
+		FROM organization.social_providers
+		WHERE organization_id = $1 AND provider = $2
+	`, organizationID, provider).Scan(&clientID, &ciphertext, &nonce, &discoveryURL, &enabled, &teamID, &keyID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return pc, errs.ErrSocialProviderNotConfigured
 	}
@@ -518,7 +518,7 @@ func (s *Service) loadProvider(ctx context.Context, tenantID uuid.UUID, provider
 		return pc, err
 	}
 	// Switched off reads exactly like never set up: an unauthenticated
-	// caller cannot tell an organisation has switched a provider off.
+	// caller cannot tell an organization has switched a provider off.
 	if !enabled {
 		return pc, errs.ErrSocialProviderNotConfigured
 	}
@@ -539,7 +539,7 @@ func (s *Service) loadProvider(ctx context.Context, tenantID uuid.UUID, provider
 	if s.box == nil {
 		return pc, errs.ErrSocialProviderNotConfigured
 	}
-	plain, err := s.box.Open(tenantID, "social-provider", provider, ciphertext, nonce)
+	plain, err := s.box.Open(organizationID, "social-provider", provider, ciphertext, nonce)
 	if err != nil {
 		return pc, err
 	}
@@ -550,19 +550,19 @@ func (s *Service) loadProvider(ctx context.Context, tenantID uuid.UUID, provider
 	return pc, nil
 }
 
-// BeginLogin resolves the tenant + provider, persists CSRF state with a PKCE
+// BeginLogin resolves the organization + provider, persists CSRF state with a PKCE
 // verifier, and returns the upstream authorization URL to redirect the user to.
-func (s *Service) BeginLogin(ctx context.Context, provider, tenantRef, redirectURI, returnTo string) (string, error) {
+func (s *Service) BeginLogin(ctx context.Context, provider, organizationRef, redirectURI, returnTo string) (string, error) {
 	// Validate before anything is persisted, so a rejected value never reaches
 	// the callback that would redirect to it.
 	if err := s.validateReturnTo(returnTo); err != nil {
 		return "", err
 	}
-	tenantID, err := s.resolveTenant(ctx, tenantRef)
+	organizationID, err := s.resolveOrganization(ctx, organizationRef)
 	if err != nil {
 		return "", err
 	}
-	pc, err := s.loadProvider(ctx, tenantID, provider)
+	pc, err := s.loadProvider(ctx, organizationID, provider)
 	if err != nil {
 		return "", err
 	}
@@ -594,14 +594,14 @@ func (s *Service) BeginLogin(ctx context.Context, provider, tenantRef, redirectU
 		nonce, nonceHash = raw, &hash
 	}
 	if err := s.q.InsertSocialOAuthState(ctx, dbgen.InsertSocialOAuthStateParams{
-		StateHash:    stateHash,
-		TenantID:     tenantID,
-		Provider:     provider,
-		CodeVerifier: verifier,
-		RedirectUri:  redirectURI,
-		ReturnTo:     returnTo,
-		ExpiresAt:    time.Now().UTC().Add(socialStateTTL),
-		NonceHash:    nonceHash,
+		StateHash:      stateHash,
+		OrganizationID: organizationID,
+		Provider:       provider,
+		CodeVerifier:   verifier,
+		RedirectUri:    redirectURI,
+		ReturnTo:       returnTo,
+		ExpiresAt:      time.Now().UTC().Add(socialStateTTL),
+		NonceHash:      nonceHash,
 	}); err != nil {
 		return "", err
 	}
@@ -637,18 +637,18 @@ func (s *Service) BeginLogin(ctx context.Context, provider, tenantRef, redirectU
 
 // CallbackResult is a successful callback's outcome: a one-time code the SPA
 // trades for a session and, for the hosted flow, the return_to and the user and
-// tenant to set the SSO cookie for.
+// organization to set the SSO cookie for.
 type CallbackResult struct {
-	Code     string
-	ReturnTo string
-	UserID   uuid.UUID
-	TenantID uuid.UUID
+	Code           string
+	ReturnTo       string
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 // CompleteCallback consumes the state, exchanges the code, finds or creates the
 // user and linked identity, and returns a one-time code the SPA trades for a
 // session. Without startedHere it fails with ErrSocialBrowserMismatch; that error
-// and a closed organisation still return the result's ReturnTo.
+// and a closed organization still return the result's ReturnTo.
 func (s *Service) CompleteCallback(ctx context.Context, provider, state, code string, startedHere bool) (*CallbackResult, error) {
 	if state == "" || code == "" {
 		return nil, errs.ErrSocialCallbackParamsMissing
@@ -670,10 +670,10 @@ func (s *Service) CompleteCallback(ctx context.Context, provider, state, code st
 		return nil, errs.ErrSocialStateExpired
 	}
 	if !startedHere {
-		return &CallbackResult{ReturnTo: st.ReturnTo, TenantID: st.TenantID}, errs.ErrSocialBrowserMismatch
+		return &CallbackResult{ReturnTo: st.ReturnTo, OrganizationID: st.OrganizationID}, errs.ErrSocialBrowserMismatch
 	}
 
-	pc, err := s.loadProvider(ctx, st.TenantID, provider)
+	pc, err := s.loadProvider(ctx, st.OrganizationID, provider)
 	if err != nil {
 		return nil, err
 	}
@@ -681,26 +681,26 @@ func (s *Service) CompleteCallback(ctx context.Context, provider, state, code st
 	if err != nil {
 		return nil, err
 	}
-	userID, err := s.findOrCreateUser(ctx, st.TenantID, provider, ui)
+	userID, err := s.findOrCreateUser(ctx, st.OrganizationID, provider, ui)
 	if errors.Is(err, errs.ErrAuthSelfRegistrationDisabled) {
 		// The return_to comes back with the refusal so the person lands on the
 		// application's sign-in page, told why, rather than losing their way.
-		if aerr := s.recordSignUpRefused(ctx, st.TenantID, provider, ui); aerr != nil {
+		if aerr := s.recordSignUpRefused(ctx, st.OrganizationID, provider, ui); aerr != nil {
 			return nil, aerr
 		}
-		return &CallbackResult{ReturnTo: st.ReturnTo, TenantID: st.TenantID}, err
+		return &CallbackResult{ReturnTo: st.ReturnTo, OrganizationID: st.OrganizationID}, err
 	}
 	if err != nil {
 		return nil, err
 	}
-	// An account already linked signs in no more once its organisation requires
+	// An account already linked signs in no more once its organization requires
 	// single sign-on on its domain (adoption and sign-up were refused above).
 	if err := s.refuseCapturedAccount(ctx, userID); err != nil {
 		return nil, err
 	}
 
 	// A suspended or deleted account gets no code to sign in with.
-	if err := s.auth.CheckSignInAccount(ctx, userID, st.TenantID, "social", "", ""); err != nil {
+	if err := s.auth.CheckSignInAccount(ctx, userID, st.OrganizationID, "social", "", ""); err != nil {
 		return nil, err
 	}
 	rawCode, codeHash, err := codes.URLToken()
@@ -708,15 +708,15 @@ func (s *Service) CompleteCallback(ctx context.Context, provider, state, code st
 		return nil, err
 	}
 	if err := s.q.InsertSocialLoginCode(ctx, dbgen.InsertSocialLoginCodeParams{
-		CodeHash:  codeHash,
-		UserID:    userID,
-		TenantID:  st.TenantID,
-		Provider:  provider,
-		ExpiresAt: time.Now().UTC().Add(socialCodeTTL),
+		CodeHash:       codeHash,
+		UserID:         userID,
+		OrganizationID: st.OrganizationID,
+		Provider:       provider,
+		ExpiresAt:      time.Now().UTC().Add(socialCodeTTL),
 	}); err != nil {
 		return nil, err
 	}
-	return &CallbackResult{Code: rawCode, ReturnTo: st.ReturnTo, UserID: userID, TenantID: st.TenantID}, nil
+	return &CallbackResult{Code: rawCode, ReturnTo: st.ReturnTo, UserID: userID, OrganizationID: st.OrganizationID}, nil
 }
 
 // signedIn trades code with pc's provider and returns who signed in: through
@@ -772,36 +772,36 @@ func (s *Service) signedIn(ctx context.Context, pc providerConfig, code, redirec
 	return ui, nil
 }
 
-// EnabledProviderNames returns the names of a tenant's enabled social providers
+// EnabledProviderNames returns the names of an organization's enabled social providers
 // (for the hosted login app to render buttons). Satisfies oidc.ProviderLister.
-func (s *Service) EnabledProviderNames(ctx context.Context, tenantID uuid.UUID) ([]string, error) {
-	return s.q.EnabledSocialProviderNames(ctx, tenantID)
+func (s *Service) EnabledProviderNames(ctx context.Context, organizationID uuid.UUID) ([]string, error) {
+	return s.q.EnabledSocialProviderNames(ctx, organizationID)
 }
 
 // BeginLoginSession signs a social-authenticated user in to the hosted login
-// for tenantID, so social login can drive the OAuth authorize/consent flow: the
+// for organizationID, so social login can drive the OAuth authorize/consent flow: the
 // SSO session cookie value, or the second-factor challenge to complete first
 // (see auth.Service.BeginSocialLoginSession).
-func (s *Service) BeginLoginSession(ctx context.Context, userID, tenantID uuid.UUID, ip, ua, trustedToken, country string) (*auth.LoginSessionResult, error) {
-	return s.auth.BeginSocialLoginSession(ctx, userID, tenantID, ip, ua, trustedToken, country)
+func (s *Service) BeginLoginSession(ctx context.Context, userID, organizationID uuid.UUID, ip, ua, trustedToken, country string) (*auth.LoginSessionResult, error) {
+	return s.auth.BeginSocialLoginSession(ctx, userID, organizationID, ip, ua, trustedToken, country)
 }
 
-// CheckHostedSignIn asks the organisation's address rules whether the browser
+// CheckHostedSignIn asks the organization's address rules whether the browser
 // at ip may finish a hosted social sign-in to it.
-func (s *Service) CheckHostedSignIn(ctx context.Context, tenantID, userID uuid.UUID, ip string) error {
-	return s.auth.CheckSignInAddress(ctx, tenantID, userID, ip, "hosted_social")
+func (s *Service) CheckHostedSignIn(ctx context.Context, organizationID, userID uuid.UUID, ip string) error {
+	return s.auth.CheckSignInAddress(ctx, organizationID, userID, ip, "hosted_social")
 }
 
 // findOrCreateUser links the external identity to an existing user (matched by
 // provider subject, then by globally-unique email) or provisions a new
 // password-less one. All in one tx so concurrent logins can't duplicate rows.
-func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, provider string, ui userInfo) (uuid.UUID, error) {
-	// Whether the organisation allows self-registration is read before the
+func (s *Service) findOrCreateUser(ctx context.Context, organizationID uuid.UUID, provider string, ui userInfo) (uuid.UUID, error) {
+	// Whether the organization allows self-registration is read before the
 	// transaction, as the policy is read on another connection. It decides only
 	// the branch below that creates an account.
-	registration := s.requireSelfRegistration(ctx, tenantID)
+	registration := s.requireSelfRegistration(ctx, organizationID)
 	// The provider's word for the address is weighed before it too.
-	vouch, err := s.vouchingFor(ctx, tenantID, provider, ui)
+	vouch, err := s.vouchingFor(ctx, organizationID, provider, ui)
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -814,19 +814,19 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, prov
 	q := s.q.WithTx(tx)
 
 	userID, err := q.GetExternalIdentityUser(ctx, dbgen.GetExternalIdentityUserParams{
-		TenantID: tenantID,
-		Provider: provider,
-		Subject:  ui.Subject,
+		OrganizationID: organizationID,
+		Provider:       provider,
+		Subject:        ui.Subject,
 	})
 	if err == nil {
-		// A linked identity signs in only while this organisation is still the
+		// A linked identity signs in only while this organization is still the
 		// account's home.
-		home, herr := identitylink.HomeIn(ctx, tx, userID, tenantID)
+		home, herr := identitylink.HomeIn(ctx, tx, userID, organizationID)
 		if herr != nil {
 			return uuid.Nil, herr
 		}
 		if !home {
-			return uuid.Nil, errs.ErrSocialAccountNotInTenant
+			return uuid.Nil, errs.ErrSocialAccountNotInOrganization
 		}
 		return userID, tx.Commit(ctx)
 	}
@@ -843,15 +843,15 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, prov
 	userID, err = q.GetUserByEmail(ctx, ui.Email)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
-		// Nobody the organisation knows: creating an account is
-		// self-registration, so it follows the organisation's setting exactly
+		// Nobody the organization knows: creating an account is
+		// self-registration, so it follows the organization's setting exactly
 		// as password and passkey sign-up do. Refused before any write; the
 		// caller records the attempt.
 		if registration != nil {
 			return uuid.Nil, registration
 		}
 		// Nor does a provider create an account on a domain that requires single
-		// sign-on, or on one another organisation manages.
+		// sign-on, or on one another organization manages.
 		if vouch.refusal != nil {
 			return uuid.Nil, vouch.refusal
 		}
@@ -868,10 +868,10 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, prov
 			verifiedAt = &now
 		}
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO account.users (tenant_id, email, email_verified_at, display_name, status)
+			INSERT INTO account.users (organization_id, email, email_verified_at, display_name, status)
 			VALUES ($1, $2, $3, $4, 'active')
 			RETURNING id
-		`, tenantID, ui.Email, verifiedAt, displayName).Scan(&userID); err != nil {
+		`, organizationID, ui.Email, verifiedAt, displayName).Scan(&userID); err != nil {
 			return uuid.Nil, err
 		}
 	case err != nil:
@@ -883,23 +883,23 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, prov
 		if !vouch.proved {
 			return uuid.Nil, errs.ErrSocialEmailUnverified
 		}
-		// Nor is an account adopted on a domain whose organisation requires
+		// Nor is an account adopted on a domain whose organization requires
 		// single sign-on: only its identity provider signs its people in.
 		if errors.Is(vouch.refusal, errs.ErrAuthSSORequired) {
 			return uuid.Nil, vouch.refusal
 		}
-		// Second, this tenant must be the account's home. Emails are unique across
-		// tenants, so otherwise a tenant admin's own IdP could assert another tenant's
+		// Second, this organization must be the account's home. Emails are unique across
+		// organizations, so otherwise an organization admin's own IdP could assert another organization's
 		// user's address, or a guest's, and be handed that user's tokens.
-		home, err := identitylink.HomeIn(ctx, tx, userID, tenantID)
+		home, err := identitylink.HomeIn(ctx, tx, userID, organizationID)
 		if err != nil {
 			return uuid.Nil, err
 		}
 		if !home {
-			return uuid.Nil, errs.ErrSocialAccountNotInTenant
+			return uuid.Nil, errs.ErrSocialAccountNotInOrganization
 		}
 		// Third, the address must be vouched for — proved by the account or its
-		// organisation's directory provisioned it — or a squatter who registered
+		// organization's directory provisioned it — or a squatter who registered
 		// it unverified keeps a working password on the adopted account.
 		vouched, err := identitylink.AddressVerified(ctx, tx, userID)
 		if err != nil {
@@ -908,10 +908,10 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, prov
 		if !vouched {
 			return uuid.Nil, errs.ErrSocialAccountUnverified
 		}
-		// Fourth, the account must not administer the organisation, or whoever
+		// Fourth, the account must not administer the organization, or whoever
 		// can configure a provider could assert an owner's address. It keeps its
 		// own credentials and connects a provider from the account instead.
-		admin, err := identitylink.Administers(ctx, tx, userID, tenantID)
+		admin, err := identitylink.Administers(ctx, tx, userID, organizationID)
 		if err != nil {
 			return uuid.Nil, err
 		}
@@ -929,11 +929,11 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, prov
 		emailPtr = &ui.Email
 	}
 	if err := q.LinkExternalIdentity(ctx, dbgen.LinkExternalIdentityParams{
-		UserID:   userID,
-		TenantID: tenantID,
-		Provider: provider,
-		Subject:  ui.Subject,
-		Email:    emailPtr,
+		UserID:         userID,
+		OrganizationID: organizationID,
+		Provider:       provider,
+		Subject:        ui.Subject,
+		Email:          emailPtr,
 	}); err != nil {
 		return uuid.Nil, err
 	}
@@ -944,7 +944,7 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, prov
 }
 
 // refuseCapturedAccount returns errs.ErrAuthSSORequired when userID's address
-// is on a domain whose organisation requires single sign-on and the account
+// is on a domain whose organization requires single sign-on and the account
 // isn't exempt: social sign-in, whichever provider, never satisfies it.
 func (s *Service) refuseCapturedAccount(ctx context.Context, userID uuid.UUID) error {
 	if s.capture == nil {
@@ -957,7 +957,7 @@ func (s *Service) refuseCapturedAccount(ctx context.Context, userID uuid.UUID) e
 	return s.capture.RefuseCaptured(ctx, email)
 }
 
-// vouching is what a provider's word for an address is worth to a tenant:
+// vouching is what a provider's word for an address is worth to an organization:
 // proved reports whether it verifies the address, and refusal, when set, is
 // why the provider may not create an account for it.
 type vouching struct {
@@ -965,17 +965,17 @@ type vouching struct {
 	refusal error
 }
 
-// vouchingFor weighs ui's address for tenantID's provider. An OpenID Connect
-// provider's endpoints are the organisation's choice, so it proves only
-// addresses on domains the organisation manages; an adapter's are fixed. It
-// reads every organisation's domains, so it runs before the transaction.
-func (s *Service) vouchingFor(ctx context.Context, tenantID uuid.UUID, provider string, ui userInfo) (vouching, error) {
+// vouchingFor weighs ui's address for organizationID's provider. An OpenID Connect
+// provider's endpoints are the organization's choice, so it proves only
+// addresses on domains the organization manages; an adapter's are fixed. It
+// reads every organization's domains, so it runs before the transaction.
+func (s *Service) vouchingFor(ctx context.Context, organizationID uuid.UUID, provider string, ui userInfo) (vouching, error) {
 	v := vouching{proved: ui.EmailVerified}
-	domain, managed, err := domainverify.ManagingDomain(postgres.AcrossTenants(ctx), s.pool, ui.Email)
+	domain, managed, err := domainverify.ManagingDomain(postgres.AcrossOrganizations(ctx), s.pool, ui.Email)
 	if err != nil {
 		return v, err
 	}
-	own := managed && domain.TenantID == tenantID
+	own := managed && domain.OrganizationID == organizationID
 	if adapterKind(provider) == kindOIDC && !own {
 		v.proved = false
 	}
@@ -983,7 +983,7 @@ func (s *Service) vouchingFor(ctx context.Context, tenantID uuid.UUID, provider 
 		return v, nil
 	}
 	// A domain that requires single sign-on takes new accounts through it
-	// alone, and any other managed domain only from its own organisation.
+	// alone, and any other managed domain only from its own organization.
 	if domain.SSO && s.capture != nil {
 		err := s.capture.RefuseCaptured(ctx, ui.Email)
 		if errors.Is(err, errs.ErrAuthSSORequired) {
@@ -1001,12 +1001,12 @@ func (s *Service) vouchingFor(ctx context.Context, tenantID uuid.UUID, provider 
 }
 
 // requireSelfRegistration refuses with ErrAuthSelfRegistrationDisabled unless
-// the tenant allows self-registration. No wired policy counts as closed.
-func (s *Service) requireSelfRegistration(ctx context.Context, tenantID uuid.UUID) error {
+// the organization allows self-registration. No wired policy counts as closed.
+func (s *Service) requireSelfRegistration(ctx context.Context, organizationID uuid.UUID) error {
 	if s.auth == nil {
 		return errs.ErrAuthSelfRegistrationDisabled
 	}
-	open, err := s.auth.SelfRegistrationEnabled(ctx, tenantID)
+	open, err := s.auth.SelfRegistrationEnabled(ctx, organizationID)
 	if err != nil {
 		return err
 	}
@@ -1016,19 +1016,19 @@ func (s *Service) requireSelfRegistration(ctx context.Context, tenantID uuid.UUI
 	return nil
 }
 
-// recordSignUpRefused audits a social sign-up refused because the tenant does
+// recordSignUpRefused audits a social sign-up refused because the organization does
 // not allow self-registration, naming the provider and the asserted address so
 // an administrator can see who tried to join. Written on its own: the
 // provisioning transaction it describes was rolled back.
-func (s *Service) recordSignUpRefused(ctx context.Context, tenantID uuid.UUID, provider string, ui userInfo) error {
+func (s *Service) recordSignUpRefused(ctx context.Context, organizationID uuid.UUID, provider string, ui userInfo) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	tid := tenantID
+	tid := organizationID
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID: &tid, ActorType: "system",
+		OrganizationID: &tid, ActorType: "system",
 		Action: "social.signup_refused", ResourceType: "tenant", ResourceID: &tid,
 		Metadata: map[string]any{
 			"provider":       provider,
@@ -1075,13 +1075,13 @@ func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*a
 	if !row.Enabled {
 		return nil, errs.ErrSocialProviderNotConfigured
 	}
-	if err := q.MarkSocialLoginCodeUsed(ctx, dbgen.MarkSocialLoginCodeUsedParams{CodeHash: codeHash, TenantID: row.TenantID}); err != nil {
+	if err := q.MarkSocialLoginCodeUsed(ctx, dbgen.MarkSocialLoginCodeUsedParams{CodeHash: codeHash, OrganizationID: row.OrganizationID}); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-	return s.auth.BeginSocialSignIn(ctx, row.UserID, row.TenantID, ip, ua)
+	return s.auth.BeginSocialSignIn(ctx, row.UserID, row.OrganizationID, ip, ua)
 }
 
 // Handler serves the social endpoints. CookieSecure marks the SSO and binding
@@ -1100,26 +1100,26 @@ type Handler struct {
 	ActOnCheck identitylink.ActOn
 }
 
-// checkTrust refuses pointing the organisation's OpenID Connect provider name
+// checkTrust refuses pointing the organization's OpenID Connect provider name
 // at discoveryURL, unless that is where it already looks, when the caller may
 // not act on every administrator linked to it: the provider signs them in on
 // what that URL serves. A provider set up again under a name it had before
 // gets its earlier links back, so it counts as a change too.
-func (h *Handler) checkTrust(r *http.Request, tenantID uuid.UUID, name, discoveryURL string) error {
+func (h *Handler) checkTrust(r *http.Request, organizationID uuid.UUID, name, discoveryURL string) error {
 	if adapterKind(name) != kindOIDC {
 		return nil
 	}
 	ctx := r.Context()
 	var current string
-	err := h.Service.pool.QueryRow(ctx, `SELECT coalesce(discovery_url, '') FROM tenant.social_providers WHERE tenant_id = $1 AND provider = $2`,
-		tenantID, name).Scan(&current)
+	err := h.Service.pool.QueryRow(ctx, `SELECT coalesce(discovery_url, '') FROM organization.social_providers WHERE organization_id = $1 AND provider = $2`,
+		organizationID, name).Scan(&current)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
 	if err == nil && strings.TrimSpace(discoveryURL) == current {
 		return nil
 	}
-	return identitylink.CheckTrustChange(ctx, h.Service.pool, httpx.PrincipalFromCtx(ctx), h.ActOnCheck, tenantID, uuid.Nil, name)
+	return identitylink.CheckTrustChange(ctx, h.Service.pool, httpx.PrincipalFromCtx(ctx), h.ActOnCheck, organizationID, uuid.Nil, name)
 }
 
 // Mount registers the social sign-in routes on r.
@@ -1130,7 +1130,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/social/providers", h.listProviders)
 	r.Get("/users/{userID}/social/identities", h.listIdentities)
 	r.Delete("/social/identities/{id}", h.unlink)
-	// Self-service (tenant-independent): manage the social logins on my own
+	// Self-service (organization-independent): manage the social logins on my own
 	// account, so a user who signed up via Google can see/unlink it pre-org.
 	r.Get("/me/social/identities", h.listMyIdentities)
 	r.Delete("/me/social/identities/{id}", h.unlinkMine)
@@ -1147,7 +1147,7 @@ func (h *Handler) MountPublic(r chi.Router) {
 	r.Get("/social/{provider}/callback", h.callback)
 	r.Post("/social/{provider}/callback", h.callback) // Apple response_mode=form_post
 	r.Post("/social/exchange", h.exchange)
-	// Which platform (tenant-less) providers are configured — lets the console
+	// Which platform (organization-less) providers are configured — lets the console
 	// enable only the social buttons that will actually work.
 	r.Get("/social/platform/providers", h.platformProviders)
 }
@@ -1164,7 +1164,7 @@ func (h *Handler) callbackURL(r *http.Request, provider string) string {
 }
 
 func (h *Handler) upsertProvider(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := httpx.RequireTenant(r)
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1174,9 +1174,9 @@ func (h *Handler) upsertProvider(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	in.TenantID = tenantID // scope comes from the principal, never the body
+	in.OrganizationID = organizationID // scope comes from the principal, never the body
 	in.ChangedBy = changedBy(r)
-	if err := h.checkTrust(r, tenantID, in.Provider, in.DiscoveryURL); err != nil {
+	if err := h.checkTrust(r, organizationID, in.Provider, in.DiscoveryURL); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -1194,16 +1194,16 @@ func (h *Handler) listProviders(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
 		return
 	}
-	tenantID, err := httpx.RequireTenant(r)
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if tid != tenantID {
+	if tid != organizationID {
 		httpx.WriteError(w, r, errs.ErrForbidden.WithDetail("tenant mismatch"))
 		return
 	}
-	out, err := h.Service.ListProviders(r.Context(), tenantID)
+	out, err := h.Service.ListProviders(r.Context(), organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1217,12 +1217,12 @@ func (h *Handler) listIdentities(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid userID"))
 		return
 	}
-	tenantID, err := httpx.RequireTenant(r)
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out, err := h.Service.ListIdentities(r.Context(), uid, tenantID)
+	out, err := h.Service.ListIdentities(r.Context(), uid, organizationID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1236,7 +1236,7 @@ func (h *Handler) unlink(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	tenantID, err := httpx.RequireTenant(r)
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1247,15 +1247,15 @@ func (h *Handler) unlink(w http.ResponseWriter, r *http.Request) {
 	}
 	by.IP, by.UserAgent, by.RequestID = httpx.ClientIP(r), r.UserAgent(), httpx.RequestID(r)
 	// Only an administrator who outranks the account takes a way in from it.
-	mayChange := func(owner uuid.UUID) error { return httpx.ActOn(r, h.ActOnCheck, tenantID, owner) }
-	if err := h.Service.Unlink(r.Context(), id, tenantID, by, mayChange); err != nil {
+	mayChange := func(owner uuid.UUID) error { return httpx.ActOn(r, h.ActOnCheck, organizationID, owner) }
+	if err := h.Service.Unlink(r.Context(), id, organizationID, by, mayChange); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// listMyIdentities lists the social logins on the caller's own account (no tenant).
+// listMyIdentities lists the social logins on the caller's own account (no organization).
 func (h *Handler) listMyIdentities(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {
@@ -1385,19 +1385,19 @@ func stateOf(authURL string) string {
 }
 
 // start redirects the browser to the provider and gives it the binding the
-// callback checks. ?tenant=<slug> or ?tenant_id=<uuid> names the organisation
+// callback checks. ?tenant=<slug> or ?tenant_id=<uuid> names the organization
 // (none means the console's platform sign-in); ?return_to opts into the hosted
 // flow.
 func (h *Handler) start(w http.ResponseWriter, r *http.Request) {
 	provider := chi.URLParam(r, "provider")
-	tenantRef := r.URL.Query().Get("tenant")
-	if tenantRef == "" {
-		tenantRef = r.URL.Query().Get("tenant_id")
+	organizationRef := r.URL.Query().Get("tenant")
+	if organizationRef == "" {
+		organizationRef = r.URL.Query().Get("tenant_id")
 	}
-	// No tenant → platform (tenant-less) console flow. ?intent=signup permits
+	// No organization → platform (organization-less) console flow. ?intent=signup permits
 	// just-in-time account creation; anything else (sign-in) requires an existing
 	// account, so a "sign in with Google" can't silently create one.
-	if tenantRef == "" {
+	if organizationRef == "" {
 		allowCreate := r.URL.Query().Get("intent") == "signup"
 		authURL, err := h.Service.BeginPlatformLogin(r.Context(), provider, h.callbackURL(r, provider), allowCreate)
 		if err != nil {
@@ -1408,7 +1408,7 @@ func (h *Handler) start(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, authURL, http.StatusFound) // #nosec G710 -- operator-configured provider endpoint
 		return
 	}
-	authURL, err := h.Service.BeginLogin(r.Context(), provider, tenantRef, h.callbackURL(r, provider), r.URL.Query().Get("return_to"))
+	authURL, err := h.Service.BeginLogin(r.Context(), provider, organizationRef, h.callbackURL(r, provider), r.URL.Query().Get("return_to"))
 	if err != nil {
 		h.redirectSocialError(w, r, err)
 		return
@@ -1434,8 +1434,8 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	state, code := r.FormValue("state"), r.FormValue("code")
 	startedHere := h.binding().Holds(r, state)
 
-	// Platform (tenant-less) console sign-in: complete it and bounce the SPA to
-	// /sign-in with a one-time code to exchange. Fall through to the tenant flow
+	// Platform (organization-less) console sign-in: complete it and bounce the SPA to
+	// /sign-in with a one-time code to exchange. Fall through to the organization flow
 	// only when the state isn't a platform state.
 	if h.Service.PlatformProviderEnabled(provider) {
 		res, perr := h.Service.CompletePlatformCallback(r.Context(), provider, state, code, startedHere)
@@ -1484,7 +1484,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 
 	res, err := h.Service.CompleteCallback(r.Context(), provider, state, code, startedHere)
 	if (errors.Is(err, errs.ErrAuthSelfRegistrationDisabled) || errors.Is(err, errs.ErrSocialBrowserMismatch)) && h.LoginBaseURL != "" {
-		// A closed organisation, or a sign-in begun in another browser, not a
+		// A closed organization, or a sign-in begun in another browser, not a
 		// provider failure: say so, and keep the way back to the application
 		// (validated when the sign-in began).
 		q := url.Values{"error": {"registration_closed"}}
@@ -1503,9 +1503,9 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	}
 	h.binding().Remove(w, r, state)
 	if res.ReturnTo != "" {
-		// An address the organisation refuses is told so on the hosted login,
+		// An address the organization refuses is told so on the hosted login,
 		// as every other method is, not shown a provider failure.
-		if aerr := h.Service.CheckHostedSignIn(r.Context(), res.TenantID, res.UserID, httpx.ClientIP(r)); aerr != nil {
+		if aerr := h.Service.CheckHostedSignIn(r.Context(), res.OrganizationID, res.UserID, httpx.ClientIP(r)); aerr != nil {
 			if errors.Is(aerr, errs.ErrAuthAddressNotAllowed) && h.LoginBaseURL != "" {
 				q := url.Values{"error": {"address_not_allowed"}, "return_to": {res.ReturnTo}}
 				http.Redirect(w, r, h.LoginBaseURL+"/sign-in?"+q.Encode(), http.StatusFound)
@@ -1522,7 +1522,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		if c, cerr := r.Cookie(auth.TrustedDeviceCookie); cerr == nil {
 			trusted = c.Value
 		}
-		ls, serr := h.Service.BeginLoginSession(r.Context(), res.UserID, res.TenantID, httpx.ClientIP(r), r.UserAgent(),
+		ls, serr := h.Service.BeginLoginSession(r.Context(), res.UserID, res.OrganizationID, httpx.ClientIP(r), r.UserAgent(),
 			trusted, httpx.GeoCountry(r.Context()))
 		if serr != nil {
 			h.redirectSocialError(w, r, serr)
@@ -1585,7 +1585,7 @@ func (h *Handler) exchange(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	// Platform (tenant-less) code first; fall back to the tenant exchange when
+	// Platform (organization-less) code first; fall back to the organization exchange when
 	// the code isn't a platform one.
 	if res, perr := h.Service.ExchangePlatformLogin(r.Context(), in.Code, httpx.ClientIP(r), r.UserAgent()); perr == nil {
 		writeSignIn(w, res)

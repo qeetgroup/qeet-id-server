@@ -34,16 +34,16 @@ const (
 // user must know to check the pending-requests list themselves. Kept as an
 // interface so oidc doesn't depend on the notifications package directly.
 type Notifier interface {
-	Notify(ctx context.Context, tenantID, userID uuid.UUID, kind, title, description, href string) error
+	Notify(ctx context.Context, organizationID, userID uuid.UUID, kind, title, description, href string) error
 }
 
 // SetNotifier wires the CIBA consent-prompt notifier.
 func (s *Service) SetNotifier(n Notifier) { s.notifier = n }
 
-// SetSessionFactors sets the check of what second factor an organisation
+// SetSessionFactors sets the check of what second factor an organization
 // still requires of a person's session (auth.Service.SessionFactorShortfall),
 // which approving a backchannel request in its name must meet. Nil checks none.
-func (s *Service) SetSessionFactors(check func(ctx context.Context, sessionID, userID, tenantID uuid.UUID) error) {
+func (s *Service) SetSessionFactors(check func(ctx context.Context, sessionID, userID, organizationID uuid.UUID) error) {
 	s.sessionFactors = check
 }
 
@@ -54,7 +54,7 @@ type CIBAAuthResponse struct {
 	Interval  int    `json:"interval"`
 }
 
-// BackchannelAuthorize resolves loginHint (an email in the client's tenant) to a
+// BackchannelAuthorize resolves loginHint (an email in the client's organization) to a
 // user, creates a pending CIBA request and notifies the user. Errors use CIBA's
 // own codes (OpenID CIBA §13).
 func (s *Service) BackchannelAuthorize(ctx context.Context, clientID, clientSecret, loginHint, scope, bindingMessage string) (*CIBAAuthResponse, error) {
@@ -72,11 +72,11 @@ func (s *Service) BackchannelAuthorize(ctx context.Context, clientID, clientSecr
 		return nil, oauthErr("invalid_request", "login_hint is required")
 	}
 
-	cinfo, err := s.q.GetClientTenantAndScopes(ctx, clientID)
+	cinfo, err := s.q.GetClientOrganizationAndScopes(ctx, clientID)
 	if err != nil {
 		return nil, err
 	}
-	tenantID := cinfo.TenantID
+	organizationID := cinfo.OrganizationID
 	dbScopes := cinfo.Scopes
 	scopes := strings.Fields(scope)
 	if len(scopes) == 0 {
@@ -88,9 +88,9 @@ func (s *Service) BackchannelAuthorize(ctx context.Context, clientID, clientSecr
 		}
 	}
 
-	userID, err := s.q.GetUserByEmailInTenant(ctx, dbgen.GetUserByEmailInTenantParams{
-		TenantID: tenantID,
-		Email:    loginHint,
+	userID, err := s.q.GetUserByEmailInOrganization(ctx, dbgen.GetUserByEmailInOrganizationParams{
+		OrganizationID: organizationID,
+		Email:          loginHint,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, oauthErr("unknown_user_id", "login_hint does not resolve to a known user")
@@ -98,10 +98,10 @@ func (s *Service) BackchannelAuthorize(ctx context.Context, clientID, clientSecr
 	if err != nil {
 		return nil, err
 	}
-	// GetUserByEmailInTenant filters soft-deletes but not suspension, and the
-	// tenant's own state is never consulted. Match a browser sign-in's
+	// GetUserByEmailInOrganization filters soft-deletes but not suspension, and the
+	// organization's own state is never consulted. Match a browser sign-in's
 	// requirement before minting anything.
-	live, err := s.activeTenantPrincipal(ctx, s.q, userID, tenantID)
+	live, err := s.activeOrganizationPrincipal(ctx, s.q, userID, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +120,7 @@ func (s *Service) BackchannelAuthorize(ctx context.Context, clientID, clientSecr
 	if err := s.q.InsertCIBARequest(ctx, dbgen.InsertCIBARequestParams{
 		AuthReqIDHash:   hash,
 		ClientID:        clientID,
-		TenantID:        tenantID,
+		OrganizationID:  organizationID,
 		UserID:          userID,
 		Scopes:          scopes,
 		BindingMessage:  msgArg,
@@ -138,7 +138,7 @@ func (s *Service) BackchannelAuthorize(ctx context.Context, clientID, clientSecr
 				desc = bindingMessage
 			}
 			// No console page lists pending requests, so the notice links nowhere.
-			_ = s.notifier.Notify(ctx, tenantID, userID, "info", title, desc, "")
+			_ = s.notifier.Notify(ctx, organizationID, userID, "info", title, desc, "")
 		}
 	}
 
@@ -179,12 +179,12 @@ func (s *Service) ListPendingCIBA(ctx context.Context, userID uuid.UUID) ([]CIBA
 // userID's.
 func (s *Service) DecideBackchannel(ctx context.Context, userID, sessionID, id uuid.UUID, approve bool, ip string) error {
 	// Approving is the person's sign-in to the application, so the session it
-	// is made through must meet the second factor the request's organisation
+	// is made through must meet the second factor the request's organization
 	// requires. That check reads the pool, so it comes before the transaction.
 	if approve && s.sessionFactors != nil {
-		tenantID, err := s.q.CIBARequestTenant(ctx, dbgen.CIBARequestTenantParams{ID: id, UserID: userID})
+		organizationID, err := s.q.CIBARequestOrganization(ctx, dbgen.CIBARequestOrganizationParams{ID: id, UserID: userID})
 		if err == nil {
-			err = s.sessionFactors(ctx, sessionID, userID, tenantID)
+			err = s.sessionFactors(ctx, sessionID, userID, organizationID)
 		} else if errors.Is(err, pgx.ErrNoRows) {
 			err = nil // refused below, as for any request that isn't theirs
 		}
@@ -223,16 +223,16 @@ func (s *Service) DecideBackchannel(ctx context.Context, userID, sessionID, id u
 		return tx.Commit(ctx)
 	}
 	// As at device approval: an active member of the request's active
-	// organisation, from an address its rules allow. Nothing else is written
+	// organization, from an address its rules allow. Nothing else is written
 	// yet, so committing keeps only the refusal's record.
-	live, err := s.activeTenantPrincipal(ctx, q, userID, row.TenantID)
+	live, err := s.activeOrganizationPrincipal(ctx, q, userID, row.OrganizationID)
 	if err != nil {
 		return err
 	}
 	if !live {
-		return errs.ErrOIDCUserTenantMismatch
+		return errs.ErrOIDCUserOrganizationMismatch
 	}
-	if err := s.checkAddressTx(ctx, tx, row.TenantID, userID, ip, "ciba_approval"); err != nil {
+	if err := s.checkAddressTx(ctx, tx, row.OrganizationID, userID, ip, "ciba_approval"); err != nil {
 		if errors.Is(err, errs.ErrAuthAddressNotAllowed) {
 			if cerr := tx.Commit(ctx); cerr != nil {
 				return cerr
@@ -331,13 +331,13 @@ func (s *Service) BackchannelToken(ctx context.Context, clientID, clientSecret, 
 		return nil, err
 	}
 	// An approval given before the account was suspended or deleted, or before
-	// its person left the application's organisation, issues nothing; the
+	// its person left the application's organization, issues nothing; the
 	// request is spent either way.
 	active, err := accountActive(ctx, q, cr.UserID)
 	if err != nil {
 		return nil, err
 	}
-	member, err := s.activeTenantPrincipal(ctx, q, cr.UserID, cr.TenantID)
+	member, err := s.activeOrganizationPrincipal(ctx, q, cr.UserID, cr.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -348,20 +348,20 @@ func (s *Service) BackchannelToken(ctx context.Context, clientID, clientSecret, 
 		if !active {
 			return nil, oauthErr("invalid_grant", "account_suspended")
 		}
-		return nil, errs.ErrOIDCUserTenantMismatch
+		return nil, errs.ErrOIDCUserOrganizationMismatch
 	}
-	registered, err := q.GetClientTenantAndScopes(ctx, clientID)
+	registered, err := q.GetClientOrganizationAndScopes(ctx, clientID)
 	if err != nil {
 		return nil, err
 	}
 	userID := cr.UserID
-	tenantID := cr.TenantID
+	organizationID := cr.OrganizationID
 	scopes := cr.Scopes
 	// The refresh token is stored with the spent request, so a failure to
 	// store it leaves the request for a later poll.
 	refresh := ""
 	if issuesRefreshToken(registered.Scopes, registered.GrantTypes, scopes) {
-		refresh, err = s.issueRefreshToken(ctx, q, clientID, userID, tenantID, scopes, "", pgtype.UUID{}, "", pgtype.Timestamptz{})
+		refresh, err = s.issueRefreshToken(ctx, q, clientID, userID, organizationID, scopes, "", pgtype.UUID{}, "", pgtype.Timestamptz{})
 		if err != nil {
 			return nil, err
 		}
@@ -370,14 +370,14 @@ func (s *Service) BackchannelToken(ctx context.Context, clientID, clientSecret, 
 		return nil, err
 	}
 	access, _, err := s.issuer.IssueClientAccess(tokens.ClientAccess{
-		UserID: userID, TenantID: tenantID, Scopes: strings.Join(scopes, " "), ClientID: clientID,
+		UserID: userID, OrganizationID: organizationID, Scopes: strings.Join(scopes, " "), ClientID: clientID,
 	})
 	if err != nil {
 		return nil, err
 	}
 	idTok := ""
 	if contains(scopes, "openid") {
-		t, err := s.signIDToken(ctx, idToken{UserID: userID, TenantID: tenantID, Audience: clientID, Scopes: scopes})
+		t, err := s.signIDToken(ctx, idToken{UserID: userID, OrganizationID: organizationID, Audience: clientID, Scopes: scopes})
 		if err != nil {
 			return nil, err
 		}

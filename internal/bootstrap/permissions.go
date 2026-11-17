@@ -12,7 +12,7 @@ import (
 // listed.
 func userPermissionMap() map[string]string {
 	return map[string]string{
-		// Tenants (GET /v1/tenants lists the caller's own memberships — ungated).
+		// Organizations (GET /v1/tenants lists the caller's own memberships — ungated).
 		"GET /v1/tenants/{tenantID}":                  "tenant.read",
 		"PATCH /v1/tenants/{tenantID}":                "tenant.write",
 		"DELETE /v1/tenants/{tenantID}":               "tenant.delete",
@@ -37,11 +37,11 @@ func userPermissionMap() map[string]string {
 		"DELETE /v1/users/{id}/purge":      "user.delete",
 		"POST /v1/users/{id}/password":     "user.credentials",
 		"DELETE /v1/users/{id}/mfa":        "user.credentials", // admin MFA reset
-		// A member's remembered devices, in the administrator's organisation.
+		// A member's remembered devices, in the administrator's organization.
 		"GET /v1/users/{id}/trusted-devices":               "user.read",
 		"DELETE /v1/users/{id}/trusted-devices":            "user.credentials",
 		"DELETE /v1/users/{id}/trusted-devices/{deviceID}": "user.credentials",
-		// A member's linked phones, in the administrator's organisation.
+		// A member's linked phones, in the administrator's organization.
 		"GET /v1/users/{id}/push-devices":               "user.read",
 		"DELETE /v1/users/{id}/push-devices/{deviceID}": "user.credentials",
 
@@ -85,8 +85,8 @@ func userPermissionMap() map[string]string {
 
 		// ABAC: attribute-based access control policy CRUD.
 		// Reads are gated on policy.read; mutations on policy.write. The
-		// evaluate endpoint is a PDP call and is ungated beyond tenant scope
-		// (it gates itself via requirePathTenant in the handler).
+		// evaluate endpoint is a PDP call and is ungated beyond organization scope
+		// (it gates itself via requirePathOrganization in the handler).
 		"GET /v1/tenants/{tenantID}/abac/policies":                                  "policy.read",
 		"POST /v1/tenants/{tenantID}/abac/policies":                                 "policy.write",
 		"GET /v1/tenants/{tenantID}/abac/policies/{id}":                             "policy.read",
@@ -101,8 +101,8 @@ func userPermissionMap() map[string]string {
 
 		// ReBAC: relationship tuples + identity graph.
 		// Reads are gated on role.read (structural authz data). Writes/deletes
-		// and the /check endpoint are ungated beyond tenant scope (they gate
-		// themselves via requirePathTenant + the relation-tuple payload).
+		// and the /check endpoint are ungated beyond organization scope (they gate
+		// themselves via requirePathOrganization + the relation-tuple payload).
 		"GET /v1/tenants/{tenantID}/relation-tuples":                    "role.read",
 		"POST /v1/tenants/{tenantID}/relation-tuples":                   "role.write",
 		"DELETE /v1/tenants/{tenantID}/relation-tuples/{id}":            "role.write",
@@ -160,7 +160,7 @@ func userPermissionMap() map[string]string {
 		"DELETE /v1/tenants/{tenantID}/oauth/grants/{id}":             "connection.write",
 		"POST /v1/tenants/{tenantID}/oauth/grants/revoke":             "connection.write",
 		"GET /v1/tenants/{tenantID}/oauth/devices":                    "connection.read",
-		// Tenant-wide trusted-device estate (adaptive MFA "remember this
+		// Organization-wide trusted-device estate (adaptive MFA "remember this
 		// device"), distinct from the OAuth device-grant flows above.
 		"GET /v1/auth/trusted-devices/count":               "connection.read",
 		"DELETE /v1/tenants/{tenantID}/oauth/devices/{id}": "connection.write",
@@ -332,7 +332,7 @@ func userPermissionMap() map[string]string {
 		"PUT /v1/tenants/{tenantID}/rate-limits":                      "policy.write",
 		"DELETE /v1/tenants/{tenantID}/rate-limits":                   "policy.write",
 
-		// Synchronous login hooks are tenant security policy.
+		// Synchronous login hooks are organization security policy.
 		"GET /v1/tenants/{tenantID}/auth-hooks":            "policy.read",
 		"POST /v1/tenants/{tenantID}/auth-hooks":           "policy.write",
 		"PATCH /v1/tenants/{tenantID}/auth-hooks/{id}":     "policy.write",
@@ -409,13 +409,13 @@ func userPermissionMap() map[string]string {
 		"GET /v1/tenants/{tenantID}/analytics/overview": "analytics.read",
 		"GET /v1/tenants/{tenantID}/service-health":     "tenant.read",
 
-		// Email delivery: whether the organisation's mail arrived (support),
+		// Email delivery: whether the organization's mail arrived (support),
 		// and lifting a suppression its mail caused (administrators).
 		"GET /v1/tenants/{tenantID}/email/messages":             "user.read",
 		"GET /v1/tenants/{tenantID}/email/suppressions":         "user.read",
 		"DELETE /v1/tenants/{tenantID}/email/suppressions/{id}": "user.write",
 
-		// SIEM/log streaming contains tenant audit data.
+		// SIEM/log streaming contains organization audit data.
 		"GET /v1/tenants/{tenantID}/log-sinks":            "audit.read",
 		"POST /v1/tenants/{tenantID}/log-sinks":           "audit.write",
 		"PATCH /v1/tenants/{tenantID}/log-sinks/{id}":     "audit.write",

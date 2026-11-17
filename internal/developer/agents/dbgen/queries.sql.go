@@ -14,30 +14,30 @@ import (
 )
 
 const agentScopes = `-- name: AgentScopes :one
-SELECT scopes FROM auth.agents WHERE id = $1 AND tenant_id = $2 AND status <> 'decommissioned'
+SELECT scopes FROM auth.agents WHERE id = $1 AND organization_id = $2 AND status <> 'decommissioned'
 `
 
 type AgentScopesParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
-// AgentScopes returns the scopes of one of the tenant's agents still in service.
+// AgentScopes returns the scopes of one of the organization's agents still in service.
 func (q *Queries) AgentScopes(ctx context.Context, arg AgentScopesParams) ([]string, error) {
-	row := q.db.QueryRow(ctx, agentScopes, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, agentScopes, arg.ID, arg.OrganizationID)
 	var scopes []string
 	err := row.Scan(&scopes)
 	return scopes, err
 }
 
 const createAgent = `-- name: CreateAgent :one
-INSERT INTO auth.agents (tenant_id, name, secret_hash, scopes, token_ttl_seconds, sponsor_user_id)
+INSERT INTO auth.agents (organization_id, name, secret_hash, scopes, token_ttl_seconds, sponsor_user_id)
 VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, name, scopes, token_ttl_seconds, sponsor_user_id, created_at
 `
 
 type CreateAgentParams struct {
-	TenantID        uuid.UUID
+	OrganizationID  uuid.UUID
 	Name            string
 	SecretHash      string
 	Scopes          []string
@@ -56,7 +56,7 @@ type CreateAgentRow struct {
 
 func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (CreateAgentRow, error) {
 	row := q.db.QueryRow(ctx, createAgent,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.Name,
 		arg.SecretHash,
 		arg.Scopes,
@@ -76,16 +76,16 @@ func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Creat
 }
 
 const deleteAgent = `-- name: DeleteAgent :execrows
-DELETE FROM auth.agents WHERE id = $1 AND tenant_id = $2
+DELETE FROM auth.agents WHERE id = $1 AND organization_id = $2
 `
 
 type DeleteAgentParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) DeleteAgent(ctx context.Context, arg DeleteAgentParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteAgent, arg.ID, arg.TenantID)
+	result, err := q.db.Exec(ctx, deleteAgent, arg.ID, arg.OrganizationID)
 	if err != nil {
 		return 0, err
 	}
@@ -93,14 +93,14 @@ func (q *Queries) DeleteAgent(ctx context.Context, arg DeleteAgentParams) (int64
 }
 
 const getAgentForToken = `-- name: GetAgentForToken :one
-SELECT a.tenant_id, a.secret_hash, a.scopes, a.token_ttl_seconds, a.status, a.previous_secret_hash, a.previous_secret_expires_at
+SELECT a.organization_id, a.secret_hash, a.scopes, a.token_ttl_seconds, a.status, a.previous_secret_hash, a.previous_secret_expires_at
 FROM auth.agents a
-JOIN tenant.tenants t ON t.id = a.tenant_id AND t.status = 'active' AND t.deleted_at IS NULL
+JOIN organization.organizations t ON t.id = a.organization_id AND t.status = 'active' AND t.deleted_at IS NULL
 WHERE a.id = $1
 `
 
 type GetAgentForTokenRow struct {
-	TenantID                uuid.UUID
+	OrganizationID          uuid.UUID
 	SecretHash              string
 	Scopes                  []string
 	TokenTtlSeconds         int32
@@ -109,12 +109,12 @@ type GetAgentForTokenRow struct {
 	PreviousSecretExpiresAt pgtype.Timestamptz
 }
 
-// GetAgentForToken finds no agent of a suspended or deleted organisation.
+// GetAgentForToken finds no agent of a suspended or deleted organization.
 func (q *Queries) GetAgentForToken(ctx context.Context, id uuid.UUID) (GetAgentForTokenRow, error) {
 	row := q.db.QueryRow(ctx, getAgentForToken, id)
 	var i GetAgentForTokenRow
 	err := row.Scan(
-		&i.TenantID,
+		&i.OrganizationID,
 		&i.SecretHash,
 		&i.Scopes,
 		&i.TokenTtlSeconds,
@@ -126,16 +126,16 @@ func (q *Queries) GetAgentForToken(ctx context.Context, id uuid.UUID) (GetAgentF
 }
 
 const getAgentStatus = `-- name: GetAgentStatus :one
-SELECT status FROM auth.agents WHERE id = $1 AND tenant_id = $2
+SELECT status FROM auth.agents WHERE id = $1 AND organization_id = $2
 `
 
 type GetAgentStatusParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) GetAgentStatus(ctx context.Context, arg GetAgentStatusParams) (string, error) {
-	row := q.db.QueryRow(ctx, getAgentStatus, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, getAgentStatus, arg.ID, arg.OrganizationID)
 	var status string
 	err := row.Scan(&status)
 	return status, err
@@ -144,12 +144,12 @@ func (q *Queries) GetAgentStatus(ctx context.Context, arg GetAgentStatusParams) 
 const getAgentStatusByID = `-- name: GetAgentStatusByID :one
 
 SELECT a.status FROM auth.agents a
-JOIN tenant.tenants t ON t.id = a.tenant_id AND t.status = 'active' AND t.deleted_at IS NULL
+JOIN organization.organizations t ON t.id = a.organization_id AND t.status = 'active' AND t.deleted_at IS NULL
 WHERE a.id = $1
 `
 
 // Queries for the agents domain.
-// GetAgentStatusByID finds no agent of a suspended or deleted organisation.
+// GetAgentStatusByID finds no agent of a suspended or deleted organization.
 func (q *Queries) GetAgentStatusByID(ctx context.Context, id uuid.UUID) (string, error) {
 	row := q.db.QueryRow(ctx, getAgentStatusByID, id)
 	var status string
@@ -159,11 +159,11 @@ func (q *Queries) GetAgentStatusByID(ctx context.Context, id uuid.UUID) (string,
 
 const killAllAgents = `-- name: KillAllAgents :execrows
 UPDATE auth.agents SET status = 'suspended'
-WHERE tenant_id = $1 AND status = 'active'
+WHERE organization_id = $1 AND status = 'active'
 `
 
-func (q *Queries) KillAllAgents(ctx context.Context, tenantID uuid.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, killAllAgents, tenantID)
+func (q *Queries) KillAllAgents(ctx context.Context, organizationID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, killAllAgents, organizationID)
 	if err != nil {
 		return 0, err
 	}
@@ -173,7 +173,7 @@ func (q *Queries) KillAllAgents(ctx context.Context, tenantID uuid.UUID) (int64,
 const listAgents = `-- name: ListAgents :many
 SELECT id, name, scopes, token_ttl_seconds, status, sponsor_user_id, created_at, last_used_at, previous_secret_expires_at
 FROM auth.agents
-WHERE tenant_id = $1 AND status <> 'decommissioned'
+WHERE organization_id = $1 AND status <> 'decommissioned'
 ORDER BY created_at DESC
 LIMIT 1001
 `
@@ -191,8 +191,8 @@ type ListAgentsRow struct {
 }
 
 // At most paging.MaxListItems+1 rows: the API truncates the rest.
-func (q *Queries) ListAgents(ctx context.Context, tenantID uuid.UUID) ([]ListAgentsRow, error) {
-	rows, err := q.db.Query(ctx, listAgents, tenantID)
+func (q *Queries) ListAgents(ctx context.Context, organizationID uuid.UUID) ([]ListAgentsRow, error) {
+	rows, err := q.db.Query(ctx, listAgents, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -224,14 +224,14 @@ func (q *Queries) ListAgents(ctx context.Context, tenantID uuid.UUID) ([]ListAge
 const listAgentsSponsoredBy = `-- name: ListAgentsSponsoredBy :many
 SELECT id, name, scopes, token_ttl_seconds, status, sponsor_user_id, created_at
 FROM auth.agents
-WHERE tenant_id = $1 AND sponsor_user_id = $2 AND status <> 'decommissioned'
+WHERE organization_id = $1 AND sponsor_user_id = $2 AND status <> 'decommissioned'
 ORDER BY created_at DESC
 LIMIT 1001
 `
 
 type ListAgentsSponsoredByParams struct {
-	TenantID uuid.UUID
-	UserID   pgtype.UUID
+	OrganizationID uuid.UUID
+	UserID         pgtype.UUID
 }
 
 type ListAgentsSponsoredByRow struct {
@@ -246,7 +246,7 @@ type ListAgentsSponsoredByRow struct {
 
 // At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListAgentsSponsoredBy(ctx context.Context, arg ListAgentsSponsoredByParams) ([]ListAgentsSponsoredByRow, error) {
-	rows, err := q.db.Query(ctx, listAgentsSponsoredBy, arg.TenantID, arg.UserID)
+	rows, err := q.db.Query(ctx, listAgentsSponsoredBy, arg.OrganizationID, arg.UserID)
 	if err != nil {
 		return nil, err
 	}
@@ -275,11 +275,11 @@ func (q *Queries) ListAgentsSponsoredBy(ctx context.Context, arg ListAgentsSpons
 
 const resumeAllAgents = `-- name: ResumeAllAgents :execrows
 UPDATE auth.agents SET status = 'active'
-WHERE tenant_id = $1 AND status = 'suspended'
+WHERE organization_id = $1 AND status = 'suspended'
 `
 
-func (q *Queries) ResumeAllAgents(ctx context.Context, tenantID uuid.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, resumeAllAgents, tenantID)
+func (q *Queries) ResumeAllAgents(ctx context.Context, organizationID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, resumeAllAgents, organizationID)
 	if err != nil {
 		return 0, err
 	}
@@ -289,7 +289,7 @@ func (q *Queries) ResumeAllAgents(ctx context.Context, tenantID uuid.UUID) (int6
 const rotateAgentSecret = `-- name: RotateAgentSecret :one
 UPDATE auth.agents
 SET previous_secret_hash = secret_hash, previous_secret_expires_at = $1, secret_hash = $2
-WHERE id = $3 AND tenant_id = $4 AND status <> 'decommissioned'
+WHERE id = $3 AND organization_id = $4 AND status <> 'decommissioned'
 RETURNING name
 `
 
@@ -297,7 +297,7 @@ type RotateAgentSecretParams struct {
 	PreviousExpiresAt pgtype.Timestamptz
 	SecretHash        string
 	ID                uuid.UUID
-	TenantID          uuid.UUID
+	OrganizationID    uuid.UUID
 }
 
 // RotateAgentSecret makes the new secret current and keeps the old one
@@ -307,7 +307,7 @@ func (q *Queries) RotateAgentSecret(ctx context.Context, arg RotateAgentSecretPa
 		arg.PreviousExpiresAt,
 		arg.SecretHash,
 		arg.ID,
-		arg.TenantID,
+		arg.OrganizationID,
 	)
 	var name string
 	err := row.Scan(&name)
@@ -316,37 +316,37 @@ func (q *Queries) RotateAgentSecret(ctx context.Context, arg RotateAgentSecretPa
 
 const setAgentStatus = `-- name: SetAgentStatus :exec
 UPDATE auth.agents SET status = $1
-WHERE id = $2 AND tenant_id = $3
+WHERE id = $2 AND organization_id = $3
 `
 
 type SetAgentStatusParams struct {
-	Status   string
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	Status         string
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 func (q *Queries) SetAgentStatus(ctx context.Context, arg SetAgentStatusParams) error {
-	_, err := q.db.Exec(ctx, setAgentStatus, arg.Status, arg.ID, arg.TenantID)
+	_, err := q.db.Exec(ctx, setAgentStatus, arg.Status, arg.ID, arg.OrganizationID)
 	return err
 }
 
-const sponsorBelongsToTenant = `-- name: SponsorBelongsToTenant :one
+const sponsorBelongsToOrganization = `-- name: SponsorBelongsToOrganization :one
 SELECT EXISTS (
-    SELECT 1 FROM account.users WHERE id = $1 AND tenant_id = $2::uuid AND deleted_at IS NULL
+    SELECT 1 FROM account.users WHERE id = $1 AND organization_id = $2::uuid AND deleted_at IS NULL
     UNION ALL
-    SELECT 1 FROM rbac.user_roles WHERE tenant_id = $2::uuid AND user_id = $1
+    SELECT 1 FROM rbac.user_roles WHERE organization_id = $2::uuid AND user_id = $1
 )
 `
 
-type SponsorBelongsToTenantParams struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
+type SponsorBelongsToOrganizationParams struct {
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
 }
 
-// SponsorBelongsToTenant reports whether the user is a member of the tenant:
+// SponsorBelongsToOrganization reports whether the user is a member of the organization:
 // its own account, or holding a role there.
-func (q *Queries) SponsorBelongsToTenant(ctx context.Context, arg SponsorBelongsToTenantParams) (bool, error) {
-	row := q.db.QueryRow(ctx, sponsorBelongsToTenant, arg.UserID, arg.TenantID)
+func (q *Queries) SponsorBelongsToOrganization(ctx context.Context, arg SponsorBelongsToOrganizationParams) (bool, error) {
+	row := q.db.QueryRow(ctx, sponsorBelongsToOrganization, arg.UserID, arg.OrganizationID)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
@@ -354,33 +354,33 @@ func (q *Queries) SponsorBelongsToTenant(ctx context.Context, arg SponsorBelongs
 
 const touchAgent = `-- name: TouchAgent :exec
 UPDATE auth.agents SET last_used_at = NOW()
-WHERE id = $1 AND tenant_id = $2 AND (last_used_at IS NULL OR last_used_at < NOW() - INTERVAL '1 minute')
+WHERE id = $1 AND organization_id = $2 AND (last_used_at IS NULL OR last_used_at < NOW() - INTERVAL '1 minute')
 `
 
 type TouchAgentParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
 }
 
 // TouchAgent notes a token issued to the agent, at most once a minute.
 func (q *Queries) TouchAgent(ctx context.Context, arg TouchAgentParams) error {
-	_, err := q.db.Exec(ctx, touchAgent, arg.ID, arg.TenantID)
+	_, err := q.db.Exec(ctx, touchAgent, arg.ID, arg.OrganizationID)
 	return err
 }
 
 const transferAgentSponsor = `-- name: TransferAgentSponsor :execrows
 UPDATE auth.agents SET sponsor_user_id = $1
-WHERE tenant_id = $2 AND sponsor_user_id = $3 AND status <> 'decommissioned'
+WHERE organization_id = $2 AND sponsor_user_id = $3 AND status <> 'decommissioned'
 `
 
 type TransferAgentSponsorParams struct {
-	ToUserID   pgtype.UUID
-	TenantID   uuid.UUID
-	FromUserID pgtype.UUID
+	ToUserID       pgtype.UUID
+	OrganizationID uuid.UUID
+	FromUserID     pgtype.UUID
 }
 
 func (q *Queries) TransferAgentSponsor(ctx context.Context, arg TransferAgentSponsorParams) (int64, error) {
-	result, err := q.db.Exec(ctx, transferAgentSponsor, arg.ToUserID, arg.TenantID, arg.FromUserID)
+	result, err := q.db.Exec(ctx, transferAgentSponsor, arg.ToUserID, arg.OrganizationID, arg.FromUserID)
 	if err != nil {
 		return 0, err
 	}
@@ -389,14 +389,14 @@ func (q *Queries) TransferAgentSponsor(ctx context.Context, arg TransferAgentSpo
 
 const upgradeAgentSecretHash = `-- name: UpgradeAgentSecretHash :exec
 UPDATE auth.agents SET secret_hash = $1
-WHERE id = $2 AND tenant_id = $3 AND secret_hash = $4
+WHERE id = $2 AND organization_id = $3 AND secret_hash = $4
 `
 
 type UpgradeAgentSecretHashParams struct {
-	NewHash  string
-	ID       uuid.UUID
-	TenantID uuid.UUID
-	OldHash  string
+	NewHash        string
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	OldHash        string
 }
 
 // UpgradeAgentSecretHash replaces an Argon2id secret hash from before with its
@@ -405,7 +405,7 @@ func (q *Queries) UpgradeAgentSecretHash(ctx context.Context, arg UpgradeAgentSe
 	_, err := q.db.Exec(ctx, upgradeAgentSecretHash,
 		arg.NewHash,
 		arg.ID,
-		arg.TenantID,
+		arg.OrganizationID,
 		arg.OldHash,
 	)
 	return err

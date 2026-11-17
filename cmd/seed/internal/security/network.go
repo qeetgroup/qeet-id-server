@@ -20,14 +20,14 @@ import (
 // ruleSpec is an address rule as an administrator types it.
 type ruleSpec struct{ cidr, label, action string }
 
-// enforcedSince is when each organisation last switched its address rules on;
+// enforcedSince is when each organization last switched its address rules on;
 // absent while they are off. Compliance evidence reads it.
 var enforcedSince = map[string]time.Time{}
 
-// ruleSet is an organisation's address rules as they stand.
+// ruleSet is an organization's address rules as they stand.
 var ruleSet = map[string][]ipallow.Rule{}
 
-// addressRules writes each organisation's address rules and the sign-ins they
+// addressRules writes each organization's address rules and the sign-ins they
 // refused.
 func addressRules(w *world.World) {
 	if o := org(w, "northwind"); o != nil {
@@ -196,21 +196,21 @@ func addRules(w *world.World, o *world.Org, by *world.Person, at time.Time, enab
 	// One transaction stamps every rule alike; the administrator added them
 	// one after another.
 	for i, r := range added {
-		w.Exec("date an address rule", `UPDATE tenant.ip_rules SET created_at = $3 WHERE id = $1 AND tenant_id = $2`,
+		w.Exec("date an address rule", `UPDATE organization.ip_rules SET created_at = $3 WHERE id = $1 AND organization_id = $2`,
 			r.ID, o.ID, at.Add(time.Duration(i)*40*time.Second))
 	}
 	if enable {
-		w.Exec("date address rule enforcement", `UPDATE tenant.ip_rules_config SET updated_at = $2 WHERE tenant_id = $1`,
+		w.Exec("date address rule enforcement", `UPDATE organization.ip_rules_config SET updated_at = $2 WHERE organization_id = $1`,
 			o.ID, at.Add(time.Duration(len(specs))*40*time.Second))
 	}
 	for i, r := range specs {
-		w.Audit(at.Add(time.Duration(i)*40*time.Second), audit.Event{TenantID: &o.ID, ActorUserID: &by.ID, Action: "ip_rules.rule_added",
+		w.Audit(at.Add(time.Duration(i)*40*time.Second), audit.Event{OrganizationID: &o.ID, ActorUserID: &by.ID, Action: "ip_rules.rule_added",
 			ResourceType: "ip_rule", IP: by.Device.Office(officeOf(by)).IP, UserAgent: by.Device.UserAgent,
 			Metadata: map[string]any{"cidr": r.cidr, "action": r.action}})
 	}
 	if enable {
 		enforcedSince[o.Spec.Slug] = at
-		w.Audit(at.Add(time.Duration(len(specs))*40*time.Second), audit.Event{TenantID: &o.ID, ActorUserID: &by.ID,
+		w.Audit(at.Add(time.Duration(len(specs))*40*time.Second), audit.Event{OrganizationID: &o.ID, ActorUserID: &by.ID,
 			Action: "ip_rules.enforcement_changed", ResourceType: "ip_rule", IP: by.Device.Office(officeOf(by)).IP,
 			UserAgent: by.Device.UserAgent, Metadata: map[string]any{"enabled": true}})
 	}
@@ -228,7 +228,7 @@ func setEnforcement(w *world.World, o *world.Org, by *world.Person, at time.Time
 	} else {
 		delete(enforcedSince, o.Spec.Slug)
 	}
-	w.Audit(at, audit.Event{TenantID: &o.ID, ActorUserID: &by.ID, Action: "ip_rules.enforcement_changed", ResourceType: "ip_rule",
+	w.Audit(at, audit.Event{OrganizationID: &o.ID, ActorUserID: &by.ID, Action: "ip_rules.enforcement_changed", ResourceType: "ip_rule",
 		IP: by.Device.Office(officeOf(by)).IP, UserAgent: by.Device.UserAgent, Metadata: map[string]any{"enabled": enabled}})
 }
 
@@ -251,7 +251,7 @@ func refuse(w *world.World, o *world.Org, t time.Time, ip, path string, who *wor
 	if who != nil {
 		actor = &who.ID
 	}
-	w.Audit(t, audit.Event{TenantID: &o.ID, ActorUserID: actor, ActorType: "user", Action: "auth.address_refused",
+	w.Audit(t, audit.Event{OrganizationID: &o.ID, ActorUserID: actor, ActorType: "user", Action: "auth.address_refused",
 		ResourceType: "ip_rule", ResourceID: ruleID, IP: ip, Metadata: meta})
 }
 

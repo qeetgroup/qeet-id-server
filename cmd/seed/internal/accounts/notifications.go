@@ -15,13 +15,13 @@ const inbox = 21 * 24 * time.Hour
 
 // note is one notification for one person.
 type note struct {
-	tenant uuid.UUID
+	organization uuid.UUID
 	event
 }
 
 // notifications fills the bell of every test account and every owner: alerts
 // about their own account (new sign-ins, factors added) and, for those who
-// administer an organisation, what happened in it over the last three weeks.
+// administer an organization, what happened in it over the last three weeks.
 // Each person opened the bell now and then, which marked everything read;
 // what arrived since is unread.
 func (s *seeder) notifications() {
@@ -41,7 +41,7 @@ func (s *seeder) notifications() {
 	}
 }
 
-// orgEvents adds what the organisation's administrators hear about besides
+// orgEvents adds what the organization's administrators hear about besides
 // the steps' own events: billing, trials, adoption and set-up nudges.
 func (s *seeder) orgEvents(o *world.Org) {
 	w := s.w
@@ -130,7 +130,7 @@ func planName(plan string) string {
 func (s *seeder) notesFor(p *world.Person) []note {
 	w, o := s.w, p.Org
 	var out []note
-	add := func(tenant uuid.UUID, e event) { out = append(out, note{tenant, e}) }
+	add := func(organization uuid.UUID, e event) { out = append(out, note{organization, e}) }
 	since := w.Now.Add(-inbox)
 	if p.Joined.After(since) {
 		since = p.Joined
@@ -166,7 +166,7 @@ func (s *seeder) notesFor(p *world.Person) []note {
 		}
 	}
 
-	// What happened in the organisations they help run.
+	// What happened in the organizations they help run.
 	orgs := []struct {
 		o    *world.Org
 		role string
@@ -229,7 +229,7 @@ func (s *seeder) deliver(p *world.Person, notes []note) {
 			reads = reads[1:]
 		}
 		w.At(note.at, func() {
-			w.Check(svc.Notify(w.Ctx, note.tenant, p.ID, note.kind, note.title, note.detail, note.href), "notify "+p.Email)
+			w.Check(svc.Notify(w.Ctx, note.organization, p.ID, note.kind, note.title, note.detail, note.href), "notify "+p.Email)
 		})
 	}
 	for _, t := range reads {

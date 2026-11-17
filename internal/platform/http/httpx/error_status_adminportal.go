@@ -27,10 +27,10 @@ func init() {
 		errs.CodeAdminPortalSessionInvalid: http.StatusUnauthorized,
 
 		// Request shape & path parameters.
-		errs.CodeAdminPortalTenantIDInvalid: http.StatusBadRequest,
-		errs.CodeAdminPortalTenantMismatch:  http.StatusForbidden,
-		errs.CodeAdminPortalActorRequired:   http.StatusUnauthorized,
-		errs.CodeAdminPortalIDInvalid:       http.StatusBadRequest,
+		errs.CodeAdminPortalOrganizationIDInvalid: http.StatusBadRequest,
+		errs.CodeAdminPortalOrganizationMismatch:  http.StatusForbidden,
+		errs.CodeAdminPortalActorRequired:         http.StatusUnauthorized,
+		errs.CodeAdminPortalIDInvalid:             http.StatusBadRequest,
 
 		// SAML connection input.
 		errs.CodeAdminPortalSAMLFieldsRequired: http.StatusUnprocessableEntity,

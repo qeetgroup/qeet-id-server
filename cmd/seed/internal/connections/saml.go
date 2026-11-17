@@ -47,10 +47,10 @@ type idp struct {
 	name, entityID, ssoURL, cert, emailAttr, nameAttr string
 }
 
-// orgLabel is the organisation's tenant name at a vendor, e.g. "northwindcapital".
+// orgLabel is the organization's name at a vendor, e.g. "northwindcapital".
 func orgLabel(o *world.Org) string { return strings.SplitN(o.Spec.Domain, ".", 2)[0] }
 
-// vendorIdP describes the organisation's connection to vendor, its signing
+// vendorIdP describes the organization's connection to vendor, its signing
 // certificate issued at issued.
 func (f *fed) vendorIdP(o *world.Org, vendor string, issued time.Time) idp {
 	label := orgLabel(o)
@@ -87,7 +87,7 @@ func (f *fed) vendorIdP(o *world.Org, vendor string, issued time.Time) idp {
 	}
 }
 
-// setup is when the organisation configured its identity provider and
+// setup is when the organization configured its identity provider and
 // directories: SAML created and switched on, the SCIM token minted and the
 // LDAP directory added and switched on. Each comes before the first account
 // it brought in.
@@ -95,7 +95,7 @@ type setup struct {
 	samlCreated, samlActive, scim, ldapCreated, ldapActive time.Time
 }
 
-// setupTimes places the organisation's set-up in its first days, before the
+// setupTimes places the organization's set-up in its first days, before the
 // first provisioned account arrived.
 func (f *fed) setupTimes(o *world.Org) setup {
 	if s, ok := f.setups[o.ID]; ok {
@@ -140,7 +140,7 @@ func (f *fed) setupTimes(o *world.Org) setup {
 	return s
 }
 
-// sso connects the organisation to its SAML identity provider, active or a
+// sso connects the organization to its SAML identity provider, active or a
 // draft as its story says, and links the people who sign in through it.
 func (f *fed) sso(o *world.Org) {
 	vendor := o.Spec.Features.SSO
@@ -164,13 +164,13 @@ func (f *fed) sso(o *world.Org) {
 
 	if vendor == "entra" {
 		// The rollout first ran against the identity provider's staging
-		// tenant; that connection was switched off at go-live.
+		// organization; that connection was switched off at go-live.
 		staging := f.vendorIdP(o, vendor, times.samlCreated.AddDate(-1, 0, 0))
 		staging.name += " (staging tenant)"
 		sc := f.samlConnection(o, by, times.samlCreated.Add(-10*time.Minute), staging)
 		f.samlStatus(o, by, times.samlCreated.Add(-4*time.Minute), sc, "active", nil)
 		f.samlStatus(o, by, times.samlActive.Add(3*24*time.Hour), sc, "disabled", nil)
-		w.Exec("staging sign-in", `UPDATE tenant.saml_connections SET last_login_at = $3 WHERE id = $1 AND tenant_id = $2`,
+		w.Exec("staging sign-in", `UPDATE organization.saml_connections SET last_login_at = $3 WHERE id = $1 AND organization_id = $2`,
 			sc, o.ID, times.samlActive.Add(-20*time.Minute))
 	}
 	if o.Spec.Features.SSOStatus != "active" {
@@ -184,7 +184,7 @@ func (f *fed) sso(o *world.Org) {
 	f.samlStatus(o, adminAt(o, times.samlActive), times.samlActive, conn, "active", idpInitiated)
 	f.groupSync(o, conn, times.samlActive)
 	f.breakGlass(o, times.samlActive)
-	w.Exec("saml last sign-in", `UPDATE tenant.saml_connections SET last_login_at = $3 WHERE id = $1 AND tenant_id = $2`,
+	w.Exec("saml last sign-in", `UPDATE organization.saml_connections SET last_login_at = $3 WHERE id = $1 AND organization_id = $2`,
 		conn, o.ID, f.ago(8*time.Minute, 58*time.Minute))
 
 	// The people who sign in through it: everyone where the identity provider
@@ -208,7 +208,7 @@ func (f *fed) sso(o *world.Org) {
 			to = w.Now.Add(-time.Hour)
 		}
 		linked := f.workTime(from, to, p.Loc)
-		batch.Queue(`INSERT INTO account.external_identities (id, user_id, tenant_id, provider, connection_id, subject, email, metadata, linked_at)
+		batch.Queue(`INSERT INTO account.external_identities (id, user_id, organization_id, provider, connection_id, subject, email, metadata, linked_at)
 			VALUES ($1, $2, $3, 'saml', $4, $5, $6, $7, $8)`, uuid.New(), p.ID, o.ID, conn, p.Email, p.Email,
 			map[string]any{"connection": conn.String(), "idp": c.entityID}, linked)
 	}
@@ -253,7 +253,7 @@ type sp struct {
 	access                            spec // who may sign in to it, when not everyone
 }
 
-// serviceProviders registers the SaaS applications an Enterprise organisation
+// serviceProviders registers the SaaS applications an Enterprise organization
 // signs its people in to with Qeet ID as the identity provider, and records the
 // assertions issued to the live ones.
 func (f *fed) serviceProviders(o *world.Org) {
@@ -355,7 +355,7 @@ func (f *fed) serviceProvider(o *world.Org, by *world.Person, t time.Time, s sp)
 			continue
 		}
 		uid := p.ID
-		w.Audit(at, audit.Event{TenantID: &o.ID, ActorUserID: &uid, ActorType: "user", Action: "saml.idp_assertion_issued",
+		w.Audit(at, audit.Event{OrganizationID: &o.ID, ActorUserID: &uid, ActorType: "user", Action: "saml.idp_assertion_issued",
 			ResourceType: "saml_service_provider", ResourceID: &id, IP: p.Device.IP, UserAgent: p.Device.UserAgent,
 			RequestID: f.requestID(), Metadata: map[string]any{"sp_entity_id": s.entityID}})
 		if at.After(last) {
@@ -363,6 +363,6 @@ func (f *fed) serviceProvider(o *world.Org, by *world.Person, t time.Time, s sp)
 		}
 	}
 	if !last.IsZero() {
-		w.Exec("SP last sign-in", `UPDATE tenant.saml_service_providers SET last_login_at = $3 WHERE id = $1 AND tenant_id = $2`, id, o.ID, last)
+		w.Exec("SP last sign-in", `UPDATE organization.saml_service_providers SET last_login_at = $3 WHERE id = $1 AND organization_id = $2`, id, o.ID, last)
 	}
 }

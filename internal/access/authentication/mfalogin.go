@@ -64,7 +64,7 @@ func methodsOf(factors []LoginFactor) []string {
 // MFAProof is how a challenge is met: exactly one of a code, a passkey
 // assertion, or an approved push. An enrolment challenge (see mfapolicy.go)
 // is met by a code from the authenticator app set up for it, or skipped
-// while the organisation's grace period runs.
+// while the organization's grace period runs.
 type MFAProof struct {
 	Code    string
 	Passkey *PasskeyProof
@@ -103,7 +103,7 @@ var errNotAFactorChallenge = errs.ErrBadRequest.WithDetail("This sign-in is sett
 // pendingMFAChallenge is a challenge not yet met, as its helpers read it.
 type pendingMFAChallenge struct {
 	userID           uuid.UUID
-	tenantID         *uuid.UUID
+	organizationID   *uuid.UUID
 	enrollment       bool
 	passkeySessionID *uuid.UUID
 	pushChallengeID  *uuid.UUID
@@ -128,10 +128,10 @@ func loadMFAChallenge(ctx context.Context, tx pgx.Tx, mfaToken string) (uuid.UUI
 	var c pendingMFAChallenge
 	var expiresAt time.Time
 	err = tx.QueryRow(ctx, `
-		SELECT user_id, tenant_id, enrollment, expires_at, passkey_session_id, push_challenge_id, codes_sent,
+		SELECT user_id, organization_id, enrollment, expires_at, passkey_session_id, push_challenge_id, codes_sent,
 		       risk_email, email_code_sent_at, email_code_hash, email_code_expires_at
 		FROM auth.mfa_login_challenges WHERE id = $1 FOR UPDATE`, id).
-		Scan(&c.userID, &c.tenantID, &c.enrollment, &expiresAt, &c.passkeySessionID, &c.pushChallengeID, &c.codesSent,
+		Scan(&c.userID, &c.organizationID, &c.enrollment, &expiresAt, &c.passkeySessionID, &c.pushChallengeID, &c.codesSent,
 			&c.riskEmail, &c.emailCodeSentAt, &c.emailCodeHash, &c.emailCodeExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && time.Now().After(expiresAt)) {
 		return uuid.Nil, pendingMFAChallenge{}, errs.ErrAuthMFAChallengeExpired
@@ -194,7 +194,7 @@ func (s *Service) SendMFACode(ctx context.Context, mfaToken string, factorID uui
 	case c.riskEmail:
 		return s.sendRiskEmailCode(ctx, id, c, risk)
 	}
-	if err := s.mfa.SendLoginCode(ctx, c.userID, c.tenantID, factorID); err != nil {
+	if err := s.mfa.SendLoginCode(ctx, c.userID, c.organizationID, factorID); err != nil {
 		// On a context of its own, so a send that failed as ctx ended is undone too.
 		uctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 		defer cancel()

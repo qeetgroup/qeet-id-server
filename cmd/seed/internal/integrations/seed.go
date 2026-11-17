@@ -1,4 +1,4 @@
-// Package integrations seeds each organisation's integrations: API keys, service
+// Package integrations seeds each organization's integrations: API keys, service
 // principals, AI agents, webhooks and their deliveries, auth hooks, secrets,
 // token-vault connections, verifiable credentials, ABAC policies,
 // relationship tuples, the access decisions they answered, rate-limit
@@ -21,7 +21,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// Seed builds every organisation's integrations in the order its people set
+// Seed builds every organization's integrations in the order its people set
 // them up, then the webhook traffic everything since has produced.
 func Seed(w *world.World) {
 	d := &dev{w: w, box: vaultCipher(w), host: "qeet-id-api-7c9f4d6b8-x2kqp/" + token(w, 10)}
@@ -63,7 +63,7 @@ type dev struct {
 	box  *envelope.Cipher
 	host string
 	seq  int
-	subs map[uuid.UUID][]sub // each organisation's webhook subscriptions
+	subs map[uuid.UUID][]sub // each organization's webhook subscriptions
 }
 
 // vaultCipher is the cipher the API's token vault seals with: the vault key
@@ -183,7 +183,7 @@ func person(o *world.Org, t time.Time, prefs ...who) *world.Person {
 // administrator who is, else the owner.
 func (d *dev) issuer(o *world.Org, t time.Time, scopes []string, prefs ...who) *world.Person {
 	allowed := func(p *world.Person) bool {
-		caller := &httpx.Principal{UserID: &p.ID, TenantID: &o.ID, ActorType: "user"}
+		caller := &httpx.Principal{UserID: &p.ID, OrganizationID: &o.ID, ActorType: "user"}
 		return d.w.Deps.RBAC.Repo.CheckGrantScopes(d.w.Ctx, caller, o.ID, scopes) == nil
 	}
 	admin := func(p *world.Person) bool { return p.Role == world.RoleAdmin }
@@ -224,7 +224,7 @@ func guestSince(o *world.Org, g *world.Person) time.Time {
 }
 
 // when is daysAgo days before now in o's working hours, but no earlier than a
-// day after the organisation signed up or an hour after any of ps joined it,
+// day after the organization signed up or an hour after any of ps joined it,
 // and never in the future.
 func (d *dev) when(o *world.Org, daysAgo float64, ps ...*world.Person) time.Time {
 	w := d.w

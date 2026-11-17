@@ -22,13 +22,13 @@ import (
 func TestRotatingAnAgentNeedsItsScopes(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	tenant := dbtest.Tenant(t)
-	developer := dbtest.User(t, tenant)
-	dbtest.Assign(t, developer.ID, tenant, dbtest.Role(t, tenant, "apikey.write", "user.read"))
+	organization := dbtest.Organization(t)
+	developer := dbtest.User(t, organization)
+	dbtest.Assign(t, developer.ID, organization, dbtest.Role(t, organization, "apikey.write", "user.read"))
 	svc := NewService(pool, dbtest.Issuer(t))
 	create := func(scopes ...string) uuid.UUID {
 		t.Helper()
-		a, err := svc.Create(ctx, tenant, dbtest.Unique("agent"), scopes, 0, developer.ID, audit.Actor{UserID: &developer.ID, Type: "user"})
+		a, err := svc.Create(ctx, organization, dbtest.Unique("agent"), scopes, 0, developer.ID, audit.Actor{UserID: &developer.ID, Type: "user"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -37,15 +37,15 @@ func TestRotatingAnAgentNeedsItsScopes(t *testing.T) {
 	secret := func(id uuid.UUID) string {
 		t.Helper()
 		var hash string
-		if err := pool.QueryRow(ctx, `SELECT secret_hash FROM auth.agents WHERE tenant_id = $1 AND id = $2`, tenant, id).Scan(&hash); err != nil {
+		if err := pool.QueryRow(ctx, `SELECT secret_hash FROM auth.agents WHERE organization_id = $1 AND id = $2`, organization, id).Scan(&hash); err != nil {
 			t.Fatal(err)
 		}
 		return hash
 	}
-	h := dbtest.Serve(dbtest.Principal(developer.ID, tenant),
+	h := dbtest.Serve(dbtest.Principal(developer.ID, organization),
 		(&Handler{Service: svc, GrantCheck: rbac.NewRepository(pool).CheckGrantScopes}).Mount)
 	rotate := func(id uuid.UUID) (int, string) {
-		rec := dbtest.Do(t, h, http.MethodPost, "/tenants/"+tenant.String()+"/agents/"+id.String()+"/rotate-secret", nil)
+		rec := dbtest.Do(t, h, http.MethodPost, "/tenants/"+organization.String()+"/agents/"+id.String()+"/rotate-secret", nil)
 		return rec.Code, rec.Body.String()
 	}
 

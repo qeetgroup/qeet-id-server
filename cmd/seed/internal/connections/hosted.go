@@ -17,7 +17,7 @@ import (
 // printed token request redeems the code it returns.
 const verifier = "seed-verifier-0123456789-abcdefghijklmnopqrstuvwxyz"
 
-// hostedTest remembers a for the summary: the organisation's app to sign in to
+// hostedTest remembers a for the summary: the organization's app to sign in to
 // through the hosted pages, or the device-flow app.
 func (f *fed) hostedTest(o *world.Org, a *app) {
 	h := hostedApp{org: o, name: a.spec.name, clientID: a.clientID, scopes: a.spec.scopes, note: a.spec.note}
@@ -47,7 +47,7 @@ func (f *fed) hostedTest(o *world.Org, a *app) {
 	f.hosted = append(f.hosted, h)
 }
 
-// portal mints the organisation's enterprise-setup links: the one Vertex's
+// portal mints the organization's enterprise-setup links: the one Vertex's
 // Okta administrator has open now, the one Northwind's used to rotate the SCIM
 // token, and links that expired unused or were revoked.
 func (f *fed) portal(o *world.Org) {
@@ -95,10 +95,10 @@ func (f *fed) portalLink(o *world.Org, by *world.Person, t time.Time, caps []str
 	})
 	f.record(t, o, by, "admin_portal.link_generated", "admin_portal_link", &id, map[string]any{"capabilities": caps})
 	// The API dates its expiry from the time it ran; date it from the story's.
-	w.Exec("link expiry", `UPDATE tenant.admin_portal_links SET expires_at = created_at + $3 * interval '1 second' WHERE id = $1 AND tenant_id = $2`,
+	w.Exec("link expiry", `UPDATE organization.admin_portal_links SET expires_at = created_at + $3 * interval '1 second' WHERE id = $1 AND organization_id = $2`,
 		id, o.ID, ttl.Seconds())
 	if used != nil {
-		w.Exec("link use", `UPDATE tenant.admin_portal_links SET redeemed_at = $3, last_used_at = $4 WHERE id = $1 AND tenant_id = $2`,
+		w.Exec("link use", `UPDATE organization.admin_portal_links SET redeemed_at = $3, last_used_at = $4 WHERE id = $1 AND organization_id = $2`,
 			id, o.ID, used.Add(-3*time.Minute), used.Add(4*time.Minute))
 		w.Exec("portal session", `UPDATE auth.admin_portal_sessions SET created_at = $2, expires_at = $3, last_used_at = $4 WHERE link_id = $1`,
 			id, used.Add(-3*time.Minute), used.Add(27*time.Minute), used.Add(4*time.Minute))

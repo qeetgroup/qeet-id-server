@@ -463,7 +463,7 @@ func (s *Service) sendExpoPush(ctx context.Context, pushToken string, challengeI
 		req.Header.Set("Authorization", "Bearer "+s.pushAccessToken)
 	}
 
-	resp, err := http.DefaultClient.Do(req) //nolint:forbidigo // operator-configured Expo endpoint, not tenant-controlled
+	resp, err := http.DefaultClient.Do(req) //nolint:forbidigo // operator-configured Expo endpoint, not organization-controlled
 	if err != nil {
 		return err
 	}
@@ -530,7 +530,7 @@ func (h *Handler) MountPublic(r chi.Router) {
 }
 
 // MountAdmin mounts an administrator's view of a member's linked phones, in
-// the administrator's own organisation (user.read / user.credentials).
+// the administrator's own organization (user.read / user.credentials).
 func (h *Handler) MountAdmin(r chi.Router) {
 	r.Get("/users/{id}/push-devices", h.listMemberPushDevices)
 	r.Delete("/users/{id}/push-devices/{deviceID}", h.revokeMemberPushDevice)
@@ -605,7 +605,7 @@ func (h *Handler) revokePushDevice(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	h.Service.auditPushDevice(r, p.TenantID, *p.UserID, deviceID, "mfa.push_device_revoked")
+	h.Service.auditPushDevice(r, p.OrganizationID, *p.UserID, deviceID, "mfa.push_device_revoked")
 	h.Service.tellPhoneUnlinked(r.Context(), *p.UserID)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -802,9 +802,9 @@ func (s *Service) UpdatePushToken(ctx context.Context, deviceID, userID uuid.UUI
 	return tx.Commit(ctx)
 }
 
-// isMember reports whether userID belongs to tenantID, for the member routes.
-func (h *Handler) isMember(ctx context.Context, userID, tenantID uuid.UUID) (bool, error) {
-	return h.Service.q.IsTenantMember(ctx, dbgen.IsTenantMemberParams{UserID: userID, TenantID: tenantID})
+// isMember reports whether userID belongs to organizationID, for the member routes.
+func (h *Handler) isMember(ctx context.Context, userID, organizationID uuid.UUID) (bool, error) {
+	return h.Service.q.IsOrganizationMember(ctx, dbgen.IsOrganizationMemberParams{UserID: userID, OrganizationID: organizationID})
 }
 
 // listMemberPushDevices → GET /v1/users/{id}/push-devices.
@@ -825,7 +825,7 @@ func (h *Handler) listMemberPushDevices(w http.ResponseWriter, r *http.Request) 
 // revokeMemberPushDevice → DELETE /v1/users/{id}/push-devices/{deviceID}: an
 // administrator disconnects a lost phone of a member they outrank.
 func (h *Handler) revokeMemberPushDevice(w http.ResponseWriter, r *http.Request) {
-	userID, tenantID, err := httpx.MemberToActOn(r, "id", h.isMember, h.ActOnCheck)
+	userID, organizationID, err := httpx.MemberToActOn(r, "id", h.isMember, h.ActOnCheck)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -839,13 +839,13 @@ func (h *Handler) revokeMemberPushDevice(w http.ResponseWriter, r *http.Request)
 		httpx.WriteError(w, r, err)
 		return
 	}
-	h.Service.auditPushDevice(r, &tenantID, userID, deviceID, "mfa.push_device_revoked")
+	h.Service.auditPushDevice(r, &organizationID, userID, deviceID, "mfa.push_device_revoked")
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // auditPushDevice records a linked phone removed, best effort: the removal
 // stands either way.
-func (s *Service) auditPushDevice(r *http.Request, tenantID *uuid.UUID, owner, deviceID uuid.UUID, action string) {
+func (s *Service) auditPushDevice(r *http.Request, organizationID *uuid.UUID, owner, deviceID uuid.UUID, action string) {
 	ctx := r.Context()
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -857,7 +857,7 @@ func (s *Service) auditPushDevice(r *http.Request, tenantID *uuid.UUID, owner, d
 		actorID, actorType = audit.ActorOf(r).Identity()
 	}
 	if audit.Record(ctx, tx, audit.Event{
-		TenantID: tenantID, ActorUserID: actorID, ActorType: actorType,
+		OrganizationID: organizationID, ActorUserID: actorID, ActorType: actorType,
 		Action: action, ResourceType: "push_device", ResourceID: &deviceID,
 		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
 		Metadata: map[string]any{"user_id": owner},

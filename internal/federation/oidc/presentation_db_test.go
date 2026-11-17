@@ -23,10 +23,10 @@ import (
 // leaves out what wasn't, whatever the request carries.
 func TestApplicationLogoAndHomePage(t *testing.T) {
 	p := newProvider(t)
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: p.svc}).Mount)
-	clients := "/tenants/" + tenant.String() + "/oidc/clients"
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: p.svc}).Mount)
+	clients := "/tenants/" + organization.String() + "/oidc/clients"
 	const logo, home = "https://cdn.acme.example.test/notes.svg", "https://acme.example.test"
 
 	var created struct {
@@ -86,24 +86,24 @@ func TestApplicationLogoAndHomePage(t *testing.T) {
 	}
 }
 
-// fakePolicy is an organisation's hosted sign-in policy, as authpolicy would read it.
+// fakePolicy is an organization's hosted sign-in policy, as authpolicy would read it.
 type fakePolicy struct{ err error }
 
 func (f fakePolicy) HostedSignInPolicy(context.Context, uuid.UUID) (int, bool, bool, bool, int, int, error) {
 	return 12, true, true, false, 15, 30, f.err
 }
 
-// TestLoginContextPolicy checks that the hosted sign-in page's context carries the organisation's
+// TestLoginContextPolicy checks that the hosted sign-in page's context carries the organization's
 // name, password rules and lifetimes, and leaves the policy out when it can't be read.
 func TestLoginContextPolicy(t *testing.T) {
 	p := newProvider(t)
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: p.svc}).Mount)
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: p.svc}).Mount)
 	var created struct {
 		Client Client `json:"client"`
 	}
-	dbtest.Decode(t, dbtest.Do(t, asAdmin, http.MethodPost, "/tenants/"+tenant.String()+"/oidc/clients",
+	dbtest.Decode(t, dbtest.Do(t, asAdmin, http.MethodPost, "/tenants/"+organization.String()+"/oidc/clients",
 		map[string]any{"name": "Acme Notes", "redirect_uris": []string{testRedirect}}), &created)
 
 	loginContext := func(reader HostedPolicyReader) map[string]any {
