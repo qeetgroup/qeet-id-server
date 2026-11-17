@@ -616,6 +616,7 @@ func csrfExemptPaths() []string {
 		"/v1/oauth/token",        // service-principal client credentials, in the form or Basic; no cookie session
 		"/ldap/*/authenticate",   // directory credentials in the body, answered with a token pair; no cookie session
 		"/v1/oauth/bc-authorize", // exact: .../decision below it is authenticated
+		"/v1/oauth/authorize",    // exact: an application's form POST, which only goes on by GET; .../decision is not exempt
 		"/v1/auth/signup", "/v1/auth/login", "/v1/auth/refresh",
 		"/v1/auth/mfa",  // completes a token-flow sign-in: the mfa_token, not a cookie, is the credential
 		"/v1/auth/mfa/", // its helpers (send a code, begin a passkey, send a push) — likewise

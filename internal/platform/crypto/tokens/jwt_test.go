@@ -1,14 +1,20 @@
 package tokens
 
 import (
+	"crypto"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"maps"
+	"math/big"
 	"strings"
 	"sync"
 	"testing"
@@ -33,16 +39,25 @@ func testIssuer(t *testing.T) (*Issuer, *ecdsa.PrivateKey) {
 	return i, priv
 }
 
-func publicPEM(t *testing.T, priv *ecdsa.PrivateKey) string {
+func publicPEM(t *testing.T, priv crypto.Signer) string {
 	t.Helper()
-	der, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
+	der, err := x509.MarshalPKIXPublicKey(priv.Public())
 	if err != nil {
 		t.Fatalf("marshal pub: %v", err)
 	}
 	return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
 }
 
-func privatePEM(t *testing.T, priv *ecdsa.PrivateKey) string {
+// rsaKey is one RSA key for the whole test binary, as making one is slow.
+var rsaKey = sync.OnceValue(func() *rsa.PrivateKey {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		panic(err)
+	}
+	return key
+})
+
+func privatePEM(t *testing.T, priv crypto.Signer) string {
 	t.Helper()
 	der, err := x509.MarshalPKCS8PrivateKey(priv)
 	if err != nil {
@@ -620,5 +635,157 @@ func TestNewRefreshToken_HashStable(t *testing.T) {
 	}
 	if HashRefresh(raw) != hash {
 		t.Error("HashRefresh must be stable across calls")
+	}
+}
+
+// TestAnRSAKeySignsRS256 checks that an issuer given an RSA key signs RS256,
+// names the key by its RFC 7638 thumbprint and publishes it as an RSA key.
+func TestAnRSAKeySignsRS256(t *testing.T) {
+	key := rsaKey()
+	enc := base64.RawURLEncoding
+	n, e := enc.EncodeToString(key.N.Bytes()), enc.EncodeToString(big.NewInt(int64(key.E)).Bytes())
+	canonical, err := json.Marshal(map[string]string{"e": e, "kty": "RSA", "n": n})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(canonical)
+	kid := enc.EncodeToString(sum[:])
+	for form, keyPEM := range map[string]string{
+		"PKCS#8": privatePEM(t, key),
+		"PKCS#1": string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})),
+	} {
+		i, err := NewIssuer(keyPEM, "qeet-test", "qeet-test", time.Hour, 24*time.Hour)
+		if err != nil {
+			t.Fatalf("%s: an issuer over an RSA key: %v", form, err)
+		}
+		if i.KID() != kid || i.Alg() != "RS256" {
+			t.Errorf("%s: kid %s signing %s, want the key's thumbprint %s signing RS256", form, i.KID(), i.Alg(), kid)
+		}
+		tok, _, err := i.IssueAccess(uuid.New(), uuid.New(), uuid.New(), "")
+		if err != nil {
+			t.Fatalf("%s: IssueAccess: %v", form, err)
+		}
+		if h := decodeHeader(t, tok); h["alg"] != "RS256" || h["kid"] != kid {
+			t.Errorf("%s: token header %v, want RS256 and the key's kid", form, h)
+		}
+		if _, err := i.VerifyAccess(tok); err != nil {
+			t.Errorf("%s: the issuer's own token: %v", form, err)
+		}
+		raw, err := json.Marshal(i.JWKS())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var published []map[string]string
+		if err := json.Unmarshal(raw, &published); err != nil {
+			t.Fatal(err)
+		}
+		want := map[string]string{"kty": "RSA", "n": n, "e": e, "use": "sig", "alg": "RS256", "kid": kid}
+		if len(published) != 1 || !maps.Equal(published[0], want) {
+			t.Errorf("%s: published keys %s, want only %v", form, raw, want)
+		}
+	}
+}
+
+// TestRotationBetweenKeyTypes checks that after the signing key changes from
+// EC to RSA or back, a token the retired key signed still verifies and both
+// keys are published, each with its own algorithm.
+func TestRotationBetweenKeyTypes(t *testing.T) {
+	_, ecKey := testIssuer(t)
+	for name, keys := range map[string][2]crypto.Signer{
+		"EC to RSA": {ecKey, rsaKey()},
+		"RSA to EC": {rsaKey(), ecKey},
+	} {
+		before, err := NewIssuer(privatePEM(t, keys[0]), "qeet-test", "qeet-test", time.Hour, 24*time.Hour)
+		if err != nil {
+			t.Fatalf("%s: the issuer before: %v", name, err)
+		}
+		after, err := NewIssuer(privatePEM(t, keys[1]), "qeet-test", "qeet-test", time.Hour, 24*time.Hour)
+		if err != nil {
+			t.Fatalf("%s: the issuer after: %v", name, err)
+		}
+		old, _, err := before.IssueAccess(uuid.New(), uuid.New(), uuid.New(), "")
+		if err != nil {
+			t.Fatalf("%s: IssueAccess: %v", name, err)
+		}
+		if n, err := after.LoadRetiredKeysPEM(publicPEM(t, keys[0])); err != nil || n != 1 {
+			t.Fatalf("%s: %d retired keys loaded (%v), want 1", name, n, err)
+		}
+		if _, err := after.VerifyAccess(old); err != nil {
+			t.Errorf("%s: a token the retired key signed: %v", name, err)
+		}
+		fresh, _, err := after.IssueAccess(uuid.New(), uuid.New(), uuid.New(), "")
+		if err != nil {
+			t.Fatalf("%s: IssueAccess: %v", name, err)
+		}
+		if _, err := after.VerifyAccess(fresh); err != nil {
+			t.Errorf("%s: a token the new key signed: %v", name, err)
+		}
+		if decodeHeader(t, old)["alg"] == decodeHeader(t, fresh)["alg"] {
+			t.Errorf("%s: both tokens are signed %v, want each key's own algorithm", name, decodeHeader(t, fresh)["alg"])
+		}
+		algs := map[string]string{}
+		for _, k := range after.JWKS() {
+			algs[k.Kty] = k.Alg
+		}
+		if !maps.Equal(algs, map[string]string{"EC": "ES256", "RSA": "RS256"}) {
+			t.Errorf("%s: published keys by type %v, want an ES256 EC key and an RS256 RSA key", name, algs)
+		}
+	}
+}
+
+// TestAKeyVerifiesOnlyItsOwnAlgorithm checks that a token naming a key under
+// the other accepted algorithm is refused before its signature is looked at.
+func TestAKeyVerifiesOnlyItsOwnAlgorithm(t *testing.T) {
+	i, _ := testIssuer(t)
+	if n := i.AddRetiredKeysPEM(publicPEM(t, rsaKey())); n != 1 {
+		t.Fatalf("%d retired keys added, want the RSA key", n)
+	}
+	kids := map[string]string{}
+	for _, k := range i.JWKS() {
+		kids[k.Alg] = k.Kid
+	}
+	for _, c := range []struct {
+		method jwt.SigningMethod
+		kid    string
+		ok     bool
+	}{
+		{jwt.SigningMethodES256, kids["ES256"], true},
+		{jwt.SigningMethodRS256, kids["RS256"], true},
+		{jwt.SigningMethodES256, kids["RS256"], false},
+		{jwt.SigningMethodRS256, kids["ES256"], false},
+	} {
+		_, err := i.keyFunc(&jwt.Token{Method: c.method, Header: map[string]any{"kid": c.kid}})
+		if (err == nil) != c.ok {
+			t.Errorf("a %s token naming the %s key: %v, want accepted=%t", c.method.Alg(), c.kid, err, c.ok)
+		}
+	}
+}
+
+// TestOnlyP256AndRSA2048KeysAreAccepted checks that a key neither ES256 nor
+// RS256 may sign with is refused, as the signing key and as a retired one.
+func TestOnlyP256AndRSA2048KeysAreAccepted(t *testing.T) {
+	small, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p384, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ed, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, key := range map[string]crypto.Signer{"RSA 1024": small, "P-384": p384, "Ed25519": ed} {
+		if _, err := NewIssuer(privatePEM(t, key), "qeet-test", "qeet-test", time.Hour, 24*time.Hour); err == nil {
+			t.Errorf("%s: accepted as the signing key", name)
+		}
+		i, _ := testIssuer(t)
+		if n, err := i.LoadRetiredKeysPEM(publicPEM(t, key)); err == nil || n != 0 {
+			t.Errorf("%s: %d loaded as retired keys (%v), want it refused", name, n, err)
+		}
+		if n := i.AddRetiredKeysPEM(publicPEM(t, key)); n != 0 {
+			t.Errorf("%s: added as a retired key", name)
+		}
 	}
 }

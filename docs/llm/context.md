@@ -300,7 +300,7 @@ One PostgreSQL database, **seven schemas**: `auth`, `tenant`, `user`, `rbac`, `a
 
 ### Migrations
 
-**Evidence:** `internal/platform/database/migrations/` — 241 up/down pairs, `0001`–`0242` (`0082` intentionally absent)
+**Evidence:** `internal/platform/database/migrations/` — 242 up/down pairs, `0001`–`0243` (`0082` intentionally absent)
 (`0082` is absent and must not be reused). Embedded with `//go:embed *.sql` in `runner.go` and
 applied on startup.
 
@@ -429,7 +429,7 @@ OAuth scope. ABAC denies are evaluated by the composed checker and override a ro
 
 | Concern | Implementation |
 |---|---|
-| Algorithm | **ES256 only** — `validMethods` is a one-element allowlist, so `alg` confusion is impossible |
+| Algorithm | **ES256 or RS256**, by the active key's type (EC P-256 or RSA of 2048 bits or more). `validMethods` allows only those two and `keyFunc` holds each key to its own, so `alg` confusion is impossible |
 | `kid` | RFC 7638 JWK thumbprint, computed at key load |
 | Verification | Missing or unknown `kid` → rejected |
 | Rotation | Shared encrypted registry: candidate staging, explicit activation, replica refresh, timed public-key retirement |

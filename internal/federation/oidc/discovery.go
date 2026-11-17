@@ -91,8 +91,8 @@ func (h *Handler) protectedResourceMetadata(w http.ResponseWriter, r *http.Reque
 
 // jwks publishes the public signing keys (active + any retired key still in its
 // rotation grace window) so any relying party can verify Qeet-issued ID/access
-// tokens. Keys are ES256 over EC P-256; each `kid` matches the token's `kid`
-// header (an RFC 7638 JWK thumbprint).
+// tokens. A key is EC P-256 (ES256) or RSA (RS256); each `kid` matches the
+// token's `kid` header (an RFC 7638 JWK thumbprint).
 func (h *Handler) jwks(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"keys": h.Service.issuer.JWKS()})
 }

@@ -6,6 +6,7 @@ properties:
     description: RFC 7638 JWK thumbprint of the public key.
   alg:
     type: string
+    description: ES256 for an EC P-256 key, RS256 for an RSA key.
     example: ES256
   use:
     type: string

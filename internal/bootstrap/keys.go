@@ -47,7 +47,7 @@ func loadKeys(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) k
 	}
 	if cfg.JWTSigningKey == "" {
 		if !cfg.IsDev() {
-			slog.Error("JWT_SIGNING_KEY is required outside dev (PEM-encoded EC P-256 private key)")
+			slog.Error("JWT_SIGNING_KEY is required outside dev (a PEM private key: EC P-256 or RSA)")
 			os.Exit(1)
 		}
 		// A workstation with no key uses the database's active one, and makes one

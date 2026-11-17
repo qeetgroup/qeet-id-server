@@ -118,6 +118,18 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, appendQuery(redirect, "code", code, "state", state, "iss", h.Service.issuer.JWTIssuer()), http.StatusFound) // #nosec G710 -- redirect_uri matched against the registered list (a loopback port aside)
 }
 
+// authorizeByPost serves the authorization endpoint's form POST, which OpenID
+// Connect Core 3.1.2.1 requires beside GET. It goes on as the same request by
+// GET: a cross-site POST doesn't carry the sign-in cookie, so the one handler
+// that reads it runs on the GET.
+func (h *Handler) authorizeByPost(w http.ResponseWriter, r *http.Request) {
+	if err := httpx.ParseForm(r, 0); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, httpx.PublicOrigin(r, h.PublicBaseURL)+r.URL.Path+"?"+r.Form.Encode(), http.StatusSeeOther) // #nosec G710 -- this endpoint itself, on this server's origin
+}
+
 // authorizeError reports a failure before a code was issued. Per RFC 6749
 // §4.1.2.1 it redirects to the client's redirect_uri, but only when that URI is
 // registered; otherwise it renders the error, so it is never an open redirect.

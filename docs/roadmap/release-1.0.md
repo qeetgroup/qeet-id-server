@@ -127,7 +127,7 @@ Social sign-in (GitHub, Facebook, X, Discord and Apple) has only been tested aga
 
 **Why we need it.** A backup that has never been restored is not one we can rely on. Part of Qeet ID's data is encrypted with keys that rotate, so a restore also needs the right key versions; otherwise stored secrets can't be read.
 
-The current candidate adds database migrations through 0242 (241 pairs in total; 0082 is
+The current candidate adds database migrations through 0243 (242 pairs in total; 0082 is
 intentionally absent). Some build indexes while the service keeps running (`CONCURRENTLY`), and an
 interrupted build can leave an invalid index that has to be cleaned up before retrying.
 
@@ -142,9 +142,9 @@ interrupted build can leave an invalid index that has to be cleaned up before re
 - Restore a backup into an isolated environment with the encryption and signing key versions it needs.
 - After the restore, check sign-in, reading stored secrets (for example SAML keys and webhook secrets), organisation isolation and audit-chain verification.
 - Measure how much data could be lost (recovery point objective, RPO) and how long recovery takes (recovery time objective, RTO).
-- Run every migration newer than the last production schema through 0242 on a copy of production
+- Run every migration newer than the last production schema through 0243 on a copy of production
   data; interrupt one concurrent index build and recover from it. Re-read the highest migration when
-  selecting the candidate instead of assuming 0242 remains final.
+  selecting the candidate instead of assuming 0243 remains final.
 - Write down the rollback or roll-forward path.
 
 **Done when:**
@@ -269,6 +269,9 @@ Claims such as "NIST AAL2" or "ASVS compliant" need test evidence behind them; w
 
 - Internal reviews: the Phase 1 security programme, the enterprise plan and an October 2026 backend review, whose five findings are fixed.
 - CI runs gosec (the security scan) and govulncheck (the vulnerability scan).
+- A local run of the OpenID Foundation conformance suite (November 2026): the Basic OP, Config OP,
+  RP-initiated logout and back-channel logout plans have no failure against a build that signs with
+  an RSA key (RS256). The run against staging, which a certification needs, is still to do.
 
 **Steps:**
 

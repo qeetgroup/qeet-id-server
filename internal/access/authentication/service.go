@@ -1,6 +1,6 @@
 // Package auth handles login, refresh, logout, and session storage.
-// Access & ID tokens are signed with ES256 (asymmetric) and verifiable via the
-// public JWKS; see internal/platform/tokens.
+// Access & ID tokens are signed ES256 or RS256, by the signing key's type, and
+// verifiable via the public JWKS; see internal/platform/crypto/tokens.
 package auth
 
 import (

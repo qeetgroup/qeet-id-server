@@ -104,10 +104,10 @@ type Config struct {
 	SessionMaxAge      time.Duration `envconfig:"SESSION_MAX_AGE" default:"720h"`
 	SessionIdleTimeout time.Duration `envconfig:"SESSION_IDLE_TIMEOUT" default:"24h"`
 
-	// JWTSigningKey is the PEM-encoded EC P-256 private key (PKCS#8 or SEC1)
-	// used to sign access & ID tokens with ES256. Empty is allowed only in
-	// dev, where an ephemeral key is generated at startup (tokens won't
-	// survive a restart). Required outside dev (enforced in config gates).
+	// JWTSigningKey is the PEM private key that signs access & ID tokens: an EC
+	// P-256 key signs ES256, an RSA key of 2048 bits or more RS256. Empty is
+	// allowed only in dev, which uses the database's key or makes its first.
+	// Required outside dev (enforced in config gates).
 	JWTSigningKey string `envconfig:"JWT_SIGNING_KEY" default:""`
 	// JWTRetiredKeys holds concatenated PEM public keys (SPKI or certificate) of
 	// retired signing keys: they verify tokens during the rotation grace window but
@@ -612,7 +612,7 @@ func (c *Config) Validate() error {
 		problems = append(problems, "JWT_SECRET is missing, shorter than 32 chars, or a known placeholder")
 	}
 	if strings.TrimSpace(c.JWTSigningKey) == "" {
-		problems = append(problems, "JWT_SIGNING_KEY is required (PEM EC P-256 private key for ES256 token signing)")
+		problems = append(problems, "JWT_SIGNING_KEY is required (a PEM private key: EC P-256 to sign ES256, or RSA to sign RS256)")
 	}
 	if c.JWTSigningKeyRetireGrace < c.AccessTokenTTL || c.JWTSigningKeyRetireGrace < time.Hour {
 		problems = append(problems, "JWT_SIGNING_KEY_RETIRE_GRACE must cover ACCESS_TOKEN_TTL and be at least 1h")

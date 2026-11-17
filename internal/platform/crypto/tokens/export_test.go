@@ -5,14 +5,14 @@ import (
 	"encoding/pem"
 )
 
-// PublicKeyPEM returns the SPKI ("PUBLIC KEY") PEM for an EC private key, the
-// form JWT_RETIRED_KEYS accepts.
+// PublicKeyPEM returns the SPKI ("PUBLIC KEY") PEM for a private key, the form
+// JWT_RETIRED_KEYS accepts.
 func PublicKeyPEM(privateKeyPEM string) (string, error) {
-	priv, err := parseECPrivateKey(privateKeyPEM)
+	priv, err := parsePrivateKey(privateKeyPEM)
 	if err != nil {
 		return "", err
 	}
-	der, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
+	der, err := x509.MarshalPKIXPublicKey(priv.Public())
 	if err != nil {
 		return "", err
 	}

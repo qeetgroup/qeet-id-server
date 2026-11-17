@@ -3,8 +3,7 @@ package tokens
 import (
 	"bytes"
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
+	"crypto"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
@@ -85,10 +84,11 @@ func (r *SigningKeyRegistry) Reconcile(ctx context.Context, configuredKeyPEM, le
 	if retireGrace <= 0 {
 		retireGrace = DefaultSigningKeyRetireGrace
 	}
-	kid, publicPEM, err := signingKeyMaterial(configuredKeyPEM)
+	key, publicPEM, err := signingKeyMaterial(configuredKeyPEM)
 	if err != nil {
 		return err
 	}
+	kid := key.kid
 	ciphertext, nonce, err := r.box.Seal(signingKeyEncryptionNamespace, "jwt-signing-key", kid, []byte(configuredKeyPEM))
 	if err != nil {
 		return err
@@ -110,8 +110,8 @@ func (r *SigningKeyRegistry) Reconcile(ctx context.Context, configuredKeyPEM, le
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO platform.jwt_signing_keys
 			    (kid, algorithm, state, public_key_pem, private_key_ct, private_key_nonce)
-			VALUES ($1, 'ES256', 'candidate', $2, $3, $4)
-		`, kid, publicPEM, ciphertext, nonce); err != nil {
+			VALUES ($1, $5, 'candidate', $2, $3, $4)
+		`, kid, publicPEM, ciphertext, nonce, key.alg); err != nil {
 			return err
 		}
 	case err != nil:
@@ -188,19 +188,19 @@ func (r *SigningKeyRegistry) EnsureDevelopmentKey(ctx context.Context) (generate
 	if err != nil {
 		return false, err
 	}
-	kid, publicPEM, err := signingKeyMaterial(keyPEM)
+	key, publicPEM, err := signingKeyMaterial(keyPEM)
 	if err != nil {
 		return false, err
 	}
-	ciphertext, nonce, err = r.box.Seal(signingKeyEncryptionNamespace, "jwt-signing-key", kid, []byte(keyPEM))
+	ciphertext, nonce, err = r.box.Seal(signingKeyEncryptionNamespace, "jwt-signing-key", key.kid, []byte(keyPEM))
 	if err != nil {
 		return false, err
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO platform.jwt_signing_keys
 		    (kid, algorithm, state, public_key_pem, private_key_ct, private_key_nonce, activated_at)
-		VALUES ($1, 'ES256', 'active', $2, $3, $4, NOW())
-	`, kid, publicPEM, ciphertext, nonce); err != nil {
+		VALUES ($1, $5, 'active', $2, $3, $4, NOW())
+	`, key.kid, publicPEM, ciphertext, nonce, key.alg); err != nil {
 		return false, err
 	}
 	return true, tx.Commit(ctx)
@@ -235,47 +235,42 @@ func registerLegacyRetiredKeys(ctx context.Context, tx pgx.Tx, raw string, retir
 		if err != nil {
 			return fmt.Errorf("parse retired signing key: %w", err)
 		}
-		ec, ok := publicKey.(*ecdsa.PublicKey)
-		if !ok || ec.Curve != elliptic.P256() {
-			return errors.New("retired signing keys must use P-256")
-		}
-		kid, publicPEM, err := publicSigningKeyMaterial(ec)
+		key, publicPEM, err := publicSigningKeyMaterial(publicKey)
 		if err != nil {
-			return err
+			return fmt.Errorf("retired signing key: %w", err)
 		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO platform.jwt_signing_keys
 			    (kid, algorithm, state, public_key_pem, retire_at)
-			VALUES ($1, 'ES256', 'retired', $2, $3)
+			VALUES ($1, $4, 'retired', $2, $3)
 			ON CONFLICT (kid) DO NOTHING
-		`, kid, publicPEM, retireAt); err != nil {
+		`, key.kid, publicPEM, retireAt, key.alg); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func signingKeyMaterial(privatePEM string) (string, string, error) {
-	privateKey, err := parseECPrivateKey(privatePEM)
+// signingKeyMaterial returns what the registry records of a private key: its
+// kid and algorithm, and its public key as PEM.
+func signingKeyMaterial(privatePEM string) (*signingKey, string, error) {
+	privateKey, err := parsePrivateKey(privatePEM)
 	if err != nil {
-		return "", "", fmt.Errorf("parse configured signing key: %w", err)
+		return nil, "", fmt.Errorf("parse configured signing key: %w", err)
 	}
-	if privateKey.Curve != elliptic.P256() {
-		return "", "", errors.New("configured signing key must use P-256")
-	}
-	return publicSigningKeyMaterial(&privateKey.PublicKey)
+	return publicSigningKeyMaterial(privateKey.Public())
 }
 
-func publicSigningKeyMaterial(publicKey *ecdsa.PublicKey) (string, string, error) {
-	kid, err := thumbprint(publicKey)
+func publicSigningKeyMaterial(publicKey crypto.PublicKey) (*signingKey, string, error) {
+	key, err := verifierFor(publicKey, "")
 	if err != nil {
-		return "", "", err
+		return nil, "", err
 	}
 	der, err := x509.MarshalPKIXPublicKey(publicKey)
 	if err != nil {
-		return "", "", err
+		return nil, "", err
 	}
-	return kid, string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})), nil
+	return key, string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})), nil
 }
 
 func (r *SigningKeyRegistry) loadSnapshot(ctx context.Context) (string, []verificationKeyPEM, error) {
@@ -292,11 +287,11 @@ func (r *SigningKeyRegistry) loadSnapshot(ctx context.Context) (string, []verifi
 	if err != nil {
 		return "", nil, fmt.Errorf("decrypt active signing key: %w", err)
 	}
-	loadedKID, _, err := signingKeyMaterial(string(plaintext))
+	loaded, _, err := signingKeyMaterial(string(plaintext))
 	if err != nil {
 		return "", nil, err
 	}
-	if loadedKID != activeKID {
+	if loaded.kid != activeKID {
 		return "", nil, errors.New("active signing key ciphertext does not match its kid")
 	}
 

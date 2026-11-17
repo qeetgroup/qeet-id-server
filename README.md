@@ -123,7 +123,7 @@ bounded context must not import `cmd/*` or `internal/bootstrap`.
 | HTTP | chi v5, REST, OpenAPI 3.1 |
 | Database | PostgreSQL 16, pgx v5, SQL/sqlc |
 | Authentication | WebAuthn/FIDO2, OAuth 2.0, OpenID Connect, SAML 2.0, SCIM 2.0 |
-| Tokens & cryptography | ES256 JWT, JWKS, Argon2id, AES-GCM, HMAC-SHA256 |
+| Tokens & cryptography | ES256 or RS256 JWT, JWKS, Argon2id, AES-GCM, HMAC-SHA256 |
 | Events | PostgreSQL transactional outbox, optional NATS |
 | Rate limiting | In-process token buckets, optional Redis |
 | Observability | Prometheus metrics, OpenTelemetry tracing, structured logs |
@@ -299,7 +299,7 @@ trusted-header, origin, URL, sandbox-payment, or ephemeral-key settings outside 
 environment.
 
 - Passwords and MFA recovery codes use Argon2id, with transparent verification and upgrade of legacy bcrypt hashes; random machine secrets (API keys, service-principal, agent and OAuth client secrets) are stored as their SHA-256.
-- Passkeys use `go-webauthn`; access and ID tokens use ES256 with `kid`-based JWKS verification and retired-key support.
+- Passkeys use `go-webauthn`; access and ID tokens are signed ES256 (an EC P-256 key) or RS256 (an RSA key), with `kid`-based JWKS verification and retired-key support.
 - The secrets vault uses AES-GCM with a static key or AWS KMS-backed data-key provider. Every stored value names the data key that sealed it, so the key can be rotated: previous keys stay readable (`SECRETS_PREVIOUS_KEYS`) while a background job moves stored values to the current one (steps on `SecretsKey` in `internal/platform/config/config.go`).
 - Tenant routes are checked against the authenticated principal and persistence queries carry tenant scope.
 - Audit events are transactionally recorded in per-tenant SHA-256 hash chains; webhooks use HMAC-SHA256 signatures.

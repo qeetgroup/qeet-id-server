@@ -148,6 +148,7 @@ func (h *Handler) MountToken(r chi.Router) {
 // CSRF-exempt.
 func (h *Handler) MountBrowser(r chi.Router) {
 	r.Get("/oauth/authorize", h.authorize)
+	r.Post("/oauth/authorize", h.authorizeByPost) // the same request by form POST
 	r.Post("/oauth/authorize/decision", h.decision)
 	r.Get("/oauth/authorize/request", h.consentRequest)
 	r.Get("/oauth/login-context", h.loginContext)

@@ -1080,7 +1080,7 @@ guidance is not automatically a universal private-enterprise deadline.
   evidence must include the actual terminator and every relevant hop. A Go version,
   configured curve list or TLS 1.3 cipher-suite name does not prove a negotiated
   hybrid group. This review did not inspect the deployed network.
-- Do not replace ES256, change JWT/JWKS/`kid` handling, disable validation, invent
+- Do not replace ES256 or RS256, change JWT/JWKS/`kid` handling, disable validation, invent
   a hybrid JWT format, or declare "quantum-safe" from these proposals.
 
 ### PQ-01: Cryptographic inventory and post-quantum plan
@@ -1093,7 +1093,7 @@ The practical first step is knowing what you have. What matters most is data tha
 
 **What Qeet ID has today:**
 
-- JWT signing keys (ES256) with key IDs and rotation.
+- JWT signing keys (ES256 or RS256) with key IDs and rotation.
 - A registry of encrypted columns, and envelope encryption with key IDs.
 
 **Research detail.**

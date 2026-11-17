@@ -1,24 +1,35 @@
 type: object
+description: >-
+  A public signing key. An EC key (kty EC) has crv, x and y; an RSA key (kty
+  RSA) has n and e.
 required:
   - alg
-  - crv
   - kid
   - kty
   - use
-  - x
-  - 'y'
 properties:
   alg:
     type: string
+    description: ES256 for an EC P-256 key, RS256 for an RSA key.
   crv:
     type: string
+    description: EC keys only. The curve, P-256.
   kid:
     type: string
   kty:
     type: string
+    description: EC or RSA.
   use:
     type: string
   x:
     type: string
+    description: EC keys only.
   'y':
     type: string
+    description: EC keys only.
+  'n':
+    type: string
+    description: RSA keys only. The modulus.
+  e:
+    type: string
+    description: RSA keys only. The public exponent.

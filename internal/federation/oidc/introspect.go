@@ -100,7 +100,7 @@ func (s *Service) RevokeToken(ctx context.Context, clientID, clientSecret, token
 
 // Introspect implements RFC 7662. After client authentication it reports
 // whether the token is active and, if so, its metadata. It recognises both our
-// ES256 access tokens (verified statelessly) and stored OIDC refresh tokens.
+// signed access tokens (verified statelessly) and stored OIDC refresh tokens.
 // token_type_hint, when given, picks which check to run first/only.
 func (s *Service) Introspect(ctx context.Context, clientID, clientSecret, token, hint string) (map[string]any, error) {
 	client, err := s.authenticateClient(ctx, clientID, clientSecret)

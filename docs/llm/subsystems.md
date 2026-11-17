@@ -55,7 +55,7 @@ line count on this revision.
 ## access — authentication
 
 **Purpose** — *"handles login, refresh, logout, and session storage. Access & ID tokens are signed
-with ES256 (asymmetric) and verifiable via the public JWKS."*
+ES256 or RS256, by the signing key's type, and verifiable via the public JWKS."*
 **Path** `internal/access/authentication/`
 **Key dependencies** `platform/http/{errs,httpx}` · `platform/crypto/{tokens,encryption,hibp}` ·
 `platform/events/outbox` · **`identity/users`** and **`operations/audit`** (cross-context)
@@ -339,7 +339,7 @@ http/httpx/csrf.go        double-submit, HMAC-keyed
 http/httpx/middleware.go · response.go · ctx.go · timing.go
 http/errs/                ~50 files, one per domain
 http/httpx/error_status_*.go   ~40 files, 1:1 mirror of errs/
-crypto/tokens/jwt.go      ES256, RFC 7638 kid, rotation
+crypto/tokens/jwt.go      ES256 or RS256, RFC 7638 kid, rotation
 crypto/password/          Argon2id hashing, strength rules, machine secrets' SHA-256
 crypto/envelope/          AES-256-GCM encryption under the data key, key ids for rotation
 crypto/envelope/reseal/   moves stored values to the current key (secrets-reencrypt job)

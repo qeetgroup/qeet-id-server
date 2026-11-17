@@ -61,7 +61,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | **Auth middleware, principal, `EnforceTenantScope`, `RequireTenant`** | `internal/platform/http/httpx/auth.go` |
 | **CSRF double-submit** | `internal/platform/http/httpx/csrf.go` |
 | Security headers | `internal/platform/http/httpx/` |
-| **JWT issue/verify, ES256, `kid`, rotation** | `internal/platform/crypto/tokens/jwt.go` |
+| **JWT issue/verify, ES256 or RS256, `kid`, rotation** | `internal/platform/crypto/tokens/jwt.go` |
 | **Password hashing (Argon2id)** | `internal/platform/crypto/password/hasher.go` |
 | Encryption, secrets vault crypto | `internal/platform/crypto/envelope/` |
 | TOTP | `internal/platform/crypto/totp/` |
@@ -164,7 +164,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 |---|---|
 | Postgres pool | `internal/platform/database/postgres/` |
 | pgx error mapping | `internal/platform/database/postgres/pgxerr/` |
-| **Migrations (0001–0242; 0082 absent)** | `internal/platform/database/migrations/` |
+| **Migrations (0001–0243; 0082 absent)** | `internal/platform/database/migrations/` |
 | Migration runner (`//go:embed`) | `internal/platform/database/migrations/runner.go` |
 | Per-domain queries | `internal/<context>/<domain>/queries.sql` (53) |
 | sqlc config | `internal/<context>/<domain>/sqlc.yaml` (53) |

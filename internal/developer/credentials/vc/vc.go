@@ -1,5 +1,5 @@
 // Package vc issues and verifies W3C Verifiable Credentials in the JWT
-// serialization (JWT-VC): ES256-signed by the platform issuer (verifiable via the
+// serialization (JWT-VC): signed by the platform issuer (verifiable via the
 // same JWKS), tracked in auth.credentials for listing/revocation. Verification
 // checks signature + issuer + expiry, then the revocation registry.
 package vc

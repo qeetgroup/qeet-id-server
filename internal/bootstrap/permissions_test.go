@@ -397,6 +397,28 @@ func TestHostedLoginCookieRoutesKeepTheCSRFCheck(t *testing.T) {
 	}
 }
 
+// TestConsentAnswerKeepsTheCSRFCheck checks that an application's form POST to
+// the authorization endpoint, which only goes on by GET, passes the CSRF check
+// from any site, and that the consent answer below it, given for the
+// signed-in person, does not.
+func TestConsentAnswerKeepsTheCSRFCheck(t *testing.T) {
+	reached := false
+	h := httpx.CSRF(httpx.CSRFConfig{AllowedOrigins: []string{"https://login.example"}, ExemptPaths: csrfExemptPaths()})(
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true }))
+	for path, want := range map[string]bool{
+		"/v1/oauth/authorize":          true,
+		"/v1/oauth/authorize/decision": false,
+	} {
+		reached = false
+		req := httptest.NewRequest(http.MethodPost, path, nil)
+		req.Header.Set("Origin", "https://application.example")
+		h.ServeHTTP(httptest.NewRecorder(), req)
+		if reached != want {
+			t.Errorf("POST %s from another site with no CSRF token: reached handler = %v, want %v", path, reached, want)
+		}
+	}
+}
+
 // TestServerCallersPassTheCSRFCheck checks that API-key and server credential
 // calls pass the CSRF check, while cookie changes without the token, cross-site
 // form posts and Basic credentials still don't.

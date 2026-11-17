@@ -34,6 +34,12 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
   administrator. Needs `audit.read`.
 - Linked phones can be sent notices besides sign-in requests (an access request to answer): an alert on
   iOS, a data message with its text on Android, kept for a day. Sign-in requests are unchanged.
+- `JWT_SIGNING_KEY` may be an RSA key of 2048 bits or more as well as an EC P-256 key. Tokens are signed with
+  the active key's algorithm, RS256 for an RSA key and ES256 for an EC key; the discovery document names it and
+  `/.well-known/jwks.json` publishes an RSA key with `n` and `e`. OpenID Connect requires a provider to support
+  RS256, so a deployment that is to be OpenID Certified, or serves applications that accept only RS256, signs
+  with an RSA key. The key a development instance makes for itself stays ES256. A rotation may change the key's
+  type: the retired key's tokens still verify for the grace period.
 
 ### Fixed
 
@@ -58,6 +64,8 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
   server.
 - A role someone holds for a time through an access request, then is given for good, is no longer taken back when
   the request's time is up: the permanent assignment clears the request's end.
+- The authorization endpoint (`/v1/oauth/authorize`) takes its parameters by form POST as well as by GET, as
+  OpenID Connect Core requires: a POST is answered 303 to the same request by GET.
 
 ### Security
 
