@@ -54,7 +54,7 @@ func TestEmailChangeToAddressInUse(t *testing.T) {
 	if _, err := svc.ConfirmEmailChange(ctx, a.ID, freeCode, who); !errors.Is(err, errs.ErrVerifyCodeInvalid) {
 		t.Errorf("confirm with the superseded code: %v, want %v", err, errs.ErrVerifyCodeInvalid)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND email = $2`, a.ID, a.Email); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND email = $2`, a.ID, a.Email); n != 1 {
 		t.Error("the account's address changed")
 	}
 }
@@ -120,7 +120,7 @@ func TestCapturedMemberCannotMoveOffTheManagedDomain(t *testing.T) {
 
 	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, tenant, tenant)
 	directory := dbtest.User(t, tenant, tenant)
-	exec(`UPDATE "user".users SET provisioned_via = 'scim' WHERE id = $1`, directory.ID)
+	exec(`UPDATE account.users SET provisioned_via = 'scim' WHERE id = $1`, directory.ID)
 	sso := dbtest.User(t, tenant, tenant)
 	var conn string
 	if err := pool.QueryRow(ctx, `
@@ -128,7 +128,7 @@ func TestCapturedMemberCannotMoveOffTheManagedDomain(t *testing.T) {
 		VALUES ($1, 'Okta', 'https://idp.example.test', 'https://idp.example.test/sso', 'cert', 'active') RETURNING id`, tenant).Scan(&conn); err != nil {
 		t.Fatal(err)
 	}
-	exec(`INSERT INTO "user".external_identities (user_id, tenant_id, provider, connection_id, subject) VALUES ($1, $2, 'saml', $3, 'okta|sso')`, sso.ID, tenant, conn)
+	exec(`INSERT INTO account.external_identities (user_id, tenant_id, provider, connection_id, subject) VALUES ($1, $2, 'saml', $3, 'okta|sso')`, sso.ID, tenant, conn)
 	plain := dbtest.User(t, tenant, tenant)
 	for name, c := range map[string]struct {
 		a     dbtest.Account
@@ -167,7 +167,7 @@ func TestCapturedMemberCannotMoveOffTheManagedDomain(t *testing.T) {
 	if _, err := svc.ConfirmEmailChange(ctx, moving.ID, code, who); !errors.Is(err, errs.ErrVerifyEmailManaged) {
 		t.Errorf("confirm a move off a domain verified since the start: %v, want %v", err, errs.ErrVerifyEmailManaged)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND email = $2`, moving.ID, moving.Email); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND email = $2`, moving.ID, moving.Email); n != 1 {
 		t.Error("the address moved off a domain its organisation manages")
 	}
 }

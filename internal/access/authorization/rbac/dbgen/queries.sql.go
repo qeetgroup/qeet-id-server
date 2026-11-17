@@ -52,7 +52,7 @@ WITH allowed AS (
     SELECT (
         EXISTS (SELECT 1 FROM rbac.roles ro WHERE ro.id = $1 AND ro.tenant_id = $2)
         AND EXISTS (
-            SELECT 1 FROM "user".users account
+            SELECT 1 FROM account.users account
             WHERE account.id = $3 AND account.deleted_at IS NULL
               AND (
                   account.tenant_id = $2
@@ -399,7 +399,7 @@ func (q *Queries) GrantPermissions(ctx context.Context, arg GrantPermissionsPara
 
 const leftTenant = `-- name: LeftTenant :one
 SELECT (NOT EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = $1::uuid AND ur.tenant_id = $2::uuid)
-    AND NOT EXISTS (SELECT 1 FROM "user".users u WHERE u.id = $1::uuid AND u.tenant_id = $2::uuid))::bool
+    AND NOT EXISTS (SELECT 1 FROM account.users u WHERE u.id = $1::uuid AND u.tenant_id = $2::uuid))::bool
     AS left_tenant
 `
 
@@ -567,7 +567,7 @@ SELECT u.id, u.email, COALESCE(u.display_name, '')::text AS display_name,
        COALESCE((SELECT array_agg(gr.group_id ORDER BY gr.group_id) FROM rbac.group_roles gr
                    JOIN tenant.group_members gm ON gm.group_id = gr.group_id AND gm.tenant_id = gr.tenant_id
                   WHERE gr.tenant_id = $1 AND gr.role_id = $2 AND gm.user_id = u.id), '{}')::uuid[] AS via_groups
-FROM "user".users u
+FROM account.users u
 WHERE u.deleted_at IS NULL
   AND (EXISTS (SELECT 1 FROM rbac.user_roles ur
                 WHERE ur.user_id = u.id AND ur.tenant_id = $1 AND ur.role_id = $2)
@@ -785,11 +785,11 @@ func (q *Queries) RevokePermissions(ctx context.Context, arg RevokePermissionsPa
 const roleHolderCounts = `-- name: RoleHolderCounts :many
 SELECT ro.id AS role_id,
        (SELECT count(DISTINCT ur.user_id) FROM rbac.user_roles ur
-          JOIN "user".users u ON u.id = ur.user_id AND u.deleted_at IS NULL
+          JOIN account.users u ON u.id = ur.user_id AND u.deleted_at IS NULL
          WHERE ur.tenant_id = ro.tenant_id AND ur.role_id = ro.id)::int AS people_direct,
        (SELECT count(DISTINCT gm.user_id) FROM rbac.group_roles gr
           JOIN tenant.group_members gm ON gm.group_id = gr.group_id AND gm.tenant_id = gr.tenant_id
-          JOIN "user".users u ON u.id = gm.user_id AND u.deleted_at IS NULL
+          JOIN account.users u ON u.id = gm.user_id AND u.deleted_at IS NULL
          WHERE gr.tenant_id = ro.tenant_id AND gr.role_id = ro.id
            AND NOT EXISTS (SELECT 1 FROM rbac.user_roles ur
                             WHERE ur.user_id = gm.user_id AND ur.tenant_id = ro.tenant_id AND ur.role_id = ro.id))::int AS people_through_groups,
@@ -950,7 +950,7 @@ FROM (
     JOIN rbac.permissions p ON p.id = rp.permission_id
     WHERE gm.tenant_id = $1 AND p.key = $2
 ) holder
-JOIN "user".users u ON u.id = holder.user_id AND u.deleted_at IS NULL AND u.status = 'active'
+JOIN account.users u ON u.id = holder.user_id AND u.deleted_at IS NULL AND u.status = 'active'
 LIMIT 200
 `
 

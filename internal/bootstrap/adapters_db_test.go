@@ -48,7 +48,7 @@ func TestBulkImportRolesTakeSeats(t *testing.T) {
 	if rec.Code != http.StatusOK || res.Succeeded != 2 || res.Failed != 1 || len(res.Errors) != 1 || res.Errors[0].Code != errs.CodePlanLimit {
 		t.Fatalf("import of 3 with 2 seats free: %d %+v; want 2 in and the third refused with %s", rec.Code, res, errs.CodePlanLimit)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1`, res.Errors[0].Email); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, res.Errors[0].Email); n != 0 {
 		t.Errorf("the refused row got %d accounts, want none", n)
 	}
 }

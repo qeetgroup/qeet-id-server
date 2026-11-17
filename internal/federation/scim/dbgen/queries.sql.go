@@ -35,7 +35,7 @@ func (q *Queries) AddGroupMember(ctx context.Context, arg AddGroupMemberParams) 
 
 const checkUserInTenant = `-- name: CheckUserInTenant :one
 SELECT EXISTS(
-    SELECT 1 FROM "user".users WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+    SELECT 1 FROM account.users WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
 )
 `
 
@@ -67,7 +67,7 @@ func (q *Queries) CountLiveScimTokens(ctx context.Context, tenantID uuid.UUID) (
 }
 
 const countProvisionedUsers = `-- name: CountProvisionedUsers :one
-SELECT count(*) FROM "user".users
+SELECT count(*) FROM account.users
 WHERE tenant_id = $1 AND provisioned_via = 'scim' AND deleted_at IS NULL
 `
 
@@ -112,7 +112,7 @@ func (q *Queries) DeleteScimGroup(ctx context.Context, arg DeleteScimGroupParams
 const getProvisionedUser = `-- name: GetProvisionedUser :one
 
 SELECT id, email, display_name, status, external_id, created_at, updated_at
-FROM "user".users WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+FROM account.users WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
 `
 
 type GetProvisionedUserParams struct {
@@ -184,7 +184,7 @@ func (q *Queries) GetScimGroup(ctx context.Context, arg GetScimGroupParams) (Get
 }
 
 const homeUserByEmail = `-- name: HomeUserByEmail :one
-SELECT id FROM "user".users
+SELECT id FROM account.users
 WHERE tenant_id = $1::uuid AND LOWER(email) = LOWER($2) AND deleted_at IS NULL
 `
 
@@ -328,7 +328,7 @@ func (q *Queries) LastSCIMOperation(ctx context.Context, arg LastSCIMOperationPa
 const listGroupMembers = `-- name: ListGroupMembers :many
 SELECT gm.user_id, u.email, u.display_name
 FROM tenant.group_members gm
-JOIN "user".users u ON u.id = gm.user_id
+JOIN account.users u ON u.id = gm.user_id
 WHERE gm.group_id = $1 AND gm.tenant_id = $2 AND u.deleted_at IS NULL
 ORDER BY u.email
 `
@@ -479,7 +479,7 @@ SELECT u.status, COALESCE(u.suspension_source, '')::text AS suspension_source,
            JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.tenant_id = gr.tenant_id AND ro.is_system AND ro.name = 'owner'
            WHERE gm.user_id = u.id AND gm.tenant_id = $1
        )::bool AS owner
-FROM "user".users u
+FROM account.users u
 WHERE u.id = $2 AND u.tenant_id = $1 AND u.deleted_at IS NULL
 FOR UPDATE OF u
 `
@@ -659,7 +659,7 @@ func (q *Queries) RevokeScimToken(ctx context.Context, arg RevokeScimTokenParams
 }
 
 const tagProvisionedUser = `-- name: TagProvisionedUser :exec
-UPDATE "user".users
+UPDATE account.users
     SET external_id    = $1,
         provisioned_via = 'scim',
         updated_at     = NOW()

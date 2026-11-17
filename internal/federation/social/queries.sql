@@ -9,28 +9,28 @@ LIMIT 1001;
 
 -- name: ListExternalIdentities :many
 SELECT ei.id, ei.user_id, ei.tenant_id, ei.provider, ei.subject, ei.email, ei.linked_at
-FROM "user".external_identities ei
-JOIN "user".users u ON u.id = ei.user_id
+FROM account.external_identities ei
+JOIN account.users u ON u.id = ei.user_id
 WHERE ei.user_id = @user_id AND ei.tenant_id = @tenant_id AND u.deleted_at IS NULL
 ORDER BY ei.linked_at DESC;
 
 -- name: DeleteExternalIdentity :execrows
-DELETE FROM "user".external_identities WHERE id = @id AND tenant_id = @tenant_id;
+DELETE FROM account.external_identities WHERE id = @id AND tenant_id = @tenant_id;
 
 -- ListExternalIdentitiesForUser is the self-service variant: scoped to the
 -- caller's own user id across every tenant, so an org-less user can still see
 -- the social logins linked to their account.
 -- name: ListExternalIdentitiesForUser :many
 SELECT ei.id, ei.user_id, ei.tenant_id, ei.provider, ei.subject, ei.email, ei.linked_at
-FROM "user".external_identities ei
-JOIN "user".users u ON u.id = ei.user_id
+FROM account.external_identities ei
+JOIN account.users u ON u.id = ei.user_id
 WHERE ei.user_id = @user_id AND u.deleted_at IS NULL
 ORDER BY ei.linked_at DESC;
 
 -- DeleteExternalIdentityForUser unlinks scoped to the owner (not a tenant), so
 -- a user can remove their own social login before joining any org.
 -- name: DeleteExternalIdentityForUser :execrows
-DELETE FROM "user".external_identities WHERE id = @id AND user_id = @user_id;
+DELETE FROM account.external_identities WHERE id = @id AND user_id = @user_id;
 
 -- ---- Platform (tenant-less) connected social accounts ----
 
@@ -61,17 +61,19 @@ DELETE FROM auth.platform_social_identities WHERE id = @id AND user_id = @user_i
 SELECT id FROM tenant.tenants WHERE slug = @slug;
 
 -- name: InsertSocialOAuthState :exec
-INSERT INTO auth.social_oauth_states
-    (state_hash, tenant_id, provider, code_verifier, redirect_uri, return_to, expires_at, nonce_hash)
-VALUES (@state_hash, @tenant_id, @provider, @code_verifier, @redirect_uri, @return_to, @expires_at, sqlc.narg('nonce_hash'));
+INSERT INTO auth.oauth_states
+    (state_hash, kind, tenant_id, provider, code_verifier, redirect_uri, return_to, expires_at, nonce_hash)
+VALUES (@state_hash, 'social', @tenant_id::uuid, @provider::text, @code_verifier, @redirect_uri,
+        NULLIF(@return_to::text, ''), @expires_at, sqlc.narg('nonce_hash'));
 
 -- name: ConsumeSocialOAuthState :one
-DELETE FROM auth.social_oauth_states WHERE state_hash = @state_hash
-RETURNING tenant_id, provider, code_verifier, redirect_uri, return_to, expires_at, nonce_hash;
+DELETE FROM auth.oauth_states WHERE state_hash = @state_hash AND kind = 'social'
+RETURNING tenant_id::uuid AS tenant_id, provider::text AS provider, code_verifier, redirect_uri,
+          COALESCE(return_to, '')::text AS return_to, expires_at, nonce_hash;
 
 -- name: InsertSocialLoginCode :exec
-INSERT INTO auth.social_login_codes (code_hash, user_id, tenant_id, provider, expires_at)
-VALUES (@code_hash, @user_id, @tenant_id, @provider::text, @expires_at);
+INSERT INTO auth.login_codes (code_hash, kind, user_id, tenant_id, provider, expires_at)
+VALUES (@code_hash, 'social', @user_id, @tenant_id::uuid, @provider::text, @expires_at);
 
 -- name: EnabledSocialProviderNames :many
 SELECT provider FROM tenant.social_providers
@@ -79,35 +81,35 @@ WHERE tenant_id = @tenant_id AND enabled ORDER BY provider;
 
 -- name: ConsumeSocialLoginCode :one
 -- With whether the provider that issued the code is on: one since deleted finds no row.
-SELECT lc.user_id, lc.tenant_id, lc.expires_at, lc.used_at, p.enabled
-FROM auth.social_login_codes lc
+SELECT lc.user_id, p.tenant_id, lc.expires_at, lc.used_at, p.enabled
+FROM auth.login_codes lc
 JOIN tenant.social_providers p ON p.tenant_id = lc.tenant_id AND p.provider = lc.provider
-WHERE lc.code_hash = @code_hash
+WHERE lc.code_hash = @code_hash AND lc.kind = 'social'
 FOR UPDATE OF lc;
 
 -- name: MarkSocialLoginCodeUsed :exec
-UPDATE auth.social_login_codes SET used_at = NOW() WHERE code_hash = @code_hash;
+UPDATE auth.login_codes SET used_at = NOW() WHERE code_hash = @code_hash AND tenant_id = @tenant_id::uuid;
 
 -- ==========================================================================
--- findOrCreateUser — same cross-schema "user" pattern as ldap/saml
+-- findOrCreateUser — same cross-schema account pattern as ldap/saml
 -- ==========================================================================
 
 -- name: GetExternalIdentityUser :one
 -- A social identity names no connection; a single sign-on connection's links,
 -- whose provider a social one could be named after, are not looked at.
-SELECT user_id FROM "user".external_identities
+SELECT user_id FROM account.external_identities
 WHERE tenant_id = @tenant_id AND provider = @provider AND subject = @subject
   AND connection_id IS NULL;
 
 -- name: GetUserByEmail :one
-SELECT id FROM "user".users WHERE LOWER(email) = LOWER(@email) AND deleted_at IS NULL;
+SELECT id FROM account.users WHERE LOWER(email) = LOWER(@email) AND deleted_at IS NULL;
 
 -- name: InsertUserWithEmail :one
-INSERT INTO "user".users (tenant_id, email, email_verified_at, display_name, status)
+INSERT INTO account.users (tenant_id, email, email_verified_at, display_name, status)
 VALUES (@tenant_id, @email, NOW(), sqlc.narg('display_name'), 'active')
 RETURNING id;
 
 -- name: LinkExternalIdentity :exec
-INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject, email)
+INSERT INTO account.external_identities (user_id, tenant_id, provider, subject, email)
 VALUES (@user_id, @tenant_id, @provider, @subject, @email)
 ON CONFLICT (tenant_id, provider, connection_id, subject) DO NOTHING;

@@ -125,7 +125,7 @@ UPDATE auth.sessions s SET revoked_at = NOW()
 WHERE s.id = $1 AND s.user_id = $2 AND s.revoked_at IS NULL
   AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
   AND (s.tenant_id = $3::uuid
-       OR (s.tenant_id IS NULL AND EXISTS (SELECT 1 FROM "user".users u WHERE u.id = s.user_id AND u.tenant_id = $3::uuid)))
+       OR (s.tenant_id IS NULL AND EXISTS (SELECT 1 FROM account.users u WHERE u.id = s.user_id AND u.tenant_id = $3::uuid)))
 RETURNING COALESCE(s.tenant_id, '00000000-0000-0000-0000-000000000000'::uuid)::uuid AS tenant_id
 `
 
@@ -181,7 +181,7 @@ func (q *Queries) GetPasswordHash(ctx context.Context, userID uuid.UUID) (string
 const getUserByEmail = `-- name: GetUserByEmail :one
 SELECT id, tenant_id, email, email_verified_at, phone, phone_verified_at,
        display_name, status, metadata, created_at, updated_at
-FROM "user".users
+FROM account.users
 WHERE tenant_id = $1 AND LOWER(email) = LOWER($2) AND deleted_at IS NULL
 `
 
@@ -226,7 +226,7 @@ func (q *Queries) GetUserByEmail(ctx context.Context, arg GetUserByEmailParams) 
 const getUserByEmailGlobal = `-- name: GetUserByEmailGlobal :one
 SELECT id, tenant_id, email, email_verified_at, phone, phone_verified_at,
        display_name, status, metadata, created_at, updated_at
-FROM "user".users
+FROM account.users
 WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL
 `
 
@@ -268,7 +268,7 @@ func (q *Queries) GetUserByEmailGlobal(ctx context.Context, lower string) (GetUs
 const getUserByID = `-- name: GetUserByID :one
 SELECT id, tenant_id, email, email_verified_at, phone, phone_verified_at,
        display_name, status, metadata, created_at, updated_at, avatar_url
-FROM "user".users WHERE id = $1 AND deleted_at IS NULL
+FROM account.users WHERE id = $1 AND deleted_at IS NULL
 `
 
 type GetUserByIDRow struct {
@@ -354,7 +354,7 @@ SELECT
   (SELECT count(DISTINCT s.user_agent) FROM auth.sessions s WHERE s.user_id = u.id AND s.revoked_at IS NULL
      AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
      AND (s.tenant_id = $1::uuid OR (s.tenant_id IS NULL AND u.tenant_id = $1::uuid)))::int AS distinct_devices
-FROM "user".users u
+FROM account.users u
 WHERE u.id = $2 AND u.deleted_at IS NULL
 `
 
@@ -413,7 +413,7 @@ SELECT COALESCE(u.tenant_id = $1::uuid, false)::boolean AS home,
              ON member_role.id = membership.role_id AND member_role.tenant_id = membership.tenant_id
            WHERE membership.user_id = u.id AND membership.tenant_id = $1::uuid
        )::boolean AS member
-FROM "user".users u
+FROM account.users u
 WHERE u.id = $2
 `
 
@@ -441,9 +441,9 @@ func (q *Queries) GetUserStandingIn(ctx context.Context, arg GetUserStandingInPa
 const getUserStats = `-- name: GetUserStats :one
 WITH members AS (
   SELECT u.id, u.status, u.created_at
-  FROM "user".users u
+  FROM account.users u
   WHERE u.deleted_at IS NULL
-    AND u.id IN (SELECT h.id FROM "user".users h WHERE h.tenant_id = $1::uuid AND h.deleted_at IS NULL
+    AND u.id IN (SELECT h.id FROM account.users h WHERE h.tenant_id = $1::uuid AND h.deleted_at IS NULL
                  UNION SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.tenant_id = $1)
 ),
 mfa AS (
@@ -511,9 +511,9 @@ members AS (
        UNION ALL
        SELECT d.created_at FROM auth.mfa_push_devices d WHERE d.user_id = u.id
      ) e) AS mfa_at
-  FROM "user".users u
+  FROM account.users u
   WHERE u.deleted_at IS NULL
-    AND u.id IN (SELECT h.id FROM "user".users h WHERE h.tenant_id = $1::uuid AND h.deleted_at IS NULL
+    AND u.id IN (SELECT h.id FROM account.users h WHERE h.tenant_id = $1::uuid AND h.deleted_at IS NULL
                  UNION SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.tenant_id = $1)
 )
 SELECT
@@ -572,7 +572,7 @@ func (q *Queries) InsertPasswordCredential(ctx context.Context, arg InsertPasswo
 
 const insertUser = `-- name: InsertUser :one
 
-INSERT INTO "user".users (tenant_id, email, phone, display_name, metadata)
+INSERT INTO account.users (tenant_id, email, phone, display_name, metadata)
 VALUES ($1, $2, $3, $4, $5)
 RETURNING id, tenant_id, email, email_verified_at, phone, phone_verified_at,
           display_name, status, metadata, created_at, updated_at
@@ -689,7 +689,7 @@ func (q *Queries) IntegrationsCreatedBy(ctx context.Context, arg IntegrationsCre
 
 const listDeletedUsers = `-- name: ListDeletedUsers :many
 SELECT id, email, display_name, deleted_at, created_at, deleted_by
-FROM "user".users
+FROM account.users
 WHERE tenant_id = $1 AND deleted_at IS NOT NULL
   AND ($2::timestamptz IS NULL OR deleted_at < $2
        OR (deleted_at = $2 AND id < $3::uuid))
@@ -751,7 +751,7 @@ const listUserActiveSessions = `-- name: ListUserActiveSessions :many
 SELECT s.id, COALESCE(host(s.ip), '')::text AS ip, s.user_agent, s.created_at, s.last_seen_at,
        COALESCE(s.country, '')::text AS country, COALESCE(s.city, '')::text AS city
 FROM auth.sessions s
-JOIN "user".users u ON u.id = s.user_id
+JOIN account.users u ON u.id = s.user_id
 WHERE s.user_id = $1 AND s.revoked_at IS NULL
   AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
   AND (s.tenant_id = $2::uuid OR (s.tenant_id IS NULL AND u.tenant_id = $2::uuid))
@@ -928,7 +928,7 @@ func (q *Queries) ListUserRolesInTenant(ctx context.Context, arg ListUserRolesIn
 }
 
 const markEmailVerified = `-- name: MarkEmailVerified :exec
-UPDATE "user".users
+UPDATE account.users
 SET email_verified_at = COALESCE(email_verified_at, NOW()), updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
 `
@@ -939,7 +939,7 @@ func (q *Queries) MarkEmailVerified(ctx context.Context, id uuid.UUID) error {
 }
 
 const purgeUser = `-- name: PurgeUser :execrows
-DELETE FROM "user".users WHERE id = $1 AND deleted_at IS NOT NULL
+DELETE FROM account.users WHERE id = $1 AND deleted_at IS NOT NULL
 `
 
 func (q *Queries) PurgeUser(ctx context.Context, id uuid.UUID) (int64, error) {
@@ -986,7 +986,7 @@ func (q *Queries) RemoveUserRolesInTenant(ctx context.Context, arg RemoveUserRol
 }
 
 const restoreUser = `-- name: RestoreUser :execrows
-UPDATE "user".users
+UPDATE account.users
 SET deleted_at = NULL, deleted_by = NULL, status = 'active', updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NOT NULL
 `
@@ -1082,7 +1082,7 @@ func (q *Queries) SetPassword(ctx context.Context, arg SetPasswordParams) error 
 }
 
 const setUserMfaRequired = `-- name: SetUserMfaRequired :execrows
-UPDATE "user".users
+UPDATE account.users
 SET mfa_required = $2, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
 `
@@ -1104,7 +1104,7 @@ func (q *Queries) SetUserMfaRequired(ctx context.Context, arg SetUserMfaRequired
 
 const softDeleteUser = `-- name: SoftDeleteUser :execrows
 
-UPDATE "user".users
+UPDATE account.users
 SET deleted_at = NOW(), status = 'deleted', updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
 `
@@ -1122,7 +1122,7 @@ func (q *Queries) SoftDeleteUser(ctx context.Context, id uuid.UUID) (int64, erro
 }
 
 const softDeleteUserBy = `-- name: SoftDeleteUserBy :one
-UPDATE "user".users
+UPDATE account.users
 SET deleted_at = NOW(), status = 'deleted', deleted_by = $1, updated_at = NOW()
 WHERE id = $2 AND deleted_at IS NULL
 RETURNING id, deleted_at, deleted_by

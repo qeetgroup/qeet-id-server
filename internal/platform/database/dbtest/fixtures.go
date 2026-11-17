@@ -73,7 +73,7 @@ func UserAt(t testing.TB, email string, home uuid.UUID, memberOf ...uuid.UUID) A
 	}
 	a := Account{Email: email}
 	if err := Pool(t).QueryRow(context.Background(), `
-		INSERT INTO "user".users (tenant_id, email) VALUES ($1, $2) RETURNING id
+		INSERT INTO account.users (tenant_id, email) VALUES ($1, $2) RETURNING id
 	`, homeArg, a.Email).Scan(&a.ID); err != nil {
 		t.Fatalf("dbtest: create user: %v", err)
 	}

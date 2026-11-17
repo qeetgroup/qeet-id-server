@@ -148,9 +148,8 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, typ, endpoint,
 	defer tx.Rollback(ctx)
 	err = tx.QueryRow(ctx, `
 		INSERT INTO tenant.log_sinks
-		    (id, tenant_id, type, endpoint, token, token_ct, token_nonce,
-		     encryption_version, cursor_created_at, cursor_id)
-		VALUES ($1, $2, $3, $4, '', $5, $6, 1, NOW(), '00000000-0000-0000-0000-000000000000')
+		    (id, tenant_id, type, endpoint, token_ct, token_nonce, cursor_created_at, cursor_id)
+		VALUES ($1, $2, $3, $4, $5, $6, NOW(), '00000000-0000-0000-0000-000000000000')
 		RETURNING id, type, endpoint, enabled, last_forwarded_at, last_error, created_at
 	`, id, tenantID, typ, endpoint, ciphertext, nonce).Scan(
 		&row.ID, &row.Type, &row.Endpoint, &row.Enabled, &row.LastForwardedAt, &row.LastError, &row.CreatedAt,
@@ -285,15 +284,13 @@ type sinkRow struct {
 type storedSink struct {
 	id, tenantID        uuid.UUID
 	typ, endpoint       string
-	legacyToken         string
 	tokenCT, tokenNonce []byte
 }
 
-// forwardDue forwards new events to every enabled sink, first encrypting any
-// token still stored in plaintext.
+// forwardDue forwards new events to every enabled sink.
 func (s *Service) forwardDue(ctx context.Context) error {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, tenant_id, type, endpoint, token, token_ct, token_nonce
+		SELECT id, tenant_id, type, endpoint, token_ct, token_nonce
 		FROM tenant.log_sinks
 		WHERE enabled
 	`)
@@ -303,8 +300,7 @@ func (s *Service) forwardDue(ctx context.Context) error {
 	var stored []storedSink
 	for rows.Next() {
 		var r storedSink
-		if err := rows.Scan(&r.id, &r.tenantID, &r.typ, &r.endpoint, &r.legacyToken,
-			&r.tokenCT, &r.tokenNonce); err != nil {
+		if err := rows.Scan(&r.id, &r.tenantID, &r.typ, &r.endpoint, &r.tokenCT, &r.tokenNonce); err != nil {
 			rows.Close()
 			return err
 		}
@@ -318,30 +314,14 @@ func (s *Service) forwardDue(ctx context.Context) error {
 
 	sinks := make([]sinkRow, 0, len(stored))
 	for _, r := range stored {
-		tokenValue := r.legacyToken
-		if len(r.tokenCT) > 0 {
-			if s.box == nil {
-				return errors.New("SIEM token encryption is unavailable")
-			}
-			plain, openErr := s.box.Open(r.tenantID, "siem-token", r.id.String(), r.tokenCT, r.tokenNonce)
-			if openErr != nil {
-				return openErr
-			}
-			tokenValue = string(plain)
-		} else if tokenValue != "" && s.box != nil {
-			ct, nonce, sealErr := s.box.Seal(r.tenantID, "siem-token", r.id.String(), []byte(tokenValue))
-			if sealErr != nil {
-				return sealErr
-			}
-			if _, updateErr := s.pool.Exec(ctx, `
-				UPDATE tenant.log_sinks
-				SET token = '', token_ct = $2, token_nonce = $3, encryption_version = 1
-				WHERE id = $1 AND token_ct IS NULL
-			`, r.id, ct, nonce); updateErr != nil {
-				return updateErr
-			}
+		if s.box == nil {
+			return errors.New("SIEM token encryption is unavailable")
 		}
-		sinks = append(sinks, sinkRow{id: r.id, tenantID: r.tenantID, typ: r.typ, endpoint: r.endpoint, token: tokenValue})
+		plain, openErr := s.box.Open(r.tenantID, "siem-token", r.id.String(), r.tokenCT, r.tokenNonce)
+		if openErr != nil {
+			return openErr
+		}
+		sinks = append(sinks, sinkRow{id: r.id, tenantID: r.tenantID, typ: r.typ, endpoint: r.endpoint, token: string(plain)})
 	}
 	var lag time.Duration
 	for _, sk := range sinks {
@@ -519,27 +499,23 @@ func (s *Service) Test(ctx context.Context, tenantID uuid.UUID, typ, endpoint, t
 func (s *Service) TestSaved(ctx context.Context, tenantID, id uuid.UUID, actor audit.Actor) (*TestResult, error) {
 	var r storedSink
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, tenant_id, type, endpoint, token, token_ct, token_nonce
+		SELECT id, tenant_id, type, endpoint, token_ct, token_nonce
 		FROM tenant.log_sinks WHERE id = $1 AND tenant_id = $2
-	`, id, tenantID).Scan(&r.id, &r.tenantID, &r.typ, &r.endpoint, &r.legacyToken, &r.tokenCT, &r.tokenNonce)
+	`, id, tenantID).Scan(&r.id, &r.tenantID, &r.typ, &r.endpoint, &r.tokenCT, &r.tokenNonce)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	token := r.legacyToken
-	if len(r.tokenCT) > 0 {
-		if s.box == nil {
-			return nil, errs.ErrInternalServer.WithDetail("SIEM token encryption is unavailable")
-		}
-		plain, err := s.box.Open(r.tenantID, "siem-token", r.id.String(), r.tokenCT, r.tokenNonce)
-		if err != nil {
-			return nil, err
-		}
-		token = string(plain)
+	if s.box == nil {
+		return nil, errs.ErrInternalServer.WithDetail("SIEM token encryption is unavailable")
 	}
-	return s.test(ctx, tenantID, &id, r.typ, r.endpoint, token, actor)
+	plain, err := s.box.Open(r.tenantID, "siem-token", r.id.String(), r.tokenCT, r.tokenNonce)
+	if err != nil {
+		return nil, err
+	}
+	return s.test(ctx, tenantID, &id, r.typ, r.endpoint, string(plain), actor)
 }
 
 // test sends the test event and audits that it was sent, and how it went.

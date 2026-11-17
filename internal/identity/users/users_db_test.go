@@ -57,7 +57,7 @@ func TestUsersStayInTheirTenant(t *testing.T) {
 		t.Error("tenant B's user list includes tenant A's user")
 	}
 	if n := dbtest.Count(t, `
-		SELECT count(*) FROM "user".users
+		SELECT count(*) FROM account.users
 		WHERE id = $1 AND status = 'active' AND deleted_at IS NULL AND display_name IS NULL
 	`, victim.ID); n != 1 {
 		t.Error("tenant B changed tenant A's user")

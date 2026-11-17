@@ -186,7 +186,7 @@ func (r *Reader) kpis(ctx context.Context, tid uuid.UUID, out *Overview) error {
 	var mfaPct, mfaPctPrev float64
 	if err := r.pool.QueryRow(ctx, `
 		WITH active AS (
-			SELECT id FROM "user".users
+			SELECT id FROM account.users
 			WHERE tenant_id = $1 AND status = 'active' AND deleted_at IS NULL
 		),
 		enrolled AS (
@@ -202,7 +202,7 @@ func (r *Reader) kpis(ctx context.Context, tid uuid.UUID, out *Overview) error {
 	}
 	if err := r.pool.QueryRow(ctx, `
 		WITH active AS (
-			SELECT id FROM "user".users
+			SELECT id FROM account.users
 			WHERE tenant_id = $1 AND status = 'active' AND deleted_at IS NULL
 			  AND created_at <= NOW() - INTERVAL '7 days'
 		),
@@ -244,13 +244,13 @@ func (r *Reader) trends14d(ctx context.Context, tid uuid.UUID, out *Overview) er
 		),
 		users_per_day AS (
 			SELECT date_trunc('day', created_at)::date AS day, COUNT(*) AS new_users
-			FROM "user".users
+			FROM account.users
 			WHERE tenant_id = $1 AND deleted_at IS NULL
 			GROUP BY 1
 		),
 		base AS (
 			SELECT COUNT(*) AS total
-			FROM "user".users
+			FROM account.users
 			WHERE tenant_id = $1 AND deleted_at IS NULL
 			  AND created_at < NOW() - INTERVAL '14 days'
 		),
@@ -272,7 +272,7 @@ func (r *Reader) trends14d(ctx context.Context, tid uuid.UUID, out *Overview) er
 		mfa_per_day AS (
 			SELECT date_trunc('day', confirmed_at)::date AS day, COUNT(*) AS enrolled
 			FROM auth.mfa_totp t
-			JOIN "user".users u ON u.id = t.user_id
+			JOIN account.users u ON u.id = t.user_id
 			WHERE u.tenant_id = $1 AND u.deleted_at IS NULL AND t.confirmed_at IS NOT NULL
 			GROUP BY 1
 		)

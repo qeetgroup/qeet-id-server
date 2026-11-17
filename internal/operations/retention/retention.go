@@ -114,7 +114,7 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p P
 // RipeDeletedUsers counts soft-deleted users older than `days` for a tenant —
 // i.e. how many a purge would remove right now.
 func (s *Service) RipeDeletedUsers(ctx context.Context, tenantID uuid.UUID, days int) (int, error) {
-	// "user".users.tenant_id is NOT NULL UUID; sqlc infers pgtype.UUID here due
+	// account.users.tenant_id is NOT NULL UUID; sqlc infers pgtype.UUID here due
 	// to the quoted "user" schema — pass Valid: true to match a non-null value.
 	n, err := s.q.CountRipeDeletedUsers(ctx, dbgen.CountRipeDeletedUsersParams{
 		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},

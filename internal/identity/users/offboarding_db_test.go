@@ -26,8 +26,8 @@ func integrationsBy(t *testing.T, tenant, creator uuid.UUID) map[string]string {
 	}
 	exec(t, `INSERT INTO auth.service_principals (tenant_id, name, secret_hash, created_by) VALUES ($1, $2, 'hash', $3)`, tenant, names["service_principal"], creator)
 	exec(t, `INSERT INTO tenant.scim_tokens (tenant_id, name, token_hash, token_prefix, created_by) VALUES ($1, $2, gen_random_uuid()::text, 'scim', $3)`, tenant, names["scim_token"], creator)
-	exec(t, `INSERT INTO tenant.webhook_subscriptions (tenant_id, url, secret, created_by) VALUES ($1, $2, 'secret', $3)`, tenant, names["webhook"], creator)
-	exec(t, `INSERT INTO tenant.auth_hooks (tenant_id, url, secret, created_by) VALUES ($1, $2, 'secret', $3)`, tenant, names["auth_hook"], creator)
+	exec(t, `INSERT INTO tenant.webhook_subscriptions (tenant_id, url, secret_ct, secret_nonce, created_by) VALUES ($1, $2, '\x00', '\x00', $3)`, tenant, names["webhook"], creator)
+	exec(t, `INSERT INTO tenant.auth_hooks (tenant_id, url, secret_ct, secret_nonce, created_by) VALUES ($1, $2, '\x00', '\x00', $3)`, tenant, names["auth_hook"], creator)
 	exec(t, `INSERT INTO auth.oidc_clients (tenant_id, client_id, name, created_by) VALUES ($1, gen_random_uuid()::text, $2, $3)`, tenant, names["oidc_client"], creator)
 	return names
 }

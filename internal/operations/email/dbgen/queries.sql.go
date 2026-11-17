@@ -52,7 +52,7 @@ func (q *Queries) GetEmailTemplateOverride(ctx context.Context, arg GetEmailTemp
 
 const getRecipientLocale = `-- name: GetRecipientLocale :one
 SELECT COALESCE(u.metadata->>'locale', '')::text AS locale
-FROM "user".users u
+FROM account.users u
 WHERE LOWER(u.email) = LOWER($1) AND u.deleted_at IS NULL
   AND (u.tenant_id = $2::uuid
        OR EXISTS (SELECT 1 FROM rbac.user_roles r WHERE r.user_id = u.id AND r.tenant_id = $2::uuid))

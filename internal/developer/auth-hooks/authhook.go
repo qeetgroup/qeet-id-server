@@ -175,9 +175,9 @@ func (s *Service) Run(ctx context.Context, tenantID, userID uuid.UUID, email str
 
 // runHook calls one hook with payload, signed with its secrets, and returns
 // the claims it asked for, ErrAuthHookDenied when it denies, or skipped's
-// answer when it gives none. A plaintext secret is encrypted on first use.
+// answer when it gives none.
 func (s *Service) runHook(ctx context.Context, tenantID, userID uuid.UUID, hook dbgen.ListEnabledSignInHooksRow, payload []byte) (map[string]any, error) {
-	secrets, err := s.secretsOf(ctx, tenantID, hook.ID, hook.Secret, hook.SecretCt, hook.SecretNonce,
+	secrets, err := s.secretsOf(tenantID, hook.ID, hook.SecretCt, hook.SecretNonce,
 		previousSecret{hook.PreviousSecretCt, hook.PreviousSecretNonce, hook.PreviousSecretExpiresAt})
 	if err != nil {
 		s.counted(ctx, tenantID, hook.ID, outcomeSkipped, 0)
@@ -234,16 +234,19 @@ type previousSecret struct {
 	until     pgtype.Timestamptz
 }
 
-// secretsOf is what a hook's calls are signed with: its secret (see secretOf),
-// then while it overlaps the one it replaced. A replaced secret that can't be
+// secretsOf is what a hook's calls are signed with: its secret, opened, then
+// while it overlaps the one it replaced. A replaced secret that can't be
 // opened is left out, with a warning, rather than stop the calls.
-func (s *Service) secretsOf(ctx context.Context, tenantID, hookID uuid.UUID, legacy string, ct, nonce []byte, previous previousSecret) ([]string, error) {
-	current, err := s.secretOf(ctx, tenantID, hookID, legacy, ct, nonce)
+func (s *Service) secretsOf(tenantID, hookID uuid.UUID, ct, nonce []byte, previous previousSecret) ([]string, error) {
+	if s.box == nil {
+		return nil, errors.New("no cipher to open the signing secret")
+	}
+	current, err := s.box.Open(tenantID, "auth-hook-signing", hookID.String(), ct, nonce)
 	if err != nil {
 		return nil, err
 	}
-	secrets := []string{current}
-	if len(previous.ct) > 0 && previous.until.Valid && time.Now().Before(previous.until.Time) && s.box != nil {
+	secrets := []string{string(current)}
+	if len(previous.ct) > 0 && previous.until.Valid && time.Now().Before(previous.until.Time) {
 		if plain, err := s.box.Open(tenantID, "auth-hook-signing", hookID.String(), previous.ct, previous.nonce); err == nil {
 			secrets = append(secrets, string(plain))
 		} else {
@@ -251,27 +254,6 @@ func (s *Service) secretsOf(ctx context.Context, tenantID, hookID uuid.UUID, leg
 		}
 	}
 	return secrets, nil
-}
-
-// secretOf is a hook's signing secret, opened; a plaintext one is encrypted on
-// first use.
-func (s *Service) secretOf(ctx context.Context, tenantID, hookID uuid.UUID, legacy string, ct, nonce []byte) (string, error) {
-	if len(ct) > 0 {
-		if s.box == nil {
-			return "", errors.New("no cipher to open the signing secret")
-		}
-		plain, err := s.box.Open(tenantID, "auth-hook-signing", hookID.String(), ct, nonce)
-		if err != nil {
-			return "", err
-		}
-		return string(plain), nil
-	}
-	if legacy != "" && s.box != nil {
-		if sealed, sealedNonce, err := s.box.Seal(tenantID, "auth-hook-signing", hookID.String(), []byte(legacy)); err == nil {
-			_ = s.q.SealHookSecret(ctx, dbgen.SealHookSecretParams{SecretCt: sealed, SecretNonce: sealedNonce, ID: hookID, TenantID: tenantID})
-		}
-	}
-	return legacy, nil
 }
 
 // skipped answers a sign-in the hook gave no answer for, refusing it with
@@ -415,8 +397,8 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, url, secret st
 	defer tx.Rollback(ctx)
 	err = tx.QueryRow(ctx, `
 		INSERT INTO tenant.auth_hooks
-		    (id, tenant_id, url, secret, secret_ct, secret_nonce, encryption_version, fail_open, created_by)
-		VALUES ($1, $2, $3, '', $4, $5, 1, $6, NULLIF($7::uuid, '00000000-0000-0000-0000-000000000000'))
+		    (id, tenant_id, url, secret_ct, secret_nonce, fail_open, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7::uuid, '00000000-0000-0000-0000-000000000000'))
 		RETURNING id, trigger, url, enabled, fail_open, created_at
 	`, id, tenantID, url, ciphertext, nonce, failOpen, httpx.PrincipalUserID(ctx)).Scan(
 		&row.ID, &row.Trigger, &row.URL, &row.Enabled, &row.FailOpen, &row.CreatedAt,
@@ -557,15 +539,7 @@ func (s *Service) setEndpoint(ctx context.Context, tx pgx.Tx, id, tenantID uuid.
 			return err
 		}
 		params.PreviousCt, params.PreviousNonce = cur.SecretCt, cur.SecretNonce
-		if len(cur.SecretCt) == 0 && cur.Secret != "" {
-			// A secret stored before encryption is sealed as it steps aside.
-			if params.PreviousCt, params.PreviousNonce, err = s.box.Seal(tenantID, "auth-hook-signing", id.String(), []byte(cur.Secret)); err != nil {
-				return err
-			}
-		}
-		if len(params.PreviousCt) > 0 {
-			params.PreviousExpiresAt = pgtype.Timestamptz{Time: time.Now().UTC().Add(SecretRotationOverlap), Valid: true}
-		}
+		params.PreviousExpiresAt = pgtype.Timestamptz{Time: time.Now().UTC().Add(SecretRotationOverlap), Valid: true}
 		ct, nonce, err := s.box.Seal(tenantID, "auth-hook-signing", id.String(), []byte(*secret))
 		if err != nil {
 			return err
@@ -606,7 +580,7 @@ func (s *Service) Test(ctx context.Context, id, tenantID uuid.UUID, actor audit.
 		return nil, err
 	}
 	out := &TestResult{Decision: "none"}
-	secrets, err := s.secretsOf(ctx, tenantID, hook.ID, hook.Secret, hook.SecretCt, hook.SecretNonce,
+	secrets, err := s.secretsOf(tenantID, hook.ID, hook.SecretCt, hook.SecretNonce,
 		previousSecret{hook.PreviousSecretCt, hook.PreviousSecretNonce, hook.PreviousSecretExpiresAt})
 	if err != nil {
 		out.Error = "the signing secret can't be read"

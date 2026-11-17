@@ -170,10 +170,8 @@ func (s *Service) UpdateProvider(ctx context.Context, tenantID uuid.UUID, provid
 		    client_id = COALESCE($2, client_id),
 		    discovery_url = CASE WHEN $3::boolean THEN NULLIF($4, '') ELSE discovery_url END,
 		    enabled = COALESCE($5, enabled),
-		    client_secret = CASE WHEN $6::boolean THEN '' ELSE client_secret END,
 		    client_secret_ct = CASE WHEN $6::boolean THEN $7 ELSE client_secret_ct END,
 		    client_secret_nonce = CASE WHEN $6::boolean THEN $8 ELSE client_secret_nonce END,
-		    encryption_version = CASE WHEN $6::boolean THEN 1 ELSE encryption_version END,
 		    apple_team_id = COALESCE($9, apple_team_id),
 		    apple_key_id = COALESCE($10, apple_key_id)
 		WHERE id = $1
@@ -264,13 +262,13 @@ func providerDependents(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, prov
 		SELECT count(*) FILTER (WHERE
 		           NOT EXISTS (SELECT 1 FROM auth.password_credentials pc WHERE pc.user_id = ei.user_id)
 		       AND NOT EXISTS (SELECT 1 FROM auth.passkey_credentials pk WHERE pk.user_id = ei.user_id)
-		       AND NOT EXISTS (SELECT 1 FROM "user".external_identities other
+		       AND NOT EXISTS (SELECT 1 FROM account.external_identities other
 		                       WHERE other.user_id = ei.user_id AND other.id <> ei.id
 		                         AND NOT (other.tenant_id = ei.tenant_id AND other.provider = ei.provider))
 		       AND NOT EXISTS (SELECT 1 FROM auth.platform_social_identities ps WHERE ps.user_id = ei.user_id)),
 		       count(*)
-		FROM "user".external_identities ei
-		JOIN "user".users u ON u.id = ei.user_id AND u.deleted_at IS NULL
+		FROM account.external_identities ei
+		JOIN account.users u ON u.id = ei.user_id AND u.deleted_at IS NULL
 		WHERE ei.tenant_id = $1 AND ei.provider = $2`, tenantID, provider).Scan(&dependent, &linked)
 	return dependent, linked, err
 }

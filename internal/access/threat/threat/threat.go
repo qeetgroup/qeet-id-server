@@ -239,8 +239,8 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, limit int, curso
 		SELECT e.id, e.type, e.severity, e.detail, e.status, e.user_id, u.email,
 		       host(e.ip), e.metadata, e.created_at, e.resolved_at, e.resolved_by, rb.email
 		FROM auth.security_events e
-		LEFT JOIN "user".users u ON u.id = e.user_id
-		LEFT JOIN "user".users rb ON rb.id = e.resolved_by
+		LEFT JOIN account.users u ON u.id = e.user_id
+		LEFT JOIN account.users rb ON rb.id = e.resolved_by
 		WHERE e.tenant_id = $1 AND ($2 = '' OR e.status = $2) AND (e.created_at, e.id) < ($3, $4)
 		ORDER BY e.created_at DESC, e.id DESC
 		LIMIT $5

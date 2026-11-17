@@ -50,7 +50,7 @@ func TestAdministersCountsEveryPrivilegedPermission(t *testing.T) {
 	conn := uuid.New()
 	linked := func(userID uuid.UUID) {
 		t.Helper()
-		if _, err := pool.Exec(ctx, `INSERT INTO "user".external_identities (user_id, tenant_id, provider, connection_id, subject) VALUES ($1, $2, 'saml', $3, $4)`,
+		if _, err := pool.Exec(ctx, `INSERT INTO account.external_identities (user_id, tenant_id, provider, connection_id, subject) VALUES ($1, $2, 'saml', $3, $4)`,
 			userID, tenant, conn, dbtest.Unique("subject")); err != nil {
 			t.Fatal(err)
 		}

@@ -149,7 +149,7 @@ func TestOrganisationAdaptersSignIn(t *testing.T) {
 	if target, q := redirectQuery(t, rec); target != "https://console.example.test/auth/social/callback" || q.Get("code") == "" {
 		t.Fatalf("Discord sign-in went to %s %v", target, q)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users u JOIN "user".external_identities e ON e.user_id = u.id
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users u JOIN account.external_identities e ON e.user_id = u.id
 		WHERE u.email = $1 AND u.email_verified_at IS NOT NULL AND e.provider = 'discord' AND e.subject = 'd-1' AND e.tenant_id = $2`, email, tenant); n != 1 {
 		t.Errorf("Discord sign-in made %d verified, linked accounts; want 1", n)
 	}
@@ -171,7 +171,7 @@ func TestOrganisationAdaptersSignIn(t *testing.T) {
 	if _, q := redirectQuery(t, rec); q.Get("code") != "" {
 		t.Errorf("Facebook's unverified address adopted an existing account: %v", q)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE user_id = $1`, member.ID); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE user_id = $1`, member.ID); n != 0 {
 		t.Errorf("%d identities linked to the existing account, want none", n)
 	}
 }

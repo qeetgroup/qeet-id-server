@@ -91,7 +91,6 @@ func validateTransition(cur, target string) error {
 // Transition moves an agent to target (active, suspended or decommissioned)
 // after enforcing the allowed source states, recorded as actor's. Returns the
 // previous status. Emits a webhook event (best-effort) on a real change.
-// disabled_at is kept in sync for legacy readers.
 func (s *Service) Transition(ctx context.Context, id, tenantID uuid.UUID, target string, actor audit.Actor) (string, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -114,13 +113,7 @@ func (s *Service) Transition(ctx context.Context, id, tenantID uuid.UUID, target
 	if cur == target {
 		return cur, nil
 	}
-	// Resume clears disabled_at; other transitions stamp disabled_at=NOW().
-	qtx := s.q.WithTx(tx)
-	if target == "active" {
-		err = qtx.ResumeAgent(ctx, dbgen.ResumeAgentParams{ID: id, TenantID: tenantID})
-	} else {
-		err = qtx.DeactivateAgent(ctx, dbgen.DeactivateAgentParams{Status: target, ID: id, TenantID: tenantID})
-	}
+	err = s.q.WithTx(tx).SetAgentStatus(ctx, dbgen.SetAgentStatusParams{Status: target, ID: id, TenantID: tenantID})
 	if err != nil {
 		return cur, err
 	}

@@ -129,24 +129,24 @@ const membersCTE = `WITH m AS (
 	  COALESCE((
 		SELECT array_agg(r.name ORDER BY r.name)
 		FROM rbac.user_roles ur2 JOIN rbac.roles r ON r.id = ur2.role_id
-		WHERE ur2.user_id = "user".users.id AND ur2.tenant_id = $1
+		WHERE ur2.user_id = account.users.id AND ur2.tenant_id = $1
 	  ), '{}') AS roles,
 	  COALESCE((
 		SELECT jsonb_agg(jsonb_build_object('id', r.id, 'name', r.name) ORDER BY r.name)
 		FROM rbac.user_roles ur2 JOIN rbac.roles r ON r.id = ur2.role_id
-		WHERE ur2.user_id = "user".users.id AND ur2.tenant_id = $1
+		WHERE ur2.user_id = account.users.id AND ur2.tenant_id = $1
 	  ), '[]') AS role_refs,
-	  (EXISTS(SELECT 1 FROM auth.mfa_totp t WHERE t.user_id = "user".users.id AND t.confirmed_at IS NOT NULL)
-	   OR EXISTS(SELECT 1 FROM auth.mfa_otp_factors o WHERE o.user_id = "user".users.id AND o.verified_at IS NOT NULL)
-	   OR EXISTS(SELECT 1 FROM auth.mfa_push_devices d WHERE d.user_id = "user".users.id))::boolean AS mfa_enabled,
+	  (EXISTS(SELECT 1 FROM auth.mfa_totp t WHERE t.user_id = account.users.id AND t.confirmed_at IS NOT NULL)
+	   OR EXISTS(SELECT 1 FROM auth.mfa_otp_factors o WHERE o.user_id = account.users.id AND o.verified_at IS NOT NULL)
+	   OR EXISTS(SELECT 1 FROM auth.mfa_push_devices d WHERE d.user_id = account.users.id))::boolean AS mfa_enabled,
 	  (SELECT count(*) FROM tenant.group_members gm
-	   WHERE gm.user_id = "user".users.id AND gm.tenant_id = $1)::int AS groups_count,
+	   WHERE gm.user_id = account.users.id AND gm.tenant_id = $1)::int AS groups_count,
 	  ` + lastSeenCols + `,
-	  (SELECT ht.name FROM tenant.tenants ht WHERE ht.id = "user".users.tenant_id) AS home_tenant_name
-	FROM "user".users
+	  (SELECT ht.name FROM tenant.tenants ht WHERE ht.id = account.users.tenant_id) AS home_tenant_name
+	FROM account.users
 	WHERE deleted_at IS NULL
 	  AND id IN (
-		SELECT u.id FROM "user".users u WHERE u.tenant_id = $1 AND u.deleted_at IS NULL
+		SELECT u.id FROM account.users u WHERE u.tenant_id = $1 AND u.deleted_at IS NULL
 		UNION
 		SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.tenant_id = $1
 	  )
@@ -304,13 +304,13 @@ func (r *Repository) SuspensionOf(ctx context.Context, tenantID, id uuid.UUID) (
 	err := r.pool.QueryRow(ctx, `
 		SELECT COALESCE(u.suspension_reason, 'unspecified'), COALESCE(u.suspension_source, 'unknown'), u.suspended_at,
 		       e.actor_user_id, a.email
-		FROM "user".users u
+		FROM account.users u
 		LEFT JOIN LATERAL (
 			SELECT ev.actor_user_id FROM audit.events ev
 			WHERE ev.tenant_id = $1 AND ev.resource_id = u.id AND ev.action = 'user.suspended'
 			ORDER BY ev.created_at DESC LIMIT 1
 		) e ON TRUE
-		LEFT JOIN "user".users a ON a.id = e.actor_user_id
+		LEFT JOIN account.users a ON a.id = e.actor_user_id
 		WHERE u.id = $2 AND u.tenant_id = $1 AND u.status = 'suspended' AND u.deleted_at IS NULL`,
 		tenantID, id).Scan(&s.Reason, &s.Source, &s.SuspendedAt, &s.SuspendedBy, &s.SuspendedByEmail)
 	if errors.Is(err, pgx.ErrNoRows) {

@@ -131,7 +131,7 @@ SELECT
     e.action, e.resource_type, COALESCE(host(e.ip), '') AS ip, e.created_at AS event_at
 FROM audit.anomalies a
 JOIN audit.events e ON e.id = a.event_id
-LEFT JOIN "user".users u ON u.id = a.actor_user_id
+LEFT JOIN account.users u ON u.id = a.actor_user_id
 WHERE a.tenant_id = $1
   AND ($2::timestamptz IS NULL OR a.created_at < $2
        OR (a.created_at = $2 AND a.id < $3::uuid))
@@ -213,7 +213,7 @@ SELECT
     e.action, e.resource_type, COALESCE(host(e.ip), '') AS ip, e.created_at AS event_at
 FROM audit.anomalies a
 JOIN audit.events e ON e.id = a.event_id
-LEFT JOIN "user".users u ON u.id = a.actor_user_id
+LEFT JOIN account.users u ON u.id = a.actor_user_id
 WHERE a.tenant_id = $1 AND a.status = $2
   AND ($3::timestamptz IS NULL OR a.created_at < $3
        OR (a.created_at = $3 AND a.id < $4::uuid))

@@ -94,7 +94,7 @@ func TestOwnOrganisationNeedsNoRole(t *testing.T) {
 	if next, err := switchTo(back, guestOf); !errors.Is(err, errs.ErrAuthNotTenantMember) || next != nil {
 		t.Errorf("switch into an organisation whose roles were removed: %+v, %v; want %v", next, err, errs.ErrAuthNotTenantMember)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE "user".users SET status = 'suspended' WHERE id = $1`, a.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET status = 'suspended' WHERE id = $1`, a.ID); err != nil {
 		t.Fatal(err)
 	}
 	if next, err := switchTo(back, home); !errors.Is(err, errs.ErrAuthNotTenantMember) || next != nil {

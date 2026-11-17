@@ -16,7 +16,6 @@ import (
 // revoked. $1 is the account.
 var accountData = []string{
 	`DELETE FROM auth.passkey_credentials WHERE user_id = $1`,
-	`DELETE FROM auth.passkey_challenges WHERE user_id = $1`,
 	`DELETE FROM auth.webauthn_sessions WHERE user_id = $1`,
 	`DELETE FROM auth.mfa_otp_factors WHERE user_id = $1`,
 	`DELETE FROM auth.mfa_push_pairings WHERE user_id = $1`,
@@ -36,20 +35,17 @@ var accountData = []string{
 	`DELETE FROM auth.oidc_authorization_codes WHERE user_id = $1`,
 	`DELETE FROM auth.oidc_device_codes WHERE user_id = $1`,
 	`DELETE FROM auth.oidc_ciba_requests WHERE user_id = $1`,
-	`DELETE FROM auth.social_login_codes WHERE user_id = $1`,
-	`DELETE FROM auth.saml_login_codes WHERE user_id = $1`,
-	`DELETE FROM auth.oidc_connection_login_codes WHERE user_id = $1`,
-	`DELETE FROM auth.platform_social_codes WHERE user_id = $1`,
+	`DELETE FROM auth.login_codes WHERE user_id = $1`,
 	`DELETE FROM auth.platform_social_link_codes WHERE user_id = $1`,
-	`DELETE FROM auth.platform_social_states WHERE link_user_id = $1`,
+	`DELETE FROM auth.oauth_states WHERE link_user_id = $1`,
 	`DELETE FROM auth.platform_social_identities WHERE user_id = $1`,
-	`DELETE FROM "user".external_identities WHERE user_id = $1`,
+	`DELETE FROM account.external_identities WHERE user_id = $1`,
 	`DELETE FROM auth.password_credentials WHERE user_id = $1`,
 	`DELETE FROM auth.password_resets WHERE user_id = $1`,
 	`DELETE FROM auth.mfa_totp WHERE user_id = $1`,
 	`DELETE FROM auth.mfa_recovery_codes WHERE user_id = $1`,
-	`DELETE FROM "user".email_verifications WHERE user_id = $1`,
-	`DELETE FROM "user".phone_verifications WHERE user_id = $1`,
+	`DELETE FROM account.email_verifications WHERE user_id = $1`,
+	`DELETE FROM account.phone_verifications WHERE user_id = $1`,
 	`DELETE FROM auth.api_keys WHERE user_id = $1`,
 	`DELETE FROM auth.notifications WHERE user_id = $1`,
 	`DELETE FROM tenant.token_vault_grants WHERE user_id = $1`,
@@ -68,7 +64,7 @@ var accountData = []string{
 	`UPDATE auth.credentials
 	 SET subject = 'erased', claims = '{}', revoked_at = COALESCE(revoked_at, NOW()), user_id = NULL
 	 WHERE user_id = $1`,
-	`UPDATE "user".export_requests
+	`UPDATE account.export_requests
 	 SET payload = NULL, lease_owner = NULL, lease_until = NULL,
 	     status = CASE status WHEN 'pending' THEN 'failed' WHEN 'ready' THEN 'expired' ELSE status END,
 	     error = CASE status WHEN 'pending' THEN 'The account was erased.' ELSE error END,

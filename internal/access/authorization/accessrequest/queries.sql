@@ -39,8 +39,8 @@ SELECT ar.id, ar.tenant_id, ar.requester_id, ar.role_id, ar.reason, ar.duration_
        COALESCE(d.email, '') AS decider_email, COALESCE(d.display_name, '') AS decider_name
 FROM rbac.access_requests ar
 JOIN rbac.roles ro ON ro.id = ar.role_id AND ro.tenant_id = ar.tenant_id
-LEFT JOIN "user".users u ON u.id = ar.requester_id
-LEFT JOIN "user".users d ON d.id = ar.decided_by
+LEFT JOIN account.users u ON u.id = ar.requester_id
+LEFT JOIN account.users d ON d.id = ar.decided_by
 WHERE ar.id = @id AND ar.tenant_id = @tenant_id;
 
 -- name: LockPendingAccessRequest :one
@@ -60,8 +60,8 @@ SELECT ar.id, ar.tenant_id, ar.requester_id, ar.role_id, ar.reason, ar.duration_
        COALESCE(d.email, '') AS decider_email, COALESCE(d.display_name, '') AS decider_name
 FROM rbac.access_requests ar
 JOIN rbac.roles ro ON ro.id = ar.role_id AND ro.tenant_id = ar.tenant_id
-LEFT JOIN "user".users u ON u.id = ar.requester_id
-LEFT JOIN "user".users d ON d.id = ar.decided_by
+LEFT JOIN account.users u ON u.id = ar.requester_id
+LEFT JOIN account.users d ON d.id = ar.decided_by
 WHERE ar.tenant_id = @tenant_id
   AND (sqlc.narg('status')::text IS NULL OR ar.status = sqlc.narg('status')::text)
 ORDER BY ar.created_at DESC, ar.id DESC
@@ -76,8 +76,8 @@ SELECT ar.id, ar.tenant_id, ar.requester_id, ar.role_id, ar.reason, ar.duration_
        COALESCE(d.email, '') AS decider_email, COALESCE(d.display_name, '') AS decider_name
 FROM rbac.access_requests ar
 JOIN rbac.roles ro ON ro.id = ar.role_id AND ro.tenant_id = ar.tenant_id
-LEFT JOIN "user".users u ON u.id = ar.requester_id
-LEFT JOIN "user".users d ON d.id = ar.decided_by
+LEFT JOIN account.users u ON u.id = ar.requester_id
+LEFT JOIN account.users d ON d.id = ar.decided_by
 WHERE ar.tenant_id = @tenant_id AND ar.requester_id = @requester_id
 ORDER BY ar.created_at DESC, ar.id DESC
 LIMIT 100;

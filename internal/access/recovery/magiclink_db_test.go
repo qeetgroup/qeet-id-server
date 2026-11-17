@@ -136,7 +136,7 @@ func TestMagicLinkIntoUnprovedAccountEndsItsPassword(t *testing.T) {
 	if n := dbtest.Count(t, `SELECT count(*) FROM auth.sessions WHERE user_id = $1 AND revoked_at IS NULL`, squatted.ID); n != 0 {
 		t.Errorf("%d sessions from before the link stay open", n)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND email_verified_at IS NOT NULL`, squatted.ID); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND email_verified_at IS NOT NULL`, squatted.ID); n != 1 {
 		t.Error("the address isn't marked verified after the link proved it")
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'auth.credentials_removed' AND resource_id = $1

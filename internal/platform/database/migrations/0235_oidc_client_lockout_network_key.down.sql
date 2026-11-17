@@ -1,1 +1,0 @@
-DROP INDEX CONCURRENTLY IF EXISTS auth.oidc_client_auth_lockouts_client_network;

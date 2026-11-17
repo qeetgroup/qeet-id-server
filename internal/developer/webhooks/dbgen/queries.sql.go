@@ -359,7 +359,7 @@ func (q *Queries) ListWebhookDeliveries(ctx context.Context, arg ListWebhookDeli
 }
 
 const listWebhookManagers = `-- name: ListWebhookManagers :many
-SELECT u.id FROM "user".users u
+SELECT u.id FROM account.users u
 WHERE u.status = 'active' AND u.deleted_at IS NULL AND u.id IN (
     SELECT ur.user_id FROM rbac.user_roles ur
     JOIN rbac.role_permissions rp ON rp.role_id = ur.role_id
@@ -478,7 +478,7 @@ func (q *Queries) ListWebhookSubscriptions(ctx context.Context, tenantID uuid.UU
 }
 
 const lockWebhookSecret = `-- name: LockWebhookSecret :one
-SELECT secret, secret_ct, secret_nonce FROM tenant.webhook_subscriptions
+SELECT secret_ct, secret_nonce FROM tenant.webhook_subscriptions
 WHERE id = $1 AND tenant_id = $2
 FOR UPDATE
 `
@@ -489,7 +489,6 @@ type LockWebhookSecretParams struct {
 }
 
 type LockWebhookSecretRow struct {
-	Secret      string
 	SecretCt    []byte
 	SecretNonce []byte
 }
@@ -498,7 +497,7 @@ type LockWebhookSecretRow struct {
 func (q *Queries) LockWebhookSecret(ctx context.Context, arg LockWebhookSecretParams) (LockWebhookSecretRow, error) {
 	row := q.db.QueryRow(ctx, lockWebhookSecret, arg.ID, arg.TenantID)
 	var i LockWebhookSecretRow
-	err := row.Scan(&i.Secret, &i.SecretCt, &i.SecretNonce)
+	err := row.Scan(&i.SecretCt, &i.SecretNonce)
 	return i, err
 }
 
@@ -569,7 +568,7 @@ func (q *Queries) RetryWebhookDelivery(ctx context.Context, arg RetryWebhookDeli
 
 const rotateWebhookSecret = `-- name: RotateWebhookSecret :exec
 UPDATE tenant.webhook_subscriptions
-SET secret = '', secret_ct = $1, secret_nonce = $2, encryption_version = 1,
+SET secret_ct = $1, secret_nonce = $2,
     previous_secret_ct = $3, previous_secret_nonce = $4,
     previous_secret_expires_at = $5
 WHERE id = $6 AND tenant_id = $7

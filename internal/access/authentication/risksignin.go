@@ -82,7 +82,7 @@ func (s *Service) riskEmailChallenge(ctx context.Context, userID, tenantID uuid.
 	firstFactor, ip, ua string) (MFAChallenge, error) {
 	var email string
 	var verified bool
-	if err := s.pool.QueryRow(ctx, `SELECT email, email_verified_at IS NOT NULL FROM "user".users WHERE id = $1`, userID).
+	if err := s.pool.QueryRow(ctx, `SELECT email, email_verified_at IS NOT NULL FROM account.users WHERE id = $1`, userID).
 		Scan(&email, &verified); err != nil {
 		return MFAChallenge{}, err
 	}
@@ -159,7 +159,7 @@ func (s *Service) newRiskEmailCode(ctx context.Context, tx pgx.Tx, id uuid.UUID,
 		}
 	}
 	var out riskEmailCode
-	if err := tx.QueryRow(ctx, `SELECT email FROM "user".users WHERE id = $1 AND email_verified_at IS NOT NULL`, c.userID).
+	if err := tx.QueryRow(ctx, `SELECT email FROM account.users WHERE id = $1 AND email_verified_at IS NOT NULL`, c.userID).
 		Scan(&out.email); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return riskEmailCode{}, errs.ErrAuthRiskVerificationUnavailable

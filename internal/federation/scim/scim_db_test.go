@@ -39,7 +39,7 @@ func TestLapsedPlanStopsSCIM(t *testing.T) {
 	if rec.Code != http.StatusForbidden || decodeBody(t, rec)["schemas"] == nil {
 		t.Errorf("SCIM after the plan lapsed: status %d %s, want a SCIM 403", rec.Code, rec.Body.String())
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE tenant_id = $1`, f.tenantID); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE tenant_id = $1`, f.tenantID); n != 0 {
 		t.Errorf("%d users provisioned after the plan lapsed, want none", n)
 	}
 }
@@ -69,7 +69,7 @@ func TestSCIMUserReadsStayInTheirTenant(t *testing.T) {
 			t.Errorf("B GET %s: totalResults %v, want 0", path, total)
 		}
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND deleted_at IS NULL`, victim); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND deleted_at IS NULL`, victim); n != 1 {
 		t.Error("B's SCIM token deleted A's user")
 	}
 	if rec := a.do(t, http.MethodGet, "/scim/v2/Users/"+victim.String(), nil); rec.Code != http.StatusOK {
@@ -92,10 +92,10 @@ func TestSCIMAdoptingAnUnverifiedAccountRemovesItsCredentials(t *testing.T) {
 		a := dbtest.UserAt(t, dbtest.Unique("alice")+"@"+domain, f.tenantID, f.tenantID)
 		dbtest.SetPassword(t, a.ID, "Kx7mQ2vLp9Wz-squat")
 		for _, q := range []string{
-			`INSERT INTO auth.passkey_credentials (user_id, credential_id, public_key, name) SELECT id, convert_to(id::text, 'UTF8'), '\x00', 'Laptop' FROM "user".users WHERE id = $1`,
-			`INSERT INTO auth.mfa_totp (user_id, secret, confirmed_at) VALUES ($1, 'secret', NOW())`,
-			`INSERT INTO auth.api_keys (tenant_id, user_id, name, prefix, key_hash) SELECT tenant_id, id, 'laptop', left(md5(id::text), 12), 'hash' FROM "user".users WHERE id = $1`,
-			`INSERT INTO auth.sessions (user_id, tenant_id) SELECT id, tenant_id FROM "user".users WHERE id = $1`,
+			`INSERT INTO auth.passkey_credentials (user_id, credential_id, public_key, name) SELECT id, convert_to(id::text, 'UTF8'), '\x00', 'Laptop' FROM account.users WHERE id = $1`,
+			`INSERT INTO auth.mfa_totp (user_id, secret_ct, secret_nonce, confirmed_at) VALUES ($1, '\x00', '\x00', NOW())`,
+			`INSERT INTO auth.api_keys (tenant_id, user_id, name, prefix, key_hash) SELECT tenant_id, id, 'laptop', left(md5(id::text), 12), 'hash' FROM account.users WHERE id = $1`,
+			`INSERT INTO auth.sessions (user_id, tenant_id) SELECT id, tenant_id FROM account.users WHERE id = $1`,
 			setup,
 		} {
 			if _, err := pool.Exec(ctx, q, a.ID); err != nil {
@@ -148,8 +148,8 @@ func TestSCIMAdoptingAnUnverifiedAccountRemovesItsCredentials(t *testing.T) {
 			t.Errorf("%s: the removal was recorded %d times, want once", way, n)
 		}
 		for name, setup := range map[string]string{
-			"an account that proved its address":           `UPDATE "user".users SET email_verified_at = NOW() WHERE id = $1`,
-			"an account the directory already provisioned": `UPDATE "user".users SET provisioned_via = 'scim' WHERE id = $1`,
+			"an account that proved its address":           `UPDATE account.users SET email_verified_at = NOW() WHERE id = $1`,
+			"an account the directory already provisioned": `UPDATE account.users SET provisioned_via = 'scim' WHERE id = $1`,
 		} {
 			a := account(setup)
 			vouch(a)
@@ -181,7 +181,7 @@ func TestSCIMDoesNotChangeAnAdministratorsAddress(t *testing.T) {
 	address := func(id string) string {
 		t.Helper()
 		var email string
-		if err := dbtest.Pool(t).QueryRow(ctx, `SELECT email FROM "user".users WHERE id = $1`, id).Scan(&email); err != nil {
+		if err := dbtest.Pool(t).QueryRow(ctx, `SELECT email FROM account.users WHERE id = $1`, id).Scan(&email); err != nil {
 			t.Fatal(err)
 		}
 		return email
@@ -219,8 +219,8 @@ func TestSCIMDeprovisioningListsTheIntegrationsTheUserCreated(t *testing.T) {
 	ctx := dbtest.Context(t)
 	f := newSCIMFixture(t, ctx)
 	id := f.seedUser(t, ctx, dbtest.Unique("scim")+"@example.test")
-	if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO tenant.webhook_subscriptions (tenant_id, url, secret, created_by)
-		VALUES ($1, 'https://hooks.example.test/in', 'secret', $2)`, f.tenantID, id); err != nil {
+	if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO tenant.webhook_subscriptions (tenant_id, url, secret_ct, secret_nonce, created_by)
+		VALUES ($1, 'https://hooks.example.test/in', '\x00', '\x00', $2)`, f.tenantID, id); err != nil {
 		t.Fatal(err)
 	}
 	if rec := f.do(t, http.MethodDelete, "/scim/v2/Users/"+id.String(), nil); rec.Code != http.StatusNoContent {

@@ -14,10 +14,10 @@ import (
 )
 
 const consumeSocialLoginCode = `-- name: ConsumeSocialLoginCode :one
-SELECT lc.user_id, lc.tenant_id, lc.expires_at, lc.used_at, p.enabled
-FROM auth.social_login_codes lc
+SELECT lc.user_id, p.tenant_id, lc.expires_at, lc.used_at, p.enabled
+FROM auth.login_codes lc
 JOIN tenant.social_providers p ON p.tenant_id = lc.tenant_id AND p.provider = lc.provider
-WHERE lc.code_hash = $1
+WHERE lc.code_hash = $1 AND lc.kind = 'social'
 FOR UPDATE OF lc
 `
 
@@ -44,8 +44,9 @@ func (q *Queries) ConsumeSocialLoginCode(ctx context.Context, codeHash string) (
 }
 
 const consumeSocialOAuthState = `-- name: ConsumeSocialOAuthState :one
-DELETE FROM auth.social_oauth_states WHERE state_hash = $1
-RETURNING tenant_id, provider, code_verifier, redirect_uri, return_to, expires_at, nonce_hash
+DELETE FROM auth.oauth_states WHERE state_hash = $1 AND kind = 'social'
+RETURNING tenant_id::uuid AS tenant_id, provider::text AS provider, code_verifier, redirect_uri,
+          COALESCE(return_to, '')::text AS return_to, expires_at, nonce_hash
 `
 
 type ConsumeSocialOAuthStateRow struct {
@@ -74,7 +75,7 @@ func (q *Queries) ConsumeSocialOAuthState(ctx context.Context, stateHash string)
 }
 
 const deleteExternalIdentity = `-- name: DeleteExternalIdentity :execrows
-DELETE FROM "user".external_identities WHERE id = $1 AND tenant_id = $2
+DELETE FROM account.external_identities WHERE id = $1 AND tenant_id = $2
 `
 
 type DeleteExternalIdentityParams struct {
@@ -91,7 +92,7 @@ func (q *Queries) DeleteExternalIdentity(ctx context.Context, arg DeleteExternal
 }
 
 const deleteExternalIdentityForUser = `-- name: DeleteExternalIdentityForUser :execrows
-DELETE FROM "user".external_identities WHERE id = $1 AND user_id = $2
+DELETE FROM account.external_identities WHERE id = $1 AND user_id = $2
 `
 
 type DeleteExternalIdentityForUserParams struct {
@@ -153,7 +154,7 @@ func (q *Queries) EnabledSocialProviderNames(ctx context.Context, tenantID uuid.
 
 const getExternalIdentityUser = `-- name: GetExternalIdentityUser :one
 
-SELECT user_id FROM "user".external_identities
+SELECT user_id FROM account.external_identities
 WHERE tenant_id = $1 AND provider = $2 AND subject = $3
   AND connection_id IS NULL
 `
@@ -165,7 +166,7 @@ type GetExternalIdentityUserParams struct {
 }
 
 // ==========================================================================
-// findOrCreateUser — same cross-schema "user" pattern as ldap/saml
+// findOrCreateUser — same cross-schema account pattern as ldap/saml
 // ==========================================================================
 // A social identity names no connection; a single sign-on connection's links,
 // whose provider a social one could be named after, are not looked at.
@@ -207,7 +208,7 @@ func (q *Queries) GetTenantIDBySlug(ctx context.Context, slug string) (uuid.UUID
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id FROM "user".users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL
+SELECT id FROM account.users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (uuid.UUID, error) {
@@ -218,8 +219,8 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (uuid.UUID, 
 }
 
 const insertSocialLoginCode = `-- name: InsertSocialLoginCode :exec
-INSERT INTO auth.social_login_codes (code_hash, user_id, tenant_id, provider, expires_at)
-VALUES ($1, $2, $3, $4::text, $5)
+INSERT INTO auth.login_codes (code_hash, kind, user_id, tenant_id, provider, expires_at)
+VALUES ($1, 'social', $2, $3::uuid, $4::text, $5)
 `
 
 type InsertSocialLoginCodeParams struct {
@@ -242,9 +243,10 @@ func (q *Queries) InsertSocialLoginCode(ctx context.Context, arg InsertSocialLog
 }
 
 const insertSocialOAuthState = `-- name: InsertSocialOAuthState :exec
-INSERT INTO auth.social_oauth_states
-    (state_hash, tenant_id, provider, code_verifier, redirect_uri, return_to, expires_at, nonce_hash)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+INSERT INTO auth.oauth_states
+    (state_hash, kind, tenant_id, provider, code_verifier, redirect_uri, return_to, expires_at, nonce_hash)
+VALUES ($1, 'social', $2::uuid, $3::text, $4, $5,
+        NULLIF($6::text, ''), $7, $8)
 `
 
 type InsertSocialOAuthStateParams struct {
@@ -273,7 +275,7 @@ func (q *Queries) InsertSocialOAuthState(ctx context.Context, arg InsertSocialOA
 }
 
 const insertUserWithEmail = `-- name: InsertUserWithEmail :one
-INSERT INTO "user".users (tenant_id, email, email_verified_at, display_name, status)
+INSERT INTO account.users (tenant_id, email, email_verified_at, display_name, status)
 VALUES ($1, $2, NOW(), $3, 'active')
 RETURNING id
 `
@@ -292,7 +294,7 @@ func (q *Queries) InsertUserWithEmail(ctx context.Context, arg InsertUserWithEma
 }
 
 const linkExternalIdentity = `-- name: LinkExternalIdentity :exec
-INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject, email)
+INSERT INTO account.external_identities (user_id, tenant_id, provider, subject, email)
 VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (tenant_id, provider, connection_id, subject) DO NOTHING
 `
@@ -318,8 +320,8 @@ func (q *Queries) LinkExternalIdentity(ctx context.Context, arg LinkExternalIden
 
 const listExternalIdentities = `-- name: ListExternalIdentities :many
 SELECT ei.id, ei.user_id, ei.tenant_id, ei.provider, ei.subject, ei.email, ei.linked_at
-FROM "user".external_identities ei
-JOIN "user".users u ON u.id = ei.user_id
+FROM account.external_identities ei
+JOIN account.users u ON u.id = ei.user_id
 WHERE ei.user_id = $1 AND ei.tenant_id = $2 AND u.deleted_at IS NULL
 ORDER BY ei.linked_at DESC
 `
@@ -369,8 +371,8 @@ func (q *Queries) ListExternalIdentities(ctx context.Context, arg ListExternalId
 
 const listExternalIdentitiesForUser = `-- name: ListExternalIdentitiesForUser :many
 SELECT ei.id, ei.user_id, ei.tenant_id, ei.provider, ei.subject, ei.email, ei.linked_at
-FROM "user".external_identities ei
-JOIN "user".users u ON u.id = ei.user_id
+FROM account.external_identities ei
+JOIN account.users u ON u.id = ei.user_id
 WHERE ei.user_id = $1 AND u.deleted_at IS NULL
 ORDER BY ei.linked_at DESC
 `
@@ -503,11 +505,16 @@ func (q *Queries) ListSocialProviders(ctx context.Context, tenantID uuid.UUID) (
 }
 
 const markSocialLoginCodeUsed = `-- name: MarkSocialLoginCodeUsed :exec
-UPDATE auth.social_login_codes SET used_at = NOW() WHERE code_hash = $1
+UPDATE auth.login_codes SET used_at = NOW() WHERE code_hash = $1 AND tenant_id = $2::uuid
 `
 
-func (q *Queries) MarkSocialLoginCodeUsed(ctx context.Context, codeHash string) error {
-	_, err := q.db.Exec(ctx, markSocialLoginCodeUsed, codeHash)
+type MarkSocialLoginCodeUsedParams struct {
+	CodeHash string
+	TenantID uuid.UUID
+}
+
+func (q *Queries) MarkSocialLoginCodeUsed(ctx context.Context, arg MarkSocialLoginCodeUsedParams) error {
+	_, err := q.db.Exec(ctx, markSocialLoginCodeUsed, arg.CodeHash, arg.TenantID)
 	return err
 }
 

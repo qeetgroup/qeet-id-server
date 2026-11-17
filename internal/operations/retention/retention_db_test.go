@@ -51,14 +51,14 @@ func TestPurgeRemovesEachRipeUser(t *testing.T) {
 		{`INSERT INTO auth.agents (tenant_id, name, secret_hash, sponsor_user_id) VALUES ($1, 'bot', 'hash', $2) RETURNING id`, []any{tenant, sponsor.ID}, &agent},
 		{`INSERT INTO auth.oidc_clients (tenant_id, client_id, name, reviewed_by, reviewed_at) VALUES ($1, $2, 'Payroll', $3, NOW()) RETURNING id`, []any{tenant, client, reviewer.ID}, new(uuid.UUID)},
 		{`INSERT INTO auth.api_keys (tenant_id, user_id, name, prefix, key_hash) VALUES ($1, $2, 'laptop', $3, 'hash') RETURNING id`, []any{tenant, reviewer.ID, dbtest.Unique("qk")}, new(uuid.UUID)},
-		{`INSERT INTO "user".purge_requests (tenant_id, user_id, subject_id, grace_until, status, completed_at) VALUES ($1, $2, $2, NOW(), 'completed', NOW()) RETURNING id`, []any{tenant, reviewer.ID}, &request},
+		{`INSERT INTO account.purge_requests (tenant_id, user_id, subject_id, grace_until, status, completed_at) VALUES ($1, $2, $2, NOW(), 'completed', NOW()) RETURNING id`, []any{tenant, reviewer.ID}, &request},
 	} {
 		if err := pool.QueryRow(ctx, s.sql, s.args...).Scan(s.scan); err != nil {
 			t.Fatalf("%s: %v", s.sql, err)
 		}
 	}
 	owner := dbtest.Owner(t)
-	if _, err := owner.Exec(ctx, `CREATE TABLE public.purge_hold (user_id UUID REFERENCES "user".users (id))`); err != nil {
+	if _, err := owner.Exec(ctx, `CREATE TABLE public.purge_hold (user_id UUID REFERENCES account.users (id))`); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _, _ = owner.Exec(context.Background(), `DROP TABLE public.purge_hold`) })
@@ -66,11 +66,11 @@ func TestPurgeRemovesEachRipeUser(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, u := range []dbtest.Account{sponsor, reviewer, held} {
-		if _, err := pool.Exec(ctx, `UPDATE "user".users SET status = 'deleted', deleted_at = NOW() - INTERVAL '40 days' WHERE id = $1`, u.ID); err != nil {
+		if _, err := pool.Exec(ctx, `UPDATE account.users SET status = 'deleted', deleted_at = NOW() - INTERVAL '40 days' WHERE id = $1`, u.ID); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := pool.Exec(ctx, `UPDATE "user".users SET status = 'deleted', deleted_at = NOW() - INTERVAL '2 days' WHERE id = $1`, recent.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET status = 'deleted', deleted_at = NOW() - INTERVAL '2 days' WHERE id = $1`, recent.ID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -88,12 +88,12 @@ func TestPurgeRemovesEachRipeUser(t *testing.T) {
 		arg   any
 		want  int
 	}{
-		{"accounts left", `SELECT count(*) FROM "user".users WHERE id = ANY($1)`, []uuid.UUID{sponsor.ID, reviewer.ID, held.ID, recent.ID}, 2},
+		{"accounts left", `SELECT count(*) FROM account.users WHERE id = ANY($1)`, []uuid.UUID{sponsor.ID, reviewer.ID, held.ID, recent.ID}, 2},
 		{"the agent, without its sponsor", `SELECT count(*) FROM auth.agents WHERE id = $1 AND sponsor_user_id IS NULL`, agent, 1},
 		{"the application, without its reviewer", `SELECT count(*) FROM auth.oidc_clients WHERE client_id = $1 AND reviewed_by IS NULL`, client, 1},
 		{"the reviewer's personal key", `SELECT count(*) FROM auth.api_keys WHERE tenant_id = $1`, tenant, 0},
 		{"the purged accounts' memberships", `SELECT count(*) FROM rbac.user_roles WHERE user_id = ANY($1)`, []uuid.UUID{sponsor.ID, reviewer.ID}, 0},
-		{"the erasure request, naming the account", `SELECT count(*) FROM "user".purge_requests WHERE id = $1 AND user_id IS NULL AND subject_id = $2`, nil, 1},
+		{"the erasure request, naming the account", `SELECT count(*) FROM account.purge_requests WHERE id = $1 AND user_id IS NULL AND subject_id = $2`, nil, 1},
 	} {
 		args := []any{c.arg}
 		if c.arg == nil {
@@ -124,7 +124,7 @@ func TestSweepIsAudited(t *testing.T) {
 	}
 	for range 2 {
 		u := dbtest.User(t, tenant, tenant)
-		if _, err := pool.Exec(ctx, `UPDATE "user".users SET status = 'deleted', deleted_at = NOW() - INTERVAL '40 days' WHERE id = $1`, u.ID); err != nil {
+		if _, err := pool.Exec(ctx, `UPDATE account.users SET status = 'deleted', deleted_at = NOW() - INTERVAL '40 days' WHERE id = $1`, u.ID); err != nil {
 			t.Fatal(err)
 		}
 	}

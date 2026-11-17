@@ -208,7 +208,7 @@ func (f *fed) sso(o *world.Org) {
 			to = w.Now.Add(-time.Hour)
 		}
 		linked := f.workTime(from, to, p.Loc)
-		batch.Queue(`INSERT INTO "user".external_identities (id, user_id, tenant_id, provider, connection_id, subject, email, metadata, linked_at)
+		batch.Queue(`INSERT INTO account.external_identities (id, user_id, tenant_id, provider, connection_id, subject, email, metadata, linked_at)
 			VALUES ($1, $2, $3, 'saml', $4, $5, $6, $7, $8)`, uuid.New(), p.ID, o.ID, conn, p.Email, p.Email,
 			map[string]any{"connection": conn.String(), "idp": c.entityID}, linked)
 	}

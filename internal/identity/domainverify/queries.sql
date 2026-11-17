@@ -53,7 +53,7 @@ SET host = EXCLUDED.host, checked_at = EXCLUDED.checked_at, result = EXCLUDED.re
 -- administrator is never adopted by address, so only a home account linked to
 -- an active connection can). Every branch runs for every address.
 WITH account AS (
-    SELECT u.id, u.tenant_id FROM "user".users u
+    SELECT u.id, u.tenant_id FROM account.users u
     WHERE lower(u.email) = lower(sqlc.arg(email)::text) AND u.deleted_at IS NULL
       AND (u.tenant_id = sqlc.arg(tenant_id)::uuid OR EXISTS (
           SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = sqlc.arg(tenant_id)::uuid))
@@ -84,7 +84,7 @@ SELECT
                   WHERE gm.user_id = a.id AND gm.tenant_id = sqlc.arg(tenant_id)::uuid
                     AND ((ro.is_system AND ro.name = 'owner') OR (p.key IS NOT NULL AND NOT (p.key = ANY(sqlc.arg(member_permissions)::text[]))))))
           AND NOT (a.tenant_id IS NOT DISTINCT FROM sqlc.arg(tenant_id)::uuid AND EXISTS (
-                  SELECT 1 FROM "user".external_identities ei
+                  SELECT 1 FROM account.external_identities ei
                   WHERE ei.user_id = a.id AND ei.tenant_id = sqlc.arg(tenant_id)::uuid
                     AND (EXISTS (SELECT 1 FROM tenant.saml_connections s
                                  WHERE s.id = ei.connection_id AND s.tenant_id = ei.tenant_id AND ei.provider = 'saml' AND s.status = 'active')
@@ -113,7 +113,7 @@ SELECT name FROM tenant.tenants WHERE id = @tenant_id AND deleted_at IS NULL;
 -- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT b.user_id, u.email, u.display_name, b.created_by, b.created_at
 FROM tenant.break_glass_members b
-JOIN "user".users u ON u.id = b.user_id
+JOIN account.users u ON u.id = b.user_id
 WHERE b.tenant_id = $1
 ORDER BY lower(u.email)
 LIMIT 1001;
@@ -122,7 +122,7 @@ LIMIT 1001;
 -- A member: the organisation is the account's home, or the account holds one
 -- of its roles.
 SELECT EXISTS (
-    SELECT 1 FROM "user".users u
+    SELECT 1 FROM account.users u
     WHERE u.id = sqlc.arg(user_id) AND u.deleted_at IS NULL
       AND (u.tenant_id = sqlc.arg(tenant_id)::uuid OR EXISTS (
           SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = sqlc.arg(tenant_id)::uuid))

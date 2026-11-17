@@ -31,7 +31,7 @@ func (q *Queries) DeleteHook(ctx context.Context, arg DeleteHookParams) (int64, 
 }
 
 const getHookForCall = `-- name: GetHookForCall :one
-SELECT id, url, secret, secret_ct, secret_nonce, fail_open,
+SELECT id, url, secret_ct, secret_nonce, fail_open,
        previous_secret_ct, previous_secret_nonce, previous_secret_expires_at
 FROM tenant.auth_hooks WHERE id = $1 AND tenant_id = $2
 `
@@ -44,7 +44,6 @@ type GetHookForCallParams struct {
 type GetHookForCallRow struct {
 	ID                      uuid.UUID
 	Url                     string
-	Secret                  string
 	SecretCt                []byte
 	SecretNonce             []byte
 	FailOpen                bool
@@ -60,7 +59,6 @@ func (q *Queries) GetHookForCall(ctx context.Context, arg GetHookForCallParams) 
 	err := row.Scan(
 		&i.ID,
 		&i.Url,
-		&i.Secret,
 		&i.SecretCt,
 		&i.SecretNonce,
 		&i.FailOpen,
@@ -72,7 +70,7 @@ func (q *Queries) GetHookForCall(ctx context.Context, arg GetHookForCallParams) 
 }
 
 const listEnabledSignInHooks = `-- name: ListEnabledSignInHooks :many
-SELECT id, url, secret, secret_ct, secret_nonce, fail_open,
+SELECT id, url, secret_ct, secret_nonce, fail_open,
        previous_secret_ct, previous_secret_nonce, previous_secret_expires_at
 FROM tenant.auth_hooks
 WHERE tenant_id = $1 AND enabled AND trigger = 'post_login'
@@ -82,7 +80,6 @@ ORDER BY created_at, id
 type ListEnabledSignInHooksRow struct {
 	ID                      uuid.UUID
 	Url                     string
-	Secret                  string
 	SecretCt                []byte
 	SecretNonce             []byte
 	FailOpen                bool
@@ -105,7 +102,6 @@ func (q *Queries) ListEnabledSignInHooks(ctx context.Context, tenantID uuid.UUID
 		if err := rows.Scan(
 			&i.ID,
 			&i.Url,
-			&i.Secret,
 			&i.SecretCt,
 			&i.SecretNonce,
 			&i.FailOpen,
@@ -185,7 +181,7 @@ func (q *Queries) ListHooks(ctx context.Context, tenantID uuid.UUID) ([]ListHook
 }
 
 const lockHookSecret = `-- name: LockHookSecret :one
-SELECT secret, secret_ct, secret_nonce FROM tenant.auth_hooks
+SELECT secret_ct, secret_nonce FROM tenant.auth_hooks
 WHERE id = $1 AND tenant_id = $2 FOR UPDATE
 `
 
@@ -195,7 +191,6 @@ type LockHookSecretParams struct {
 }
 
 type LockHookSecretRow struct {
-	Secret      string
 	SecretCt    []byte
 	SecretNonce []byte
 }
@@ -205,7 +200,7 @@ type LockHookSecretRow struct {
 func (q *Queries) LockHookSecret(ctx context.Context, arg LockHookSecretParams) (LockHookSecretRow, error) {
 	row := q.db.QueryRow(ctx, lockHookSecret, arg.ID, arg.TenantID)
 	var i LockHookSecretRow
-	err := row.Scan(&i.Secret, &i.SecretCt, &i.SecretNonce)
+	err := row.Scan(&i.SecretCt, &i.SecretNonce)
 	return i, err
 }
 
@@ -237,37 +232,11 @@ func (q *Queries) RecordHookCall(ctx context.Context, arg RecordHookCallParams) 
 	return err
 }
 
-const sealHookSecret = `-- name: SealHookSecret :exec
-UPDATE tenant.auth_hooks
-SET secret = '', secret_ct = $1, secret_nonce = $2, encryption_version = 1
-WHERE id = $3 AND tenant_id = $4 AND secret_ct IS NULL
-`
-
-type SealHookSecretParams struct {
-	SecretCt    []byte
-	SecretNonce []byte
-	ID          uuid.UUID
-	TenantID    uuid.UUID
-}
-
-// SealHookSecret replaces a hook's plaintext secret with its encrypted form.
-func (q *Queries) SealHookSecret(ctx context.Context, arg SealHookSecretParams) error {
-	_, err := q.db.Exec(ctx, sealHookSecret,
-		arg.SecretCt,
-		arg.SecretNonce,
-		arg.ID,
-		arg.TenantID,
-	)
-	return err
-}
-
 const setHookEndpoint = `-- name: SetHookEndpoint :execrows
 UPDATE tenant.auth_hooks
 SET url = COALESCE($1, url),
-    secret = CASE WHEN $2::bytea IS NULL THEN secret ELSE '' END,
     secret_ct = COALESCE($2::bytea, secret_ct),
     secret_nonce = COALESCE($3::bytea, secret_nonce),
-    encryption_version = CASE WHEN $2::bytea IS NULL THEN encryption_version ELSE 1 END,
     previous_secret_ct = CASE WHEN $2::bytea IS NULL THEN previous_secret_ct ELSE $4::bytea END,
     previous_secret_nonce = CASE WHEN $2::bytea IS NULL THEN previous_secret_nonce ELSE $5::bytea END,
     previous_secret_expires_at = CASE WHEN $2::bytea IS NULL THEN previous_secret_expires_at

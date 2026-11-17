@@ -1,17 +1,17 @@
 -- Queries for the verification domain.
--- All queries are static. Queries that touch "user".users are cross-schema reads
+-- All queries are static. Queries that touch account.users are cross-schema reads
 -- that are acceptable here (verification is a "user" subdomain and needs the address
 -- on file). audit/outbox are not involved in this domain.
 
 -- GetUserEmail fetches the email address for the given user (used by StartEmail
 -- when the caller omits the address so we default to the one on file).
 -- name: GetUserEmail :one
-SELECT email FROM "user".users WHERE id = $1;
+SELECT email FROM account.users WHERE id = $1;
 
 -- GetUserPhone fetches the phone number for the given user (used by StartPhone
 -- when the caller omits the number).
 -- name: GetUserPhone :one
-SELECT phone FROM "user".users WHERE id = $1;
+SELECT phone FROM account.users WHERE id = $1;
 
 -- InsertEmailVerification issues a code for one purpose (verify_email or
 -- change_email) and expires the user's open codes, so a resend replaces the
@@ -19,31 +19,31 @@ SELECT phone FROM "user".users WHERE id = $1;
 -- pending; each confirm reads only codes of its own purpose.
 -- name: InsertEmailVerification :one
 WITH retired AS (
-    UPDATE "user".email_verifications
+    UPDATE account.email_verifications
     SET expires_at = LEAST(expires_at, NOW())
     WHERE user_id = @user_id AND used_at IS NULL
 )
-INSERT INTO "user".email_verifications (user_id, email, code_hash, expires_at, purpose)
+INSERT INTO account.email_verifications (user_id, email, code_hash, expires_at, purpose)
 VALUES (@user_id, @email, @code_hash, @expires_at, @purpose)
 RETURNING id;
 
 -- name: DeleteEmailVerification :exec
-DELETE FROM "user".email_verifications WHERE id = $1;
+DELETE FROM account.email_verifications WHERE id = $1;
 
 -- LockAccountForCodeSend holds the account while a code is counted against
 -- the sending limits and stored, so two sends can't both pass them.
 -- name: LockAccountForCodeSend :exec
-SELECT 1 FROM "user".users WHERE id = @user_id FOR NO KEY UPDATE;
+SELECT 1 FROM account.users WHERE id = @user_id FOR NO KEY UPDATE;
 
 -- EmailCodeSends counts the email codes of the last hour sent to the user and
 -- to the address, by any account and ignoring case, each with when the oldest
 -- went (now, when none did).
 -- name: EmailCodeSends :one
 WITH mine AS (
-    SELECT v.created_at FROM "user".email_verifications v
+    SELECT v.created_at FROM account.email_verifications v
     WHERE v.user_id = @user_id AND v.created_at > NOW() - INTERVAL '1 hour'
 ), theirs AS (
-    SELECT v.created_at FROM "user".email_verifications v
+    SELECT v.created_at FROM account.email_verifications v
     WHERE lower(v.email) = lower(@email) AND v.created_at > NOW() - INTERVAL '1 hour'
 )
 SELECT
@@ -56,7 +56,7 @@ SELECT
 -- sent in the last hour or still open, with when the oldest such code went.
 -- name: EmailCodeFailures :one
 SELECT COALESCE(sum(attempts), 0)::int AS failures, COALESCE(min(created_at), NOW())::timestamptz AS oldest
-FROM "user".email_verifications
+FROM account.email_verifications
 WHERE user_id = @user_id AND purpose = @purpose AND attempts > 0
   AND (created_at > NOW() - INTERVAL '1 hour' OR expires_at > NOW());
 
@@ -64,28 +64,28 @@ WHERE user_id = @user_id AND purpose = @purpose AND attempts > 0
 -- given user + code and locks it for update so concurrent Confirm calls don't race.
 -- name: GetLatestEmailVerification :one
 SELECT id, expires_at, used_at
-FROM "user".email_verifications
+FROM account.email_verifications
 WHERE user_id = $1 AND code_hash = $2
 ORDER BY created_at DESC
 LIMIT 1
 FOR UPDATE;
 
 -- name: MarkEmailVerificationUsed :exec
-UPDATE "user".email_verifications SET used_at = NOW() WHERE id = $1;
+UPDATE account.email_verifications SET used_at = NOW() WHERE id = $1;
 
 -- EmailTakenByOther reports whether an email already belongs to a *different*
 -- account (email is unique platform-wide, ignoring case) — the pre-check for an
 -- email change.
 -- name: EmailTakenByOther :one
 SELECT EXISTS(
-    SELECT 1 FROM "user".users WHERE lower(email) = lower(@email) AND id <> @user_id
+    SELECT 1 FROM account.users WHERE lower(email) = lower(@email) AND id <> @user_id
 )::boolean;
 
 -- GetLatestEmailChange is like GetLatestEmailVerification but also returns the
 -- pending new email so confirm can swap it onto the user.
 -- name: GetLatestEmailChange :one
 SELECT id, email, expires_at, used_at
-FROM "user".email_verifications
+FROM account.email_verifications
 WHERE user_id = @user_id AND code_hash = @code_hash
 ORDER BY created_at DESC
 LIMIT 1
@@ -95,14 +95,14 @@ FOR UPDATE;
 -- proved control of the new address). May hit the global-unique index if the
 -- address was taken between start and confirm — caller maps that to email_taken.
 -- name: UpdateUserEmail :execrows
-UPDATE "user".users
+UPDATE account.users
 SET email = @email, email_verified_at = NOW(), updated_at = NOW()
 WHERE id = @user_id;
 
 -- MarkUserEmailVerified marks the account's address verified only when it is
 -- the address the code was sent to; zero rows means it isn't.
 -- name: MarkUserEmailVerified :execrows
-UPDATE "user".users
+UPDATE account.users
 SET email_verified_at = COALESCE(email_verified_at, NOW()), updated_at = NOW()
 WHERE id = @user_id AND lower(email) = lower(@email);
 
@@ -110,25 +110,25 @@ WHERE id = @user_id AND lower(email) = lower(@email);
 -- ones, so a resend replaces the code before it even if it is then withdrawn.
 -- name: InsertPhoneVerification :one
 WITH retired AS (
-    UPDATE "user".phone_verifications
+    UPDATE account.phone_verifications
     SET expires_at = LEAST(expires_at, NOW())
     WHERE user_id = @user_id AND used_at IS NULL
 )
-INSERT INTO "user".phone_verifications (user_id, phone, code_hash, expires_at)
+INSERT INTO account.phone_verifications (user_id, phone, code_hash, expires_at)
 VALUES (@user_id, @phone, @code_hash, @expires_at)
 RETURNING id;
 
 -- name: DeletePhoneVerification :exec
-DELETE FROM "user".phone_verifications WHERE id = $1;
+DELETE FROM account.phone_verifications WHERE id = $1;
 
 -- PhoneCodeSends is EmailCodeSends for phone codes, by user and by number,
 -- with when the user's last code of the hour went (an hour ago, when none did).
 -- name: PhoneCodeSends :one
 WITH mine AS (
-    SELECT v.created_at FROM "user".phone_verifications v
+    SELECT v.created_at FROM account.phone_verifications v
     WHERE v.user_id = @user_id AND v.created_at > NOW() - INTERVAL '1 hour'
 ), theirs AS (
-    SELECT v.created_at FROM "user".phone_verifications v
+    SELECT v.created_at FROM account.phone_verifications v
     WHERE v.phone = @phone AND v.created_at > NOW() - INTERVAL '1 hour'
 )
 SELECT
@@ -141,23 +141,23 @@ SELECT
 -- PhoneCodeFailures is EmailCodeFailures for phone codes.
 -- name: PhoneCodeFailures :one
 SELECT COALESCE(sum(attempts), 0)::int AS failures, COALESCE(min(created_at), NOW())::timestamptz AS oldest
-FROM "user".phone_verifications
+FROM account.phone_verifications
 WHERE user_id = @user_id AND attempts > 0
   AND (created_at > NOW() - INTERVAL '1 hour' OR expires_at > NOW());
 
 -- name: GetLatestPhoneVerification :one
 SELECT id, phone, expires_at, used_at
-FROM "user".phone_verifications
+FROM account.phone_verifications
 WHERE user_id = $1 AND code_hash = $2
 ORDER BY created_at DESC
 LIMIT 1
 FOR UPDATE;
 
 -- name: MarkPhoneVerificationUsed :exec
-UPDATE "user".phone_verifications SET used_at = NOW() WHERE id = $1;
+UPDATE account.phone_verifications SET used_at = NOW() WHERE id = $1;
 
 -- name: MarkUserPhoneVerified :exec
-UPDATE "user".users
+UPDATE account.users
 SET phone_verified_at = COALESCE(phone_verified_at, NOW()), updated_at = NOW()
 WHERE id = $1;
 
@@ -165,7 +165,7 @@ WHERE id = $1;
 -- time. Unlike MarkUserPhoneVerified it writes users.phone and re-stamps the time
 -- (no COALESCE) — the number just changed, so its prior verification is void.
 -- name: SetUserVerifiedPhone :exec
-UPDATE "user".users
+UPDATE account.users
 SET phone = @phone, phone_verified_at = NOW(), updated_at = NOW()
 WHERE id = @user_id;
 
@@ -178,7 +178,7 @@ WITH resets AS (
     WHERE user_id = @user_id AND used_at IS NULL AND expires_at > NOW() - INTERVAL '1 minute'
 )
 UPDATE auth.magic_links SET expires_at = NOW() - INTERVAL '1 minute'
-WHERE LOWER(email) = (SELECT LOWER(u.email) FROM "user".users u WHERE u.id = @user_id)
+WHERE LOWER(email) = (SELECT LOWER(u.email) FROM account.users u WHERE u.id = @user_id)
   AND used_at IS NULL AND expires_at > NOW() - INTERVAL '1 minute';
 
 -- AddressHolder returns the account's address and organisation, and whether
@@ -187,7 +187,7 @@ WHERE LOWER(email) = (SELECT LOWER(u.email) FROM "user".users u WHERE u.id = @us
 -- name: AddressHolder :one
 SELECT u.email, u.tenant_id,
        ((u.provisioned_via IS NOT DISTINCT FROM 'scim') OR EXISTS (
-           SELECT 1 FROM "user".external_identities e
+           SELECT 1 FROM account.external_identities e
            WHERE e.user_id = u.id AND e.tenant_id = u.tenant_id AND e.connection_id IS NOT NULL
        ))::bool AS provided
-FROM "user".users u WHERE u.id = @user_id;
+FROM account.users u WHERE u.id = @user_id;

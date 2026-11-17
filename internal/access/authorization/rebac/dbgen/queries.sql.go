@@ -332,7 +332,7 @@ func (q *Queries) ListRelationTuplesBySubject(ctx context.Context, arg ListRelat
 
 const namePeople = `-- name: NamePeople :many
 SELECT u.id, COALESCE(NULLIF(u.display_name, ''), u.email)::text AS name
-FROM "user".users u
+FROM account.users u
 WHERE u.id = ANY($1::uuid[]) AND u.deleted_at IS NULL
   AND (u.tenant_id = $2 OR EXISTS (
       SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = $2))

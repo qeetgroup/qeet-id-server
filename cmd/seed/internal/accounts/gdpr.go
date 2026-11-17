@@ -59,7 +59,7 @@ func (s *seeder) erasures(o *world.Org) {
 		})
 		// The service set the grace period's end from the clock, which At
 		// doesn't move.
-		w.Exec("grace of erasure request", `UPDATE "user".purge_requests SET grace_until = $3 WHERE id = $1 AND tenant_id = $2`,
+		w.Exec("grace of erasure request", `UPDATE account.purge_requests SET grace_until = $3 WHERE id = $1 AND tenant_id = $2`,
 			req.ID, o.ID, ends)
 		if ends.Before(w.Now) {
 			s.purged(o, p, req.ID, ends.Add(time.Duration(1+w.Rand.IntN(50))*time.Second))
@@ -93,7 +93,7 @@ func (s *seeder) erasures(o *world.Org) {
 			w.Check(svc.Cancel(w.Ctx, o.ID, req.ID, requester.Actor()), "cancel erasure request for "+p.Email)
 			cancelled = req.ID
 		})
-		w.Exec("grace of erasure request", `UPDATE "user".purge_requests SET grace_until = $3 WHERE id = $1 AND tenant_id = $2`,
+		w.Exec("grace of erasure request", `UPDATE account.purge_requests SET grace_until = $3 WHERE id = $1 AND tenant_id = $2`,
 			cancelled, o.ID, filed.Add(grace))
 		break
 	}
@@ -105,7 +105,7 @@ func (s *seeder) erasures(o *world.Org) {
 // steps don't give the erased account new ones.
 func (s *seeder) purged(o *world.Org, p *world.Person, id uuid.UUID, done time.Time) {
 	w := s.w
-	w.Exec("complete erasure", `UPDATE "user".purge_requests SET status = 'completed', completed_at = $3
+	w.Exec("complete erasure", `UPDATE account.purge_requests SET status = 'completed', completed_at = $3
 		WHERE id = $1 AND tenant_id = $2`, id, o.ID, done)
 	w.At(done, func() {
 		w.Check(w.Deps.GDPR.Service.PurgeSelf(w.Ctx, p.ID), "erase "+p.Email)
@@ -164,11 +164,11 @@ func (s *seeder) exports(o *world.Org) {
 	payload["generated_at"] = done
 	raw, err := json.Marshal(payload)
 	w.Check(err, "encode export of "+subject.Email)
-	w.Exec("export ready", `UPDATE "user".export_requests SET status = 'ready', payload = $3, completed_at = $4
+	w.Exec("export ready", `UPDATE account.export_requests SET status = 'ready', payload = $3, completed_at = $4
 		WHERE id = $1 AND tenant_id = $2`, req.ID, o.ID, raw, done)
 	// The API deletes a payload once it has been downloadable for the retention window.
 	if done.Before(w.Now.Add(-gdpr.ExportRetention)) {
-		w.Exec("export expired", `UPDATE "user".export_requests SET status = 'expired', payload = NULL
+		w.Exec("export expired", `UPDATE account.export_requests SET status = 'expired', payload = NULL
 			WHERE id = $1 AND tenant_id = $2`, req.ID, o.ID)
 	}
 }

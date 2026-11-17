@@ -1,0 +1,12 @@
+DROP TRIGGER IF EXISTS keep_owner_on_account_delete ON account.users;
+DROP TRIGGER IF EXISTS keep_owner_on_account_change ON account.users;
+DROP TRIGGER IF EXISTS capture_suspension_transition ON account.users;
+DROP TRIGGER IF EXISTS keep_owner_on_role_removal ON rbac.user_roles;
+DROP TRIGGER IF EXISTS forget_trusted_devices_on_password_change ON auth.password_credentials;
+DROP TRIGGER IF EXISTS clear_step_ups_on_password_change ON auth.password_credentials;
+DROP FUNCTION IF EXISTS account.capture_suspension_transition();
+DROP FUNCTION IF EXISTS auth.forget_trusted_devices_on_password_change();
+DROP FUNCTION IF EXISTS auth.clear_step_ups_on_password_change();
+DROP FUNCTION IF EXISTS tenant.refuse_last_owner(uuid, uuid);
+DROP FUNCTION IF EXISTS tenant.keep_owner_on_role_removal();
+DROP FUNCTION IF EXISTS tenant.keep_owner_on_account_change();

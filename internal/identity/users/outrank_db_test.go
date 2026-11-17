@@ -69,7 +69,7 @@ func TestAdminsChangeOnlyPeopleTheyOutrank(t *testing.T) {
 	if rec := dbtest.Do(t, as(owner), http.MethodPost, "/users/"+admin.String()+"/password", map[string]any{"password": "Kx7mQ2vLp9Wz-new"}); rec.Code != http.StatusNoContent {
 		t.Errorf("an owner resets an admin's password: %d %s, want 204", rec.Code, rec.Body.String())
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = ANY($1) AND tenant_id = $2 AND status = 'active' AND deleted_at IS NULL`,
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = ANY($1) AND tenant_id = $2 AND status = 'active' AND deleted_at IS NULL`,
 		[]uuid.UUID{owner, admin}, tenant); n != 2 {
 		t.Errorf("%d of the owner and admin still active, want both", n)
 	}

@@ -109,7 +109,7 @@ func (s *seeder) deactivate(o *world.Org, p *world.Person, at time.Time, source 
 			if _, err := w.Deps.User.Repo.UpdateTx(w.Ctx, tx, p.ID, user.UpdateInput{Status: &suspended}); err != nil {
 				return err
 			}
-			if _, err := tx.Exec(w.Ctx, `UPDATE "user".users SET suspension_source = $3, suspension_reason = $4
+			if _, err := tx.Exec(w.Ctx, `UPDATE account.users SET suspension_source = $3, suspension_reason = $4
 				WHERE id = $1 AND tenant_id = $2`, p.ID, o.ID, source, reason); err != nil {
 				return err
 			}

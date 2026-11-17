@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"slices"
 	"strings"
-	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -96,7 +95,6 @@ type Service struct {
 	egress     *egress.Policy
 	providers  *providerClient
 	appBaseURL string
-	nextSweep  atomic.Int64 // when this replica next deletes expired states and codes
 	// The hosted login's origin and the addresses a sign-in it starts may return to (SetHostedLogin).
 	loginBaseURL string
 	returnTo     returnto.Allowed

@@ -108,13 +108,13 @@ func TestHostedSignInCookie(t *testing.T) {
 	if rec := b.do(http.MethodGet, "/auth/sessions", nil); !answered(rec, http.StatusUnauthorized, errs.CodeUnauthorized) {
 		t.Errorf("a route not listed for the cookie: %d %s, want 401", rec.Code, rec.Body.String())
 	}
-	if _, err := pool.Exec(ctx, `UPDATE "user".users SET status = 'suspended' WHERE id = $1`, a.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET status = 'suspended' WHERE id = $1`, a.ID); err != nil {
 		t.Fatal(err)
 	}
 	if rec := b.do(http.MethodGet, "/auth/me", nil); !answered(rec, http.StatusUnauthorized, errs.CodeUnauthorized) {
 		t.Errorf("the cookie of a suspended account: %d %s, want 401", rec.Code, rec.Body.String())
 	}
-	if _, err := pool.Exec(ctx, `UPDATE "user".users SET status = 'active' WHERE id = $1`, a.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET status = 'active' WHERE id = $1`, a.ID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -502,8 +502,8 @@ func TestMagicLinkSignIn(t *testing.T) {
 			name, change string
 			want         error
 		}{
-			{"suspended account", `UPDATE "user".users SET status = 'suspended' WHERE id = $1`, errs.ErrAuthAccountInactive},
-			{"suspended organisation", `UPDATE tenant.tenants SET status = 'suspended' WHERE id = (SELECT tenant_id FROM "user".users WHERE id = $1)`, errs.ErrAuthTenantInactive},
+			{"suspended account", `UPDATE account.users SET status = 'suspended' WHERE id = $1`, errs.ErrAuthAccountInactive},
+			{"suspended organisation", `UPDATE tenant.tenants SET status = 'suspended' WHERE id = (SELECT tenant_id FROM account.users WHERE id = $1)`, errs.ErrAuthTenantInactive},
 		} {
 			a, tenant := member(t)
 			if _, err := pool.Exec(ctx, tc.change, a.ID); err != nil {
@@ -608,7 +608,7 @@ func TestSuspensionEndsTheHostedLogin(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `UPDATE "user".users SET status = 'suspended' WHERE id = $1`, a.ID); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE account.users SET status = 'suspended' WHERE id = $1`, a.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := sessionsignal.EndUserSessions(ctx, tx, a.ID); err != nil {

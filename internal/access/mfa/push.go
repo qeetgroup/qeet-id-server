@@ -94,9 +94,6 @@ func (s *Service) registerPushDeviceTx(ctx context.Context, tx pgx.Tx, userID uu
 	if s.box == nil {
 		return PushDevice{}, "", errs.ErrInternalServer.WithDetail("MFA secret encryption is unavailable")
 	}
-	if _, err := s.loadPushTokens(ctx, tx, userID); err != nil {
-		return PushDevice{}, "", err
-	}
 	pushTokenHash := secretHash(pushToken)
 	ciphertext, nonce, err := s.box.Seal(userID, "mfa-push-token", pushTokenHash, []byte(pushToken))
 	if err != nil {
@@ -105,18 +102,15 @@ func (s *Service) registerPushDeviceTx(ctx context.Context, tx pgx.Tx, userID uu
 	var row dbgen.ListPushDevicesRow
 	err = tx.QueryRow(ctx, `
 		INSERT INTO auth.mfa_push_devices
-		    (user_id, name, push_token, push_token_ct, push_token_nonce, push_token_hash,
-		     platform, device_token, device_token_hash, encryption_version, device_token_expires_at)
-		VALUES ($1, $2, NULL, $3, $4, $5, $6, NULL, $7, 1, NOW() + make_interval(secs => $8))
-		ON CONFLICT (user_id, push_token_hash) WHERE push_token_hash IS NOT NULL DO UPDATE SET
+		    (user_id, name, push_token_ct, push_token_nonce, push_token_hash,
+		     platform, device_token_hash, device_token_expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW() + make_interval(secs => $8))
+		ON CONFLICT (user_id, push_token_hash) DO UPDATE SET
 		    name = EXCLUDED.name,
-		    push_token = NULL,
 		    push_token_ct = EXCLUDED.push_token_ct,
 		    push_token_nonce = EXCLUDED.push_token_nonce,
 		    platform = EXCLUDED.platform,
-		    device_token = NULL,
 		    device_token_hash = EXCLUDED.device_token_hash,
-		    encryption_version = 1,
 		    device_token_expires_at = EXCLUDED.device_token_expires_at,
 		    last_seen_at = NOW()
 		RETURNING id, user_id, name, platform, created_at, last_seen_at
@@ -309,9 +303,6 @@ func (s *Service) RespondToPushChallenge(ctx context.Context, challengeID, userI
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if _, err := s.loadPushTokens(ctx, tx, userID); err != nil {
-		return err
-	}
 	var deviceID uuid.UUID
 	err = tx.QueryRow(ctx, `
 		SELECT id FROM auth.mfa_push_devices
@@ -361,84 +352,35 @@ func (s *Service) RespondToPushChallenge(ctx context.Context, challengeID, userI
 	return nil
 }
 
-type storedPushToken struct {
-	id         uuid.UUID
-	platform   string
-	legacy     *string
-	ciphertext []byte
-	nonce      []byte
-	hash       *string
-	device     *string
-}
-
+// loadPushTokens opens the push tokens of the person's linked phones whose
+// device credential hasn't expired.
 func (s *Service) loadPushTokens(ctx context.Context, tx pgx.Tx, userID uuid.UUID) ([]pushTarget, error) {
 	rows, err := tx.Query(ctx, `
-		SELECT id, platform, push_token, push_token_ct, push_token_nonce, push_token_hash, device_token
+		SELECT platform, push_token_ct, push_token_nonce, push_token_hash
 		FROM auth.mfa_push_devices
 		WHERE user_id = $1 AND device_token_expires_at > NOW()
 	`, userID)
 	if err != nil {
 		return nil, err
 	}
-	var records []storedPushToken
+	defer rows.Close()
+	var tokens []pushTarget
 	for rows.Next() {
-		var record storedPushToken
-		if err := rows.Scan(&record.id, &record.platform, &record.legacy, &record.ciphertext, &record.nonce, &record.hash, &record.device); err != nil {
-			rows.Close()
+		var platform, hash string
+		var ciphertext, nonce []byte
+		if err := rows.Scan(&platform, &ciphertext, &nonce, &hash); err != nil {
 			return nil, err
-		}
-		records = append(records, record)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return nil, err
-	}
-	rows.Close()
-
-	tokens := make([]pushTarget, 0, len(records))
-	for _, record := range records {
-		if len(record.ciphertext) > 0 {
-			if s.box == nil {
-				return nil, errors.New("MFA secret encryption is unavailable")
-			}
-			if record.hash == nil || *record.hash == "" {
-				return nil, errors.New("encrypted push device token has no lookup hash")
-			}
-			plain, err := s.box.Open(userID, "mfa-push-token", *record.hash, record.ciphertext, record.nonce)
-			if err != nil {
-				return nil, err
-			}
-			tokens = append(tokens, pushTarget{token: string(plain), platform: record.platform})
-			continue
-		}
-		if record.legacy == nil {
-			return nil, errors.New("push device token is missing")
 		}
 		if s.box == nil {
 			return nil, errors.New("MFA secret encryption is unavailable")
 		}
-		pushTokenHash := secretHash(*record.legacy)
-		ciphertext, nonce, err := s.box.Seal(userID, "mfa-push-token", pushTokenHash, []byte(*record.legacy))
+		plain, err := s.box.Open(userID, "mfa-push-token", hash, ciphertext, nonce)
 		if err != nil {
 			return nil, err
 		}
-		var deviceTokenHash *string
-		if record.device != nil {
-			hash := secretHash(*record.device)
-			deviceTokenHash = &hash
-		}
-		if _, err := tx.Exec(ctx, `
-			UPDATE auth.mfa_push_devices
-			SET push_token = NULL, push_token_ct = $2, push_token_nonce = $3,
-			    push_token_hash = $4, device_token = NULL, device_token_hash = $5,
-			    encryption_version = 1
-			WHERE id = $1 AND push_token_ct IS NULL
-		`, record.id, ciphertext, nonce, pushTokenHash, deviceTokenHash); err != nil {
-			return nil, err
-		}
-		tokens = append(tokens, pushTarget{token: *record.legacy, platform: record.platform})
+		tokens = append(tokens, pushTarget{token: string(plain), platform: platform})
 	}
-	return tokens, nil
+	return tokens, rows.Err()
 }
 
 func secretHash(secret string) string {
@@ -692,7 +634,7 @@ func (h *Handler) unlinkPushDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n, err := h.Service.q.DeletePushDeviceByCredential(r.Context(), dbgen.DeletePushDeviceByCredentialParams{
-		ID: id, UserID: in.UserID, DeviceTokenHash: ptr(secretHash(in.DeviceToken)),
+		ID: id, UserID: in.UserID, DeviceTokenHash: secretHash(in.DeviceToken),
 	})
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -852,7 +794,7 @@ func (s *Service) UpdatePushToken(ctx context.Context, deviceID, userID uuid.UUI
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE auth.mfa_push_devices
-		SET push_token = NULL, push_token_ct = $2, push_token_nonce = $3, push_token_hash = $4, encryption_version = 1
+		SET push_token_ct = $2, push_token_nonce = $3, push_token_hash = $4
 		WHERE id = $1
 	`, deviceID, ciphertext, nonce, pushTokenHash); err != nil {
 		return err
@@ -923,8 +865,6 @@ func (s *Service) auditPushDevice(r *http.Request, tenantID *uuid.UUID, owner, d
 		_ = tx.Commit(ctx)
 	}
 }
-
-func ptr[T any](v T) *T { return &v }
 
 // --- public challenge endpoints ---
 

@@ -18,7 +18,7 @@ func TestTellEmailsTheAccountHolder(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
 	tenant := dbtest.Tenant(t)
 	a, gone := dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant)
-	if _, err := pool.Exec(ctx, `UPDATE "user".users SET deleted_at = NOW() WHERE id = $1`, gone.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET deleted_at = NOW() WHERE id = $1`, gone.ID); err != nil {
 		t.Fatal(err)
 	}
 	mail := &dbtest.Mailbox{}

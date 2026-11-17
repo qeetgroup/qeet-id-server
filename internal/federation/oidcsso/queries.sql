@@ -74,56 +74,54 @@ UPDATE tenant.oidc_connections SET last_login_at = NOW() WHERE id = @id AND tena
 -- ==========================================================================
 
 -- name: InsertOidcConnectionState :exec
-INSERT INTO auth.oidc_connection_states (state_hash, connection_id, code_verifier, nonce_hash, redirect_uri, expires_at, return_to)
-VALUES (@state_hash, @connection_id, @code_verifier, @nonce_hash, @redirect_uri, @expires_at, sqlc.narg(return_to));
+INSERT INTO auth.oauth_states
+    (state_hash, kind, tenant_id, connection_id, code_verifier, nonce_hash, redirect_uri, expires_at, return_to)
+VALUES (@state_hash, 'oidc_connection', @tenant_id::uuid, @connection_id::uuid, @code_verifier, @nonce_hash::text,
+        @redirect_uri, @expires_at, sqlc.narg(return_to));
 
--- ConsumeOidcConnectionState spends a state as it reads it, so a callback
--- carrying it succeeds at most once.
+-- ConsumeOidcConnectionState spends a state the connection issued as it reads
+-- it, so a callback carrying it succeeds at most once.
 -- name: ConsumeOidcConnectionState :one
-DELETE FROM auth.oidc_connection_states WHERE state_hash = @state_hash
-RETURNING connection_id, code_verifier, nonce_hash, redirect_uri, expires_at, return_to;
-
--- name: DeleteExpiredOidcConnectionStates :exec
-DELETE FROM auth.oidc_connection_states WHERE expires_at <= NOW();
+DELETE FROM auth.oauth_states
+WHERE state_hash = @state_hash AND kind = 'oidc_connection'
+  AND tenant_id = @tenant_id::uuid AND connection_id = @connection_id::uuid
+RETURNING code_verifier, nonce_hash::text AS nonce_hash, redirect_uri, expires_at, return_to;
 
 -- name: InsertOidcConnectionLoginCode :exec
-INSERT INTO auth.oidc_connection_login_codes (code_hash, connection_id, user_id, expires_at)
-VALUES (@code_hash, @connection_id, @user_id, @expires_at);
+INSERT INTO auth.login_codes (code_hash, kind, user_id, tenant_id, connection_id, expires_at)
+VALUES (@code_hash, 'oidc_connection', @user_id, @tenant_id::uuid, @connection_id::uuid, @expires_at);
 
 -- name: ConsumeOidcConnectionLoginCode :one
 SELECT lc.user_id, lc.expires_at, lc.used_at, c.tenant_id, c.status
-FROM auth.oidc_connection_login_codes lc
-JOIN tenant.oidc_connections c ON c.id = lc.connection_id
-WHERE lc.code_hash = @code_hash
+FROM auth.login_codes lc
+JOIN tenant.oidc_connections c ON c.tenant_id = lc.tenant_id AND c.id = lc.connection_id
+WHERE lc.code_hash = @code_hash AND lc.kind = 'oidc_connection'
 FOR UPDATE OF lc;
 
 -- name: MarkOidcConnectionLoginCodeUsed :exec
-UPDATE auth.oidc_connection_login_codes SET used_at = NOW() WHERE code_hash = @code_hash;
-
--- name: DeleteStaleOidcConnectionLoginCodes :exec
-DELETE FROM auth.oidc_connection_login_codes WHERE expires_at <= NOW() - INTERVAL '1 hour';
+UPDATE auth.login_codes SET used_at = NOW() WHERE code_hash = @code_hash AND tenant_id = @tenant_id::uuid;
 
 -- ==========================================================================
 -- findOrCreateUser — the same rules as saml and ldap
 -- ==========================================================================
 
 -- name: GetExternalIdentityUser :one
-SELECT user_id FROM "user".external_identities
+SELECT user_id FROM account.external_identities
 WHERE tenant_id = @tenant_id AND provider = @provider AND connection_id = @connection_id::uuid
   AND subject = @subject;
 
 -- name: GetUserByEmail :one
-SELECT id FROM "user".users WHERE LOWER(email) = LOWER(@email) AND deleted_at IS NULL;
+SELECT id FROM account.users WHERE LOWER(email) = LOWER(@email) AND deleted_at IS NULL;
 
 -- name: InsertUserWithEmail :one
-INSERT INTO "user".users (tenant_id, email, email_verified_at, display_name, status)
+INSERT INTO account.users (tenant_id, email, email_verified_at, display_name, status)
 VALUES (@tenant_id, @email, NOW(), sqlc.narg('display_name'), 'active')
 RETURNING id;
 
 -- LinkExternalIdentity links the subject to the connection, or refreshes the
 -- profile an existing link holds.
 -- name: LinkExternalIdentity :exec
-INSERT INTO "user".external_identities (user_id, tenant_id, provider, connection_id, subject, email, metadata)
+INSERT INTO account.external_identities (user_id, tenant_id, provider, connection_id, subject, email, metadata)
 VALUES (@user_id, @tenant_id, @provider, @connection_id::uuid, @subject, @email, @metadata)
 ON CONFLICT (tenant_id, provider, connection_id, subject)
 DO UPDATE SET email = EXCLUDED.email, metadata = EXCLUDED.metadata;

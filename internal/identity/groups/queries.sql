@@ -50,7 +50,7 @@ SELECT EXISTS(SELECT 1 FROM tenant.groups WHERE id = $1 AND tenant_id = $2);
 -- name: InsertGroupMember :one
 WITH allowed AS (
     SELECT EXISTS (
-        SELECT 1 FROM "user".users account
+        SELECT 1 FROM account.users account
         WHERE account.id = @user_id AND account.deleted_at IS NULL
           AND (
               account.tenant_id = @tenant_id::uuid
@@ -84,7 +84,7 @@ WHERE group_id = $1 AND user_id = $2 AND tenant_id = $3;
 -- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT gm.user_id, u.email, u.display_name
 FROM tenant.group_members gm
-JOIN "user".users u ON u.id = gm.user_id
+JOIN account.users u ON u.id = gm.user_id
 WHERE gm.group_id = $1 AND gm.tenant_id = $2 AND u.deleted_at IS NULL
   AND (
       u.tenant_id = gm.tenant_id

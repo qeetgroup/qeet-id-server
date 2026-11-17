@@ -195,7 +195,7 @@ func as(idp *fakeIdP, sub, email string, change func(jwt.MapClaims)) func(string
 
 func verify(t *testing.T, userID uuid.UUID) {
 	t.Helper()
-	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `UPDATE "user".users SET email_verified_at = NOW() WHERE id = $1`, userID); err != nil {
+	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `UPDATE account.users SET email_verified_at = NOW() WHERE id = $1`, userID); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -250,7 +250,7 @@ func TestOIDCSignIn(t *testing.T) {
 	refused(t, "a one-time code used again", s.exchange(t, code), errs.CodeOIDCSSOLoginCodeUsed)
 	refused(t, "an unknown code", s.exchange(t, "not-a-code"), errs.CodeOIDCSSOLoginCodeInvalid)
 	refused(t, "no code", s.exchange(t, ""), errs.CodeOIDCSSOLoginCodeRequired)
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE user_id = $1 AND tenant_id = $2 AND provider = 'oidc'
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE user_id = $1 AND tenant_id = $2 AND provider = 'oidc'
 		AND connection_id = $3 AND subject = $4 AND metadata->'groups' = '["engineering", "oncall"]'::jsonb`,
 		member.ID, tenant, conn.ID, idp.URL+"#entra-asha"); n != 1 {
 		t.Errorf("%d identities linked for the member to the connection with their groups, want 1", n)
@@ -274,7 +274,7 @@ func TestOIDCSignIn(t *testing.T) {
 		delete(c, "name")
 		c["given_name"], c["family_name"] = "Ravi", "Iyer"
 	}))
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND tenant_id = $2 AND email = $3
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND tenant_id = $2 AND email = $3
 		AND email_verified_at IS NOT NULL AND display_name = 'Ravi Iyer'`, joined.UserID, tenant, newcomer); n != 1 {
 		t.Errorf("the newcomer was not provisioned into the organisation, verified and named")
 	}
@@ -325,10 +325,10 @@ func TestOIDCSignInRefusesBadIDTokens(t *testing.T) {
 	if n := failures(t, tenant, errs.CodeOIDCSSOIDTokenInvalid); n != len(bad) {
 		t.Errorf("%d refused tokens recorded, want %d", n, len(bad))
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1`, email); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, email); n != 0 {
 		t.Errorf("a refused token provisioned an account")
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM auth.oidc_connection_login_codes WHERE connection_id = $1`, conn.ID); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM auth.login_codes WHERE connection_id = $1`, conn.ID); n != 0 {
 		t.Errorf("%d login codes issued for refused tokens, want none", n)
 	}
 
@@ -362,7 +362,7 @@ func TestOIDCSignInBindsTheBrowser(t *testing.T) {
 	authURL = s.begin(t, conn.ID)
 	idp.expect(t, authURL, "code-2", as(idp, "u-1", email, nil), nil, "")
 	refused(t, "the sign-in at another connection's callback", s.callback(t, other.ID, authURL, "code-2", nil), errs.CodeOIDCSSOStateInvalid)
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1`, email); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, email); n != 0 {
 		t.Errorf("a refused sign-in provisioned an account")
 	}
 }
@@ -398,7 +398,7 @@ func TestOIDCSignInAdoptsOnlyOnVerifiedDomains(t *testing.T) {
 	verify(t, guest.ID)
 	refused(t, "a guest whose home is elsewhere", s.answer(t, idp, conn.ID, as(idp, "u-guest", guest.Email, nil)), errs.CodeOIDCSSOUserTenantMismatch)
 	for _, refusedUser := range []uuid.UUID{foreign.ID, unverified.ID, owner.ID, guest.ID} {
-		if n := dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE user_id = $1`, refusedUser); n != 0 {
+		if n := dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE user_id = $1`, refusedUser); n != 0 {
 			t.Errorf("a refused account %s was linked", refusedUser)
 		}
 	}
@@ -584,7 +584,7 @@ func TestOIDCSignInProvisionsOnlyWithJIT(t *testing.T) {
 	newcomer := dbtest.Unique("bea") + "@" + domain
 
 	refused(t, "a newcomer with provisioning off", s.answer(t, idp, conn.ID, as(idp, "u-new", newcomer, nil)), errs.CodeOIDCSSOJITNotAllowed)
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1`, newcomer); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, newcomer); n != 0 {
 		t.Errorf("a refused newcomer was given %d accounts", n)
 	}
 	if pair := s.signIn(t, idp, conn.ID, as(idp, "u-member", member.Email, nil)); pair.UserID != member.ID {
@@ -608,7 +608,7 @@ func TestOIDCSignInNeedsSSOInThePlan(t *testing.T) {
 	refused(t, "the answer after the plan lapsed", s.callback(t, conn.ID, authURL, "code-1", nil), errs.CodeUpgradeRequired)
 	rec := s.send(httptest.NewRequestWithContext(dbtest.Context(t), http.MethodGet, "/oidc-connections/"+conn.ID.String()+"/login", nil))
 	refused(t, "a sign-in started on a plan without single sign-on", rec, errs.CodeUpgradeRequired)
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1`, email); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, email); n != 0 {
 		t.Errorf("a sign-in refused for the plan provisioned %d accounts", n)
 	}
 }

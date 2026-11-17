@@ -68,7 +68,7 @@ func newHandler(t *testing.T) (*Handler, *auth.Service, *announced) {
 func verifiedAccount(t *testing.T) dbtest.Account {
 	t.Helper()
 	a := dbtest.User(t, uuid.Nil)
-	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `UPDATE "user".users SET email_verified_at = NOW() WHERE id = $1`, a.ID); err != nil {
+	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `UPDATE account.users SET email_verified_at = NOW() WHERE id = $1`, a.ID); err != nil {
 		t.Fatal(err)
 	}
 	return a
@@ -169,7 +169,7 @@ func TestCreateOrganisation(t *testing.T) {
 	`, owner.ID, id); missing != 0 {
 		t.Errorf("the owner lacks %d permissions in the new organisation", missing)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND tenant_id = $2`, owner.ID, id); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND tenant_id = $2`, owner.ID, id); n != 1 {
 		t.Error("the new organisation didn't become the owner's home organisation")
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'tenant.created' AND resource_id = $1 AND actor_user_id = $2`, id, owner.ID); n != 1 {

@@ -125,7 +125,7 @@ func TestIdPNameIDFollowsTheSPFormat(t *testing.T) {
 	s := newIdPSide(t)
 	tenant := dbtest.Tenant(t)
 	member := dbtest.User(t, tenant)
-	execSQL(t, `UPDATE "user".users SET display_name = 'Asha Rao' WHERE id = $1`, member.ID)
+	execSQL(t, `UPDATE account.users SET display_name = 'Asha Rao' WHERE id = $1`, member.ID)
 	cookie := s.signIn(member.ID)
 	sso := func(sp *ServiceProvider) *httptest.ResponseRecorder {
 		return idpGet(t, s.router, "/saml/idp/"+tenant.String()+"/sso?sp="+sp.ID.String(), cookie)
@@ -168,7 +168,7 @@ func TestIdPNameIDFollowsTheSPFormat(t *testing.T) {
 	if old := assertedIn(t, sso(legacy)); old.nameID == member.Email || old.format != nameIDPersistent || old.nameID == first.nameID {
 		t.Errorf("an SP saved as persistent with the email was told %q, want a persistent value of its own", old.nameID)
 	}
-	execSQL(t, `UPDATE "user".users SET email = $2 WHERE id = $1`, member.ID, dbtest.Unique("moved")+"@example.test")
+	execSQL(t, `UPDATE account.users SET email = $2 WHERE id = $1`, member.ID, dbtest.Unique("moved")+"@example.test")
 	if again := assertedIn(t, sso(persistent)); again.nameID != first.nameID {
 		t.Errorf("after an email change the persistent NameID is %q, want %q", again.nameID, first.nameID)
 	}
@@ -190,7 +190,7 @@ func TestIdPNameIDFollowsTheSPFormat(t *testing.T) {
 		AND resource_id = $2 AND actor_user_id = $3 AND metadata->>'reason' = 'name_id_unavailable'`, tenant, byMetadata.ID, member.ID); n != 1 {
 		t.Errorf("%d refusals audited, want 1", n)
 	}
-	execSQL(t, `UPDATE "user".users SET metadata = '{"employee_id": "E-7"}' WHERE id = $1`, member.ID)
+	execSQL(t, `UPDATE account.users SET metadata = '{"employee_id": "E-7"}' WHERE id = $1`, member.ID)
 	if got := assertedIn(t, sso(byMetadata)); got.nameID != "E-7" {
 		t.Errorf("metadata SP was told %q, want E-7", got.nameID)
 	}
@@ -215,7 +215,7 @@ func TestIdPSendsMappedAttributesOfItsOrganisationOnly(t *testing.T) {
 	profile := `INSERT INTO tenant.directory_profiles (tenant_id, user_id, connection_id, profile) VALUES ($1, $2, $3, $4)`
 	execSQL(t, profile, tenant, member.ID, "scim:"+tenant.String(), `{"first_name": "Asha", "last_name": "Rao"}`)
 	execSQL(t, profile, other, member.ID, "scim:"+other.String(), `{"first_name": "Someone", "last_name": "Else"}`)
-	execSQL(t, `UPDATE "user".users SET metadata = '{"department": "Finance", "family_name": "Rao-Iyer", "api_key": "kept"}' WHERE id = $1`, member.ID)
+	execSQL(t, `UPDATE account.users SET metadata = '{"department": "Finance", "family_name": "Rao-Iyer", "api_key": "kept"}' WHERE id = $1`, member.ID)
 
 	sp := spWith(t, ctx, s.idp, tenant, CreateSPInput{Attributes: &[]AttributeMapping{
 		{Name: "mail", Source: sourceEmail},

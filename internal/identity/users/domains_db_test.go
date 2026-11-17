@@ -51,7 +51,7 @@ func TestNoAccountsOnAnotherOrganisationsDomain(t *testing.T) {
 	if rec.Code != http.StatusOK || res.Succeeded != 1 || len(res.Errors) != 1 || res.Errors[0] != want {
 		t.Errorf("bulk create: %d %+v, want the claimed row refused as %+v", rec.Code, res, want)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE tenant_id = $1 AND lower(email) LIKE '%' || $2`, tenant, theirs); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE tenant_id = $1 AND lower(email) LIKE '%' || $2`, tenant, theirs); n != 0 {
 		t.Errorf("%d accounts created on another organisation's domain", n)
 	}
 }
@@ -64,7 +64,7 @@ func TestGuestOrganisationsDontSeeHomeMetadata(t *testing.T) {
 	pool := dbtest.Pool(t)
 	home, guestOf := dbtest.Tenant(t), dbtest.Tenant(t)
 	person := dbtest.User(t, home, home, guestOf)
-	if _, err := pool.Exec(ctx, `UPDATE "user".users SET metadata = '{"salary_band":"L7"}' WHERE id = $1`, person.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET metadata = '{"salary_band":"L7"}' WHERE id = $1`, person.ID); err != nil {
 		t.Fatal(err)
 	}
 	h := &Handler{Repo: NewRepository(pool), Validate: jsonNamedValidator()}

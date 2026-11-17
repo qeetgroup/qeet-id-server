@@ -113,8 +113,9 @@ func (s *Service) beginPlatform(ctx context.Context, provider, redirectURI strin
 		return "", err
 	}
 	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.platform_social_states (state_hash, provider, code_verifier, redirect_uri, expires_at, link_user_id, allow_create)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		INSERT INTO auth.oauth_states
+		    (state_hash, kind, tenant_id, provider, code_verifier, redirect_uri, expires_at, link_user_id, allow_create)
+		VALUES ($1, 'platform_social', NULL, $2, $3, $4, $5, $6, $7)`,
 		stateHash, provider, verifier, redirectURI, time.Now().UTC().Add(socialStateTTL), linkArg(linkUserID), allowCreate,
 	); err != nil {
 		return "", err
@@ -144,8 +145,9 @@ func (s *Service) beginGitHubLogin(ctx context.Context, provider string, pc prov
 		return "", err
 	}
 	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.platform_social_states (state_hash, provider, code_verifier, redirect_uri, expires_at, link_user_id, allow_create)
-		VALUES ($1, $2, '', $3, $4, $5, $6)`,
+		INSERT INTO auth.oauth_states
+		    (state_hash, kind, tenant_id, provider, code_verifier, redirect_uri, expires_at, link_user_id, allow_create)
+		VALUES ($1, 'platform_social', NULL, $2, '', $3, $4, $5, $6)`,
 		stateHash, provider, redirectURI, time.Now().UTC().Add(socialStateTTL), linkArg(linkUserID), allowCreate,
 	); err != nil {
 		return "", err
@@ -172,9 +174,9 @@ func (s *Service) beginAppleLogin(ctx context.Context, provider string, pc provi
 		return "", err
 	}
 	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.platform_social_states
-		    (state_hash, provider, code_verifier, redirect_uri, expires_at, link_user_id, allow_create, nonce_hash)
-		VALUES ($1, $2, '', $3, $4, $5, $6, $7)`,
+		INSERT INTO auth.oauth_states
+		    (state_hash, kind, tenant_id, provider, code_verifier, redirect_uri, expires_at, link_user_id, allow_create, nonce_hash)
+		VALUES ($1, 'platform_social', NULL, $2, '', $3, $4, $5, $6, $7)`,
 		stateHash, provider, redirectURI, time.Now().UTC().Add(socialStateTTL), linkArg(linkUserID), allowCreate, nonceHash,
 	); err != nil {
 		return "", err
@@ -231,7 +233,7 @@ func (s *Service) CompletePlatformCallback(ctx context.Context, provider, state,
 		allowCreate                        bool
 	)
 	err := s.pool.QueryRow(ctx, `
-		DELETE FROM auth.platform_social_states WHERE state_hash = $1
+		DELETE FROM auth.oauth_states WHERE state_hash = $1 AND kind = 'platform_social' AND tenant_id IS NULL
 		RETURNING provider, code_verifier, redirect_uri, expires_at, link_user_id, allow_create, nonce_hash`, stateHash,
 	).Scan(&gotProvider, &verifier, &redirectURI, &expiresAt, &linkUserID, &allowCreate, &nonceHash)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -358,8 +360,8 @@ func (s *Service) CompletePlatformCallback(ctx context.Context, provider, state,
 		return nil, err
 	}
 	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.platform_social_codes (code_hash, user_id, expires_at)
-		VALUES ($1, $2, $3)`,
+		INSERT INTO auth.login_codes (code_hash, kind, user_id, tenant_id, expires_at)
+		VALUES ($1, 'platform_social', $2, NULL, $3)`,
 		codeHash, userID, time.Now().UTC().Add(socialCodeTTL),
 	); err != nil {
 		return nil, err
@@ -429,7 +431,7 @@ func (s *Service) CompletePlatformLink(ctx context.Context, rawCode string, user
 func (s *Service) findOrCreatePlatformUser(ctx context.Context, ui userInfo, allowCreate bool) (uuid.UUID, error) {
 	var userID uuid.UUID
 	err := s.pool.QueryRow(ctx,
-		`SELECT id FROM "user".users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL`, ui.Email,
+		`SELECT id FROM account.users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL`, ui.Email,
 	).Scan(&userID)
 	if err == nil {
 		// Adopt the account only if it has proved owning the address, or a squatter
@@ -441,7 +443,7 @@ func (s *Service) findOrCreatePlatformUser(ctx context.Context, ui userInfo, all
 		// so we never clobber a picture the user chose themselves.
 		if ui.Picture != "" {
 			_, _ = s.pool.Exec(ctx,
-				`UPDATE "user".users SET avatar_url = $2
+				`UPDATE account.users SET avatar_url = $2
 				 WHERE id = $1 AND (avatar_url IS NULL OR avatar_url = '')`,
 				userID, ui.Picture)
 		}
@@ -468,7 +470,7 @@ func (s *Service) findOrCreatePlatformUser(ctx context.Context, ui userInfo, all
 	}
 	// The platform provider verified the address: the callback takes no other.
 	if err := s.pool.QueryRow(ctx,
-		`INSERT INTO "user".users (email, display_name, avatar_url, email_verified_at) VALUES ($1, $2, $3, NOW()) RETURNING id`,
+		`INSERT INTO account.users (email, display_name, avatar_url, email_verified_at) VALUES ($1, $2, $3, NOW()) RETURNING id`,
 		ui.Email, displayName, avatar,
 	).Scan(&userID); err != nil {
 		return uuid.Nil, err
@@ -488,9 +490,10 @@ func (s *Service) ExchangePlatformLogin(ctx context.Context, rawCode, ip, ua str
 	// Atomically claim an unused, unexpired code.
 	var userID uuid.UUID
 	err := s.pool.QueryRow(ctx, `
-		UPDATE auth.platform_social_codes
+		UPDATE auth.login_codes
 		SET used_at = NOW()
-		WHERE code_hash = $1 AND used_at IS NULL AND expires_at > NOW()
+		WHERE code_hash = $1 AND kind = 'platform_social' AND tenant_id IS NULL
+		  AND used_at IS NULL AND expires_at > NOW()
 		RETURNING user_id`, codeHash,
 	).Scan(&userID)
 	if errors.Is(err, pgx.ErrNoRows) {

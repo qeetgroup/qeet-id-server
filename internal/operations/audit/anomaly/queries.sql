@@ -91,7 +91,7 @@ SELECT
     e.action, e.resource_type, COALESCE(host(e.ip), '') AS ip, e.created_at AS event_at
 FROM audit.anomalies a
 JOIN audit.events e ON e.id = a.event_id
-LEFT JOIN "user".users u ON u.id = a.actor_user_id
+LEFT JOIN account.users u ON u.id = a.actor_user_id
 WHERE a.tenant_id = @tenant_id
   AND (sqlc.narg('before_ts')::timestamptz IS NULL OR a.created_at < sqlc.narg('before_ts')
        OR (a.created_at = sqlc.narg('before_ts') AND a.id < sqlc.narg('before_id')::uuid))
@@ -106,7 +106,7 @@ SELECT
     e.action, e.resource_type, COALESCE(host(e.ip), '') AS ip, e.created_at AS event_at
 FROM audit.anomalies a
 JOIN audit.events e ON e.id = a.event_id
-LEFT JOIN "user".users u ON u.id = a.actor_user_id
+LEFT JOIN account.users u ON u.id = a.actor_user_id
 WHERE a.tenant_id = @tenant_id AND a.status = @status
   AND (sqlc.narg('before_ts')::timestamptz IS NULL OR a.created_at < sqlc.narg('before_ts')
        OR (a.created_at = sqlc.narg('before_ts') AND a.id < sqlc.narg('before_id')::uuid))

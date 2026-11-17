@@ -114,8 +114,8 @@ func (service *Service) countConnections(ctx context.Context, tenantID uuid.UUID
 	people := map[string]int{}
 	rows, err := service.pool.Query(ctx, `
 		SELECT ei.connection_id::text, count(DISTINCT ei.user_id)::int
-		FROM "user".external_identities ei
-		JOIN "user".users u ON u.id = ei.user_id AND u.deleted_at IS NULL
+		FROM account.external_identities ei
+		JOIN account.users u ON u.id = ei.user_id AND u.deleted_at IS NULL
 		WHERE ei.tenant_id = $1 AND ei.provider = 'ldap' AND ei.connection_id IS NOT NULL
 		GROUP BY ei.connection_id`, tenantID)
 	if err != nil {

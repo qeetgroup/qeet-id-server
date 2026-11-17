@@ -77,11 +77,10 @@ func (s *Service) StartEnroll(ctx context.Context, tx pgx.Tx, userID uuid.UUID, 
 	} else {
 		_, err = tx.Exec(ctx, `
 			INSERT INTO auth.mfa_totp
-			    (user_id, secret, secret_ct, secret_nonce, encryption_version)
-			VALUES ($1, '', $2, $3, 1)
+			    (user_id, secret_ct, secret_nonce)
+			VALUES ($1, $2, $3)
 			ON CONFLICT (user_id) DO UPDATE SET
-			    secret = '', secret_ct = EXCLUDED.secret_ct,
-			    secret_nonce = EXCLUDED.secret_nonce, encryption_version = 1,
+			    secret_ct = EXCLUDED.secret_ct, secret_nonce = EXCLUDED.secret_nonce,
 			    confirmed_at = NULL, pending_secret_ct = NULL, pending_secret_nonce = NULL,
 			    pending_started_at = NULL
 		`, userID, ciphertext, nonce)
@@ -186,8 +185,8 @@ func (s *Service) confirmReplacementTOTP(ctx context.Context, tx pgx.Tx, userID 
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE auth.mfa_totp
-		SET secret = '', secret_ct = pending_secret_ct, secret_nonce = pending_secret_nonce,
-		    encryption_version = 1, confirmed_at = NOW(), last_used_step = $2,
+		SET secret_ct = pending_secret_ct, secret_nonce = pending_secret_nonce,
+		    confirmed_at = NOW(), last_used_step = $2,
 		    pending_secret_ct = NULL, pending_secret_nonce = NULL, pending_started_at = NULL
 		WHERE user_id = $1
 	`, userID, step); err != nil {
@@ -202,40 +201,20 @@ func (s *Service) confirmReplacementTOTP(ctx context.Context, tx pgx.Tx, userID 
 
 func (s *Service) loadTOTP(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (string, pgtype.Timestamptz, error) {
 	var confirmedAt pgtype.Timestamptz
-	var legacySecret string
 	var ciphertext, nonce []byte
 	err := tx.QueryRow(ctx, `
-		SELECT secret, secret_ct, secret_nonce, confirmed_at
+		SELECT secret_ct, secret_nonce, confirmed_at
 		FROM auth.mfa_totp
 		WHERE user_id = $1
-	`, userID).Scan(&legacySecret, &ciphertext, &nonce, &confirmedAt)
+	`, userID).Scan(&ciphertext, &nonce, &confirmedAt)
 	if err != nil {
 		return "", confirmedAt, err
 	}
-	if len(ciphertext) > 0 {
-		if s.box == nil {
-			return "", confirmedAt, errors.New("MFA secret encryption is unavailable")
-		}
-		plain, openErr := s.box.Open(userID, "mfa-totp", userID.String(), ciphertext, nonce)
-		if openErr != nil {
-			return "", confirmedAt, openErr
-		}
-		return string(plain), confirmedAt, nil
+	if s.box == nil {
+		return "", confirmedAt, errors.New("MFA secret encryption is unavailable")
 	}
-	if legacySecret != "" && s.box != nil {
-		ct, newNonce, sealErr := s.box.Seal(userID, "mfa-totp", userID.String(), []byte(legacySecret))
-		if sealErr != nil {
-			return "", confirmedAt, sealErr
-		}
-		if _, updateErr := tx.Exec(ctx, `
-			UPDATE auth.mfa_totp
-			SET secret = '', secret_ct = $2, secret_nonce = $3, encryption_version = 1
-			WHERE user_id = $1 AND secret_ct IS NULL
-		`, userID, ct, newNonce); updateErr != nil {
-			return "", confirmedAt, updateErr
-		}
-	}
-	return legacySecret, confirmedAt, nil
+	plain, err := s.box.Open(userID, "mfa-totp", userID.String(), ciphertext, nonce)
+	return string(plain), confirmedAt, err
 }
 
 const recoveryCodeCount = 10

@@ -225,9 +225,9 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in 
 	err = tx.QueryRow(ctx, `
 		INSERT INTO tenant.ldap_connections
 		    (id, tenant_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
-		     bind_password, bind_password_ct, bind_password_nonce, encryption_version,
+		     bind_password_ct, bind_password_nonce,
 		     base_dn, user_filter, email_attribute, name_attribute, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, '', $8, $9, 1, $10, $11, $12, $13, $14)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		RETURNING id, tenant_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
 		          base_dn, user_filter, email_attribute, name_attribute, status,
 		          created_at, updated_at, last_login_at
@@ -285,7 +285,7 @@ func (s *Service) Get(ctx context.Context, id, tenantID uuid.UUID) (*Connection,
 func (s *Service) getFull(ctx context.Context, id, tenantID uuid.UUID) (*connFull, error) {
 	const base = `SELECT id, tenant_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
 	              base_dn, user_filter, email_attribute, name_attribute, status,
-	              created_at, updated_at, last_login_at, bind_password,
+	              created_at, updated_at, last_login_at,
 	              bind_password_ct, bind_password_nonce
 	              FROM tenant.ldap_connections WHERE id = $1`
 	q := base
@@ -295,43 +295,24 @@ func (s *Service) getFull(ctx context.Context, id, tenantID uuid.UUID) (*connFul
 		args = append(args, tenantID)
 	}
 	var c connFull
-	var legacyPassword string
 	var ciphertext, nonce []byte
 	err := s.pool.QueryRow(ctx, q, args...).Scan(&c.ID, &c.TenantID, &c.Name, &c.ServerURL, &c.StartTLS,
 		&c.SkipTLSVerify, &c.BindDN, &c.BaseDN, &c.UserFilter, &c.EmailAttribute, &c.NameAttribute,
-		&c.Status, &c.CreatedAt, &c.UpdatedAt, &c.LastLoginAt, &legacyPassword, &ciphertext, &nonce)
+		&c.Status, &c.CreatedAt, &c.UpdatedAt, &c.LastLoginAt, &ciphertext, &nonce)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	if len(ciphertext) > 0 {
-		if s.box == nil {
-			return nil, errors.New("LDAP secret encryption is unavailable")
-		}
-		plain, openErr := s.box.Open(c.TenantID, "ldap-bind", c.ID.String(), ciphertext, nonce)
-		if openErr != nil {
-			return nil, openErr
-		}
-		c.BindPassword = string(plain)
-	} else {
-		c.BindPassword = legacyPassword
-		if legacyPassword != "" && s.box != nil {
-			ct, newNonce, sealErr := s.box.Seal(c.TenantID, "ldap-bind", c.ID.String(), []byte(legacyPassword))
-			if sealErr != nil {
-				return nil, sealErr
-			}
-			if _, updateErr := s.pool.Exec(ctx, `
-				UPDATE tenant.ldap_connections
-				SET bind_password = '', bind_password_ct = $2, bind_password_nonce = $3,
-				    encryption_version = 1
-				WHERE id = $1 AND bind_password_ct IS NULL
-			`, c.ID, ct, newNonce); updateErr != nil {
-				return nil, updateErr
-			}
-		}
+	if s.box == nil {
+		return nil, errors.New("LDAP secret encryption is unavailable")
 	}
+	plain, err := s.box.Open(c.TenantID, "ldap-bind", c.ID.String(), ciphertext, nonce)
+	if err != nil {
+		return nil, err
+	}
+	c.BindPassword = string(plain)
 	return &c, nil
 }
 
@@ -408,8 +389,7 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID,
 		}
 		if _, updateErr := tx.Exec(ctx, `
 			UPDATE tenant.ldap_connections
-			SET bind_password = '', bind_password_ct = $3, bind_password_nonce = $4,
-			    encryption_version = 1, updated_at = NOW()
+			SET bind_password_ct = $3, bind_password_nonce = $4, updated_at = NOW()
 			WHERE id = $1 AND tenant_id = $2
 		`, id, tenantID, ciphertext, nonce); updateErr != nil {
 			return nil, updateErr

@@ -359,7 +359,7 @@ func TestOrganisationsOwnAccountsSignInWithoutARole(t *testing.T) {
 	if _, err := pool.Exec(ctx, `DELETE FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2`, formerGuest.ID, tenant); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE "user".users SET status = 'suspended' WHERE id = $1`, suspended.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET status = 'suspended' WHERE id = $1`, suspended.ID); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
@@ -792,7 +792,7 @@ func TestCodeRedemptionRules(t *testing.T) {
 	code, verifier = authorize(client.ClientID)
 	setStatus := func(status string) {
 		t.Helper()
-		if _, err := pool.Exec(ctx, `UPDATE "user".users SET status = $2 WHERE tenant_id = $1 AND id = $3`, tenant, status, person.ID); err != nil {
+		if _, err := pool.Exec(ctx, `UPDATE account.users SET status = $2 WHERE tenant_id = $1 AND id = $3`, tenant, status, person.ID); err != nil {
 			t.Fatal(err)
 		}
 	}

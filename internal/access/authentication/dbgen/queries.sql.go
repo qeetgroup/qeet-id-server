@@ -15,7 +15,7 @@ import (
 
 const checkTenantMembership = `-- name: CheckTenantMembership :one
 SELECT EXISTS (
-    SELECT 1 FROM "user".users account
+    SELECT 1 FROM account.users account
     JOIN tenant.tenants organization ON organization.id = $1::uuid
     WHERE account.id = $2
       AND account.status = 'active' AND account.deleted_at IS NULL
@@ -151,7 +151,7 @@ WITH ended AS (
     RETURNING id, user_id
 )
 SELECT ended.id, ended.user_id, u.tenant_id
-FROM ended LEFT JOIN "user".users u ON u.id = ended.user_id
+FROM ended LEFT JOIN account.users u ON u.id = ended.user_id
 `
 
 type EndLoginSessionRow struct {
@@ -207,7 +207,7 @@ WITH resets AS (
     WHERE user_id = $1 AND used_at IS NULL AND expires_at > NOW() - INTERVAL '1 minute'
 )
 UPDATE auth.magic_links SET expires_at = NOW() - INTERVAL '1 minute'
-WHERE LOWER(email) = (SELECT LOWER(u.email) FROM "user".users u WHERE u.id = $1)
+WHERE LOWER(email) = (SELECT LOWER(u.email) FROM account.users u WHERE u.id = $1)
   AND used_at IS NULL AND expires_at > NOW() - INTERVAL '1 minute'
 `
 
@@ -250,7 +250,7 @@ func (q *Queries) GetClientTenant(ctx context.Context, clientID string) (uuid.UU
 const getLoginSession = `-- name: GetLoginSession :one
 SELECT s.id, s.user_id, s.expires_at, s.created_at
 FROM auth.login_sessions s
-JOIN "user".users u ON u.id = s.user_id
+JOIN account.users u ON u.id = s.user_id
 WHERE s.token_hash = $1 AND u.status = 'active' AND u.deleted_at IS NULL
 `
 
@@ -279,7 +279,7 @@ func (q *Queries) GetLoginSession(ctx context.Context, tokenHash string) (GetLog
 const getLoginSessionUser = `-- name: GetLoginSessionUser :one
 SELECT s.user_id, u.tenant_id, s.created_at, COALESCE(s.second_factor, '')::text AS second_factor
 FROM auth.login_sessions s
-JOIN "user".users u ON u.id = s.user_id
+JOIN account.users u ON u.id = s.user_id
 LEFT JOIN tenant.tenants t ON t.id = u.tenant_id
 WHERE s.token_hash = $1
   AND s.expires_at > NOW()
@@ -470,7 +470,7 @@ func (q *Queries) InsertTenantlessSession(ctx context.Context, arg InsertTenantl
 }
 
 const insertTenantlessUser = `-- name: InsertTenantlessUser :one
-INSERT INTO "user".users (tenant_id, email, display_name)
+INSERT INTO account.users (tenant_id, email, display_name)
 VALUES (NULL, $1, $2)
 RETURNING id, created_at, updated_at
 `
@@ -550,7 +550,7 @@ func (q *Queries) LockMFASignIn(ctx context.Context, userID uuid.UUID) error {
 }
 
 const lockUserForSessionRevocation = `-- name: LockUserForSessionRevocation :one
-SELECT id FROM "user".users WHERE id = $1 FOR NO KEY UPDATE
+SELECT id FROM account.users WHERE id = $1 FOR NO KEY UPDATE
 `
 
 // LockUserForSessionRevocation row-locks the account so bulk session
@@ -615,7 +615,7 @@ SELECT u.mfa_required,
              AND ((ro.is_system AND ro.name = 'owner')
                   OR (p.key IS NOT NULL AND NOT (p.key = ANY(COALESCE($2::text[], '{}')))))
        ) AS is_admin
-FROM "user".users u
+FROM account.users u
 LEFT JOIN tenant.security_policies sp ON sp.tenant_id = $1
 WHERE u.id = $3
 `

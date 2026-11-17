@@ -41,6 +41,25 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
   with an RSA key. The key a development instance makes for itself stays ES256. A rotation may change the key's
   type: the retired key's tokens still verify for the grace period.
 
+### Changed
+
+- The database schema is one baseline of 12 migrations (`0001`–`0012`: one file per schema, every table in its
+  final shape) in place of 243 incremental ones. A database the earlier migrations built is refused at start
+  as newer than this build and has to be recreated (`make db-reset`); no release has shipped, so nothing is
+  carried over.
+- The schema `"user"` is named `account`, so it no longer has to be quoted.
+- A secret is stored only encrypted. The plaintext columns left from before encryption, and the code that read
+  them and encrypted them on first use, are gone: webhook and auth hook signing secrets, Token Vault and
+  social provider client secrets, LDAP bind passwords, SIEM tokens, authenticator app secrets and push tokens.
+- The one-time sign-in codes of SAML, OIDC connection, social and console sign-in are one table
+  (`auth.login_codes`), and the sign-in states of the last three are one (`auth.oauth_states`). A code or a
+  state is accepted only by the flow that issued it.
+- Every table with a `tenant_id` has an index leading on it and, unless it is an append-only log or outlives
+  its organisation, a foreign key to the organisation; ten indexes another index already covered are dropped;
+  eleven columns whose values are a fixed list have a CHECK.
+- Dropped, as nothing used them: the `pgcrypto` extension, `auth.passkey_challenges`, `auth.agents.disabled_at`,
+  and `tenant.security_policies.password_min_length` and `password_complexity`.
+
 ### Fixed
 
 - A request whose client hung up or gave up waiting is answered 499 and noted at info level, not logged as an
@@ -66,6 +85,8 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
   the request's time is up: the permanent assignment clears the request's end.
 - The authorization endpoint (`/v1/oauth/authorize`) takes its parameters by form POST as well as by GET, as
   OpenID Connect Core requires: a POST is answered 303 to the same request by GET.
+- The development seed (`make seed`) runs again: one demo organisation asked for a lockout window shorter than
+  the 15 minutes the sign-in policy now allows.
 
 ### Security
 

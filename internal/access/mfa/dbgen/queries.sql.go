@@ -93,7 +93,7 @@ DELETE FROM auth.mfa_push_devices WHERE id = $1 AND user_id = $2 AND device_toke
 type DeletePushDeviceByCredentialParams struct {
 	ID              uuid.UUID
 	UserID          uuid.UUID
-	DeviceTokenHash *string
+	DeviceTokenHash string
 }
 
 // DeletePushDeviceByCredential removes a linked phone that proves it is that
@@ -363,7 +363,7 @@ func (q *Queries) InsertPushChallenge(ctx context.Context, arg InsertPushChallen
 
 const isTenantMember = `-- name: IsTenantMember :one
 SELECT (EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = $1 AND ur.tenant_id = $2)
-     OR EXISTS (SELECT 1 FROM "user".users u WHERE u.id = $1 AND u.tenant_id = $2 AND u.deleted_at IS NULL))::bool
+     OR EXISTS (SELECT 1 FROM account.users u WHERE u.id = $1 AND u.tenant_id = $2 AND u.deleted_at IS NULL))::bool
 `
 
 type IsTenantMemberParams struct {
@@ -492,7 +492,7 @@ const loginFactorCounts = `-- name: LoginFactorCounts :one
 SELECT
     EXISTS (SELECT 1 FROM auth.mfa_totp t WHERE t.user_id = $1 AND t.confirmed_at IS NOT NULL) AS totp,
     (SELECT count(*) FROM auth.mfa_recovery_codes r WHERE r.user_id = $1 AND r.used_at IS NULL)::int AS recovery_codes,
-    CASE WHEN COALESCE((SELECT ap.passkey_enabled FROM "user".users u
+    CASE WHEN COALESCE((SELECT ap.passkey_enabled FROM account.users u
                         JOIN tenant.auth_policy ap ON ap.tenant_id = u.tenant_id
                         WHERE u.id = $1), TRUE)
          THEN (SELECT count(*) FROM auth.passkey_credentials p WHERE p.user_id = $1)

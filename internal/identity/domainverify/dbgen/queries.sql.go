@@ -75,7 +75,7 @@ func (q *Queries) EmailDomainManager(ctx context.Context, domain string) (EmailD
 
 const getCaptureExemption = `-- name: GetCaptureExemption :one
 WITH account AS (
-    SELECT u.id, u.tenant_id FROM "user".users u
+    SELECT u.id, u.tenant_id FROM account.users u
     WHERE lower(u.email) = lower($3::text) AND u.deleted_at IS NULL
       AND (u.tenant_id = $1::uuid OR EXISTS (
           SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = $1::uuid))
@@ -106,7 +106,7 @@ SELECT
                   WHERE gm.user_id = a.id AND gm.tenant_id = $1::uuid
                     AND ((ro.is_system AND ro.name = 'owner') OR (p.key IS NOT NULL AND NOT (p.key = ANY($2::text[]))))))
           AND NOT (a.tenant_id IS NOT DISTINCT FROM $1::uuid AND EXISTS (
-                  SELECT 1 FROM "user".external_identities ei
+                  SELECT 1 FROM account.external_identities ei
                   WHERE ei.user_id = a.id AND ei.tenant_id = $1::uuid
                     AND (EXISTS (SELECT 1 FROM tenant.saml_connections s
                                  WHERE s.id = ei.connection_id AND s.tenant_id = ei.tenant_id AND ei.provider = 'saml' AND s.status = 'active')
@@ -250,7 +250,7 @@ func (q *Queries) InsertDomain(ctx context.Context, arg InsertDomainParams) (Ins
 
 const isTenantMember = `-- name: IsTenantMember :one
 SELECT EXISTS (
-    SELECT 1 FROM "user".users u
+    SELECT 1 FROM account.users u
     WHERE u.id = $1 AND u.deleted_at IS NULL
       AND (u.tenant_id = $2::uuid OR EXISTS (
           SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = $2::uuid))
@@ -312,7 +312,7 @@ func (q *Queries) ListActiveSSOConnections(ctx context.Context, tenantID uuid.UU
 const listBreakGlassMembers = `-- name: ListBreakGlassMembers :many
 SELECT b.user_id, u.email, u.display_name, b.created_by, b.created_at
 FROM tenant.break_glass_members b
-JOIN "user".users u ON u.id = b.user_id
+JOIN account.users u ON u.id = b.user_id
 WHERE b.tenant_id = $1
 ORDER BY lower(u.email)
 LIMIT 1001

@@ -290,7 +290,7 @@ Four variables are security-critical: `CSRF_COOKIE_DOMAIN` (must be the product 
 
 ## Database
 
-One PostgreSQL database, **seven schemas**: `auth`, `tenant`, `user`, `rbac`, `audit`, `platform`,
+One PostgreSQL database, **seven schemas**: `auth`, `tenant`, `account`, `rbac`, `audit`, `platform`,
 `qeetai`.
 
 - **Driver:** pgx v5. **Queries:** hand-written SQL in `queries.sql`, compiled by **sqlc** into
@@ -300,9 +300,11 @@ One PostgreSQL database, **seven schemas**: `auth`, `tenant`, `user`, `rbac`, `a
 
 ### Migrations
 
-**Evidence:** `internal/platform/database/migrations/` — 242 up/down pairs, `0001`–`0243` (`0082` intentionally absent)
-(`0082` is absent and must not be reused). Embedded with `//go:embed *.sql` in `runner.go` and
-applied on startup.
+**Evidence:** `internal/platform/database/migrations/` — 12 up/down pairs, `0001`–`0012`: the schema
+baseline, one file per schema with every table in its final shape (`0001` schemas and the
+application role, `0002` functions, `0003`–`0009` the schemas, `0010` foreign keys between schemas,
+`0011` row-level security, `0012` owner guards and triggers). Embedded with `//go:embed *.sql` in
+`runner.go` and applied on startup.
 
 ```text
 NNNN_description.up.sql
@@ -337,7 +339,7 @@ The source states the rule directly:
 
 ### Membership
 
-A person belongs to an organisation when it is their account's home (`"user".users.tenant_id`) or
+A person belongs to an organisation when it is their account's home (`account.users.tenant_id`) or
 they hold one of its roles (`rbac.user_roles`). Every membership check — signing in to its
 applications, renewing, switching organisation, the member list — uses this rule; permissions still
 come only from roles, so a home account with none has no access. A guest leaves when their roles are

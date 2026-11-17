@@ -29,7 +29,7 @@ func erased(t *testing.T, userID uuid.UUID) bool {
 		SELECT email, status,
 		       (SELECT count(*) FROM auth.password_credentials WHERE user_id = u.id),
 		       (SELECT count(*) FROM auth.sessions WHERE user_id = u.id AND revoked_at IS NULL)
-		FROM "user".users u WHERE id = $1
+		FROM account.users u WHERE id = $1
 	`, userID).Scan(&email, &status, &passwords, &live); err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func account(t *testing.T, tenant uuid.UUID) dbtest.Account {
 func requestStatus(t *testing.T, id uuid.UUID) string {
 	t.Helper()
 	var status string
-	if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `SELECT status FROM "user".purge_requests WHERE id = $1`, id).Scan(&status); err != nil {
+	if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `SELECT status FROM account.purge_requests WHERE id = $1`, id).Scan(&status); err != nil {
 		t.Fatal(err)
 	}
 	return status
@@ -107,7 +107,7 @@ func TestErasureWaitsForItsGracePeriod(t *testing.T) {
 		t.Errorf("another organisation cancelling: %d, want 404", rec.Code)
 	}
 
-	_, err := pool.Exec(ctx, `UPDATE "user".users SET tenant_id = $2 WHERE id = $1`, waiting.ID, other)
+	_, err := pool.Exec(ctx, `UPDATE account.users SET tenant_id = $2 WHERE id = $1`, waiting.ID, other)
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || pgErr.Code != "23503" {
 		t.Errorf("an account awaiting erasure moved organisation: %v, want a foreign key violation", err)
@@ -320,16 +320,16 @@ func TestDataRequestsAreAudited(t *testing.T) {
 	if err := svc.failExport(ctx, failed, tenant, exported.ID, "not leased"); err != nil {
 		t.Fatal(err)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".export_requests WHERE id = $1 AND status = 'pending'`, failed); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.export_requests WHERE id = $1 AND status = 'pending'`, failed); n != 1 {
 		t.Error("an export request another worker holds was marked failed")
 	}
-	if _, err := pool.Exec(ctx, `UPDATE "user".export_requests SET lease_owner = $2, lease_until = NOW() + INTERVAL '1 minute' WHERE id = $1`, failed, svc.workerID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE account.export_requests SET lease_owner = $2, lease_until = NOW() + INTERVAL '1 minute' WHERE id = $1`, failed, svc.workerID); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.failExport(ctx, failed, tenant, exported.ID, "the build failed"); err != nil {
 		t.Fatal(err)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".export_requests WHERE id = $1 AND status = 'failed' AND lease_owner IS NULL`, failed); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.export_requests WHERE id = $1 AND status = 'failed' AND lease_owner IS NULL`, failed); n != 1 {
 		t.Error("a leased export request wasn't marked failed")
 	}
 	recorded(t, tenant, failed, "gdpr.export_failed", nil, exported.ID)
@@ -363,7 +363,7 @@ func TestDataRequestsRefusedForSomeoneWhoOutranksTheCaller(t *testing.T) {
 		if status, body := as(admin, http.MethodPost, path, map[string]any{"user_id": coOwner.ID}); status != http.StatusForbidden || !strings.Contains(body, errs.CodeRBACTargetIsOwner) {
 			t.Errorf("an administrator asks %s of a co-owner: %d %s, want 403 %s", path, status, body, errs.CodeRBACTargetIsOwner)
 		}
-		if n := dbtest.Count(t, `SELECT count(*) FROM "user".`+table+` WHERE tenant_id = $1 AND user_id = $2`, tenant, coOwner.ID); n != 0 {
+		if n := dbtest.Count(t, `SELECT count(*) FROM account.`+table+` WHERE tenant_id = $1 AND user_id = $2`, tenant, coOwner.ID); n != 0 {
 			t.Errorf("%d %s rows for the co-owner, want none", n, table)
 		}
 	}
@@ -375,7 +375,7 @@ func TestDataRequestsRefusedForSomeoneWhoOutranksTheCaller(t *testing.T) {
 		t.Fatalf("an owner exports a co-owner: %d %s, want 202", status, body)
 	}
 	var export struct{ ID uuid.UUID }
-	if err := pool.QueryRow(ctx, `SELECT id FROM "user".export_requests WHERE tenant_id = $1 AND user_id = $2`, tenant, coOwner.ID).Scan(&export.ID); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id FROM account.export_requests WHERE tenant_id = $1 AND user_id = $2`, tenant, coOwner.ID).Scan(&export.ID); err != nil {
 		t.Fatal(err)
 	}
 	if status, body := as(admin, http.MethodGet, "/tenants/"+tenant.String()+"/gdpr/export/"+export.ID.String(), nil); status != http.StatusForbidden || !strings.Contains(body, errs.CodeRBACTargetIsOwner) {

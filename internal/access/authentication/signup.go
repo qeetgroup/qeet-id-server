@@ -192,7 +192,7 @@ func (s *Service) RegisterInTenant(ctx context.Context, tenantID uuid.UUID, emai
 		u.DisplayName = &dn
 	}
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO "user".users (tenant_id, email, display_name)
+		INSERT INTO account.users (tenant_id, email, display_name)
 		VALUES ($1, $2, $3)
 		RETURNING id, created_at, updated_at
 	`, tenantID, u.Email, dnArg).Scan(&u.ID, &u.CreatedAt, &u.UpdatedAt); err != nil {

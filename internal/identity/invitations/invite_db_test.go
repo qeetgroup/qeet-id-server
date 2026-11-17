@@ -113,7 +113,7 @@ func TestInviteAccept(t *testing.T) {
 		t.Fatalf("accept signed in to tenant %v, want %s", pair.TenantID, tenant)
 	}
 	if n := dbtest.Count(t, `
-		SELECT count(*) FROM "user".users u JOIN rbac.user_roles ur ON ur.user_id = u.id
+		SELECT count(*) FROM account.users u JOIN rbac.user_roles ur ON ur.user_id = u.id
 		WHERE u.id = $1 AND u.tenant_id = $2 AND u.email = $3 AND ur.tenant_id = $2 AND ur.role_id = $4
 	`, pair.UserID, tenant, email, role); n != 1 {
 		t.Error("the accepted account is not a member of the inviting tenant with the invited role")
@@ -233,7 +233,7 @@ func TestAcceptAnotherOrganisationsInvitation(t *testing.T) {
 	h, _ := newHandler(t)
 	home, other := dbtest.Tenant(t), dbtest.Tenant(t)
 	a := dbtest.User(t, home, home)
-	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE "user".users SET email_verified_at = NOW() WHERE id = $1`, a.ID); err != nil {
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE account.users SET email_verified_at = NOW() WHERE id = $1`, a.ID); err != nil {
 		t.Fatal(err)
 	}
 	role := dbtest.Role(t, other)
@@ -371,7 +371,7 @@ func TestInvitationsAreAudited(t *testing.T) {
 	}
 	defer tx.Rollback(ctx)
 	var newUser uuid.UUID
-	if err := tx.QueryRow(ctx, `INSERT INTO "user".users (tenant_id, email) VALUES ($1, $2) RETURNING id`, tenant, email).Scan(&newUser); err != nil {
+	if err := tx.QueryRow(ctx, `INSERT INTO account.users (tenant_id, email) VALUES ($1, $2) RETURNING id`, tenant, email).Scan(&newUser); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.Service.AcceptForNewAccountTx(ctx, tx, inv.ID, tenant, newUser, email, "203.0.113.8", "test-agent"); err != nil {
@@ -386,7 +386,7 @@ func TestInvitationsAreAudited(t *testing.T) {
 
 	home := dbtest.Tenant(t)
 	member := dbtest.User(t, home, home)
-	if _, err := pool.Exec(ctx, `UPDATE "user".users SET email_verified_at = NOW() WHERE id = $1`, member.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET email_verified_at = NOW() WHERE id = $1`, member.ID); err != nil {
 		t.Fatal(err)
 	}
 	asMember := dbtest.Serve(dbtest.Principal(member.ID, home), h.MountAuthed)
@@ -435,7 +435,7 @@ func TestInviteCreatesNoAccountOnAnotherOrganisationsDomain(t *testing.T) {
 	if _, _, _, err := h.Service.InvitationForNewAccount(ctx, token); !errors.Is(err, errs.ErrUserDomainManaged) {
 		t.Errorf("start accepting with a passkey: %v, want %v", err, errs.ErrUserDomainManaged)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1`, claimed); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, claimed); n != 0 {
 		t.Errorf("the account was created")
 	}
 }
@@ -452,7 +452,7 @@ func TestInvitationsMatchAddressesAndNeedARoleForOutsiders(t *testing.T) {
 	admin := dbtest.User(t, tenant, tenant)
 	byAdmin := audit.Actor{UserID: &admin.ID, Type: "user"}
 	member := dbtest.UserAt(t, dbtest.Unique("bob")+"@example.test", home, home)
-	if _, err := pool.Exec(ctx, `UPDATE "user".users SET email_verified_at = NOW() WHERE id = $1`, member.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET email_verified_at = NOW() WHERE id = $1`, member.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := h.Service.Create(ctx, CreateInput{TenantID: tenant, Email: strings.ToUpper(member.Email)}, byAdmin); !errors.Is(err, errs.ErrInviteRoleRequired) {
@@ -519,7 +519,7 @@ func TestInvitationFromSomeoneNoLongerEntitledIsRefused(t *testing.T) {
 			exec(`DELETE FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2`, inviter, tenant)
 			dbtest.Assign(t, inviter, tenant, lesser)
 		},
-		"suspended": func(inviter uuid.UUID) { exec(`UPDATE "user".users SET status = 'suspended' WHERE id = $1`, inviter) },
+		"suspended": func(inviter uuid.UUID) { exec(`UPDATE account.users SET status = 'suspended' WHERE id = $1`, inviter) },
 		"removed from the organisation": func(inviter uuid.UUID) {
 			inTx(func(tx pgx.Tx) error {
 				if _, err := users.RemoveFromTenantTx(ctx, tx, inviter, tenant); err != nil {
@@ -556,7 +556,7 @@ func TestInvitationFromSomeoneNoLongerEntitledIsRefused(t *testing.T) {
 		},
 		"an existing account's inbox": func(inv *Invite, _, email string) error {
 			a := dbtest.UserAt(t, email, dbtest.Tenant(t))
-			exec(`UPDATE "user".users SET email_verified_at = NOW() WHERE id = $1`, a.ID)
+			exec(`UPDATE account.users SET email_verified_at = NOW() WHERE id = $1`, a.ID)
 			_, err := svc.AcceptAuthenticatedByID(ctx, a.ID, inv.ID, audit.Actor{})
 			return err
 		},
@@ -581,13 +581,13 @@ func TestInvitationFromSomeoneNoLongerEntitledIsRefused(t *testing.T) {
 			if !errors.Is(err, errs.ErrInviteInvalid) {
 				t.Errorf("%s accepts an invitation from someone %s: %v, want %v", way, change, err, errs.ErrInviteInvalid)
 			}
-			if n := dbtest.Count(t, `SELECT count(*) FROM rbac.user_roles ur JOIN "user".users u ON u.id = ur.user_id
+			if n := dbtest.Count(t, `SELECT count(*) FROM rbac.user_roles ur JOIN account.users u ON u.id = ur.user_id
 				WHERE ur.tenant_id = $1 AND ur.role_id = $2 AND u.email = $3`, tenant, invited, email); n != 0 {
 				t.Errorf("%s, from someone %s: the invited role was given", way, change)
 			}
 		}
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.invites i JOIN "user".users u ON u.id = i.invited_by
+	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.invites i JOIN account.users u ON u.id = i.invited_by
 		WHERE i.tenant_id = $1 AND i.status = 'pending' AND (u.deleted_at IS NOT NULL OR NOT EXISTS (
 			SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = $1))`, tenant); n != 0 {
 		t.Errorf("%d invitations from people removed or deleted are still pending, want them withdrawn", n)

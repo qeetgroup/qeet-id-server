@@ -153,7 +153,7 @@ DELETE FROM auth.mfa_push_devices WHERE id = @id AND user_id = @user_id AND devi
 -- role in it, or has it as their home organisation.
 -- name: IsTenantMember :one
 SELECT (EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = @user_id AND ur.tenant_id = @tenant_id)
-     OR EXISTS (SELECT 1 FROM "user".users u WHERE u.id = @user_id AND u.tenant_id = @tenant_id AND u.deleted_at IS NULL))::bool;
+     OR EXISTS (SELECT 1 FROM account.users u WHERE u.id = @user_id AND u.tenant_id = @tenant_id AND u.deleted_at IS NULL))::bool;
 
 -- name: DeletePushDevice :execrows
 DELETE FROM auth.mfa_push_devices WHERE id = $1 AND user_id = $2;
@@ -209,7 +209,7 @@ FOR UPDATE;
 SELECT
     EXISTS (SELECT 1 FROM auth.mfa_totp t WHERE t.user_id = @user_id AND t.confirmed_at IS NOT NULL) AS totp,
     (SELECT count(*) FROM auth.mfa_recovery_codes r WHERE r.user_id = @user_id AND r.used_at IS NULL)::int AS recovery_codes,
-    CASE WHEN COALESCE((SELECT ap.passkey_enabled FROM "user".users u
+    CASE WHEN COALESCE((SELECT ap.passkey_enabled FROM account.users u
                         JOIN tenant.auth_policy ap ON ap.tenant_id = u.tenant_id
                         WHERE u.id = @user_id), TRUE)
          THEN (SELECT count(*) FROM auth.passkey_credentials p WHERE p.user_id = @user_id)

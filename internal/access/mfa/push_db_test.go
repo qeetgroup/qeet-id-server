@@ -278,7 +278,7 @@ func TestRemovingAnOwnersPushDeviceNeedsToOutrankThem(t *testing.T) {
 	phone := func(userID uuid.UUID) string {
 		t.Helper()
 		var id uuid.UUID
-		if err := pool.QueryRow(ctx, `INSERT INTO auth.mfa_push_devices (user_id, platform, push_token, device_token) VALUES ($1, 'ios', 'push', $2) RETURNING id`,
+		if err := pool.QueryRow(ctx, `INSERT INTO auth.mfa_push_devices (user_id, platform, push_token_ct, push_token_nonce, push_token_hash, device_token_hash) VALUES ($1, 'ios', '\x00', '\x00', 'push', $2) RETURNING id`,
 			userID, dbtest.Unique("device")).Scan(&id); err != nil {
 			t.Fatal(err)
 		}

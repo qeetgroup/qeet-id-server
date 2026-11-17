@@ -151,15 +151,13 @@ func (s *Service) RegisterProvider(ctx context.Context, tenantID uuid.UUID, in R
 	var provider Provider
 	err = tx.QueryRow(ctx, `
 		INSERT INTO tenant.token_vault_providers
-		    (tenant_id, provider, client_id, client_secret, client_secret_ct,
-		     client_secret_nonce, encryption_version, authorize_url, token_url, scopes)
-		VALUES ($1, $2, $3, '', $4, $5, 1, $6, $7, $8)
+		    (tenant_id, provider, client_id, client_secret_ct, client_secret_nonce,
+		     authorize_url, token_url, scopes)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (tenant_id, provider) DO UPDATE SET
 		    client_id = EXCLUDED.client_id,
-		    client_secret = '',
 		    client_secret_ct = EXCLUDED.client_secret_ct,
 		    client_secret_nonce = EXCLUDED.client_secret_nonce,
-		    encryption_version = 1,
 		    authorize_url = EXCLUDED.authorize_url,
 		    token_url = EXCLUDED.token_url,
 		    scopes = EXCLUDED.scopes,
@@ -240,40 +238,20 @@ func (s *Service) DeleteProvider(ctx context.Context, tenantID uuid.UUID, provid
 }
 
 func (s *Service) providerConfig(ctx context.Context, tenantID uuid.UUID, provider string) (clientID, clientSecret, authorizeURL, tokenURL, scopes string, err error) {
-	var legacy string
 	var ciphertext, nonce []byte
 	err = s.pool.QueryRow(ctx, `
-		SELECT client_id, client_secret, client_secret_ct, client_secret_nonce,
-		       authorize_url, token_url, scopes
+		SELECT client_id, client_secret_ct, client_secret_nonce, authorize_url, token_url, scopes
 		FROM tenant.token_vault_providers
 		WHERE tenant_id = $1 AND provider = $2
-	`, tenantID, provider).Scan(&clientID, &legacy, &ciphertext, &nonce, &authorizeURL, &tokenURL, &scopes)
+	`, tenantID, provider).Scan(&clientID, &ciphertext, &nonce, &authorizeURL, &tokenURL, &scopes)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", "", "", "", errs.ErrTokenVaultProviderNotFound
 	}
 	if err != nil {
 		return "", "", "", "", "", err
 	}
-	if len(ciphertext) > 0 {
-		plain, openErr := s.box.Open(tenantID, "token-vault-provider", provider, ciphertext, nonce)
-		return clientID, string(plain), authorizeURL, tokenURL, scopes, openErr
-	}
-	if legacy == "" {
-		return "", "", "", "", "", errs.ErrTokenVaultProviderNotFound
-	}
-	ct, newNonce, sealErr := s.box.Seal(tenantID, "token-vault-provider", provider, []byte(legacy))
-	if sealErr != nil {
-		return "", "", "", "", "", sealErr
-	}
-	if _, updateErr := s.pool.Exec(ctx, `
-		UPDATE tenant.token_vault_providers
-		SET client_secret = '', client_secret_ct = $3, client_secret_nonce = $4,
-		    encryption_version = 1, updated_at = NOW()
-		WHERE tenant_id = $1 AND provider = $2 AND client_secret_ct IS NULL
-	`, tenantID, provider, ct, newNonce); updateErr != nil {
-		return "", "", "", "", "", updateErr
-	}
-	return clientID, legacy, authorizeURL, tokenURL, scopes, nil
+	plain, err := s.box.Open(tenantID, "token-vault-provider", provider, ciphertext, nonce)
+	return clientID, string(plain), authorizeURL, tokenURL, scopes, err
 }
 
 // --- connect ceremony ---

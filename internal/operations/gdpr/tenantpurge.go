@@ -127,7 +127,7 @@ func (s *Service) PurgeTenant(ctx context.Context, tenantID uuid.UUID, after tim
 func (s *Service) purgeHomeAccounts(ctx context.Context, tenantID uuid.UUID) (removed, detached int, err error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT u.id, EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id <> $1)
-		FROM "user".users u WHERE u.tenant_id = $1`, tenantID)
+		FROM account.users u WHERE u.tenant_id = $1`, tenantID)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -148,9 +148,9 @@ func (s *Service) purgeHomeAccounts(ctx context.Context, tenantID uuid.UUID) (re
 			return removed, detached, err
 		}
 		if a.elsewhere {
-			_, err = tx.Exec(ctx, `UPDATE "user".users SET tenant_id = NULL WHERE id = $1 AND tenant_id = $2`, a.id, tenantID)
+			_, err = tx.Exec(ctx, `UPDATE account.users SET tenant_id = NULL WHERE id = $1 AND tenant_id = $2`, a.id, tenantID)
 		} else if err = s.eraseAccount(ctx, tx, a.id); err == nil {
-			_, err = tx.Exec(ctx, `DELETE FROM "user".users WHERE id = $1 AND tenant_id = $2`, a.id, tenantID)
+			_, err = tx.Exec(ctx, `DELETE FROM account.users WHERE id = $1 AND tenant_id = $2`, a.id, tenantID)
 		}
 		if err == nil {
 			err = tx.Commit(ctx)

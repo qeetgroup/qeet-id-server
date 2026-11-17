@@ -5,12 +5,9 @@ package group
 import (
 	"errors"
 	"net/http"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -210,62 +207,6 @@ func TestTemplateGroupNames(t *testing.T) {
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'group_template.applied' AND metadata->>'prefix' = 'Pune · '`, tenant); n != 1 {
 		t.Errorf("%d applies audited with their prefix, want 1", n)
-	}
-}
-
-// TestNameMigrationRenamesExistingDuplicates checks that migration 0154
-// renames all but the oldest of the non-SCIM groups whose names differ only
-// in case or surrounding space, so its index can be built. It runs the
-// migration again inside a transaction that is rolled back.
-func TestNameMigrationRenamesExistingDuplicates(t *testing.T) {
-	ctx := dbtest.Context(t)
-	up, err := os.ReadFile(filepath.Join("..", "..", "platform", "database", "migrations", "0154_group_name_unique.up.sql"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	tx, err := dbtest.Owner(t).Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `DROP INDEX tenant.uq_groups_tenant_name`); err != nil {
-		t.Fatalf("drop the index: %v", err)
-	}
-	base := time.Now().Add(-time.Hour)
-	insert := func(tenant uuid.UUID, name string, externalID any, age time.Duration) uuid.UUID {
-		t.Helper()
-		var id uuid.UUID
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO tenant.groups (tenant_id, name, external_id, created_at) VALUES ($1, $2, $3, $4) RETURNING id
-		`, tenant, name, externalID, base.Add(age)).Scan(&id); err != nil {
-			t.Fatalf("insert %q: %v", name, err)
-		}
-		return id
-	}
-	oldest := insert(tenant, "Engineering", nil, 0)
-	padded := insert(tenant, "engineering ", nil, time.Second)
-	upper := insert(tenant, "ENGINEERING", nil, 2*time.Second)
-	provisioned := insert(tenant, "Engineering", "ext-1", 3*time.Second)
-	elsewhere := insert(other, "Engineering", nil, 4*time.Second)
-
-	if _, err := tx.Exec(ctx, string(up)); err != nil {
-		t.Fatalf("run the migration over duplicates: %v", err)
-	}
-	for id, want := range map[uuid.UUID]string{
-		oldest:      "Engineering",
-		padded:      "engineering (" + padded.String()[:8] + ")",
-		upper:       "ENGINEERING (" + upper.String()[:8] + ")",
-		provisioned: "Engineering",
-		elsewhere:   "Engineering",
-	} {
-		var got string
-		if err := tx.QueryRow(ctx, `SELECT name FROM tenant.groups WHERE id = $1 AND tenant_id IN ($2, $3)`, id, tenant, other).Scan(&got); err != nil {
-			t.Fatal(err)
-		}
-		if got != want {
-			t.Errorf("group %s is named %q, want %q", id, got, want)
-		}
 	}
 }
 

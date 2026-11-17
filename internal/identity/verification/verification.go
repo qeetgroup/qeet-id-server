@@ -180,7 +180,7 @@ func newestEmailCode(ctx context.Context, tx pgx.Tx, userID uuid.UUID, purpose s
 	var l latestCode
 	err := tx.QueryRow(ctx, `
 		SELECT id, code_hash, email, expires_at, used_at, attempts
-		FROM "user".email_verifications
+		FROM account.email_verifications
 		WHERE user_id = $1 AND purpose = $2
 		ORDER BY created_at DESC
 		LIMIT 1
@@ -194,7 +194,7 @@ func newestPhoneCode(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (latestCo
 	var l latestCode
 	err := tx.QueryRow(ctx, `
 		SELECT id, code_hash, phone, expires_at, used_at, attempts
-		FROM "user".phone_verifications
+		FROM account.phone_verifications
 		WHERE user_id = $1
 		ORDER BY created_at DESC
 		LIMIT 1
@@ -209,7 +209,7 @@ func newestPhoneCode(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (latestCo
 // lost and the budget is unlimited.
 func recordFailedAttempt(ctx context.Context, tx pgx.Tx, table string, id uuid.UUID) (bool, error) {
 	// #nosec G201 -- table is one of two package-local literals, never caller input.
-	q := `UPDATE "user".` + table + `
+	q := `UPDATE account.` + table + `
 		SET attempts = attempts + 1,
 		    used_at  = CASE WHEN attempts + 1 >= $2 THEN NOW() ELSE used_at END
 		WHERE id = $1

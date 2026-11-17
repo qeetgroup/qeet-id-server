@@ -67,7 +67,7 @@ SELECT s.id, s.name, s.scope, s.last4, s.created_at, s.updated_at,
        u.email AS revealed_by_email, u.display_name AS revealed_by_name,
        s.value_changed_at, s.rotation_interval_days
 FROM tenant.secrets s
-LEFT JOIN "user".users u ON u.id = s.last_revealed_by
+LEFT JOIN account.users u ON u.id = s.last_revealed_by
 WHERE s.id = $1 AND s.tenant_id = $2
 `
 
@@ -142,7 +142,7 @@ SELECT s.id, s.name, s.scope, s.last4, s.created_at, s.updated_at,
        u.email AS revealed_by_email, u.display_name AS revealed_by_name,
        s.value_changed_at, s.rotation_interval_days
 FROM tenant.secrets s
-LEFT JOIN "user".users u ON u.id = s.last_revealed_by
+LEFT JOIN account.users u ON u.id = s.last_revealed_by
 WHERE s.tenant_id = $1
 ORDER BY s.created_at DESC
 LIMIT 1001

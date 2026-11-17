@@ -164,7 +164,7 @@ func redirectQuery(t *testing.T, rec *httptest.ResponseRecorder) (string, url.Va
 // verified marks a's address verified and returns the provider's claims for a.
 func verified(t *testing.T, a dbtest.Account) userInfo {
 	t.Helper()
-	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `UPDATE "user".users SET email_verified_at = NOW() WHERE id = $1`, a.ID); err != nil {
+	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `UPDATE account.users SET email_verified_at = NOW() WHERE id = $1`, a.ID); err != nil {
 		t.Fatal(err)
 	}
 	return userInfo{Subject: "sub-" + a.ID.String(), Email: a.Email, EmailVerified: true, Name: "Asha"}
@@ -219,7 +219,7 @@ func TestOrganisationSocialSignIn(t *testing.T) {
 	if rec := browse(t, f.public, http.MethodPost, "/social/exchange", nil, map[string]string{"code": q.Get("code")}); rec.Code == http.StatusOK {
 		t.Error("a one-time code bought a second session")
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE user_id = $1 AND tenant_id = $2 AND provider = 'okta'`, member.ID, tenant); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE user_id = $1 AND tenant_id = $2 AND provider = 'okta'`, member.ID, tenant); n != 1 {
 		t.Errorf("%d identities linked, want 1", n)
 	}
 
@@ -255,7 +255,7 @@ func TestOrganisationSocialSignIn(t *testing.T) {
 	}
 	suspended := dbtest.UserAt(t, dbtest.Unique("ravi")+"@"+domain, tenant, tenant)
 	suspendedPerson := verified(t, suspended)
-	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE "user".users SET status = 'suspended' WHERE id = $1`, suspended.ID); err != nil {
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE account.users SET status = 'suspended' WHERE id = $1`, suspended.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, q := redirectQuery(t, f.signIn(t, "okta", start, suspendedPerson)); q.Get("error") != "account_inactive" {
@@ -358,7 +358,7 @@ func TestPlatformSocialSignIn(t *testing.T) {
 	if rec.Code != http.StatusOK || pair.AccessToken == "" {
 		t.Fatalf("exchange: %d %s", rec.Code, rec.Body.String())
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1`, newcomer.Email); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, newcomer.Email); n != 1 {
 		t.Errorf("%d accounts for the newcomer, want 1", n)
 	}
 	if _, q := redirectQuery(t, f.signIn(t, "google", "/social/google/start", newcomer)); q.Get("social_code") == "" {

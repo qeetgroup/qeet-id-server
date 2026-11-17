@@ -41,19 +41,19 @@ DELETE FROM tenant.ldap_connections WHERE id = @id AND tenant_id = @tenant_id;
 UPDATE tenant.ldap_connections SET last_login_at = NOW() WHERE id = @id;
 
 -- name: GetExternalIdentityUser :one
-SELECT user_id FROM "user".external_identities
+SELECT user_id FROM account.external_identities
 WHERE tenant_id = @tenant_id AND provider = @provider AND connection_id = @connection_id::uuid
   AND subject = @subject;
 
 -- name: GetUserByEmail :one
-SELECT id FROM "user".users WHERE LOWER(email) = LOWER(@email) AND deleted_at IS NULL;
+SELECT id FROM account.users WHERE LOWER(email) = LOWER(@email) AND deleted_at IS NULL;
 
 -- name: InsertUserWithEmail :one
-INSERT INTO "user".users (tenant_id, email, email_verified_at, display_name, status)
+INSERT INTO account.users (tenant_id, email, email_verified_at, display_name, status)
 VALUES (@tenant_id, @email, NOW(), sqlc.narg('display_name'), 'active')
 RETURNING id;
 
 -- name: LinkExternalIdentity :exec
-INSERT INTO "user".external_identities (user_id, tenant_id, provider, connection_id, subject, email)
+INSERT INTO account.external_identities (user_id, tenant_id, provider, connection_id, subject, email)
 VALUES (@user_id, @tenant_id, @provider, @connection_id::uuid, @subject, @email)
 ON CONFLICT (tenant_id, provider, connection_id, subject) DO NOTHING;

@@ -46,13 +46,45 @@ func directoryService(t *testing.T) *Service {
 	pool := dbtest.Pool(t)
 	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
 	authSvc.SetMFA(noFactors{})
-	svc := NewService(pool, authSvc, egress.DevelopmentPolicy())
+	return serviceOver(t, authSvc)
+}
+
+// serviceOver returns the LDAP service signing people in through authSvc,
+// allowed to reach loopback directories and able to open what the tests seal.
+func serviceOver(t *testing.T, authSvc *auth.Service) *Service {
+	t.Helper()
+	svc := NewService(dbtest.Pool(t), authSvc, egress.DevelopmentPolicy())
+	svc.SetCipher(testCipher(t))
+	return svc
+}
+
+// testCipher seals what the tests store.
+func testCipher(t *testing.T) *envelope.Cipher {
+	t.Helper()
 	box, err := envelope.New([]byte("0123456789abcdef0123456789abcdef"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc.SetCipher(box)
-	return svc
+	return box
+}
+
+// storedConnection stores an active directory connection of tenant at
+// serverURL, whose service account bindDN binds with "service-secret".
+func storedConnection(t *testing.T, tenant uuid.UUID, serverURL, bindDN string) uuid.UUID {
+	t.Helper()
+	id := uuid.New()
+	ct, nonce, err := testCipher(t).Seal(tenant, "ldap-bind", id.String(), []byte("service-secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `
+		INSERT INTO tenant.ldap_connections
+		    (id, tenant_id, name, server_url, bind_dn, bind_password_ct, bind_password_nonce, base_dn, status)
+		VALUES ($1, $2, 'Directory', $3, $4, $5, $6, 'dc=example,dc=test', 'active')
+	`, id, tenant, serverURL, bindDN, ct, nonce); err != nil {
+		t.Fatalf("connection: %v", err)
+	}
+	return id
 }
 
 // TestDirectoryConnectionsOverHTTP checks that an organisation manages its
@@ -149,10 +181,10 @@ func TestDirectoryConnectionsOverHTTP(t *testing.T) {
 	if first.code != http.StatusOK || !strings.Contains(first.body, `"access_token"`) {
 		t.Fatalf("first sign-in: %d %s", first.code, first.body)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1 AND tenant_id = $2 AND display_name = 'Bob'`, dir.entries["bob"].attrs["mail"], tenant); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1 AND tenant_id = $2 AND display_name = 'Bob'`, dir.entries["bob"].attrs["mail"], tenant); n != 1 {
 		t.Errorf("%d accounts provisioned for bob in the organisation, want 1", n)
 	}
-	if again := signIn("bob", "bob-secret"); again.code != http.StatusOK || dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1`, dir.entries["bob"].attrs["mail"]) != 1 {
+	if again := signIn("bob", "bob-secret"); again.code != http.StatusOK || dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, dir.entries["bob"].attrs["mail"]) != 1 {
 		t.Errorf("second sign-in: %d %s", again.code, again.body)
 	}
 	if res := signIn("eve", "eve-secret"); !strings.Contains(res.body, errs.CodeLDAPAccountNotInTenant) {
@@ -220,47 +252,20 @@ type response struct {
 }
 
 // TestDirectoryConnectionLimits checks that a plan without directory sign-in
-// can't add a connection, and that a connection stored with a plaintext
-// service password has it encrypted the first time it is used.
+// can't add a connection.
 func TestDirectoryConnectionLimits(t *testing.T) {
 	ctx := dbtest.Context(t)
-	pool := dbtest.Pool(t)
 	tenant := dbtest.Tenant(t)
 	svc := directoryService(t)
-	dir := &directory{binds: map[string]string{"cn=service,dc=example,dc=test": "older-plain-secret"}}
-	serverURL := dir.start(t)
-
 	svc.SetPlanGate(noLDAP{})
-	tx, err := pool.Begin(ctx)
+	tx, err := dbtest.Pool(t).Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = svc.Create(ctx, tx, tenant, CreateInput{Name: "Directory", ServerURL: serverURL, BindDN: "cn=service,dc=example,dc=test", BindPassword: "x", BaseDN: "dc=example,dc=test"})
+	_, err = svc.Create(ctx, tx, tenant, CreateInput{Name: "Directory", ServerURL: "ldap://127.0.0.1:1", BindDN: "cn=service,dc=example,dc=test", BindPassword: "x", BaseDN: "dc=example,dc=test"})
 	_ = tx.Rollback(ctx)
 	if !strings.Contains(errorCode(err), errs.CodeUpgradeRequired) {
 		t.Errorf("create on a plan without directory sign-in: %v, want an upgrade", err)
-	}
-
-	var id uuid.UUID
-	if err := pool.QueryRow(ctx, `
-		INSERT INTO tenant.ldap_connections (tenant_id, name, server_url, bind_dn, bind_password, base_dn)
-		VALUES ($1, 'Directory', $2, 'cn=service,dc=example,dc=test', 'older-plain-secret', 'dc=example,dc=test')
-		RETURNING id
-	`, tenant, serverURL).Scan(&id); err != nil {
-		t.Fatal(err)
-	}
-	for range 2 {
-		if err := svc.TestConnection(ctx, tenant, id); err != nil {
-			t.Fatalf("test: %v", err)
-		}
-	}
-	var plain string
-	var version int
-	if err := pool.QueryRow(ctx, `SELECT bind_password, encryption_version FROM tenant.ldap_connections WHERE id = $1`, id).Scan(&plain, &version); err != nil {
-		t.Fatal(err)
-	}
-	if plain != "" || version != 1 {
-		t.Errorf("after use the service password is %q at version %d; want it encrypted", plain, version)
 	}
 }
 

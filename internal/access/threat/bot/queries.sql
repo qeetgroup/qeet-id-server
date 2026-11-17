@@ -5,7 +5,7 @@
 -- ambiguous; correctness takes priority over coverage.
 
 -- name: GetUserTenantByEmail :one
-SELECT id, tenant_id FROM "user".users
+SELECT id, tenant_id FROM account.users
 WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL AND tenant_id IS NOT NULL
 LIMIT 1;
 

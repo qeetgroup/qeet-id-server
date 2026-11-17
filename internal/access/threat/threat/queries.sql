@@ -5,18 +5,18 @@
 -- ambiguous; correctness takes priority over coverage.
 
 -- name: GetUserForAnomaly :one
-SELECT id, tenant_id FROM "user".users
+SELECT id, tenant_id FROM account.users
 WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL AND tenant_id IS NOT NULL
 LIMIT 1;
 
 -- name: ListTenantsForEmails :many
 -- The organisations the given (lowercased) addresses belong to.
-SELECT DISTINCT tenant_id::uuid AS tenant_id FROM "user".users
+SELECT DISTINCT tenant_id::uuid AS tenant_id FROM account.users
 WHERE LOWER(email) = ANY(@emails::text[]) AND deleted_at IS NULL AND tenant_id IS NOT NULL;
 
 -- name: ListTenantUsersForEmails :many
 -- The accounts of one organisation among the given (lowercased) addresses.
-SELECT id FROM "user".users
+SELECT id FROM account.users
 WHERE tenant_id = @tenant_id::uuid AND LOWER(email) = ANY(@emails::text[]) AND deleted_at IS NULL;
 
 -- ListSecurityEvents is intentionally hand-written in threat.go because

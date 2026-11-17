@@ -31,7 +31,7 @@ func (q *Queries) DeleteLdapConnection(ctx context.Context, arg DeleteLdapConnec
 }
 
 const getExternalIdentityUser = `-- name: GetExternalIdentityUser :one
-SELECT user_id FROM "user".external_identities
+SELECT user_id FROM account.external_identities
 WHERE tenant_id = $1 AND provider = $2 AND connection_id = $3::uuid
   AND subject = $4
 `
@@ -109,7 +109,7 @@ func (q *Queries) GetLdapConnection(ctx context.Context, arg GetLdapConnectionPa
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id FROM "user".users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL
+SELECT id FROM account.users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (uuid.UUID, error) {
@@ -120,7 +120,7 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (uuid.UUID, 
 }
 
 const insertUserWithEmail = `-- name: InsertUserWithEmail :one
-INSERT INTO "user".users (tenant_id, email, email_verified_at, display_name, status)
+INSERT INTO account.users (tenant_id, email, email_verified_at, display_name, status)
 VALUES ($1, $2, NOW(), $3, 'active')
 RETURNING id
 `
@@ -139,7 +139,7 @@ func (q *Queries) InsertUserWithEmail(ctx context.Context, arg InsertUserWithEma
 }
 
 const linkExternalIdentity = `-- name: LinkExternalIdentity :exec
-INSERT INTO "user".external_identities (user_id, tenant_id, provider, connection_id, subject, email)
+INSERT INTO account.external_identities (user_id, tenant_id, provider, connection_id, subject, email)
 VALUES ($1, $2, $3, $4::uuid, $5, $6)
 ON CONFLICT (tenant_id, provider, connection_id, subject) DO NOTHING
 `

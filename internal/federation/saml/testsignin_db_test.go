@@ -116,9 +116,9 @@ func TestSAMLTestSignIn(t *testing.T) {
 		t.Errorf("attributes %+v; want the email and name the IdP sent", got.Attributes)
 	}
 	for what, n := range map[string]int{
-		"accounts":          dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE lower(email) = $1`, tester),
-		"linked identities": dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE connection_id = $1`, conn.ID),
-		"login codes":       dbtest.Count(t, `SELECT count(*) FROM auth.saml_login_codes WHERE tenant_id = $1`, tenant),
+		"accounts":          dbtest.Count(t, `SELECT count(*) FROM account.users WHERE lower(email) = $1`, tester),
+		"linked identities": dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE connection_id = $1`, conn.ID),
+		"login codes":       dbtest.Count(t, `SELECT count(*) FROM auth.login_codes WHERE tenant_id = $1`, tenant),
 		"sessions":          dbtest.Count(t, `SELECT count(*) FROM auth.sessions WHERE tenant_id = $1`, tenant),
 		"sign-ins recorded": dbtest.Count(t, `SELECT count(*) FROM tenant.saml_connections WHERE id = $1 AND last_login_at IS NOT NULL`, conn.ID),
 	} {

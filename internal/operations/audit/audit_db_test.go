@@ -206,7 +206,7 @@ func TestEventsNameWhatTheyAreAbout(t *testing.T) {
 	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
 	person := dbtest.User(t, tenant, tenant)
 	unnamed := dbtest.User(t, tenant, tenant)
-	if _, err := pool.Exec(ctx, `UPDATE "user".users SET display_name = 'Asha Rao' WHERE id = $1`, person.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET display_name = 'Asha Rao' WHERE id = $1`, person.ID); err != nil {
 		t.Fatal(err)
 	}
 	var role, otherRole, group, policy uuid.UUID

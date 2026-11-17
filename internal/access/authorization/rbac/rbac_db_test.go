@@ -233,7 +233,7 @@ func TestRolesSayWhoHoldsThem(t *testing.T) {
 	for _, u := range []uuid.UUID{both.ID, viaGroup.ID} {
 		exec(`INSERT INTO tenant.group_members (group_id, user_id, tenant_id) VALUES ($1, $2, $3)`, group, u, tenant)
 	}
-	exec(`UPDATE "user".users SET deleted_at = NOW() WHERE id = $1`, gone.ID)
+	exec(`UPDATE account.users SET deleted_at = NOW() WHERE id = $1`, gone.ID)
 
 	repo := NewRepository(pool)
 	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Repo: repo, Service: NewService(repo), Validate: validator.New()}).Mount)

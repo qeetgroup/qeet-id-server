@@ -39,8 +39,8 @@ func TestReportJudgesEachComponentByTheOrganisation(t *testing.T) {
 	}
 
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO tenant.webhook_subscriptions (tenant_id, url, secret, events, failing_since)
-		VALUES ($1, 'https://hooks.example.com/a', 's', '{user.created}', NOW() - INTERVAL '1 hour')`, tenant); err != nil {
+		INSERT INTO tenant.webhook_subscriptions (tenant_id, url, secret_ct, secret_nonce, events, failing_since)
+		VALUES ($1, 'https://hooks.example.com/a', '\x00', '\x00', '{user.created}', NOW() - INTERVAL '1 hour')`, tenant); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `

@@ -229,7 +229,7 @@ func (s *Service) ClaimPushPairing(ctx context.Context, code, name, pushToken, p
 	err = tx.QueryRow(ctx, `
 		SELECT p.id, p.user_id, p.tenant_id, u.email
 		FROM auth.mfa_push_pairings p
-		JOIN "user".users u ON u.id = p.user_id
+		JOIN account.users u ON u.id = p.user_id
 		WHERE p.code_hash = $1 AND p.used_at IS NULL AND p.expires_at > NOW()
 		  AND u.status = 'active' AND u.deleted_at IS NULL
 		FOR UPDATE OF p

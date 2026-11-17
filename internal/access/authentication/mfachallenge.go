@@ -399,7 +399,7 @@ func (s *Service) noticeMFALocked(ctx context.Context, userID uuid.UUID) {
 		return
 	}
 	var email string
-	if err := s.pool.QueryRow(ctx, `SELECT email FROM "user".users WHERE id = $1`, userID).Scan(&email); err != nil {
+	if err := s.pool.QueryRow(ctx, `SELECT email FROM account.users WHERE id = $1`, userID).Scan(&email); err != nil {
 		slog.Warn("auth: could not read the address for an MFA lock notice", "user_id", userID, "err", err)
 		return
 	}

@@ -48,8 +48,8 @@ func TestSuspensionEndsSessionsAndIsReviewed(t *testing.T) {
 	session(t, target.ID, tenant, "")
 	session(t, target.ID, nil, "")
 	guest := dbtest.User(t, other, other, tenant)
-	exec(t, `UPDATE "user".users SET status = 'suspended' WHERE id = $1`, guest.ID)
-	exec(t, `UPDATE "user".users SET suspension_reason = 'account_compromise', suspension_risk = 'high' WHERE id = $1`, guest.ID)
+	exec(t, `UPDATE account.users SET status = 'suspended' WHERE id = $1`, guest.ID)
+	exec(t, `UPDATE account.users SET suspension_reason = 'account_compromise', suspension_risk = 'high' WHERE id = $1`, guest.ID)
 	h := testHandler(t, nil)
 	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), h.Mount)
 	path := "/users/" + target.ID.String()
@@ -117,7 +117,7 @@ func TestSuspensionEndsSessionsAndIsReviewed(t *testing.T) {
 	if n := audited(t, tenant, "user.reactivated", target.ID); n != 1 {
 		t.Errorf("%d user.reactivated audit events, want 1", n)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND suspended_at IS NULL AND suspension_reason IS NULL`, target.ID); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND suspended_at IS NULL AND suspension_reason IS NULL`, target.ID); n != 1 {
 		t.Error("reactivating kept the suspension's details")
 	}
 	if rec := dbtest.Do(t, as, http.MethodPost, path+"/reactivate", nil); rec.Code != http.StatusConflict {
@@ -200,7 +200,7 @@ func TestDeleteRestoreAndPurge(t *testing.T) {
 	if rec := dbtest.Do(t, as, http.MethodDelete, path+"/purge", nil); rec.Code != http.StatusNoContent {
 		t.Fatalf("purge: %d %s", rec.Code, rec.Body.String())
 	}
-	if n := dbtest.Count(t, `SELECT (SELECT count(*) FROM "user".users WHERE id = $1) + (SELECT count(*) FROM auth.password_credentials WHERE user_id = $1)`, target.ID); n != 0 {
+	if n := dbtest.Count(t, `SELECT (SELECT count(*) FROM account.users WHERE id = $1) + (SELECT count(*) FROM auth.password_credentials WHERE user_id = $1)`, target.ID); n != 0 {
 		t.Error("the purge left the account or its password behind")
 	}
 	if n := audited(t, tenant, "user.purged", target.ID); n != 1 {
@@ -360,7 +360,7 @@ func TestMemberFromElsewhereIsReadOnly(t *testing.T) {
 		}
 	}
 	if n := dbtest.Count(t, `
-		SELECT count(*) FROM "user".users
+		SELECT count(*) FROM account.users
 		WHERE id = $1 AND status = 'active' AND deleted_at IS NULL AND display_name IS NULL AND NOT mfa_required
 	`, member.ID); n != 1 {
 		t.Error("another organisation changed the member's account")
@@ -387,14 +387,14 @@ func TestSuspendedPagesFollowTheirOrder(t *testing.T) {
 		u := dbtest.User(t, tenant, tenant)
 		// The suspension trigger stamps the time of any status change, so the
 		// chosen time is written after it.
-		exec(t, `UPDATE "user".users SET status = 'suspended' WHERE id = $1`, u.ID)
-		exec(t, `UPDATE "user".users SET suspended_at = $2 WHERE id = $1`, u.ID, when)
+		exec(t, `UPDATE account.users SET status = 'suspended' WHERE id = $1`, u.ID)
+		exec(t, `UPDATE account.users SET suspended_at = $2 WHERE id = $1`, u.ID, when)
 		own = append(own, dated{u.ID, when})
 	}
 	var guests []uuid.UUID
 	for range 2 {
 		g := dbtest.User(t, other, other, tenant)
-		exec(t, `UPDATE "user".users SET status = 'suspended' WHERE id = $1`, g.ID)
+		exec(t, `UPDATE account.users SET status = 'suspended' WHERE id = $1`, g.ID)
 		guests = append(guests, g.ID)
 	}
 	slices.SortFunc(own, func(a, b dated) int {
@@ -436,7 +436,7 @@ func TestSuspendedSearchTakesWildcardsLiterally(t *testing.T) {
 	names := map[string]uuid.UUID{}
 	for _, name := range []string{"qa_b", "qaXb", "100%", "plain"} {
 		u := dbtest.User(t, tenant, tenant)
-		exec(t, `UPDATE "user".users SET status = 'suspended', display_name = $2 WHERE id = $1`, u.ID, name)
+		exec(t, `UPDATE account.users SET status = 'suspended', display_name = $2 WHERE id = $1`, u.ID, name)
 		names[name] = u.ID
 	}
 	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), testHandler(t, nil).Mount)

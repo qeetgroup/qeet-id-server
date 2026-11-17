@@ -9,9 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
-	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -32,41 +29,6 @@ import (
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
 
-func TestDirectoryMigrationsRoundTrip(test *testing.T) {
-	pool := dbtest.Owner(test)
-	ctx := dbtest.Context(test)
-	_, source, _, _ := runtime.Caller(0)
-	directory := filepath.Join(filepath.Dir(source), "..", "..", "platform", "database", "migrations")
-	for _, migration := range []string{
-		"0225_directory_event_reasons.down.sql",
-		"0111_suspension_review.down.sql",
-		"0110_directory_mappings.down.sql",
-		"0109_directory_events.down.sql",
-		"0109_directory_events.up.sql",
-		"0110_directory_mappings.up.sql",
-		"0111_suspension_review.up.sql",
-		"0225_directory_event_reasons.up.sql",
-	} {
-		script, err := os.ReadFile(filepath.Join(directory, migration))
-		if err != nil {
-			test.Fatal(err)
-		}
-		if _, err := pool.Exec(ctx, string(script)); err != nil {
-			test.Fatalf("migration %s: %v", migration, err)
-		}
-	}
-	for _, table := range []string{"directory_events", "directory_alerts", "directory_mappings", "directory_profiles"} {
-		var exists bool
-		if err := pool.QueryRow(ctx, `SELECT to_regclass('tenant.' || $1) IS NOT NULL`, table).Scan(&exists); err != nil || !exists {
-			test.Fatalf("table %s was not restored: %v", table, err)
-		}
-	}
-	var columns int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema='user' AND table_name='users' AND column_name IN ('suspended_at','suspension_reason','suspension_source','suspension_risk','suspension_review')`).Scan(&columns); err != nil || columns != 5 {
-		test.Fatalf("suspension columns were not restored: count=%d err=%v", columns, err)
-	}
-}
-
 func TestEventStoreTenantIsolationAndAlerts(test *testing.T) {
 	pool := dbtest.Pool(test)
 	ctx := dbtest.Context(test)
@@ -76,7 +38,7 @@ func TestEventStoreTenantIsolationAndAlerts(test *testing.T) {
 			test.Fatal(err)
 		}
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO "user".users(id,tenant_id,email,status) VALUES($1,$2,$3,'active')`, userID, tenantID, userID.String()+"@example.test"); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO account.users(id,tenant_id,email,status) VALUES($1,$2,$3,'active')`, userID, tenantID, userID.String()+"@example.test"); err != nil {
 		test.Fatal(err)
 	}
 	service := NewService(&scimFixture{config: &scim.ConfigView{TokenSet: true}}, &ldapFixture{})
@@ -180,7 +142,7 @@ func TestSavedMappingAppliesToSCIMAndRejectsStaleOrForeignWrites(test *testing.T
 	if _, err := pool.Exec(ctx, `INSERT INTO tenant.tenants(id,slug,name) VALUES($1,$2,'Mapping test')`, tenantID, tenantID.String()); err != nil {
 		test.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO "user".users(id,tenant_id,email,status) VALUES($1,$2,$3,'active')`, actorID, tenantID, actorID.String()+"@example.test"); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO account.users(id,tenant_id,email,status) VALUES($1,$2,$3,'active')`, actorID, tenantID, actorID.String()+"@example.test"); err != nil {
 		test.Fatal(err)
 	}
 	scimService := scim.NewService(pool, user.NewRepository(pool))
@@ -274,11 +236,11 @@ func TestSuspendedDirectoryPrivacyReviewAndReactivation(test *testing.T) {
 		id, tenant uuid.UUID
 		status     string
 	}{{actorID, tenantID, "active"}, {ownedID, tenantID, "suspended"}, {foreignID, foreignTenant, "suspended"}} {
-		if _, err := pool.Exec(ctx, `INSERT INTO "user".users(id,tenant_id,email,status) VALUES($1,$2,$3,$4)`, record.id, record.tenant, record.id.String()+"@example.test", record.status); err != nil {
+		if _, err := pool.Exec(ctx, `INSERT INTO account.users(id,tenant_id,email,status) VALUES($1,$2,$3,$4)`, record.id, record.tenant, record.id.String()+"@example.test", record.status); err != nil {
 			test.Fatal(err)
 		}
 	}
-	if _, err := pool.Exec(ctx, `UPDATE "user".users SET suspension_risk='high',suspension_reason='account_compromise' WHERE id=$1`, foreignID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET suspension_risk='high',suspension_reason='account_compromise' WHERE id=$1`, foreignID); err != nil {
 		test.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO rbac.roles(id,tenant_id,name) VALUES($1,$2,'directory-reader')`, roleID, tenantID); err != nil {
@@ -351,7 +313,7 @@ func TestRefusedSignInIsNotASyncError(test *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO tenant.tenants(id,slug,name) VALUES($1,$2,'Directory test')`, tenantID, tenantID.String()); err != nil {
 		test.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO "user".users(id,tenant_id,email,status) VALUES($1,$2,$3,'active')`, userID, tenantID, userID.String()+"@example.test"); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO account.users(id,tenant_id,email,status) VALUES($1,$2,$3,'active')`, userID, tenantID, userID.String()+"@example.test"); err != nil {
 		test.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO tenant.directory_alerts(id,tenant_id,user_id,name,threshold) VALUES($1,$2,$3,'Directory failures',1)`, uuid.New(), tenantID, userID); err != nil {
@@ -419,7 +381,7 @@ func TestRetryRecordsItsOwnCheck(test *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO tenant.tenants(id,slug,name) VALUES($1,$2,'Directory test')`, tenantID, tenantID.String()); err != nil {
 		test.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO "user".users(id,tenant_id,email,status) VALUES($1,$2,$3,'active')`, userID, tenantID, userID.String()+"@example.test"); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO account.users(id,tenant_id,email,status) VALUES($1,$2,$3,'active')`, userID, tenantID, userID.String()+"@example.test"); err != nil {
 		test.Fatal(err)
 	}
 	service := NewService(&scimFixture{config: &scim.ConfigView{}}, &ldapFixture{})
@@ -568,7 +530,7 @@ func TestConnectionsCountTheirPeopleAndGroups(test *testing.T) {
 	service.SetEventStore(pool)
 	link := func(tenant uuid.UUID, connection uuid.UUID) uuid.UUID {
 		person := dbtest.User(test, tenant, tenant)
-		if _, err := pool.Exec(ctx, `INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject, connection_id) VALUES ($1, $2, 'ldap', $3, $4)`,
+		if _, err := pool.Exec(ctx, `INSERT INTO account.external_identities (user_id, tenant_id, provider, subject, connection_id) VALUES ($1, $2, 'ldap', $3, $4)`,
 			person.ID, tenant, uuid.NewString(), connection); err != nil {
 			test.Fatal(err)
 		}
@@ -577,7 +539,7 @@ func TestConnectionsCountTheirPeopleAndGroups(test *testing.T) {
 	link(tenantID, first)
 	link(tenantID, first)
 	gone := link(tenantID, first)
-	if _, err := pool.Exec(ctx, `UPDATE "user".users SET deleted_at = NOW() WHERE id = $1`, gone); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET deleted_at = NOW() WHERE id = $1`, gone); err != nil {
 		test.Fatal(err)
 	}
 	link(other, first) // another organisation's identity naming the same id

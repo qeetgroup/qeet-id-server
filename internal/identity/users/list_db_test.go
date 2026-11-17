@@ -33,15 +33,15 @@ func TestTheMembersListIsSearchedAndCountedOnTheServer(t *testing.T) {
 	}
 	alice := dbtest.UserAt(t, dbtest.Unique("alice")+"@example.test", tenant)
 	dbtest.Assign(t, alice.ID, tenant, admin)
-	exec(`UPDATE "user".users SET display_name = 'Alice Arden', email_verified_at = NOW(), metadata = '{"department":"Sales"}' WHERE id = $1`, alice.ID)
+	exec(`UPDATE account.users SET display_name = 'Alice Arden', email_verified_at = NOW(), metadata = '{"department":"Sales"}' WHERE id = $1`, alice.ID)
 	exec(`INSERT INTO auth.sessions (user_id, tenant_id, last_seen_at) VALUES ($1, $2, NOW())`, alice.ID, tenant)
 
 	bob := dbtest.UserAt(t, dbtest.Unique("bob")+"@example.test", tenant, tenant)
-	exec(`UPDATE "user".users SET display_name = 'Bob Brook', metadata = '{"department":"Engineering"}' WHERE id = $1`, bob.ID)
-	exec(`INSERT INTO auth.mfa_totp (user_id, secret, confirmed_at) VALUES ($1, 'secret', NOW())`, bob.ID)
+	exec(`UPDATE account.users SET display_name = 'Bob Brook', metadata = '{"department":"Engineering"}' WHERE id = $1`, bob.ID)
+	exec(`INSERT INTO auth.mfa_totp (user_id, secret_ct, secret_nonce, confirmed_at) VALUES ($1, '\x00', '\x00', NOW())`, bob.ID)
 
 	carol := dbtest.UserAt(t, dbtest.Unique("carol")+"@example.test", tenant, tenant)
-	exec(`UPDATE "user".users SET display_name = 'Carol Cole', email_verified_at = NOW(), status = 'suspended' WHERE id = $1`, carol.ID)
+	exec(`UPDATE account.users SET display_name = 'Carol Cole', email_verified_at = NOW(), status = 'suspended' WHERE id = $1`, carol.ID)
 	exec(`INSERT INTO auth.sessions (user_id, tenant_id, last_seen_at) VALUES ($1, $2, NOW() - INTERVAL '3 days')`, carol.ID, tenant)
 
 	visitor := dbtest.User(t, other, tenant) // managed by another organisation
@@ -158,7 +158,7 @@ func TestAMembersRecordSaysWhereTheyStand(t *testing.T) {
 	admin := dbtest.User(t, tenant, tenant)
 	visitor := dbtest.User(t, other, tenant)
 	suspended := dbtest.User(t, tenant, tenant)
-	if _, err := pool.Exec(ctx, `UPDATE "user".users SET status = 'suspended' WHERE id = $1`, suspended.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET status = 'suspended' WHERE id = $1`, suspended.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO audit.events (tenant_id, actor_user_id, actor_type, action, resource_type, resource_id)

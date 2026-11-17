@@ -12,7 +12,7 @@ const allowlist = `
 #   queries.sql: <name> is the sqlc query name.
 #   Go:          <name> is the enclosing function (Recv.Method for a method).
 #
-# Accounts in "user".users are global (email is unique platform-wide and
+# Accounts in account.users are global (email is unique platform-wide and
 # membership lives in rbac.user_roles), so account reads by ID appear here.
 #
 # Categories:
@@ -111,7 +111,6 @@ internal/federation/adminportal/queries.sql#GetAdminPortalLinkByHash  pending-re
 internal/federation/adminportal/queries.sql#TouchAdminPortalLinkUsed  pending-review: unused query; delete it or add a tenant condition
 internal/federation/identitylink/identitylink.go#AddressVerified  pre-tenant: federated sign-in checks the account it found
 internal/federation/identitylink/identitylink.go#MarkAddressVerified  pre-tenant: federated sign-in marks the home account it just adopted
-internal/federation/ldap/ldap.go#Service.getFull  parent-scoped: re-encrypts the connection row just read
 internal/federation/ldap/queries.sql#GetUserByEmail  pre-tenant: federated sign-in finds the account by email
 internal/federation/ldap/queries.sql#TouchLdapLastLogin  parent-scoped: connection row read for this sign-in
 internal/federation/oidc/queries.sql#ApproveCIBARequest  parent-scoped: request locked and checked against the caller
@@ -148,14 +147,12 @@ internal/federation/oidc/queries.sql#RevokeRefreshTokenGrant  secret-lookup: by 
 internal/federation/oidc/queries.sql#SessionClients  session-scoped: clients of the login session being ended
 internal/federation/oidc/queries.sql#TouchCIBAPollTime  secret-lookup: request found by its auth_req_id hash
 internal/federation/oidc/queries.sql#TouchDevicePollTime  secret-lookup: request found by its device code hash
-internal/federation/oidcsso/queries.sql#ConsumeOidcConnectionLoginCode  secret-lookup: by login code hash; the connection it joins names the tenant
 internal/federation/oidcsso/queries.sql#GetOidcConnectionForSignIn  pre-tenant: public sign-in endpoints; the connection in the path names the tenant
 internal/federation/oidcsso/queries.sql#GetUserByEmail  pre-tenant: federated sign-in finds the account by email
 internal/federation/saml/queries.sql#GetSamlConnectionByID  pre-tenant: public SSO endpoints; the connection in the path names the tenant
 internal/federation/saml/queries.sql#GetUserByEmail  pre-tenant: federated sign-in finds the account by email
 internal/federation/saml/queries.sql#GetUserForIdP  session-scoped: the IdP session's user; its tenant is compared to the SP's
 internal/federation/saml/queries.sql#ListSamlMetadataDue  background-sweep: the metadata refresh job finds every organisation's due connections
-internal/federation/saml/queries.sql#MarkSamlLoginCodeUsed  secret-lookup: by login code hash
 internal/federation/saml/queries.sql#TouchSamlLastLogin  parent-scoped: connection row read for this sign-in
 internal/federation/saml/queries.sql#TouchSamlSPLastLogin  parent-scoped: service provider row read for this sign-in
 internal/federation/saml/saml.go#Service.AllowsIdPInitiated  parent-scoped: connection ID from a read that checked it
@@ -167,7 +164,6 @@ internal/federation/social/queries.sql#ConsumeSocialOAuthState  secret-lookup: s
 internal/federation/social/queries.sql#DeleteExternalIdentityForUser  pending-review: unused query; delete it or add a tenant condition
 internal/federation/social/queries.sql#GetUserByEmail  pre-tenant: social sign-in finds the account by email
 internal/federation/social/queries.sql#ListExternalIdentitiesForUser  pending-review: unused query; delete it or add a tenant condition
-internal/federation/social/queries.sql#MarkSocialLoginCodeUsed  secret-lookup: by login code hash
 internal/federation/social/social.go#Service.refuseCapturedAccount  pre-tenant: social sign-in reads the address of the account it found
 internal/federation/social/social.go#requireVerifiedAddress  pre-tenant: social sign-in checks the account it found
 

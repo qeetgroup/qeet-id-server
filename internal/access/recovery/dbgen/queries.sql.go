@@ -15,7 +15,7 @@ import (
 
 const accountBelongsTo = `-- name: AccountBelongsTo :one
 SELECT EXISTS (
-    SELECT 1 FROM "user".users WHERE id = $1 AND tenant_id = $2::uuid
+    SELECT 1 FROM account.users WHERE id = $1 AND tenant_id = $2::uuid
     UNION ALL
     SELECT 1 FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2::uuid
 )::bool AS belongs
@@ -60,7 +60,7 @@ func (q *Queries) ExpirePasswordResets(ctx context.Context, userID uuid.UUID) er
 }
 
 const getMagicLinkAccount = `-- name: GetMagicLinkAccount :one
-SELECT id, tenant_id, email FROM "user".users
+SELECT id, tenant_id, email FROM account.users
 WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL AND status <> 'suspended'
 `
 
@@ -139,7 +139,7 @@ func (q *Queries) GetPasswordResetByToken(ctx context.Context, tokenHash string)
 }
 
 const getResetAccount = `-- name: GetResetAccount :one
-SELECT tenant_id, email FROM "user".users WHERE id = $1
+SELECT tenant_id, email FROM account.users WHERE id = $1
 `
 
 type GetResetAccountRow struct {
@@ -158,7 +158,7 @@ func (q *Queries) GetResetAccount(ctx context.Context, id uuid.UUID) (GetResetAc
 
 const getUserIDByEmailForTenant = `-- name: GetUserIDByEmailForTenant :one
 
-SELECT id FROM "user".users
+SELECT id FROM account.users
 WHERE tenant_id = $1 AND LOWER(email) = LOWER($2) AND deleted_at IS NULL
 `
 
@@ -265,7 +265,7 @@ func (q *Queries) UpsertPasswordCredential(ctx context.Context, arg UpsertPasswo
 }
 
 const verifyEmailByLink = `-- name: VerifyEmailByLink :one
-UPDATE "user".users SET email_verified_at = NOW(), updated_at = NOW()
+UPDATE account.users SET email_verified_at = NOW(), updated_at = NOW()
 WHERE id = $1 AND email_verified_at IS NULL AND deleted_at IS NULL
 RETURNING email
 `

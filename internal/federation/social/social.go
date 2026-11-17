@@ -255,10 +255,8 @@ func (s *Service) UpsertProvider(ctx context.Context, in CreateProviderInput) (*
 			UPDATE tenant.social_providers SET
 			    client_id = $3,
 			    discovery_url = NULLIF($6, ''),
-			    client_secret = CASE WHEN $7::boolean THEN '' ELSE client_secret END,
 			    client_secret_ct = CASE WHEN $7::boolean THEN $4 ELSE client_secret_ct END,
 			    client_secret_nonce = CASE WHEN $7::boolean THEN $5 ELSE client_secret_nonce END,
-			    encryption_version = CASE WHEN $7::boolean THEN 1 ELSE encryption_version END,
 			    apple_team_id = NULLIF($8, ''),
 			    apple_key_id = NULLIF($9, '')
 			WHERE tenant_id = $1 AND provider = $2
@@ -269,9 +267,9 @@ func (s *Service) UpsertProvider(ctx context.Context, in CreateProviderInput) (*
 	} else {
 		err = tx.QueryRow(ctx, `
 			INSERT INTO tenant.social_providers
-			    (tenant_id, provider, client_id, client_secret, client_secret_ct,
-			     client_secret_nonce, encryption_version, discovery_url, apple_team_id, apple_key_id)
-			VALUES ($1, $2, $3, '', $4, $5, 1, NULLIF($6, ''), NULLIF($7, ''), NULLIF($8, ''))
+			    (tenant_id, provider, client_id, client_secret_ct, client_secret_nonce,
+			     discovery_url, apple_team_id, apple_key_id)
+			VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), NULLIF($7, ''), NULLIF($8, ''))
 			RETURNING id, tenant_id, provider, client_id, discovery_url, enabled, created_at, apple_team_id, apple_key_id
 		`, in.TenantID, in.Provider, in.ClientID, ciphertext, nonce, in.DiscoveryURL, in.AppleTeamID, in.AppleKeyID).Scan(
 			&r.ID, &r.TenantID, &r.Provider, &r.ClientID, &r.DiscoveryURL, &r.Enabled, &r.CreatedAt, &r.AppleTeamID, &r.AppleKeyID,
@@ -370,7 +368,7 @@ func (s *Service) Unlink(ctx context.Context, id, tenantID uuid.UUID, by user.Re
 	// The account's other ways to sign in span its organisations.
 	ctx = postgres.AcrossTenants(ctx)
 	var owner uuid.UUID
-	if err := s.pool.QueryRow(ctx, `SELECT user_id FROM "user".external_identities WHERE id = $1 AND tenant_id = $2`,
+	if err := s.pool.QueryRow(ctx, `SELECT user_id FROM account.external_identities WHERE id = $1 AND tenant_id = $2`,
 		id, tenantID).Scan(&owner); errors.Is(err, pgx.ErrNoRows) {
 		return errs.ErrNotFound
 	} else if err != nil {
@@ -409,7 +407,7 @@ func (s *Service) Unlink(ctx context.Context, id, tenantID uuid.UUID, by user.Re
 // ListIdentitiesForUser returns the caller's connected social accounts. Console
 // accounts are tenant-less, so this reads the platform identities table (which
 // platform sign-in and the link flow populate) rather than the tenant-scoped
-// "user".external_identities.
+// account.external_identities.
 func (s *Service) ListIdentitiesForUser(ctx context.Context, userID uuid.UUID) ([]ExternalIdentity, error) {
 	rows, err := s.q.ListPlatformSocialIdentitiesForUser(ctx, userID)
 	if err != nil {
@@ -504,15 +502,15 @@ func (s *Service) resolveTenant(ctx context.Context, ref string) (uuid.UUID, err
 func (s *Service) loadProvider(ctx context.Context, tenantID uuid.UUID, provider string) (providerConfig, error) {
 	var pc providerConfig
 	var enabled bool
-	var clientID, legacySecret string
+	var clientID string
 	var discoveryURL, teamID, keyID *string
 	var ciphertext, nonce []byte
 	err := s.pool.QueryRow(ctx, `
-		SELECT client_id, client_secret, client_secret_ct, client_secret_nonce,
+		SELECT client_id, client_secret_ct, client_secret_nonce,
 		       discovery_url, enabled, apple_team_id, apple_key_id
 		FROM tenant.social_providers
 		WHERE tenant_id = $1 AND provider = $2
-	`, tenantID, provider).Scan(&clientID, &legacySecret, &ciphertext, &nonce, &discoveryURL, &enabled, &teamID, &keyID)
+	`, tenantID, provider).Scan(&clientID, &ciphertext, &nonce, &discoveryURL, &enabled, &teamID, &keyID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return pc, errs.ErrSocialProviderNotConfigured
 	}
@@ -538,34 +536,16 @@ func (s *Service) loadProvider(ctx context.Context, tenantID uuid.UUID, provider
 		pc.teamID, pc.keyID = *teamID, *keyID
 	}
 	pc.clientID = clientID
-	if len(ciphertext) > 0 {
-		if s.box == nil {
-			return pc, errs.ErrSocialProviderNotConfigured
-		}
-		plain, openErr := s.box.Open(tenantID, "social-provider", provider, ciphertext, nonce)
-		if openErr != nil {
-			return pc, openErr
-		}
-		pc.clientSecret = string(plain)
-		if pc.kind == kindApple {
-			pc.privateKey = pc.clientSecret
-		}
-	} else {
-		pc.clientSecret = legacySecret
-		if legacySecret != "" && s.box != nil {
-			ct, newNonce, sealErr := s.box.Seal(tenantID, "social-provider", provider, []byte(legacySecret))
-			if sealErr != nil {
-				return pc, sealErr
-			}
-			if _, updateErr := s.pool.Exec(ctx, `
-				UPDATE tenant.social_providers
-				SET client_secret = '', client_secret_ct = $3, client_secret_nonce = $4,
-				    encryption_version = 1
-				WHERE tenant_id = $1 AND provider = $2 AND client_secret_ct IS NULL
-			`, tenantID, provider, ct, newNonce); updateErr != nil {
-				return pc, updateErr
-			}
-		}
+	if s.box == nil {
+		return pc, errs.ErrSocialProviderNotConfigured
+	}
+	plain, err := s.box.Open(tenantID, "social-provider", provider, ciphertext, nonce)
+	if err != nil {
+		return pc, err
+	}
+	pc.clientSecret = string(plain)
+	if pc.kind == kindApple {
+		pc.privateKey = pc.clientSecret
 	}
 	return pc, nil
 }
@@ -888,7 +868,7 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, prov
 			verifiedAt = &now
 		}
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO "user".users (tenant_id, email, email_verified_at, display_name, status)
+			INSERT INTO account.users (tenant_id, email, email_verified_at, display_name, status)
 			VALUES ($1, $2, $3, $4, 'active')
 			RETURNING id
 		`, tenantID, ui.Email, verifiedAt, displayName).Scan(&userID); err != nil {
@@ -971,7 +951,7 @@ func (s *Service) refuseCapturedAccount(ctx context.Context, userID uuid.UUID) e
 		return nil
 	}
 	var email string
-	if err := s.pool.QueryRow(ctx, `SELECT email FROM "user".users WHERE id = $1`, userID).Scan(&email); err != nil {
+	if err := s.pool.QueryRow(ctx, `SELECT email FROM account.users WHERE id = $1`, userID).Scan(&email); err != nil {
 		return err
 	}
 	return s.capture.RefuseCaptured(ctx, email)
@@ -1095,7 +1075,7 @@ func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*a
 	if !row.Enabled {
 		return nil, errs.ErrSocialProviderNotConfigured
 	}
-	if err := q.MarkSocialLoginCodeUsed(ctx, codeHash); err != nil {
+	if err := q.MarkSocialLoginCodeUsed(ctx, dbgen.MarkSocialLoginCodeUsedParams{CodeHash: codeHash, TenantID: row.TenantID}); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -1628,7 +1608,7 @@ func requireVerifiedAddress(ctx context.Context, db interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }, userID uuid.UUID) error {
 	var verified bool
-	if err := db.QueryRow(ctx, `SELECT email_verified_at IS NOT NULL FROM "user".users WHERE id = $1`, userID).Scan(&verified); err != nil {
+	if err := db.QueryRow(ctx, `SELECT email_verified_at IS NOT NULL FROM account.users WHERE id = $1`, userID).Scan(&verified); err != nil {
 		return err
 	}
 	if !verified {

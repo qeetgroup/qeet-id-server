@@ -35,8 +35,8 @@ func ldapConnection(t *testing.T, tenant uuid.UUID) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID
 	if err := dbtest.Pool(t).QueryRow(context.Background(), `
-		INSERT INTO tenant.ldap_connections (tenant_id, name, server_url, bind_dn, bind_password, base_dn)
-		VALUES ($1, 'Directory', 'ldap://127.0.0.1:1', 'cn=service', 'secret', 'dc=example') RETURNING id
+		INSERT INTO tenant.ldap_connections (tenant_id, name, server_url, bind_dn, bind_password_ct, bind_password_nonce, base_dn)
+		VALUES ($1, 'Directory', 'ldap://127.0.0.1:1', 'cn=service', '\x00', '\x00', 'dc=example') RETURNING id
 	`, tenant).Scan(&id); err != nil {
 		t.Fatal(err)
 	}

@@ -115,7 +115,7 @@ WITH allowed AS (
     SELECT (
         EXISTS (SELECT 1 FROM rbac.roles ro WHERE ro.id = @role_id AND ro.tenant_id = @tenant_id)
         AND EXISTS (
-            SELECT 1 FROM "user".users account
+            SELECT 1 FROM account.users account
             WHERE account.id = @user_id AND account.deleted_at IS NULL
               AND (
                   account.tenant_id = @tenant_id
@@ -154,7 +154,7 @@ DELETE FROM rbac.user_roles WHERE user_id = @user_id AND tenant_id = @tenant_id 
 -- isn't their home and they hold no role there.
 -- name: LeftTenant :one
 SELECT (NOT EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = @user_id::uuid AND ur.tenant_id = @tenant_id::uuid)
-    AND NOT EXISTS (SELECT 1 FROM "user".users u WHERE u.id = @user_id::uuid AND u.tenant_id = @tenant_id::uuid))::bool
+    AND NOT EXISTS (SELECT 1 FROM account.users u WHERE u.id = @user_id::uuid AND u.tenant_id = @tenant_id::uuid))::bool
     AS left_tenant;
 
 -- name: CheckPermission :one
@@ -255,11 +255,11 @@ ORDER BY permission, via, group_name NULLS FIRST, role_name;
 -- it only through a group, and the groups granted it.
 SELECT ro.id AS role_id,
        (SELECT count(DISTINCT ur.user_id) FROM rbac.user_roles ur
-          JOIN "user".users u ON u.id = ur.user_id AND u.deleted_at IS NULL
+          JOIN account.users u ON u.id = ur.user_id AND u.deleted_at IS NULL
          WHERE ur.tenant_id = ro.tenant_id AND ur.role_id = ro.id)::int AS people_direct,
        (SELECT count(DISTINCT gm.user_id) FROM rbac.group_roles gr
           JOIN tenant.group_members gm ON gm.group_id = gr.group_id AND gm.tenant_id = gr.tenant_id
-          JOIN "user".users u ON u.id = gm.user_id AND u.deleted_at IS NULL
+          JOIN account.users u ON u.id = gm.user_id AND u.deleted_at IS NULL
          WHERE gr.tenant_id = ro.tenant_id AND gr.role_id = ro.id
            AND NOT EXISTS (SELECT 1 FROM rbac.user_roles ur
                             WHERE ur.user_id = gm.user_id AND ur.tenant_id = ro.tenant_id AND ur.role_id = ro.id))::int AS people_through_groups,
@@ -276,7 +276,7 @@ SELECT u.id, u.email, COALESCE(u.display_name, '')::text AS display_name,
        COALESCE((SELECT array_agg(gr.group_id ORDER BY gr.group_id) FROM rbac.group_roles gr
                    JOIN tenant.group_members gm ON gm.group_id = gr.group_id AND gm.tenant_id = gr.tenant_id
                   WHERE gr.tenant_id = @tenant_id AND gr.role_id = @role_id AND gm.user_id = u.id), '{}')::uuid[] AS via_groups
-FROM "user".users u
+FROM account.users u
 WHERE u.deleted_at IS NULL
   AND (EXISTS (SELECT 1 FROM rbac.user_roles ur
                 WHERE ur.user_id = u.id AND ur.tenant_id = @tenant_id AND ur.role_id = @role_id)
@@ -313,5 +313,5 @@ FROM (
     JOIN rbac.permissions p ON p.id = rp.permission_id
     WHERE gm.tenant_id = @tenant_id AND p.key = @perm_key
 ) holder
-JOIN "user".users u ON u.id = holder.user_id AND u.deleted_at IS NULL AND u.status = 'active'
+JOIN account.users u ON u.id = holder.user_id AND u.deleted_at IS NULL AND u.status = 'active'
 LIMIT 200;

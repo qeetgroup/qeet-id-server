@@ -163,39 +163,39 @@ ON CONFLICT (connection_id) DO NOTHING;
 -- ==========================================================================
 
 -- name: InsertSamlLoginCode :exec
-INSERT INTO auth.saml_login_codes (code_hash, user_id, tenant_id, connection_id, expires_at)
-VALUES (@code_hash, @user_id, @tenant_id, @connection_id::uuid, @expires_at);
+INSERT INTO auth.login_codes (code_hash, kind, user_id, tenant_id, connection_id, expires_at)
+VALUES (@code_hash, 'saml', @user_id, @tenant_id::uuid, @connection_id::uuid, @expires_at);
 
 -- name: ConsumeSamlLoginCode :one
 -- With the status of the connection that issued the code: one since deleted finds no row.
-SELECT lc.user_id, lc.tenant_id, lc.expires_at, lc.used_at, c.status
-FROM auth.saml_login_codes lc
+SELECT lc.user_id, c.tenant_id, lc.expires_at, lc.used_at, c.status
+FROM auth.login_codes lc
 JOIN tenant.saml_connections c ON c.tenant_id = lc.tenant_id AND c.id = lc.connection_id
-WHERE lc.code_hash = @code_hash
+WHERE lc.code_hash = @code_hash AND lc.kind = 'saml'
 FOR UPDATE OF lc;
 
 -- name: MarkSamlLoginCodeUsed :exec
-UPDATE auth.saml_login_codes SET used_at = NOW() WHERE code_hash = @code_hash;
+UPDATE auth.login_codes SET used_at = NOW() WHERE code_hash = @code_hash AND tenant_id = @tenant_id::uuid;
 
 -- ==========================================================================
--- findOrCreateUser — same pattern as ldap (cross-schema "user" tables)
+-- findOrCreateUser — same pattern as ldap (cross-schema account tables)
 -- ==========================================================================
 
 -- name: GetExternalIdentityUser :one
-SELECT user_id FROM "user".external_identities
+SELECT user_id FROM account.external_identities
 WHERE tenant_id = @tenant_id AND provider = @provider AND connection_id = @connection_id::uuid
   AND subject = @subject;
 
 -- name: GetUserByEmail :one
-SELECT id FROM "user".users WHERE LOWER(email) = LOWER(@email) AND deleted_at IS NULL;
+SELECT id FROM account.users WHERE LOWER(email) = LOWER(@email) AND deleted_at IS NULL;
 
 -- name: InsertUserWithEmail :one
-INSERT INTO "user".users (tenant_id, email, email_verified_at, display_name, status)
+INSERT INTO account.users (tenant_id, email, email_verified_at, display_name, status)
 VALUES (@tenant_id, @email, NOW(), sqlc.narg('display_name'), 'active')
 RETURNING id;
 
 -- name: LinkExternalIdentity :exec
-INSERT INTO "user".external_identities (user_id, tenant_id, provider, connection_id, subject, email)
+INSERT INTO account.external_identities (user_id, tenant_id, provider, connection_id, subject, email)
 VALUES (@user_id, @tenant_id, @provider, @connection_id::uuid, @subject, @email)
 ON CONFLICT (tenant_id, provider, connection_id, subject) DO NOTHING;
 
@@ -274,7 +274,7 @@ DELETE FROM tenant.saml_service_providers WHERE id = @id AND tenant_id = @tenant
 UPDATE tenant.saml_service_providers SET last_login_at = NOW() WHERE id = @id;
 
 -- name: GetUserForIdP :one
-SELECT email, display_name, tenant_id, status, metadata FROM "user".users WHERE id = @id AND deleted_at IS NULL;
+SELECT email, display_name, tenant_id, status, metadata FROM account.users WHERE id = @id AND deleted_at IS NULL;
 
 -- ==========================================================================
 -- IdP-side: what an assertion says about a person (idp_attributes.go)
@@ -346,7 +346,7 @@ SELECT (EXISTS (
 -- the only people its service providers sign in.
 -- name: IsSamlAssignableUser :one
 SELECT EXISTS (
-    SELECT 1 FROM "user".users WHERE id = @user_id AND tenant_id = @tenant_id AND deleted_at IS NULL
+    SELECT 1 FROM account.users WHERE id = @user_id AND tenant_id = @tenant_id AND deleted_at IS NULL
 )::bool;
 
 -- name: IsSamlAssignableGroup :one
@@ -357,7 +357,7 @@ SELECT EXISTS (
 -- name: ListSamlSPUserAssignments :many
 SELECT a.user_id, u.email, u.display_name, a.assigned_at, a.assigned_by
 FROM tenant.saml_sp_user_assignments a
-JOIN "user".users u ON u.id = a.user_id
+JOIN account.users u ON u.id = a.user_id
 WHERE a.tenant_id = @tenant_id AND a.sp_id = @sp_id
 ORDER BY a.assigned_at, a.user_id;
 

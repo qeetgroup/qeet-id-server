@@ -213,36 +213,10 @@ func TestHookDecidesSignIn(t *testing.T) {
 	}
 }
 
-// TestHookSecretIsEncryptedOnUse checks that a hook stored with a plaintext
-// secret signs with it, and has it encrypted the first time it runs.
-func TestHookSecretIsEncryptedOnUse(t *testing.T) {
-	ctx := dbtest.Context(t)
-	pool := dbtest.Pool(t)
-	svc := hookService(t)
-	tenant := dbtest.Tenant(t)
-	a := dbtest.User(t, tenant, tenant)
-	policy := newPolicyServer(t, "older-plain-secret")
-	if _, err := pool.Exec(ctx, `INSERT INTO tenant.auth_hooks (tenant_id, url, secret) VALUES ($1, $2, 'older-plain-secret')`, tenant, policy.URL); err != nil {
-		t.Fatal(err)
-	}
-	for range 2 {
-		if _, err := svc.Run(ctx, tenant, a.ID, a.Email); err != nil {
-			t.Fatal(err)
-		}
-	}
-	var plain string
-	var version int
-	if err := pool.QueryRow(ctx, `SELECT secret, encryption_version FROM tenant.auth_hooks WHERE tenant_id = $1`, tenant).Scan(&plain, &version); err != nil {
-		t.Fatal(err)
-	}
-	if plain != "" || version != 1 {
-		t.Errorf("after use the secret is %q at version %d; want it encrypted", plain, version)
-	}
-	if policy.calls != 2 || policy.badSigns != 0 {
-		t.Errorf("%d calls, %d with a bad signature; want both signed with the stored secret", policy.calls, policy.badSigns)
-	}
-
-	_, err := NewService(pool).Create(ctx, tenant, "http://127.0.0.1:9/hook", "x", true, audit.Actor{Type: "user"})
+// TestHookAtAPrivateAddressIsRefused checks that a hook whose URL is not an
+// allowed outbound destination is not created.
+func TestHookAtAPrivateAddressIsRefused(t *testing.T) {
+	_, err := NewService(dbtest.Pool(t)).Create(dbtest.Context(t), dbtest.Tenant(t), "http://127.0.0.1:9/hook", "x", true, audit.Actor{Type: "user"})
 	if !errors.Is(err, errs.ErrAuthHookURLInvalid) {
 		t.Errorf("a hook at a private address: %v, want refused", err)
 	}

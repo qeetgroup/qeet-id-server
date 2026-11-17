@@ -45,7 +45,7 @@ type signIn struct {
 var signInPolicies = map[string]signIn{
 	"qeet":      {minLength: 12, upper: true, number: true, magicTTL: 30, remember: true, rememberDays: 30},
 	"northwind": {minLength: 14, upper: true, number: true, symbol: true, lockThreshold: 3, lockWindow: 15, lockDuration: 30},
-	"meridian":  {minLength: 12, number: true, symbol: true, lockThreshold: 5, lockWindow: 10, lockDuration: 20},
+	"meridian":  {minLength: 12, number: true, symbol: true, lockThreshold: 5, lockWindow: 15, lockDuration: 20},
 	"lumen":     {minLength: 10, magicTTL: 15, remember: true, rememberDays: 30},
 	"aster":     {minLength: 8, magicTTL: 30, remember: true, rememberDays: 60},
 	"vertex":    {minLength: 8},

@@ -191,7 +191,7 @@ func (f *fed) oidcConnection(o *world.Org) {
 		}
 		linked := f.workTime(from, w.Now.Add(-2*time.Hour), p.Loc)
 		last = later(last, linked)
-		batch.Queue(`INSERT INTO "user".external_identities (id, user_id, tenant_id, provider, connection_id, subject, email, metadata, linked_at)
+		batch.Queue(`INSERT INTO account.external_identities (id, user_id, tenant_id, provider, connection_id, subject, email, metadata, linked_at)
 			VALUES ($1, $2, $3, 'oidc', $4, $5, $6, $7, $8)`, uuid.New(), p.ID, o.ID, id, f.token(alnum+"-_", 43), p.Email,
 			map[string]any{"tid": c.entraTenant, "iss": in.Issuer}, linked)
 	}

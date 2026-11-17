@@ -151,17 +151,24 @@ internal/platform/database/migrations/NNNN_description.up.sql
 internal/platform/database/migrations/NNNN_description.down.sql
 ```
 
-Numbering continues from the highest present (currently `0243`; `0082` is absent and is not to be
-reused). Migrations are embedded with `//go:embed` and applied on startup. Additive first —
+Numbering continues from the highest present (currently `0012`). `0001`–`0012` are the schema
+baseline: one file per schema with every table in its final shape, written in November 2026 in
+place of 243 incremental migrations, before any database held real data. A database the earlier
+migrations built is refused at start as newer than this build: recreate it (`make db-reset`).
+Migrations are embedded with `//go:embed` and applied on startup. Additive first —
 expand, migrate, contract across releases. An index on a table that already exists is built with
 `CREATE INDEX CONCURRENTLY`, alone in its file (a plain one blocks writes while it builds;
 `TestNewIndexesDontLockTheirTable` enforces it). A migration waits at most 10s for a busy table,
-then fails and runs again at the next start.
+then fails and runs again at the next start. A table with a `tenant_id` gets an index leading on it
+and a foreign key to `tenant.tenants`, or a note beside it saying why it has none (an append-only
+log, a record that outlives its organisation).
 
 ### 9. Behaviour changes require tests
 
 A new behaviour ships with a test. A bug fix ships with a test that fails before it. Anything
-touching tenant scoping needs a test proving cross-tenant access is denied.
+touching tenant scoping needs a test proving cross-tenant access is denied. The test database is the
+schema alone: a test that depends on the built-in permissions or plans seeds them with the service's
+own `SeedBuiltins`, which is what the server runs at start.
 
 ### 10. Do not commit secrets
 

@@ -161,7 +161,7 @@ func TestCIBAGrantRemovedAfterAuthorizeIsRefusedAtToken(t *testing.T) {
 
 	authReqID = approved(a)
 	exec(`DELETE FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2`, a.ID, tenant)
-	exec(`UPDATE "user".users SET tenant_id = $2 WHERE id = $1`, a.ID, dbtest.Tenant(t))
+	exec(`UPDATE account.users SET tenant_id = $2 WHERE id = $1`, a.ID, dbtest.Tenant(t))
 	repoll()
 	if _, err := svc.BackchannelToken(ctx, client.ClientID, secret, authReqID); err == nil {
 		t.Error("collect once the person left the organisation: tokens issued")

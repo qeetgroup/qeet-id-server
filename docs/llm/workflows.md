@@ -75,7 +75,7 @@ user's own account); a route without one fails `TestEveryRouteNamesAnApplication
 
 ```text
 1  read the existing schema        internal/platform/database/migrations/  (+ subsystems.md)
-2  new pair, next number           NNNN_description.{up,down}.sql   (read the highest with ls; 0082 is absent)
+2  new pair, next number           NNNN_description.{up,down}.sql   (read the highest with ls; 0001–0012 are the baseline)
 3  additive first                  add columns/tables; do not drop in the same release
 4  queries.sql                     update the affected domain
 5  regenerate                      sqlc → dbgen/

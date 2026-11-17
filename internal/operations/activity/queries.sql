@@ -25,7 +25,7 @@ SELECT e.id, e.actor_user_id, e.actor_type, e.action, e.resource_type, e.resourc
        COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.tenant_id,
        u.display_name AS actor_display_name, u.email AS actor_email
 FROM audit.events e
-LEFT JOIN "user".users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
+LEFT JOIN account.users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
 WHERE e.tenant_id = @tenant_id
   AND (sqlc.narg('actions')::text[] IS NULL OR e.action = ANY(sqlc.narg('actions')))
   AND (sqlc.narg('actor_id')::uuid IS NULL OR e.actor_user_id = sqlc.narg('actor_id'))
@@ -33,7 +33,7 @@ WHERE e.tenant_id = @tenant_id
   AND (sqlc.narg('from_ts')::timestamptz IS NULL OR e.created_at >= sqlc.narg('from_ts'))
   AND (sqlc.narg('to_ts')::timestamptz IS NULL OR e.created_at <= sqlc.narg('to_ts'))
   AND (sqlc.narg('q')::text IS NULL OR e.search_vector @@ audit.search_query(sqlc.narg('q'))
-       OR e.actor_user_id IN (SELECT su.id FROM "user".users su
+       OR e.actor_user_id IN (SELECT su.id FROM account.users su
            WHERE (su.email ILIKE sqlc.narg('q_like')::text || '%' OR su.display_name ILIKE '%' || sqlc.narg('q_like')::text || '%')
              AND (su.tenant_id = @tenant_id OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = @tenant_id))))
   AND (sqlc.narg('resource_types')::text[] IS NULL OR e.resource_type = ANY(sqlc.narg('resource_types')))
@@ -60,7 +60,7 @@ SELECT count(*)::bigint FROM (
       AND (sqlc.narg('from_ts')::timestamptz IS NULL OR e.created_at >= sqlc.narg('from_ts'))
       AND (sqlc.narg('to_ts')::timestamptz IS NULL OR e.created_at <= sqlc.narg('to_ts'))
       AND (sqlc.narg('q')::text IS NULL OR e.search_vector @@ audit.search_query(sqlc.narg('q'))
-       OR e.actor_user_id IN (SELECT su.id FROM "user".users su
+       OR e.actor_user_id IN (SELECT su.id FROM account.users su
            WHERE (su.email ILIKE sqlc.narg('q_like')::text || '%' OR su.display_name ILIKE '%' || sqlc.narg('q_like')::text || '%')
              AND (su.tenant_id = @tenant_id OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = @tenant_id))))
       AND (sqlc.narg('resource_types')::text[] IS NULL OR e.resource_type = ANY(sqlc.narg('resource_types')))
@@ -83,7 +83,7 @@ SELECT e.id, e.actor_user_id, e.actor_type, e.action, e.resource_type, e.resourc
        COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.tenant_id,
        u.display_name AS actor_display_name, u.email AS actor_email
 FROM audit.events e
-LEFT JOIN "user".users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
+LEFT JOIN account.users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
 WHERE e.tenant_id = @tenant_id
   AND (e.created_at > @after_ts OR (e.created_at = @after_ts AND e.id > @after_id))
 ORDER BY e.created_at ASC, e.id ASC
@@ -103,7 +103,7 @@ WHERE audit.events.tenant_id = @tenant_id
   AND (sqlc.narg('from_ts')::timestamptz IS NULL OR created_at >= sqlc.narg('from_ts'))
   AND (sqlc.narg('to_ts')::timestamptz IS NULL OR created_at <= sqlc.narg('to_ts'))
   AND (sqlc.narg('q')::text IS NULL OR search_vector @@ audit.search_query(sqlc.narg('q'))
-       OR actor_user_id IN (SELECT su.id FROM "user".users su
+       OR actor_user_id IN (SELECT su.id FROM account.users su
            WHERE (su.email ILIKE sqlc.narg('q_like')::text || '%' OR su.display_name ILIKE '%' || sqlc.narg('q_like')::text || '%')
              AND (su.tenant_id = @tenant_id OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = @tenant_id))))
   AND (sqlc.narg('resource_types')::text[] IS NULL OR resource_type = ANY(sqlc.narg('resource_types')))
@@ -134,7 +134,7 @@ WHERE audit.events.tenant_id = @tenant_id
   AND (sqlc.narg('from_ts')::timestamptz IS NULL OR created_at >= sqlc.narg('from_ts'))
   AND (sqlc.narg('to_ts')::timestamptz IS NULL OR created_at <= sqlc.narg('to_ts'))
   AND (sqlc.narg('q')::text IS NULL OR search_vector @@ audit.search_query(sqlc.narg('q'))
-       OR actor_user_id IN (SELECT su.id FROM "user".users su
+       OR actor_user_id IN (SELECT su.id FROM account.users su
            WHERE (su.email ILIKE sqlc.narg('q_like')::text || '%' OR su.display_name ILIKE '%' || sqlc.narg('q_like')::text || '%')
              AND (su.tenant_id = @tenant_id OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = @tenant_id))))
   AND (sqlc.narg('resource_types')::text[] IS NULL OR resource_type = ANY(sqlc.narg('resource_types')))
@@ -162,7 +162,7 @@ WHERE audit.events.tenant_id = @tenant_id
   AND (sqlc.narg('from_ts')::timestamptz IS NULL OR created_at >= sqlc.narg('from_ts'))
   AND (sqlc.narg('to_ts')::timestamptz IS NULL OR created_at <= sqlc.narg('to_ts'))
   AND (sqlc.narg('q')::text IS NULL OR search_vector @@ audit.search_query(sqlc.narg('q'))
-       OR actor_user_id IN (SELECT su.id FROM "user".users su
+       OR actor_user_id IN (SELECT su.id FROM account.users su
            WHERE (su.email ILIKE sqlc.narg('q_like')::text || '%' OR su.display_name ILIKE '%' || sqlc.narg('q_like')::text || '%')
              AND (su.tenant_id = @tenant_id OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = @tenant_id))))
   AND (sqlc.narg('resource_types')::text[] IS NULL OR resource_type = ANY(sqlc.narg('resource_types')))
@@ -184,7 +184,7 @@ SELECT e.id, e.actor_user_id, e.actor_type, e.action, e.resource_type, e.resourc
        COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.tenant_id,
        u.display_name AS actor_display_name, u.email AS actor_email
 FROM audit.events e
-LEFT JOIN "user".users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
+LEFT JOIN account.users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
 WHERE e.tenant_id = @tenant_id AND e.id = @id;
 
 -- name: ListRelatedByRequestID :many
@@ -194,7 +194,7 @@ SELECT e.id, e.actor_user_id, e.actor_type, e.action, e.resource_type, e.resourc
        COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.tenant_id,
        u.display_name AS actor_display_name, u.email AS actor_email
 FROM audit.events e
-LEFT JOIN "user".users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
+LEFT JOIN account.users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
 WHERE e.tenant_id = @tenant_id
   AND e.request_id = @request_id
   AND e.id <> @exclude_id
@@ -208,7 +208,7 @@ SELECT e.id, e.actor_user_id, e.actor_type, e.action, e.resource_type, e.resourc
        COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.tenant_id,
        u.display_name AS actor_display_name, u.email AS actor_email
 FROM audit.events e
-LEFT JOIN "user".users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
+LEFT JOIN account.users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
 WHERE e.tenant_id = @tenant_id
   AND e.actor_user_id = @actor_id
   AND e.created_at BETWEEN @from_ts AND @to_ts

@@ -112,7 +112,7 @@ func (q *Queries) InsertGroup(ctx context.Context, arg InsertGroupParams) (Inser
 const insertGroupMember = `-- name: InsertGroupMember :one
 WITH allowed AS (
     SELECT EXISTS (
-        SELECT 1 FROM "user".users account
+        SELECT 1 FROM account.users account
         WHERE account.id = $1 AND account.deleted_at IS NULL
           AND (
               account.tenant_id = $2::uuid
@@ -189,7 +189,7 @@ func (q *Queries) IsGroupOrDescendant(ctx context.Context, arg IsGroupOrDescenda
 const listGroupMembers = `-- name: ListGroupMembers :many
 SELECT gm.user_id, u.email, u.display_name
 FROM tenant.group_members gm
-JOIN "user".users u ON u.id = gm.user_id
+JOIN account.users u ON u.id = gm.user_id
 WHERE gm.group_id = $1 AND gm.tenant_id = $2 AND u.deleted_at IS NULL
   AND (
       u.tenant_id = gm.tenant_id

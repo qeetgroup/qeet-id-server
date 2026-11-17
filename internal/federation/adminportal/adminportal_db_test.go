@@ -581,7 +581,7 @@ func TestPortalCantChangeTrustOnceAnAdministratorIsLinked(t *testing.T) {
 	}
 	owner := dbtest.User(t, tenant, tenant)
 	dbtest.Assign(t, owner.ID, tenant, ownerRole)
-	if _, err := pool.Exec(ctx, `INSERT INTO "user".external_identities (user_id, tenant_id, provider, connection_id, subject) VALUES ($1, $2, 'saml', $3, 'okta|owner')`,
+	if _, err := pool.Exec(ctx, `INSERT INTO account.external_identities (user_id, tenant_id, provider, connection_id, subject) VALUES ($1, $2, 'saml', $3, 'okta|owner')`,
 		owner.ID, tenant, conn.ID); err != nil {
 		t.Fatal(err)
 	}

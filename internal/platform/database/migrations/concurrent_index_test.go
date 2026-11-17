@@ -3,39 +3,27 @@ package migrations
 import (
 	"io/fs"
 	"regexp"
-	"strconv"
 	"strings"
 	"testing"
 )
 
-// firstGuardedMigration is the first migration held to the index rule below;
-// the ones before it were applied without it.
-const firstGuardedMigration = 175
-
 var (
-	createIndex   = regexp.MustCompile(`(?is)\bcreate\s+(unique\s+)?index\s+(concurrently\s+)?(if\s+not\s+exists\s+)?\S+\s+on\s+(only\s+)?([a-z0-9_."]+)`)
-	createTable   = regexp.MustCompile(`(?is)\bcreate\s+table\s+(if\s+not\s+exists\s+)?([a-z0-9_."]+)`)
-	lineComment   = regexp.MustCompile(`--[^\n]*`)
-	migrationName = regexp.MustCompile(`^(\d+)_.*\.up\.sql$`)
+	createIndex = regexp.MustCompile(`(?is)\bcreate\s+(unique\s+)?index\s+(concurrently\s+)?(if\s+not\s+exists\s+)?\S+\s+on\s+(only\s+)?([a-z0-9_."]+)`)
+	createTable = regexp.MustCompile(`(?is)\bcreate\s+table\s+(if\s+not\s+exists\s+)?([a-z0-9_."]+)`)
+	lineComment = regexp.MustCompile(`--[^\n]*`)
 )
 
 // TestNewIndexesDontLockTheirTable checks that a migration adds an index to a
 // table that already exists with CREATE INDEX CONCURRENTLY, alone in its file:
 // a plain CREATE INDEX blocks every write to the table while it builds, and a
-// concurrent build can't run beside other statements.
+// concurrent build can't run beside other statements. An index on a table its
+// own file creates, as in the baseline, locks nothing.
 func TestNewIndexesDontLockTheirTable(t *testing.T) {
 	names, err := fs.Glob(sqlFiles, "*.up.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range names {
-		m := migrationName.FindStringSubmatch(name)
-		if m == nil {
-			continue
-		}
-		if n, _ := strconv.Atoi(m[1]); n < firstGuardedMigration {
-			continue
-		}
 		raw, err := fs.ReadFile(sqlFiles, name)
 		if err != nil {
 			t.Fatal(err)
@@ -70,7 +58,7 @@ func TestIndexRuleReadsMigrations(t *testing.T) {
 	for sql, table := range map[string]string{
 		"CREATE INDEX idx_a ON auth.sessions (user_id)":                               "auth.sessions",
 		"create unique index concurrently if not exists uq_b on tenant.groups (name)": "tenant.groups",
-		"CREATE INDEX idx_c ON ONLY \"user\".users (email)":                           `"user".users`,
+		"CREATE INDEX idx_c ON ONLY account.users (email)":                            `account.users`,
 	} {
 		m := createIndex.FindStringSubmatch(sql)
 		if m == nil || !strings.EqualFold(m[5], table) {

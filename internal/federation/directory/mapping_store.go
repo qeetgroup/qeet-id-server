@@ -115,7 +115,7 @@ func (service *Service) StoreProfile(ctx context.Context, tx pgx.Tx, tenantID, u
 		if name == nil {
 			name = ""
 		}
-		_, err = tx.Exec(ctx, `UPDATE "user".users SET display_name=$3,updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL`, tenantID, userID, name)
+		_, err = tx.Exec(ctx, `UPDATE account.users SET display_name=$3,updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL`, tenantID, userID, name)
 	}
 	return err
 }

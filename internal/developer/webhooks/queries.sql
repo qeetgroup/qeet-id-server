@@ -59,7 +59,7 @@ RETURNING url;
 
 -- LockWebhookSecret reads the subscription's signing secret for a rotation.
 -- name: LockWebhookSecret :one
-SELECT secret, secret_ct, secret_nonce FROM tenant.webhook_subscriptions
+SELECT secret_ct, secret_nonce FROM tenant.webhook_subscriptions
 WHERE id = @id AND tenant_id = @tenant_id
 FOR UPDATE;
 
@@ -67,7 +67,7 @@ FOR UPDATE;
 -- signing alongside it, until previous_expires_at.
 -- name: RotateWebhookSecret :exec
 UPDATE tenant.webhook_subscriptions
-SET secret = '', secret_ct = @secret_ct, secret_nonce = @secret_nonce, encryption_version = 1,
+SET secret_ct = @secret_ct, secret_nonce = @secret_nonce,
     previous_secret_ct = @previous_ct, previous_secret_nonce = @previous_nonce,
     previous_secret_expires_at = @previous_expires_at
 WHERE id = @id AND tenant_id = @tenant_id;
@@ -75,7 +75,7 @@ WHERE id = @id AND tenant_id = @tenant_id;
 -- ListWebhookManagers returns the organisation's active members who may
 -- manage its webhooks (webhook.write, held directly or through a group).
 -- name: ListWebhookManagers :many
-SELECT u.id FROM "user".users u
+SELECT u.id FROM account.users u
 WHERE u.status = 'active' AND u.deleted_at IS NULL AND u.id IN (
     SELECT ur.user_id FROM rbac.user_roles ur
     JOIN rbac.role_permissions rp ON rp.role_id = ur.role_id

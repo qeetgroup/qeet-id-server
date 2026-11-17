@@ -75,22 +75,6 @@ func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Creat
 	return i, err
 }
 
-const deactivateAgent = `-- name: DeactivateAgent :exec
-UPDATE auth.agents SET status = $1, disabled_at = NOW()
-WHERE id = $2 AND tenant_id = $3
-`
-
-type DeactivateAgentParams struct {
-	Status   string
-	ID       uuid.UUID
-	TenantID uuid.UUID
-}
-
-func (q *Queries) DeactivateAgent(ctx context.Context, arg DeactivateAgentParams) error {
-	_, err := q.db.Exec(ctx, deactivateAgent, arg.Status, arg.ID, arg.TenantID)
-	return err
-}
-
 const deleteAgent = `-- name: DeleteAgent :execrows
 DELETE FROM auth.agents WHERE id = $1 AND tenant_id = $2
 `
@@ -165,8 +149,6 @@ WHERE a.id = $1
 `
 
 // Queries for the agents domain.
-// Dynamic SQL in transition() (disabled_at = NOW() vs NULL for suspend/resume)
-// is handled as two separate static queries below.
 // GetAgentStatusByID finds no agent of a suspended or deleted organisation.
 func (q *Queries) GetAgentStatusByID(ctx context.Context, id uuid.UUID) (string, error) {
 	row := q.db.QueryRow(ctx, getAgentStatusByID, id)
@@ -176,7 +158,7 @@ func (q *Queries) GetAgentStatusByID(ctx context.Context, id uuid.UUID) (string,
 }
 
 const killAllAgents = `-- name: KillAllAgents :execrows
-UPDATE auth.agents SET status = 'suspended', disabled_at = NOW()
+UPDATE auth.agents SET status = 'suspended'
 WHERE tenant_id = $1 AND status = 'active'
 `
 
@@ -291,26 +273,8 @@ func (q *Queries) ListAgentsSponsoredBy(ctx context.Context, arg ListAgentsSpons
 	return items, nil
 }
 
-const resumeAgent = `-- name: ResumeAgent :exec
-
-UPDATE auth.agents SET status = 'active', disabled_at = NULL
-WHERE id = $1 AND tenant_id = $2
-`
-
-type ResumeAgentParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
-}
-
-// Transition helpers: resume sets status active and clears disabled_at;
-// suspend/decommission sets the given status and stamps disabled_at = NOW().
-func (q *Queries) ResumeAgent(ctx context.Context, arg ResumeAgentParams) error {
-	_, err := q.db.Exec(ctx, resumeAgent, arg.ID, arg.TenantID)
-	return err
-}
-
 const resumeAllAgents = `-- name: ResumeAllAgents :execrows
-UPDATE auth.agents SET status = 'active', disabled_at = NULL
+UPDATE auth.agents SET status = 'active'
 WHERE tenant_id = $1 AND status = 'suspended'
 `
 
@@ -350,9 +314,25 @@ func (q *Queries) RotateAgentSecret(ctx context.Context, arg RotateAgentSecretPa
 	return name, err
 }
 
+const setAgentStatus = `-- name: SetAgentStatus :exec
+UPDATE auth.agents SET status = $1
+WHERE id = $2 AND tenant_id = $3
+`
+
+type SetAgentStatusParams struct {
+	Status   string
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+func (q *Queries) SetAgentStatus(ctx context.Context, arg SetAgentStatusParams) error {
+	_, err := q.db.Exec(ctx, setAgentStatus, arg.Status, arg.ID, arg.TenantID)
+	return err
+}
+
 const sponsorBelongsToTenant = `-- name: SponsorBelongsToTenant :one
 SELECT EXISTS (
-    SELECT 1 FROM "user".users WHERE id = $1 AND tenant_id = $2::uuid AND deleted_at IS NULL
+    SELECT 1 FROM account.users WHERE id = $1 AND tenant_id = $2::uuid AND deleted_at IS NULL
     UNION ALL
     SELECT 1 FROM rbac.user_roles WHERE tenant_id = $2::uuid AND user_id = $1
 )

@@ -76,7 +76,7 @@ func TestCapturedAddressesSignInElsewhere(t *testing.T) {
 			t.Errorf("%s on a captured domain: %d %s, want 403 %s", path, rec.Code, rec.Body.String(), errs.CodeAuthSSORequired)
 		}
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1`, nobody); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, nobody); n != 0 {
 		t.Error("sign-up created an account on a captured domain")
 	}
 

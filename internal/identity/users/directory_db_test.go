@@ -144,7 +144,7 @@ func TestCreateUserInTheCallersOrganisation(t *testing.T) {
 			t.Errorf("create with %s: %d %s, want 409 %s", tc.name, rec.Code, rec.Body.String(), tc.want)
 		}
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE lower(email) = lower($1)`, email); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE lower(email) = lower($1)`, email); n != 1 {
 		t.Errorf("%d accounts hold %s, want 1", n, email)
 	}
 
@@ -159,7 +159,7 @@ func TestCreateUserInTheCallersOrganisation(t *testing.T) {
 	if rec := dbtest.Do(t, as, http.MethodPost, "/users", map[string]any{"email": refused, "password": plain}); rec.Code != http.StatusNotImplemented {
 		t.Errorf("create with a password and no policy to check it: %d, want 501", rec.Code)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email IN ($1, 'not-an-email')`, refused); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email IN ($1, 'not-an-email')`, refused); n != 0 {
 		t.Errorf("refused creations left %d accounts", n)
 	}
 }
@@ -204,14 +204,14 @@ func TestListPagesThroughTheOrganisationsMembers(t *testing.T) {
 	want = append(want, guest.ID)
 	outsider := dbtest.User(t, other, other)
 	gone := dbtest.User(t, tenant, tenant)
-	exec(t, `UPDATE "user".users SET deleted_at = NOW(), status = 'deleted' WHERE id = $1`, gone.ID)
+	exec(t, `UPDATE account.users SET deleted_at = NOW(), status = 'deleted' WHERE id = $1`, gone.ID)
 	for _, in := range []uuid.UUID{tenant, other} {
 		exec(t, `
 			WITH g AS (INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, $2) RETURNING id)
 			INSERT INTO tenant.group_members (group_id, user_id, tenant_id) SELECT id, $3, $1 FROM g
 		`, in, dbtest.Unique("group"), guest.ID)
 	}
-	exec(t, `INSERT INTO auth.mfa_totp (user_id, secret, confirmed_at) VALUES ($1, 'secret', NOW())`, admin.ID)
+	exec(t, `INSERT INTO auth.mfa_totp (user_id, secret_ct, secret_nonce, confirmed_at) VALUES ($1, '\x00', '\x00', NOW())`, admin.ID)
 	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), testHandler(t, nil).Mount)
 
 	var walked []User
@@ -319,7 +319,7 @@ func TestPeopleEditOnlyTheirOwnProfile(t *testing.T) {
 	ctx := dbtest.Context(t)
 	tenant := dbtest.Tenant(t)
 	me := dbtest.User(t, tenant, tenant)
-	exec(t, `UPDATE "user".users SET metadata = '{"team":"blue"}' WHERE id = $1`, me.ID)
+	exec(t, `UPDATE account.users SET metadata = '{"team":"blue"}' WHERE id = $1`, me.ID)
 	as := dbtest.Serve(dbtest.Principal(me.ID, tenant), testHandler(t, nil).Mount)
 
 	var got User
@@ -338,7 +338,7 @@ func TestPeopleEditOnlyTheirOwnProfile(t *testing.T) {
 	var admin *bool
 	if err := dbtest.Pool(t).QueryRow(ctx, `
 		SELECT status, display_name, phone, metadata->>'locale', metadata->>'team', (metadata->>'admin')::boolean
-		FROM "user".users WHERE id = $1
+		FROM account.users WHERE id = $1
 	`, me.ID).Scan(&status, &name, &phone, &locale, &team, &admin); err != nil {
 		t.Fatal(err)
 	}
@@ -426,7 +426,7 @@ func TestAvatarCanBeCleared(t *testing.T) {
 	if rec := dbtest.Do(t, as, http.MethodPatch, "/me", map[string]any{"avatar_url": ""}); rec.Code != http.StatusOK {
 		t.Fatalf("clear the avatar: status %d (%s)", rec.Code, rec.Body.String())
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND COALESCE(avatar_url, '') = ''`, me.ID); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND COALESCE(avatar_url, '') = ''`, me.ID); n != 1 {
 		t.Error("the avatar is still set after clearing it")
 	}
 }
@@ -444,7 +444,7 @@ func TestBulkImportStaysInTheCallersOrganisation(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Errorf("bulk import into another organisation: %d, want 403", rec.Code)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1`, smuggled); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, smuggled); n != 0 {
 		t.Errorf("the refused bulk import created %d users", n)
 	}
 	rec = dbtest.Do(t, as, http.MethodPost, "/users/bulk", map[string]any{"tenant_id": tenant, "users": []map[string]any{{"email": smuggled}}})
@@ -453,7 +453,7 @@ func TestBulkImportStaysInTheCallersOrganisation(t *testing.T) {
 	if rec.Code != http.StatusOK || res.Succeeded != 1 {
 		t.Errorf("bulk import naming the caller's organisation: %d %+v, want 1 created", rec.Code, res)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1 AND tenant_id = $2`, smuggled, tenant); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1 AND tenant_id = $2`, smuggled, tenant); n != 1 {
 		t.Errorf("the bulk import created %d users in the caller's organisation, want 1", n)
 	}
 	if n := audited(t, tenant, "user.bulk_imported", tenant); n != 1 {
@@ -511,7 +511,7 @@ func TestLastSignInOutlastsTheSessions(t *testing.T) {
 		t.Errorf("last seen %v from %v, want the sign-in here 20 days ago from 203.0.113.9", got.LastSeenAt, got.LastSeenIP)
 	}
 
-	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE "user".users SET status = 'suspended' WHERE id = $1 AND tenant_id = $2`, member.ID, tenant); err != nil {
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE account.users SET status = 'suspended' WHERE id = $1 AND tenant_id = $2`, member.ID, tenant); err != nil {
 		t.Fatal(err)
 	}
 	suspended, err := testHandler(t, nil).Repo.ListSuspended(ctx, tenant, SuspensionFilters{Limit: 10})

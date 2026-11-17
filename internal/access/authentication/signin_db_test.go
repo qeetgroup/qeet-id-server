@@ -84,7 +84,7 @@ func TestPasswordSignInRefused(t *testing.T) {
 	svc := newService(t)
 	a, _ := member(t)
 	suspended, _ := member(t)
-	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE "user".users SET status = 'suspended' WHERE id = $1`, suspended.ID); err != nil {
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE account.users SET status = 'suspended' WHERE id = $1`, suspended.ID); err != nil {
 		t.Fatalf("suspend: %v", err)
 	}
 
@@ -350,7 +350,7 @@ func TestExternalSignIn(t *testing.T) {
 		svc := newService(t)
 		svc.SetMFA(noFactors{})
 		required, _ := member(t)
-		if _, err := pool.Exec(ctx, `UPDATE "user".users SET mfa_required = TRUE WHERE id = $1`, required.ID); err != nil {
+		if _, err := pool.Exec(ctx, `UPDATE account.users SET mfa_required = TRUE WHERE id = $1`, required.ID); err != nil {
 			t.Fatalf("require MFA: %v", err)
 		}
 		res, err := svc.SignInExternal(ctx, in, func(context.Context) (uuid.UUID, bool, error) { return required.ID, false, nil })
@@ -371,7 +371,7 @@ func TestExternalSignIn(t *testing.T) {
 		svc.SetSender(&dbtest.Mailbox{})
 		risk := &riskStub{risky: true}
 		svc.SetRiskAssessor(risk)
-		if _, err := pool.Exec(ctx, `UPDATE "user".users SET email_verified_at = NOW() WHERE id = $1`, a.ID); err != nil {
+		if _, err := pool.Exec(ctx, `UPDATE account.users SET email_verified_at = NOW() WHERE id = $1`, a.ID); err != nil {
 			t.Fatal(err)
 		}
 		for attempt := range 2 {

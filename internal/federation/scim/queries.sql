@@ -18,7 +18,7 @@ ORDER BY created_at DESC, id DESC
 LIMIT 1001;
 
 -- name: CountProvisionedUsers :one
-SELECT count(*) FROM "user".users
+SELECT count(*) FROM account.users
 WHERE tenant_id = @tenant_id AND provisioned_via = 'scim' AND deleted_at IS NULL;
 
 -- CountLiveScimTokens counts the organisation's tokens that work and haven't
@@ -90,7 +90,7 @@ WHERE id = @id AND tenant_id = @tenant_id
 
 -- name: GetProvisionedUser :one
 SELECT id, email, display_name, status, external_id, created_at, updated_at
-FROM "user".users WHERE id = @id AND tenant_id = @tenant_id AND deleted_at IS NULL;
+FROM account.users WHERE id = @id AND tenant_id = @tenant_id AND deleted_at IS NULL;
 
 -- ProvisionedUserState is a user's status, what suspended them ('' when
 -- not suspended), and whether they own the organisation, directly or through
@@ -107,18 +107,18 @@ SELECT u.status, COALESCE(u.suspension_source, '')::text AS suspension_source,
            JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.tenant_id = gr.tenant_id AND ro.is_system AND ro.name = 'owner'
            WHERE gm.user_id = u.id AND gm.tenant_id = @tenant_id
        )::bool AS owner
-FROM "user".users u
+FROM account.users u
 WHERE u.id = @id AND u.tenant_id = @tenant_id AND u.deleted_at IS NULL
 FOR UPDATE OF u;
 
 -- HomeUserByEmail finds a live account whose home is @tenant_id by its
 -- address, whoever created it.
 -- name: HomeUserByEmail :one
-SELECT id FROM "user".users
+SELECT id FROM account.users
 WHERE tenant_id = @tenant_id::uuid AND LOWER(email) = LOWER(@email) AND deleted_at IS NULL;
 
 -- name: TagProvisionedUser :exec
-UPDATE "user".users
+UPDATE account.users
     SET external_id    = sqlc.narg('external_id'),
         provisioned_via = 'scim',
         updated_at     = NOW()
@@ -135,7 +135,7 @@ FROM tenant.groups WHERE id = @id AND tenant_id = @tenant_id AND provisioned_via
 -- name: ListGroupMembers :many
 SELECT gm.user_id, u.email, u.display_name
 FROM tenant.group_members gm
-JOIN "user".users u ON u.id = gm.user_id
+JOIN account.users u ON u.id = gm.user_id
 WHERE gm.group_id = @group_id AND gm.tenant_id = @tenant_id AND u.deleted_at IS NULL
 ORDER BY u.email;
 
@@ -156,7 +156,7 @@ DELETE FROM tenant.groups WHERE id = @id AND tenant_id = @tenant_id AND provisio
 
 -- name: CheckUserInTenant :one
 SELECT EXISTS(
-    SELECT 1 FROM "user".users WHERE id = @id AND tenant_id = @tenant_id AND deleted_at IS NULL
+    SELECT 1 FROM account.users WHERE id = @id AND tenant_id = @tenant_id AND deleted_at IS NULL
 );
 
 -- AddGroupMember makes a membership a single sign-on made the directory's, so

@@ -73,7 +73,7 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 		       s.tenant_id IS NULL OR (t.status = 'active' AND t.deleted_at IS NULL)
 		FROM auth.refresh_tokens rt
 		JOIN auth.sessions s ON s.id = rt.session_id
-		JOIN "user".users u ON u.id = s.user_id
+		JOIN account.users u ON u.id = s.user_id
 		LEFT JOIN tenant.tenants t ON t.id = s.tenant_id
 		WHERE rt.token_hash = $1
 		FOR UPDATE OF rt, s

@@ -12,7 +12,7 @@
 -- and admin actions use, so members who joined by invitation are found too.
 -- name: SearchUsers :many
 SELECT u.id, u.email, u.display_name, u.status, u.updated_at
-FROM "user".users u
+FROM account.users u
 WHERE u.deleted_at IS NULL
   AND (
       u.tenant_id = @tenant_id::uuid

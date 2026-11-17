@@ -34,7 +34,7 @@ func TestOIDCTrustChangeMustOutrankLinkedAdministrators(t *testing.T) {
 	for _, a := range []dbtest.Account{linked, owner} {
 		dbtest.Assign(t, a.ID, tenant, ownerRole)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO "user".external_identities (user_id, tenant_id, provider, connection_id, subject) VALUES ($1, $2, 'oidc', $3, 'entra|owner')`,
+	if _, err := pool.Exec(ctx, `INSERT INTO account.external_identities (user_id, tenant_id, provider, connection_id, subject) VALUES ($1, $2, 'oidc', $3, 'entra|owner')`,
 		linked.ID, tenant, conn.ID); err != nil {
 		t.Fatal(err)
 	}

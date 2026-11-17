@@ -129,7 +129,7 @@ ORDER BY month DESC LIMIT 12;
 -- name: GetSettings :one
 SELECT s.conversation_retention_days, s.updated_by, u.email AS updated_by_email, s.updated_at
 FROM qeetai.settings s
-LEFT JOIN "user".users u ON u.id = s.updated_by
+LEFT JOIN account.users u ON u.id = s.updated_by
 WHERE s.tenant_id = @tenant_id;
 
 -- name: UpsertSettings :exec

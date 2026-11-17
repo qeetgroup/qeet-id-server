@@ -277,40 +277,11 @@ func TestConnectedAccountLifecycle(t *testing.T) {
 	}
 }
 
-// TestProviderSecretIsEncryptedOnUse checks that a provider stored with a
-// plaintext client secret works and has it encrypted the first time it's used,
-// and that a provider at a private address is refused.
-func TestProviderSecretIsEncryptedOnUse(t *testing.T) {
-	ctx := dbtest.Context(t)
-	pool := dbtest.Pool(t)
-	svc := vaultService(t)
-	tenant := dbtest.Tenant(t)
-	person := dbtest.User(t, tenant, tenant)
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO tenant.token_vault_providers (tenant_id, provider, client_id, client_secret, authorize_url, token_url)
-		VALUES ($1, 'legacy', 'qeet-client', 'older-plain-secret', 'https://auth.example.test/authorize', 'https://auth.example.test/token')
-	`, tenant); err != nil {
-		t.Fatal(err)
-	}
-	for range 2 {
-		if _, _, err := svc.BeginConnect(ctx, tenant, person.ID, "legacy", "https://id.example.test"); err != nil {
-			t.Fatal(err)
-		}
-	}
-	var plain string
-	var version int
-	if err := pool.QueryRow(ctx, `SELECT client_secret, encryption_version FROM tenant.token_vault_providers WHERE tenant_id = $1`, tenant).Scan(&plain, &version); err != nil {
-		t.Fatal(err)
-	}
-	if plain != "" || version != 1 {
-		t.Errorf("after use the client secret is %q at version %d; want it encrypted", plain, version)
-	}
-	if _, _, _, _, _, err := svc.providerConfig(ctx, tenant, "legacy"); err != nil {
-		t.Errorf("read the encrypted secret: %v", err)
-	}
-
-	strict := NewService(pool, testCipher(t))
-	if _, err := strict.RegisterProvider(ctx, tenant, RegisterProviderInput{
+// TestProviderAtAPrivateAddressIsRefused checks that a provider whose
+// endpoints are not allowed outbound destinations is not registered.
+func TestProviderAtAPrivateAddressIsRefused(t *testing.T) {
+	strict := NewService(dbtest.Pool(t), testCipher(t))
+	if _, err := strict.RegisterProvider(dbtest.Context(t), dbtest.Tenant(t), RegisterProviderInput{
 		Provider: "internal", ClientID: "c", ClientSecret: "s", AuthorizeURL: "http://127.0.0.1:9/authorize", TokenURL: "http://127.0.0.1:9/token",
 	}); err == nil {
 		t.Error("a provider at a private address was registered")

@@ -30,9 +30,9 @@ SELECT t.id, t.slug, t.name, t.plan, t.region, t.logo_url,
     '0001-01-01 00:00:00+00'::timestamptz)::timestamptz AS last_used_at
 FROM tenant.tenants t
 WHERE t.status = 'active' AND t.deleted_at IS NULL
-  AND EXISTS (SELECT 1 FROM "user".users account
+  AND EXISTS (SELECT 1 FROM account.users account
     WHERE account.id = @user_id AND account.status = 'active' AND account.deleted_at IS NULL)
-  AND t.id IN (SELECT account.tenant_id FROM "user".users account WHERE account.id = @user_id
+  AND t.id IN (SELECT account.tenant_id FROM account.users account WHERE account.id = @user_id
     UNION SELECT membership.tenant_id FROM rbac.user_roles membership WHERE membership.user_id = @user_id)
   AND (@after_id::uuid = '00000000-0000-0000-0000-000000000000'::uuid OR t.id > @after_id::uuid)
 ORDER BY t.id
@@ -41,7 +41,7 @@ LIMIT @row_limit;
 -- IsEmailVerified reports whether the given user has a verified email — the
 -- gate for self-serve org creation.
 -- name: IsEmailVerified :one
-SELECT (email_verified_at IS NOT NULL)::boolean FROM "user".users WHERE id = @user_id;
+SELECT (email_verified_at IS NOT NULL)::boolean FROM account.users WHERE id = @user_id;
 
 -- name: GetTenantBySlug :one
 SELECT * FROM tenant.tenants
@@ -101,7 +101,7 @@ SELECT t.id, t.slug, t.name, t.status, t.plan, t.region, t.logo_url,
 FROM tenant.tenants t
 WHERE t.deleted_at IS NULL
   AND t.id IN (SELECT ur.tenant_id FROM rbac.user_roles ur WHERE ur.user_id = $1
-               UNION SELECT u.tenant_id FROM "user".users u WHERE u.id = $1)
+               UNION SELECT u.tenant_id FROM account.users u WHERE u.id = $1)
 ORDER BY t.created_at DESC, t.id DESC
 LIMIT $2;
 
@@ -118,14 +118,14 @@ SELECT t.id, t.slug, t.name, t.status, t.plan, t.region, t.logo_url,
 FROM tenant.tenants t
 WHERE t.deleted_at IS NULL
   AND t.id IN (SELECT ur.tenant_id FROM rbac.user_roles ur WHERE ur.user_id = $1
-               UNION SELECT u.tenant_id FROM "user".users u WHERE u.id = $1)
+               UNION SELECT u.tenant_id FROM account.users u WHERE u.id = $1)
   AND (t.created_at < @before_created_at
        OR (t.created_at = @before_created_at AND t.id < @before_id))
 ORDER BY t.created_at DESC, t.id DESC
 LIMIT @row_limit;
 
 -- The next four queries are the static, cross-context writes of CreateWithOwner.
--- They target other bounded contexts (rbac.*, "user".users) but are fixed SQL with
+-- They target other bounded contexts (rbac.*, account.users) but are fixed SQL with
 -- positional binds, so they compile under the shared migration schema and run on the
 -- caller's shared pgx.Tx via r.q.WithTx(tx).X(...).
 
@@ -159,5 +159,5 @@ INSERT INTO rbac.user_roles (user_id, tenant_id, role_id, granted_by)
 VALUES ($1, $2, $3, $1);
 
 -- name: AdoptHomeTenant :exec
-UPDATE "user".users SET tenant_id = @tenant_id::uuid, updated_at = NOW()
+UPDATE account.users SET tenant_id = @tenant_id::uuid, updated_at = NOW()
 WHERE id = @id AND tenant_id IS NULL AND deleted_at IS NULL;

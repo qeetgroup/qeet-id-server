@@ -1085,7 +1085,7 @@ func (s *Service) consumeLoginCode(ctx context.Context, rawCode string) (uuid.UU
 	if err := signInStatus(row.Status); err != nil {
 		return uuid.Nil, uuid.Nil, err
 	}
-	if err := q.MarkSamlLoginCodeUsed(ctx, codeHash); err != nil {
+	if err := q.MarkSamlLoginCodeUsed(ctx, dbgen.MarkSamlLoginCodeUsedParams{CodeHash: codeHash, TenantID: row.TenantID}); err != nil {
 		return uuid.Nil, uuid.Nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {

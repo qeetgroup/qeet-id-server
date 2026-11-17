@@ -31,7 +31,7 @@ func Tell(ctx context.Context, db Querier, sender notifier.Sender, userID uuid.U
 	}
 	var email string
 	var tenantID *uuid.UUID
-	if err := db.QueryRow(ctx, `SELECT email, tenant_id FROM "user".users WHERE id = $1 AND deleted_at IS NULL`, userID).Scan(&email, &tenantID); err != nil || email == "" {
+	if err := db.QueryRow(ctx, `SELECT email, tenant_id FROM account.users WHERE id = $1 AND deleted_at IS NULL`, userID).Scan(&email, &tenantID); err != nil || email == "" {
 		slog.Warn("account notice not sent: no address", "err", err, "user_id", userID, "subject", subject)
 		return
 	}

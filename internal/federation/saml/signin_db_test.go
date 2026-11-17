@@ -299,7 +299,7 @@ func loginCode(t *testing.T, rec *httptest.ResponseRecorder) string {
 // verify marks the account's address as proved.
 func verify(t *testing.T, userID uuid.UUID) {
 	t.Helper()
-	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `UPDATE "user".users SET email_verified_at = NOW() WHERE id = $1`, userID); err != nil {
+	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `UPDATE account.users SET email_verified_at = NOW() WHERE id = $1`, userID); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -366,7 +366,7 @@ func TestSAMLSignIn(t *testing.T) {
 	if rec := sp.post(t, conn.ID, response); !strings.Contains(rec.Body.String(), errs.CodeSAMLReplayDetected) {
 		t.Errorf("the same answer posted again: %d %s, want %s", rec.Code, rec.Body.String(), errs.CodeSAMLReplayDetected)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE user_id = $1 AND tenant_id = $2 AND provider = 'saml' AND connection_id = $3 AND subject = 'okta|asha'`, member.ID, tenant, conn.ID); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE user_id = $1 AND tenant_id = $2 AND provider = 'saml' AND connection_id = $3 AND subject = 'okta|asha'`, member.ID, tenant, conn.ID); n != 1 {
 		t.Errorf("%d identities linked for the member to the connection, want 1", n)
 	}
 	var got Connection
@@ -385,12 +385,12 @@ func TestSAMLSignIn(t *testing.T) {
 	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeSAMLJITNotAllowed) {
 		t.Errorf("a newcomer while the domain has JIT off: %d %s, want 403 %s", rec.Code, rec.Body.String(), errs.CodeSAMLJITNotAllowed)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1`, newcomer); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, newcomer); n != 0 {
 		t.Fatal("a newcomer was provisioned while the domain has JIT off")
 	}
 	setJIT(true)
 	joined := sp.signIn(t, idp, conn.ID, answer{nameID: "okta|newcomer", email: newcomer})
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND tenant_id = $2 AND email = $3 AND email_verified_at IS NOT NULL AND display_name = 'Asha Rao'`, joined.UserID, tenant, newcomer); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND tenant_id = $2 AND email = $3 AND email_verified_at IS NOT NULL AND display_name = 'Asha Rao'`, joined.UserID, tenant, newcomer); n != 1 {
 		t.Errorf("the newcomer was not provisioned into the organisation, verified and named")
 	}
 	if sessionTenant(t, joined.SessionID) != tenant {
@@ -406,7 +406,7 @@ func TestSAMLSignIn(t *testing.T) {
 		}
 	}
 	stale := loginCode(t, sp.post(t, conn.ID, idp.respond(t, conn.ID, answer{inResponseTo: sp.begin(t, conn.ID), nameID: "okta|asha", email: member.Email})))
-	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `UPDATE auth.saml_login_codes SET expires_at = NOW() - INTERVAL '1 second' WHERE code_hash = $1`, codes.Hash(stale)); err != nil {
+	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `UPDATE auth.login_codes SET expires_at = NOW() - INTERVAL '1 second' WHERE code_hash = $1`, codes.Hash(stale)); err != nil {
 		t.Fatal(err)
 	}
 	if rec := sp.exchange(t, stale); !strings.Contains(rec.Body.String(), errs.CodeSAMLLoginCodeExpired) {
@@ -489,7 +489,7 @@ func TestSAMLAssertionRefused(t *testing.T) {
 	verify(t, victim.ID)
 	now := time.Now().UTC()
 	issued := func() int {
-		return dbtest.Count(t, `SELECT count(*) FROM auth.saml_login_codes WHERE tenant_id = $1`, tenant)
+		return dbtest.Count(t, `SELECT count(*) FROM auth.login_codes WHERE tenant_id = $1`, tenant)
 	}
 
 	renameSubject := func(el *etree.Element) {
@@ -626,7 +626,7 @@ func TestSAMLSignInAcrossOrganisations(t *testing.T) {
 	verify(t, member.ID)
 	verify(t, outsider.ID)
 	issued := func() int {
-		return dbtest.Count(t, `SELECT count(*) FROM auth.saml_login_codes WHERE user_id IN ($1, $2)`, member.ID, outsider.ID)
+		return dbtest.Count(t, `SELECT count(*) FROM auth.login_codes WHERE user_id IN ($1, $2)`, member.ID, outsider.ID)
 	}
 	before := issued()
 
@@ -645,11 +645,11 @@ func TestSAMLSignInAcrossOrganisations(t *testing.T) {
 	if issued() != before {
 		t.Error("a refused answer was issued a login code")
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE user_id = $1`, outsider.ID); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE user_id = $1`, outsider.ID); n != 0 {
 		t.Errorf("another organisation's account was linked to the connection")
 	}
 
-	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE "user".users SET status = 'suspended' WHERE id = $1`, member.ID); err != nil {
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE account.users SET status = 'suspended' WHERE id = $1`, member.ID); err != nil {
 		t.Fatal(err)
 	}
 	rec := sp.post(t, conn.ID, idp.respond(t, conn.ID, answer{inResponseTo: sp.begin(t, conn.ID), email: member.Email}))
@@ -689,7 +689,7 @@ func TestSAMLDoesNotAdoptAnUnverifiedAccount(t *testing.T) {
 	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeSAMLAccountUnverified) {
 		t.Errorf("an assertion of an unverified account with a password: %d %s, want 403 %s", rec.Code, rec.Body.String(), errs.CodeSAMLAccountUnverified)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE user_id = $1`, squatted.ID); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE user_id = $1`, squatted.ID); n != 0 {
 		t.Errorf("the IdP user was linked to the squatted account")
 	}
 }
@@ -706,7 +706,7 @@ func TestSAMLLinkSignsInOnlyHomeAccounts(t *testing.T) {
 	guest := dbtest.User(t, home, home, tenant)
 	verify(t, guest.ID)
 	if _, err := dbtest.Pool(t).Exec(ctx, `
-		INSERT INTO "user".external_identities (user_id, tenant_id, provider, connection_id, subject, email) VALUES ($1, $2, 'saml', $3, 'okta|guest', $4)
+		INSERT INTO account.external_identities (user_id, tenant_id, provider, connection_id, subject, email) VALUES ($1, $2, 'saml', $3, 'okta|guest', $4)
 	`, guest.ID, tenant, conn.ID, guest.Email); err != nil {
 		t.Fatal(err)
 	}
@@ -745,7 +745,7 @@ func TestSAMLSignInNeedsSSOInThePlan(t *testing.T) {
 	if rec := dbtest.Do(t, sp.public, http.MethodGet, "/saml/login/"+conn.ID.String(), nil); rec.Code != http.StatusPaymentRequired {
 		t.Errorf("sign-in start after the plan lapsed: %d %s, want 402", rec.Code, rec.Body.String())
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1`, newcomer); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, newcomer); n != 0 {
 		t.Errorf("the refused assertion provisioned the newcomer")
 	}
 
@@ -769,7 +769,7 @@ func TestSAMLRefusesAGuest(t *testing.T) {
 	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeSAMLUserTenantMismatch) {
 		t.Errorf("an assertion of a guest whose home is elsewhere: %d %s, want 403 %s", rec.Code, rec.Body.String(), errs.CodeSAMLUserTenantMismatch)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE user_id = $1`, guest.ID); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE user_id = $1`, guest.ID); n != 0 {
 		t.Errorf("the guest was linked to the organisation's IdP")
 	}
 }
@@ -803,16 +803,16 @@ func TestSAMLSpeaksOnlyForTheOrganisationsDomains(t *testing.T) {
 		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeSAMLEmailDomainUnverified) {
 			t.Errorf("%s: %d %s, want 403 %s", name, rec.Code, rec.Body.String(), errs.CodeSAMLEmailDomainUnverified)
 		}
-		if n := dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE tenant_id = $1 AND subject = $2`, tenant, email); n != 0 {
+		if n := dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE tenant_id = $1 AND subject = $2`, tenant, email); n != 0 {
 			t.Errorf("%s: the address was linked", name)
 		}
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE tenant_id = $1`, tenant); n != 2 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE tenant_id = $1`, tenant); n != 2 {
 		t.Errorf("%d accounts in the organisation, want its member and its admin only", n)
 	}
 
 	below := dbtest.Unique("new") + "@eu." + domain
-	if joined := sp.signIn(t, idp, conn.ID, answer{email: below}); dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND tenant_id = $2 AND email = $3`, joined.UserID, tenant, below) != 1 {
+	if joined := sp.signIn(t, idp, conn.ID, answer{email: below}); dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND tenant_id = $2 AND email = $3`, joined.UserID, tenant, below) != 1 {
 		t.Errorf("a newcomer below the organisation's domain was not provisioned into it")
 	}
 }
@@ -877,7 +877,7 @@ func TestSAMLDoesNotAdoptAnAdministrator(t *testing.T) {
 		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeSAMLAccountAdministers) {
 			t.Errorf("%s: %d %s, want 403 %s", name, rec.Code, rec.Body.String(), errs.CodeSAMLAccountAdministers)
 		}
-		if n := dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE user_id = $1`, a.ID); n != 0 {
+		if n := dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE user_id = $1`, a.ID); n != 0 {
 			t.Errorf("%s was linked to the connection", name)
 		}
 	}
@@ -963,7 +963,7 @@ func TestSAMLAnswerCompletesOnlyInTheBrowserThatAsked(t *testing.T) {
 	if rec := victim.post(t, conn.ID, response); rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeSAMLOtherBrowser) {
 		t.Errorf("the answer posted from another browser: %d %s, want 403 %s", rec.Code, rec.Body.String(), errs.CodeSAMLOtherBrowser)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM auth.saml_login_codes WHERE user_id = $1`, attacker.ID); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM auth.login_codes WHERE user_id = $1`, attacker.ID); n != 0 {
 		t.Error("an answer from another browser was issued a login code")
 	}
 	if got := sp.signIn(t, idp, conn.ID, answer{email: attacker.Email}); got.UserID != attacker.ID {
@@ -981,13 +981,13 @@ func TestSAMLAdoptsADirectoryProvisionedAccount(t *testing.T) {
 	tenant := dbtest.Tenant(t)
 	conn := sp.connect(t, tenant, idp)
 	provisioned := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, tenant), tenant, tenant)
-	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE "user".users SET provisioned_via = 'scim', email_verified_at = NULL WHERE id = $1`, provisioned.ID); err != nil {
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE account.users SET provisioned_via = 'scim', email_verified_at = NULL WHERE id = $1`, provisioned.ID); err != nil {
 		t.Fatal(err)
 	}
 	if got := sp.signIn(t, idp, conn.ID, answer{nameID: "okta|provisioned", email: provisioned.Email}); got.UserID != provisioned.ID {
 		t.Fatalf("signed in %s, want the provisioned account %s", got.UserID, provisioned.ID)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND email_verified_at IS NOT NULL`, provisioned.ID); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND email_verified_at IS NOT NULL`, provisioned.ID); n != 1 {
 		t.Error("the adopted account's address was not marked verified")
 	}
 }
@@ -1050,7 +1050,7 @@ func TestSAMLSignInSyncsGroupsAndName(t *testing.T) {
 	if synced() != 1 {
 		t.Fatal("the sign-in didn't put the person in the group their IdP group is mapped to")
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND display_name = 'Asha Rao'`, member.ID); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND display_name = 'Asha Rao'`, member.ID); n != 1 {
 		t.Error("the sign-in didn't set the asserted display name")
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'group.member_added' AND resource_id = $2 AND actor_type = 'saml'`, tenant, engineering); n != 1 {

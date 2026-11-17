@@ -21,9 +21,8 @@ import (
 )
 
 const (
-	stateTTL      = 10 * time.Minute // how long a begun sign-in can be completed
-	loginCodeTTL  = 5 * time.Minute  // how long the console has to trade its code
-	sweepInterval = 5 * time.Minute  // how often a replica deletes expired states and codes
+	stateTTL     = 10 * time.Minute // how long a begun sign-in can be completed
+	loginCodeTTL = 5 * time.Minute  // how long the console has to trade its code
 )
 
 // providerFor reads c's discovery document and returns it with the ID token
@@ -41,19 +40,6 @@ func (s *Service) providerFor(ctx context.Context, c *signInConnection) (discove
 		return discovery{}, idTokenRules{}, errs.ErrOIDCSSOMisconfigured.Wrap(err)
 	}
 	return doc, rules, nil
-}
-
-// sweep deletes expired sign-in states and stale login codes, at most once
-// per sweepInterval on this replica. Best effort: the deletes are idempotent
-// and touch only rows past their use.
-func (s *Service) sweep(ctx context.Context) {
-	now := time.Now().Unix()
-	due := s.nextSweep.Load()
-	if now < due || !s.nextSweep.CompareAndSwap(due, now+int64(sweepInterval.Seconds())) {
-		return
-	}
-	_ = s.q.DeleteExpiredOidcConnectionStates(ctx)
-	_ = s.q.DeleteStaleOidcConnectionLoginCodes(ctx)
 }
 
 // BeginSignIn starts a sign-in through connection id, returning the provider
@@ -90,9 +76,9 @@ func (s *Service) BeginSignIn(ctx context.Context, id uuid.UUID, redirectURI, re
 	if err != nil {
 		return "", "", err
 	}
-	s.sweep(ctx)
 	if err := s.q.InsertOidcConnectionState(ctx, dbgen.InsertOidcConnectionStateParams{
 		StateHash:    stateHash,
+		TenantID:     c.TenantID,
 		ConnectionID: c.ID,
 		CodeVerifier: verifier,
 		NonceHash:    nonceHash,
@@ -152,14 +138,16 @@ func (s *Service) CompleteSignIn(ctx context.Context, cb Callback) (loginCode, r
 	if cb.State == "" {
 		return "", "", errs.ErrOIDCSSOCallbackInvalid
 	}
-	st, err := s.q.ConsumeOidcConnectionState(ctx, codes.Hash(cb.State))
+	st, err := s.q.ConsumeOidcConnectionState(ctx, dbgen.ConsumeOidcConnectionStateParams{
+		StateHash: codes.Hash(cb.State), TenantID: c.TenantID, ConnectionID: c.ID,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", errs.ErrOIDCSSOStateInvalid
 	}
 	if err != nil {
 		return "", "", err
 	}
-	if st.ConnectionID != c.ID || !time.Now().Before(st.ExpiresAt) {
+	if !time.Now().Before(st.ExpiresAt) {
 		return "", "", errs.ErrOIDCSSOStateInvalid
 	}
 	// A sign-in completes only in the browser that began it, or whoever began
@@ -209,6 +197,7 @@ func (s *Service) CompleteSignIn(ctx context.Context, cb Callback) (loginCode, r
 	}
 	if err := s.q.InsertOidcConnectionLoginCode(ctx, dbgen.InsertOidcConnectionLoginCodeParams{
 		CodeHash:     codeHash,
+		TenantID:     c.TenantID,
 		ConnectionID: c.ID,
 		UserID:       userID,
 		ExpiresAt:    time.Now().UTC().Add(loginCodeTTL),
@@ -429,7 +418,7 @@ func (s *Service) consumeLoginCode(ctx context.Context, rawCode string) (uuid.UU
 	if err := signInStatus(row.Status); err != nil {
 		return uuid.Nil, uuid.Nil, err
 	}
-	if err := q.MarkOidcConnectionLoginCodeUsed(ctx, codeHash); err != nil {
+	if err := q.MarkOidcConnectionLoginCodeUsed(ctx, dbgen.MarkOidcConnectionLoginCodeUsedParams{CodeHash: codeHash, TenantID: row.TenantID}); err != nil {
 		return uuid.Nil, uuid.Nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {

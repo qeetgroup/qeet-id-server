@@ -169,19 +169,19 @@ const userCols = `id, tenant_id, email, email_verified_at, phone, phone_verified
 // log, which outlasts the sessions the cleanup deletes.
 const lastSeenCols = `GREATEST(
 			    (SELECT s.last_seen_at FROM auth.sessions s
-			     WHERE s.user_id = "user".users.id AND s.revoked_at IS NULL
-			       AND (s.tenant_id = $1 OR (s.tenant_id IS NULL AND "user".users.tenant_id = $1))
+			     WHERE s.user_id = account.users.id AND s.revoked_at IS NULL
+			       AND (s.tenant_id = $1 OR (s.tenant_id IS NULL AND account.users.tenant_id = $1))
 			     ORDER BY s.last_seen_at DESC LIMIT 1),
 			    (SELECT e.created_at FROM audit.events e
-			     WHERE e.actor_user_id = "user".users.id AND e.tenant_id = $1 AND e.action = 'auth.login_succeeded'
+			     WHERE e.actor_user_id = account.users.id AND e.tenant_id = $1 AND e.action = 'auth.login_succeeded'
 			     ORDER BY e.created_at DESC LIMIT 1)) AS last_seen_at,
 			  COALESCE(
 			    (SELECT host(s.ip) FROM auth.sessions s
-			     WHERE s.user_id = "user".users.id AND s.revoked_at IS NULL
-			       AND (s.tenant_id = $1 OR (s.tenant_id IS NULL AND "user".users.tenant_id = $1))
+			     WHERE s.user_id = account.users.id AND s.revoked_at IS NULL
+			       AND (s.tenant_id = $1 OR (s.tenant_id IS NULL AND account.users.tenant_id = $1))
 			     ORDER BY s.last_seen_at DESC LIMIT 1),
 			    (SELECT host(e.ip) FROM audit.events e
-			     WHERE e.actor_user_id = "user".users.id AND e.tenant_id = $1 AND e.action = 'auth.login_succeeded'
+			     WHERE e.actor_user_id = account.users.id AND e.tenant_id = $1 AND e.action = 'auth.login_succeeded'
 			     ORDER BY e.created_at DESC LIMIT 1))::text AS last_seen_ip`
 
 // scanUser scans a userCols row (no avatar_url) into a User.
@@ -420,7 +420,7 @@ func (r *Repository) update(ctx context.Context, db dbgen.DBTX, id uuid.UUID, in
 	ub.SetRaw("updated_at = NOW()")
 	idAt := ub.NextPlaceholder()
 	args := append(ub.Args(), id)
-	q := `UPDATE "user".users SET ` + ub.Assignments() +
+	q := `UPDATE account.users SET ` + ub.Assignments() +
 		` WHERE id = $` + strconv.Itoa(idAt) + ` AND deleted_at IS NULL RETURNING ` + userCols
 	row := db.QueryRow(ctx, q, args...)
 	return scanUser(row)

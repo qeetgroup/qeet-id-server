@@ -450,7 +450,7 @@ func TestSCIMCreateRollsBackWithoutEvidence(t *testing.T) {
 	}
 	var users int
 	if err := dbtest.Pool(t).QueryRow(ctx,
-		`SELECT count(*) FROM "user".users WHERE email = $1`, email).Scan(&users); err != nil {
+		`SELECT count(*) FROM account.users WHERE email = $1`, email).Scan(&users); err != nil {
 		t.Fatalf("count users: %v", err)
 	}
 	if users != 0 {
@@ -501,7 +501,7 @@ func TestSCIMUserWriteTenantIsolation(t *testing.T) {
 	statusOf := func() string {
 		var s string
 		if err := dbtest.Pool(t).QueryRow(ctx,
-			`SELECT status FROM "user".users WHERE id = $1`, victim).Scan(&s); err != nil {
+			`SELECT status FROM account.users WHERE id = $1`, victim).Scan(&s); err != nil {
 			t.Fatalf("read victim status: %v", err)
 		}
 		return s
@@ -538,7 +538,7 @@ func TestSCIMUserWriteTenantIsolation(t *testing.T) {
 
 	var displayName *string
 	if err := dbtest.Pool(t).QueryRow(ctx,
-		`SELECT display_name FROM "user".users WHERE id = $1`, victim).Scan(&displayName); err != nil {
+		`SELECT display_name FROM account.users WHERE id = $1`, victim).Scan(&displayName); err != nil {
 		t.Fatalf("read victim display_name: %v", err)
 	}
 	if displayName != nil && *displayName == "pwned" {
@@ -567,7 +567,7 @@ func TestSCIMCreatesNoAccountOnAnotherOrganisationsDomain(t *testing.T) {
 	if rec := f.do(t, http.MethodPost, "/scim/v2/Users", map[string]any{"userName": claimed, "active": true}); rec.Code != http.StatusConflict {
 		t.Errorf("provision on another organisation's domain: %d %s, want 409", rec.Code, rec.Body.String())
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1`, claimed); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, claimed); n != 0 {
 		t.Errorf("the account was created")
 	}
 	own := dbtest.Unique("scim") + "@" + dbtest.Domain(t, f.tenantID)
@@ -638,7 +638,7 @@ func TestSCIMLeavesOwnersAndOthersSuspensionsAlone(t *testing.T) {
 	status := func(id uuid.UUID) string {
 		t.Helper()
 		var s string
-		if err := pool.QueryRow(ctx, `SELECT status FROM "user".users WHERE id = $1`, id).Scan(&s); err != nil {
+		if err := pool.QueryRow(ctx, `SELECT status FROM account.users WHERE id = $1`, id).Scan(&s); err != nil {
 			t.Fatal(err)
 		}
 		return s
@@ -658,10 +658,10 @@ func TestSCIMLeavesOwnersAndOthersSuspensionsAlone(t *testing.T) {
 	}
 
 	byAdmin := f.seedUser(t, ctx, dbtest.Unique("held")+"@example.test")
-	if _, err := pool.Exec(ctx, `UPDATE "user".users SET status = 'suspended' WHERE id = $1`, byAdmin); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET status = 'suspended' WHERE id = $1`, byAdmin); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE "user".users SET suspension_source = 'manual' WHERE id = $1`, byAdmin); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET suspension_source = 'manual' WHERE id = $1`, byAdmin); err != nil {
 		t.Fatal(err)
 	}
 	if rec := active(byAdmin, true); rec.Code != http.StatusOK || status(byAdmin) != "suspended" {
@@ -740,7 +740,7 @@ func TestSCIMMatchesAndAdoptsMembers(t *testing.T) {
 	domain := dbtest.Domain(t, f.tenantID)
 	member := f.seedUser(t, ctx, dbtest.Unique("invited")+"@"+domain)
 	var email string
-	if err := dbtest.Pool(t).QueryRow(ctx, `SELECT email FROM "user".users WHERE id = $1`, member).Scan(&email); err != nil {
+	if err := dbtest.Pool(t).QueryRow(ctx, `SELECT email FROM account.users WHERE id = $1`, member).Scan(&email); err != nil {
 		t.Fatal(err)
 	}
 	found := decodeBody(t, f.do(t, http.MethodGet, "/scim/v2/Users?filter="+url.QueryEscape(`userName eq "`+strings.ToUpper(email)+`"`), nil))
@@ -755,7 +755,7 @@ func TestSCIMMatchesAndAdoptsMembers(t *testing.T) {
 	if rec.Code != http.StatusCreated || decodeBody(t, rec)["id"] != member.String() {
 		t.Fatalf("create the member: %d %s; want 201 with the existing account", rec.Code, rec.Body.String())
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND provisioned_via = 'scim' AND external_id = 'okta-77' AND display_name = 'Ada Lovelace'`, member); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND provisioned_via = 'scim' AND external_id = 'okta-77' AND display_name = 'Ada Lovelace'`, member); n != 1 {
 		t.Error("the adopted account was not tagged and updated")
 	}
 
@@ -787,7 +787,7 @@ func TestSCIMPatchAppliesIdentityAttributes(t *testing.T) {
 		t.Helper()
 		if err := pool.QueryRow(ctx, `
 			SELECT status, email, COALESCE(display_name, ''), COALESCE(external_id, ''), email_verified_at IS NOT NULL
-			FROM "user".users WHERE id = $1`, id).Scan(&status, &email, &display, &external, &verified); err != nil {
+			FROM account.users WHERE id = $1`, id).Scan(&status, &email, &display, &external, &verified); err != nil {
 			t.Fatal(err)
 		}
 		return

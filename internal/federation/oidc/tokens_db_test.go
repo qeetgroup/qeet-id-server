@@ -94,7 +94,7 @@ func TestRevocationAndIntrospection(t *testing.T) {
 		t.Error("a revoked refresh token was redeemed")
 	}
 
-	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE "user".users SET status = 'suspended' WHERE id = $1`, user.ID); err != nil {
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE account.users SET status = 'suspended' WHERE id = $1`, user.ID); err != nil {
 		t.Fatal(err)
 	}
 	if active(client.ClientID, secret, issued.AccessToken) {

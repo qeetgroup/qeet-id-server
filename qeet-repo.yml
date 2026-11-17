@@ -82,8 +82,8 @@ data:
     path: internal/platform/database/migrations/
     tool: golang-migrate
     embedded: true         # //go:embed *.sql in runner.go
-    range: "0001..0243"    # 242 pairs; 0082 absent
-    schemas: [auth, tenant, "user", rbac, audit, platform, qeetai]
+    range: "0001..0012"    # the schema baseline: 12 pairs, one file per schema
+    schemas: [auth, tenant, account, rbac, audit, platform, qeetai]
 
 http:
   router: chi/v5

@@ -47,7 +47,7 @@ func newWorld(t *testing.T) world {
 	}{
 		{`INSERT INTO auth.login_sessions (token_hash, user_id, expires_at) VALUES ($1, $2, NOW() + INTERVAL '1 hour') RETURNING id`, []any{w.tag, w.user}, &w.login},
 		{`INSERT INTO tenant.saml_connections (tenant_id, name, idp_entity_id, idp_sso_url, idp_certificate) VALUES ($1, 'Okta', 'https://idp.example.test', 'https://idp.example.test/sso', 'cert') RETURNING id`, []any{w.tenant}, &w.connection},
-		{`INSERT INTO tenant.webhook_subscriptions (tenant_id, url, secret) VALUES ($1, 'https://hooks.example.test', 'secret') RETURNING id`, []any{w.tenant}, &w.subscription},
+		{`INSERT INTO tenant.webhook_subscriptions (tenant_id, url, secret_ct, secret_nonce) VALUES ($1, 'https://hooks.example.test', '\x00', '\x00') RETURNING id`, []any{w.tenant}, &w.subscription},
 		{`INSERT INTO tenant.oidc_connections (tenant_id, name, issuer, client_id, client_secret_ct, client_secret_nonce) VALUES ($1, 'Entra', 'https://login.example.test', 'qeet', '\x00', '\x00') RETURNING id`, []any{w.tenant}, &w.oidc},
 	} {
 		if err := pool.QueryRow(ctx, s.sql, s.args...).Scan(s.into); err != nil {
@@ -99,45 +99,27 @@ func signInCases(w world) []sweepCase {
 		{"password resets", `INSERT INTO auth.password_resets (user_id, token_hash, expires_at)
 			SELECT $1, gen_random_uuid()::text, e FROM ` + expiries,
 			[]any{w.user}, `SELECT count(*) FROM auth.password_resets WHERE user_id = $1`, w.user, 1},
-		{"email verifications", `INSERT INTO "user".email_verifications (user_id, email, code_hash, expires_at, purpose)
+		{"email verifications", `INSERT INTO account.email_verifications (user_id, email, code_hash, expires_at, purpose)
 			SELECT $1, 'a@example.test', 'hash', e, 'verify_email' FROM ` + expiries,
-			[]any{w.user}, `SELECT count(*) FROM "user".email_verifications WHERE user_id = $1`, w.user, 1},
-		{"phone verifications", `INSERT INTO "user".phone_verifications (user_id, phone, code_hash, expires_at)
+			[]any{w.user}, `SELECT count(*) FROM account.email_verifications WHERE user_id = $1`, w.user, 1},
+		{"phone verifications", `INSERT INTO account.phone_verifications (user_id, phone, code_hash, expires_at)
 			SELECT $1, '+15550100', 'hash', e FROM ` + expiries,
-			[]any{w.user}, `SELECT count(*) FROM "user".phone_verifications WHERE user_id = $1`, w.user, 1},
+			[]any{w.user}, `SELECT count(*) FROM account.phone_verifications WHERE user_id = $1`, w.user, 1},
 		{"SAML requests", `INSERT INTO auth.saml_authn_requests (request_id, connection_id, expires_at)
 			SELECT gen_random_uuid()::text, $1, e FROM ` + expiries,
 			[]any{w.connection}, `SELECT count(*) FROM auth.saml_authn_requests WHERE connection_id = $1`, w.connection, 1},
-		{"SAML sign-in codes", `INSERT INTO auth.saml_login_codes (code_hash, user_id, tenant_id, expires_at)
-			SELECT gen_random_uuid()::text, $1, $2, e FROM ` + expiries,
-			[]any{w.user, w.tenant}, `SELECT count(*) FROM auth.saml_login_codes WHERE tenant_id = $1`, w.tenant, 1},
-		{"OIDC connection sign-in states", `INSERT INTO auth.oidc_connection_states (state_hash, connection_id, code_verifier, nonce_hash, redirect_uri, expires_at)
-			SELECT gen_random_uuid()::text, $1, 'v', 'n', 'https://id.example.test/cb', e FROM ` + expiries,
-			[]any{w.oidc}, `SELECT count(*) FROM auth.oidc_connection_states WHERE connection_id = $1`, w.oidc, 1},
-		{"OIDC connection sign-in codes", `INSERT INTO auth.oidc_connection_login_codes (code_hash, connection_id, user_id, expires_at)
-			SELECT gen_random_uuid()::text, $1, $2, e FROM ` + expiries,
-			[]any{w.oidc, w.user}, `SELECT count(*) FROM auth.oidc_connection_login_codes WHERE connection_id = $1`, w.oidc, 1},
-		{"social sign-in codes", `INSERT INTO auth.social_login_codes (code_hash, user_id, tenant_id, expires_at)
-			SELECT gen_random_uuid()::text, $1, $2, e FROM ` + expiries,
-			[]any{w.user, w.tenant}, `SELECT count(*) FROM auth.social_login_codes WHERE tenant_id = $1`, w.tenant, 1},
-		{"social sign-in states", `INSERT INTO auth.social_oauth_states (state_hash, tenant_id, provider, code_verifier, redirect_uri, expires_at)
-			SELECT gen_random_uuid()::text, $1, 'google', 'v', 'https://id.example.test/cb', e FROM ` + expiries,
-			[]any{w.tenant}, `SELECT count(*) FROM auth.social_oauth_states WHERE tenant_id = $1`, w.tenant, 1},
-		{"platform social sign-in codes", `INSERT INTO auth.platform_social_codes (code_hash, user_id, expires_at)
-			SELECT gen_random_uuid()::text, $1, e FROM ` + expiries,
-			[]any{w.user}, `SELECT count(*) FROM auth.platform_social_codes WHERE user_id = $1`, w.user, 1},
-		{"platform social sign-in states", `INSERT INTO auth.platform_social_states (state_hash, provider, code_verifier, redirect_uri, expires_at, link_user_id)
-			SELECT gen_random_uuid()::text, 'google', 'v', 'https://id.example.test/cb', e, $1 FROM ` + expiries,
-			[]any{w.user}, `SELECT count(*) FROM auth.platform_social_states WHERE link_user_id = $1`, w.user, 1},
+		{"federated sign-in codes", `INSERT INTO auth.login_codes (code_hash, kind, user_id, expires_at)
+			SELECT gen_random_uuid()::text, 'platform_social', $1, e FROM ` + expiries,
+			[]any{w.user}, `SELECT count(*) FROM auth.login_codes WHERE user_id = $1`, w.user, 1},
+		{"federated sign-in states", `INSERT INTO auth.oauth_states (state_hash, kind, provider, code_verifier, redirect_uri, expires_at, link_user_id)
+			SELECT gen_random_uuid()::text, 'platform_social', 'google', 'v', 'https://id.example.test/cb', e, $1 FROM ` + expiries,
+			[]any{w.user}, `SELECT count(*) FROM auth.oauth_states WHERE link_user_id = $1`, w.user, 1},
 		{"platform social link codes", `INSERT INTO auth.platform_social_link_codes (code_hash, user_id, provider, subject, expires_at)
 			SELECT gen_random_uuid()::text, $1, 'google', 'g-1', e FROM ` + expiries,
 			[]any{w.user}, `SELECT count(*) FROM auth.platform_social_link_codes WHERE user_id = $1`, w.user, 1},
 		{"connected-account states", `INSERT INTO tenant.token_vault_connect_states (state, tenant_id, user_id, provider, expires_at)
 			SELECT gen_random_uuid()::text, $1, $2, 'slack', e FROM ` + expiries,
 			[]any{w.tenant, w.user}, `SELECT count(*) FROM tenant.token_vault_connect_states WHERE tenant_id = $1`, w.tenant, 1},
-		{"passkey challenges", `INSERT INTO auth.passkey_challenges (user_id, challenge, kind, expires_at)
-			SELECT $1, '\x00', 'authenticate', e FROM ` + expiries,
-			[]any{w.user}, `SELECT count(*) FROM auth.passkey_challenges WHERE user_id = $1`, w.user, 1},
 		{"second-factor sign-ins", `INSERT INTO auth.mfa_login_challenges (user_id, expires_at) SELECT $1, e FROM ` + expiries,
 			[]any{w.user}, `SELECT count(*) FROM auth.mfa_login_challenges WHERE user_id = $1`, w.user, 1},
 		// A counter is kept while recent or while its lock is in force.

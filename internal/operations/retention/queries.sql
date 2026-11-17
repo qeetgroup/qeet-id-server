@@ -1,11 +1,11 @@
 -- Queries for the retention domain.
--- Static queries against tenant.retention_policy and "user".users live here
+-- Static queries against tenant.retention_policy and account.users live here
 -- and are compiled by sqlc into ./dbgen.
 
 -- name: GetRetentionPolicy :one
 SELECT p.deleted_users_enabled, p.deleted_users_days, p.updated_at, p.updated_by, u.email AS updated_by_email
 FROM tenant.retention_policy p
-LEFT JOIN "user".users u ON u.id = p.updated_by
+LEFT JOIN account.users u ON u.id = p.updated_by
 WHERE p.tenant_id = $1;
 
 -- Upsert a tenant's retention policy and return the stored values.
@@ -23,7 +23,7 @@ RETURNING deleted_users_enabled, deleted_users_days, updated_at;
 -- The days value is clamped to [1,3650] by the caller before it reaches here.
 -- name: CountRipeDeletedUsers :one
 SELECT count(*)
-FROM "user".users
+FROM account.users
 WHERE tenant_id = $1
   AND deleted_at IS NOT NULL
   AND deleted_at < NOW() - make_interval(days => $2);
@@ -31,7 +31,7 @@ WHERE tenant_id = $1
 -- ListRipeDeletedUsers lists, in ID order after @after, at most @max_rows of
 -- the tenant's soft-deleted users older than @days days.
 -- name: ListRipeDeletedUsers :many
-SELECT id FROM "user".users
+SELECT id FROM account.users
 WHERE tenant_id = @tenant_id
   AND deleted_at IS NOT NULL
   AND deleted_at < NOW() - make_interval(days => @days)
@@ -42,7 +42,7 @@ LIMIT @max_rows;
 -- PurgeRipeDeletedUser permanently removes one of the tenant's soft-deleted
 -- users older than @days days.
 -- name: PurgeRipeDeletedUser :execrows
-DELETE FROM "user".users
+DELETE FROM account.users
 WHERE id = @id AND tenant_id = @tenant_id
   AND deleted_at IS NOT NULL
   AND deleted_at < NOW() - make_interval(days => @days);

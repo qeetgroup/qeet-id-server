@@ -533,7 +533,7 @@ func create(w *world.World, o *world.Org) {
 			ResourceID: &o.ID, IP: owner.Device.IP, UserAgent: owner.Device.UserAgent, Metadata: map[string]any{"name": s.Name, "plan": s.Plan}})
 	})
 	if owner.Org == o {
-		w.Exec("profile "+owner.Email, `UPDATE "user".users SET phone = NULLIF($2, ''), metadata = $3 WHERE id = $1 AND tenant_id = $4`,
+		w.Exec("profile "+owner.Email, `UPDATE account.users SET phone = NULLIF($2, ''), metadata = $3 WHERE id = $1 AND tenant_id = $4`,
 			owner.ID, owner.Phone, profile(owner), o.ID)
 	}
 	// The plan: a trial starts as one; everything else as its paid plan.
@@ -639,7 +639,7 @@ func create(w *world.World, o *world.Org) {
 				Metadata: map[string]any{"email": p.Email, "source": source(p)}})
 		})
 		if p.Provisioned != "" {
-			w.Exec("provisioned "+p.Email, `UPDATE "user".users SET provisioned_via = $2, external_id = $3 WHERE id = $1 AND tenant_id = $4`,
+			w.Exec("provisioned "+p.Email, `UPDATE account.users SET provisioned_via = $2, external_id = $3 WHERE id = $1 AND tenant_id = $4`,
 				p.ID, p.Provisioned, p.ExternalID, o.ID)
 		}
 	}

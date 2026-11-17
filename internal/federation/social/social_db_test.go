@@ -29,7 +29,7 @@ func TestSocialSignInAdoptsOnlyAnAccountInTheTenant(t *testing.T) {
 	svc := NewService(dbtest.Pool(t), nil, "https://api.id.qeet.in")
 	home, joined, other := dbtest.Tenant(t), dbtest.Tenant(t), dbtest.Tenant(t)
 	account := dbtest.User(t, home, joined)
-	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE "user".users SET email_verified_at = NOW() WHERE id = $1`, account.ID); err != nil {
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE account.users SET email_verified_at = NOW() WHERE id = $1`, account.ID); err != nil {
 		t.Fatal(err)
 	}
 	// GitHub, whose endpoints are fixed, vouches for an address in any tenant.
@@ -45,7 +45,7 @@ func TestSocialSignInAdoptsOnlyAnAccountInTheTenant(t *testing.T) {
 			t.Errorf("sign-in to the %s tenant = %s, %v; want %v", name, got, err, errs.ErrSocialAccountNotInTenant)
 		}
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE user_id = $1 AND tenant_id <> $2`, account.ID, home); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE user_id = $1 AND tenant_id <> $2`, account.ID, home); n != 0 {
 		t.Errorf("another tenant's sign-in linked %d identities", n)
 	}
 }
@@ -70,10 +70,10 @@ func TestSocialSignUpWithOneConnection(t *testing.T) {
 	}
 
 	dbtest.LeaveOneConnection(t)
-	if email, id, err := signUp(open); err != nil || dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND email = $2 AND tenant_id = $3`, id, email, open) != 1 {
+	if email, id, err := signUp(open); err != nil || dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND email = $2 AND tenant_id = $3`, id, email, open) != 1 {
 		t.Errorf("sign-up where self-registration is on: %s, %v; want an account in the tenant", id, err)
 	}
-	if email, _, err := signUp(closed); !errors.Is(err, errs.ErrAuthSelfRegistrationDisabled) || dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1`, email) != 0 {
+	if email, _, err := signUp(closed); !errors.Is(err, errs.ErrAuthSelfRegistrationDisabled) || dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, email) != 0 {
 		t.Errorf("sign-up where self-registration is off: %v; want %v and no account", err, errs.ErrAuthSelfRegistrationDisabled)
 	}
 }
@@ -88,7 +88,7 @@ func TestSocialSignInAdoptsADirectoryProvisionedAccount(t *testing.T) {
 	svc := NewService(pool, nil, "https://api.id.qeet.in")
 	tenant := dbtest.Tenant(t)
 	provisioned, registered := dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant)
-	if _, err := pool.Exec(ctx, `UPDATE "user".users SET provisioned_via = 'scim' WHERE id = $1`, provisioned.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET provisioned_via = 'scim' WHERE id = $1`, provisioned.ID); err != nil {
 		t.Fatal(err)
 	}
 	signIn := func(email string) (uuid.UUID, error) {
@@ -97,7 +97,7 @@ func TestSocialSignInAdoptsADirectoryProvisionedAccount(t *testing.T) {
 	if got, err := signIn(provisioned.Email); err != nil || got != provisioned.ID {
 		t.Errorf("a directory-provisioned account: %s, %v; want it adopted", got, err)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND email_verified_at IS NOT NULL`, provisioned.ID); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND email_verified_at IS NOT NULL`, provisioned.ID); n != 1 {
 		t.Error("the adopted account's address was not marked verified")
 	}
 	if _, err := signIn(registered.Email); !errors.Is(err, errs.ErrSocialAccountUnverified) {
@@ -117,7 +117,7 @@ func TestSocialSignInIgnoresConnectionLinks(t *testing.T) {
 	for _, provider := range []string{"saml", "ldap", "oidc"} {
 		subject := provider + "-subject-" + uuid.NewString()
 		if _, err := dbtest.Pool(t).Exec(ctx, `
-			INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject, email, connection_id)
+			INSERT INTO account.external_identities (user_id, tenant_id, provider, subject, email, connection_id)
 			VALUES ($1, $2, $3, $4, $5, $6)`, linked.ID, tenant, provider, subject, linked.Email, uuid.New()); err != nil {
 			t.Fatal(err)
 		}
@@ -157,7 +157,7 @@ func TestSocialProviderTrustChangeMustOutrankLinkedAdministrators(t *testing.T) 
 	if status, body := as(owner, http.MethodPost, "/social/providers", provider(discovery)); status != http.StatusOK {
 		t.Fatalf("set the provider up: %d %s", status, body)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject) VALUES ($1, $2, 'corp', 'owner-subject')`, owner.ID, tenant); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO account.external_identities (user_id, tenant_id, provider, subject) VALUES ($1, $2, 'corp', 'owner-subject')`, owner.ID, tenant); err != nil {
 		t.Fatal(err)
 	}
 	elsewhere := "https://idp.attacker.example/.well-known/openid-configuration"
@@ -210,14 +210,14 @@ func TestUnlinkingAnOwnersSocialIdentityNeedsToOutrankThem(t *testing.T) {
 	billing := dbtest.User(t, tenant)
 	dbtest.Assign(t, billing.ID, tenant, dbtest.Role(t, tenant, "billing.write"))
 	member := dbtest.User(t, tenant, tenant)
-	if _, err := pool.Exec(ctx, `INSERT INTO tenant.social_providers (tenant_id, provider, client_id, client_secret) VALUES ($1, 'google', 'id', 'secret')`, tenant); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO tenant.social_providers (tenant_id, provider, client_id, client_secret_ct, client_secret_nonce) VALUES ($1, 'google', 'id', '\x00', '\x00')`, tenant); err != nil {
 		t.Fatal(err)
 	}
 	identity := func(a dbtest.Account) string {
 		t.Helper()
 		dbtest.SetPassword(t, a.ID, dbtest.Unique("Kx7mQ2vLp9Wz"))
 		var id uuid.UUID
-		if err := pool.QueryRow(ctx, `INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject) VALUES ($1, $2, 'google', $3) RETURNING id`,
+		if err := pool.QueryRow(ctx, `INSERT INTO account.external_identities (user_id, tenant_id, provider, subject) VALUES ($1, $2, 'google', $3) RETURNING id`,
 			a.ID, tenant, dbtest.Unique("subject")).Scan(&id); err != nil {
 			t.Fatal(err)
 		}
@@ -235,7 +235,7 @@ func TestUnlinkingAnOwnersSocialIdentityNeedsToOutrankThem(t *testing.T) {
 	if status, body := unlink(admin, identity(billing)); status != http.StatusForbidden || !strings.Contains(body, errs.CodeRBACTargetOutranks) {
 		t.Errorf("an administrator unlinks the sign-in of someone holding billing.write: %d %s, want 403 %s", status, body, errs.CodeRBACTargetOutranks)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE user_id = ANY($1)`, []uuid.UUID{owner.ID, billing.ID}); n != 2 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE user_id = ANY($1)`, []uuid.UUID{owner.ID, billing.ID}); n != 2 {
 		t.Errorf("%d of the outranking people's sign-ins left, want both", n)
 	}
 	if status, body := unlink(admin, identity(member)); status != http.StatusNoContent {

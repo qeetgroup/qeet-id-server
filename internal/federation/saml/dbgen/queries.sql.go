@@ -14,10 +14,10 @@ import (
 )
 
 const consumeSamlLoginCode = `-- name: ConsumeSamlLoginCode :one
-SELECT lc.user_id, lc.tenant_id, lc.expires_at, lc.used_at, c.status
-FROM auth.saml_login_codes lc
+SELECT lc.user_id, c.tenant_id, lc.expires_at, lc.used_at, c.status
+FROM auth.login_codes lc
 JOIN tenant.saml_connections c ON c.tenant_id = lc.tenant_id AND c.id = lc.connection_id
-WHERE lc.code_hash = $1
+WHERE lc.code_hash = $1 AND lc.kind = 'saml'
 FOR UPDATE OF lc
 `
 
@@ -148,7 +148,7 @@ func (q *Queries) DeleteSamlSPUserAssignment(ctx context.Context, arg DeleteSaml
 
 const getExternalIdentityUser = `-- name: GetExternalIdentityUser :one
 
-SELECT user_id FROM "user".external_identities
+SELECT user_id FROM account.external_identities
 WHERE tenant_id = $1 AND provider = $2 AND connection_id = $3::uuid
   AND subject = $4
 `
@@ -161,7 +161,7 @@ type GetExternalIdentityUserParams struct {
 }
 
 // ==========================================================================
-// findOrCreateUser — same pattern as ldap (cross-schema "user" tables)
+// findOrCreateUser — same pattern as ldap (cross-schema account tables)
 // ==========================================================================
 func (q *Queries) GetExternalIdentityUser(ctx context.Context, arg GetExternalIdentityUserParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, getExternalIdentityUser,
@@ -500,7 +500,7 @@ func (q *Queries) GetSamlSPForUpdate(ctx context.Context, arg GetSamlSPForUpdate
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id FROM "user".users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL
+SELECT id FROM account.users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (uuid.UUID, error) {
@@ -511,7 +511,7 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (uuid.UUID, 
 }
 
 const getUserForIdP = `-- name: GetUserForIdP :one
-SELECT email, display_name, tenant_id, status, metadata FROM "user".users WHERE id = $1 AND deleted_at IS NULL
+SELECT email, display_name, tenant_id, status, metadata FROM account.users WHERE id = $1 AND deleted_at IS NULL
 `
 
 type GetUserForIdPRow struct {
@@ -665,8 +665,8 @@ func (q *Queries) InsertSamlConnectionKey(ctx context.Context, arg InsertSamlCon
 
 const insertSamlLoginCode = `-- name: InsertSamlLoginCode :exec
 
-INSERT INTO auth.saml_login_codes (code_hash, user_id, tenant_id, connection_id, expires_at)
-VALUES ($1, $2, $3, $4::uuid, $5)
+INSERT INTO auth.login_codes (code_hash, kind, user_id, tenant_id, connection_id, expires_at)
+VALUES ($1, 'saml', $2, $3::uuid, $4::uuid, $5)
 `
 
 type InsertSamlLoginCodeParams struct {
@@ -839,7 +839,7 @@ func (q *Queries) InsertSamlSPUserAssignment(ctx context.Context, arg InsertSaml
 }
 
 const insertUserWithEmail = `-- name: InsertUserWithEmail :one
-INSERT INTO "user".users (tenant_id, email, email_verified_at, display_name, status)
+INSERT INTO account.users (tenant_id, email, email_verified_at, display_name, status)
 VALUES ($1, $2, NOW(), $3, 'active')
 RETURNING id
 `
@@ -907,7 +907,7 @@ func (q *Queries) IsSamlAssignableGroup(ctx context.Context, arg IsSamlAssignabl
 
 const isSamlAssignableUser = `-- name: IsSamlAssignableUser :one
 SELECT EXISTS (
-    SELECT 1 FROM "user".users WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+    SELECT 1 FROM account.users WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
 )::bool
 `
 
@@ -939,7 +939,7 @@ func (q *Queries) IsTenantActive(ctx context.Context, id uuid.UUID) (bool, error
 }
 
 const linkExternalIdentity = `-- name: LinkExternalIdentity :exec
-INSERT INTO "user".external_identities (user_id, tenant_id, provider, connection_id, subject, email)
+INSERT INTO account.external_identities (user_id, tenant_id, provider, connection_id, subject, email)
 VALUES ($1, $2, $3, $4::uuid, $5, $6)
 ON CONFLICT (tenant_id, provider, connection_id, subject) DO NOTHING
 `
@@ -1320,7 +1320,7 @@ func (q *Queries) ListSamlSPGroupAssignments(ctx context.Context, arg ListSamlSP
 const listSamlSPUserAssignments = `-- name: ListSamlSPUserAssignments :many
 SELECT a.user_id, u.email, u.display_name, a.assigned_at, a.assigned_by
 FROM tenant.saml_sp_user_assignments a
-JOIN "user".users u ON u.id = a.user_id
+JOIN account.users u ON u.id = a.user_id
 WHERE a.tenant_id = $1 AND a.sp_id = $2
 ORDER BY a.assigned_at, a.user_id
 `
@@ -1454,11 +1454,16 @@ func (q *Queries) LockSamlMetadataSource(ctx context.Context, arg LockSamlMetada
 }
 
 const markSamlLoginCodeUsed = `-- name: MarkSamlLoginCodeUsed :exec
-UPDATE auth.saml_login_codes SET used_at = NOW() WHERE code_hash = $1
+UPDATE auth.login_codes SET used_at = NOW() WHERE code_hash = $1 AND tenant_id = $2::uuid
 `
 
-func (q *Queries) MarkSamlLoginCodeUsed(ctx context.Context, codeHash string) error {
-	_, err := q.db.Exec(ctx, markSamlLoginCodeUsed, codeHash)
+type MarkSamlLoginCodeUsedParams struct {
+	CodeHash string
+	TenantID uuid.UUID
+}
+
+func (q *Queries) MarkSamlLoginCodeUsed(ctx context.Context, arg MarkSamlLoginCodeUsedParams) error {
+	_, err := q.db.Exec(ctx, markSamlLoginCodeUsed, arg.CodeHash, arg.TenantID)
 	return err
 }
 

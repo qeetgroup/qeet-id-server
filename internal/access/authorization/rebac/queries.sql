@@ -66,7 +66,7 @@ WHERE tenant_id = @tenant_id AND object_type = @object_type;
 -- to the organisation: their home, or one they hold a role in.
 -- name: NamePeople :many
 SELECT u.id, COALESCE(NULLIF(u.display_name, ''), u.email)::text AS name
-FROM "user".users u
+FROM account.users u
 WHERE u.id = ANY(@ids::uuid[]) AND u.deleted_at IS NULL
   AND (u.tenant_id = @tenant_id OR EXISTS (
       SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = @tenant_id));

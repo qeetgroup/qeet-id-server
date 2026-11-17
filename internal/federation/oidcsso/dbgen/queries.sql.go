@@ -15,9 +15,9 @@ import (
 
 const consumeOidcConnectionLoginCode = `-- name: ConsumeOidcConnectionLoginCode :one
 SELECT lc.user_id, lc.expires_at, lc.used_at, c.tenant_id, c.status
-FROM auth.oidc_connection_login_codes lc
-JOIN tenant.oidc_connections c ON c.id = lc.connection_id
-WHERE lc.code_hash = $1
+FROM auth.login_codes lc
+JOIN tenant.oidc_connections c ON c.tenant_id = lc.tenant_id AND c.id = lc.connection_id
+WHERE lc.code_hash = $1 AND lc.kind = 'oidc_connection'
 FOR UPDATE OF lc
 `
 
@@ -43,12 +43,19 @@ func (q *Queries) ConsumeOidcConnectionLoginCode(ctx context.Context, codeHash s
 }
 
 const consumeOidcConnectionState = `-- name: ConsumeOidcConnectionState :one
-DELETE FROM auth.oidc_connection_states WHERE state_hash = $1
-RETURNING connection_id, code_verifier, nonce_hash, redirect_uri, expires_at, return_to
+DELETE FROM auth.oauth_states
+WHERE state_hash = $1 AND kind = 'oidc_connection'
+  AND tenant_id = $2::uuid AND connection_id = $3::uuid
+RETURNING code_verifier, nonce_hash::text AS nonce_hash, redirect_uri, expires_at, return_to
 `
 
-type ConsumeOidcConnectionStateRow struct {
+type ConsumeOidcConnectionStateParams struct {
+	StateHash    string
+	TenantID     uuid.UUID
 	ConnectionID uuid.UUID
+}
+
+type ConsumeOidcConnectionStateRow struct {
 	CodeVerifier string
 	NonceHash    string
 	RedirectUri  string
@@ -56,13 +63,12 @@ type ConsumeOidcConnectionStateRow struct {
 	ReturnTo     *string
 }
 
-// ConsumeOidcConnectionState spends a state as it reads it, so a callback
-// carrying it succeeds at most once.
-func (q *Queries) ConsumeOidcConnectionState(ctx context.Context, stateHash string) (ConsumeOidcConnectionStateRow, error) {
-	row := q.db.QueryRow(ctx, consumeOidcConnectionState, stateHash)
+// ConsumeOidcConnectionState spends a state the connection issued as it reads
+// it, so a callback carrying it succeeds at most once.
+func (q *Queries) ConsumeOidcConnectionState(ctx context.Context, arg ConsumeOidcConnectionStateParams) (ConsumeOidcConnectionStateRow, error) {
+	row := q.db.QueryRow(ctx, consumeOidcConnectionState, arg.StateHash, arg.TenantID, arg.ConnectionID)
 	var i ConsumeOidcConnectionStateRow
 	err := row.Scan(
-		&i.ConnectionID,
 		&i.CodeVerifier,
 		&i.NonceHash,
 		&i.RedirectUri,
@@ -70,15 +76,6 @@ func (q *Queries) ConsumeOidcConnectionState(ctx context.Context, stateHash stri
 		&i.ReturnTo,
 	)
 	return i, err
-}
-
-const deleteExpiredOidcConnectionStates = `-- name: DeleteExpiredOidcConnectionStates :exec
-DELETE FROM auth.oidc_connection_states WHERE expires_at <= NOW()
-`
-
-func (q *Queries) DeleteExpiredOidcConnectionStates(ctx context.Context) error {
-	_, err := q.db.Exec(ctx, deleteExpiredOidcConnectionStates)
-	return err
 }
 
 const deleteOidcConnection = `-- name: DeleteOidcConnection :execrows
@@ -98,18 +95,9 @@ func (q *Queries) DeleteOidcConnection(ctx context.Context, arg DeleteOidcConnec
 	return result.RowsAffected(), nil
 }
 
-const deleteStaleOidcConnectionLoginCodes = `-- name: DeleteStaleOidcConnectionLoginCodes :exec
-DELETE FROM auth.oidc_connection_login_codes WHERE expires_at <= NOW() - INTERVAL '1 hour'
-`
-
-func (q *Queries) DeleteStaleOidcConnectionLoginCodes(ctx context.Context) error {
-	_, err := q.db.Exec(ctx, deleteStaleOidcConnectionLoginCodes)
-	return err
-}
-
 const getExternalIdentityUser = `-- name: GetExternalIdentityUser :one
 
-SELECT user_id FROM "user".external_identities
+SELECT user_id FROM account.external_identities
 WHERE tenant_id = $1 AND provider = $2 AND connection_id = $3::uuid
   AND subject = $4
 `
@@ -253,7 +241,7 @@ func (q *Queries) GetOidcConnectionForSignIn(ctx context.Context, id uuid.UUID) 
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id FROM "user".users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL
+SELECT id FROM account.users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (uuid.UUID, error) {
@@ -366,22 +354,24 @@ func (q *Queries) InsertOidcConnection(ctx context.Context, arg InsertOidcConnec
 }
 
 const insertOidcConnectionLoginCode = `-- name: InsertOidcConnectionLoginCode :exec
-INSERT INTO auth.oidc_connection_login_codes (code_hash, connection_id, user_id, expires_at)
-VALUES ($1, $2, $3, $4)
+INSERT INTO auth.login_codes (code_hash, kind, user_id, tenant_id, connection_id, expires_at)
+VALUES ($1, 'oidc_connection', $2, $3::uuid, $4::uuid, $5)
 `
 
 type InsertOidcConnectionLoginCodeParams struct {
 	CodeHash     string
-	ConnectionID uuid.UUID
 	UserID       uuid.UUID
+	TenantID     uuid.UUID
+	ConnectionID uuid.UUID
 	ExpiresAt    time.Time
 }
 
 func (q *Queries) InsertOidcConnectionLoginCode(ctx context.Context, arg InsertOidcConnectionLoginCodeParams) error {
 	_, err := q.db.Exec(ctx, insertOidcConnectionLoginCode,
 		arg.CodeHash,
-		arg.ConnectionID,
 		arg.UserID,
+		arg.TenantID,
+		arg.ConnectionID,
 		arg.ExpiresAt,
 	)
 	return err
@@ -389,12 +379,15 @@ func (q *Queries) InsertOidcConnectionLoginCode(ctx context.Context, arg InsertO
 
 const insertOidcConnectionState = `-- name: InsertOidcConnectionState :exec
 
-INSERT INTO auth.oidc_connection_states (state_hash, connection_id, code_verifier, nonce_hash, redirect_uri, expires_at, return_to)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO auth.oauth_states
+    (state_hash, kind, tenant_id, connection_id, code_verifier, nonce_hash, redirect_uri, expires_at, return_to)
+VALUES ($1, 'oidc_connection', $2::uuid, $3::uuid, $4, $5::text,
+        $6, $7, $8)
 `
 
 type InsertOidcConnectionStateParams struct {
 	StateHash    string
+	TenantID     uuid.UUID
 	ConnectionID uuid.UUID
 	CodeVerifier string
 	NonceHash    string
@@ -409,6 +402,7 @@ type InsertOidcConnectionStateParams struct {
 func (q *Queries) InsertOidcConnectionState(ctx context.Context, arg InsertOidcConnectionStateParams) error {
 	_, err := q.db.Exec(ctx, insertOidcConnectionState,
 		arg.StateHash,
+		arg.TenantID,
 		arg.ConnectionID,
 		arg.CodeVerifier,
 		arg.NonceHash,
@@ -420,7 +414,7 @@ func (q *Queries) InsertOidcConnectionState(ctx context.Context, arg InsertOidcC
 }
 
 const insertUserWithEmail = `-- name: InsertUserWithEmail :one
-INSERT INTO "user".users (tenant_id, email, email_verified_at, display_name, status)
+INSERT INTO account.users (tenant_id, email, email_verified_at, display_name, status)
 VALUES ($1, $2, NOW(), $3, 'active')
 RETURNING id
 `
@@ -439,7 +433,7 @@ func (q *Queries) InsertUserWithEmail(ctx context.Context, arg InsertUserWithEma
 }
 
 const linkExternalIdentity = `-- name: LinkExternalIdentity :exec
-INSERT INTO "user".external_identities (user_id, tenant_id, provider, connection_id, subject, email, metadata)
+INSERT INTO account.external_identities (user_id, tenant_id, provider, connection_id, subject, email, metadata)
 VALUES ($1, $2, $3, $4::uuid, $5, $6, $7)
 ON CONFLICT (tenant_id, provider, connection_id, subject)
 DO UPDATE SET email = EXCLUDED.email, metadata = EXCLUDED.metadata
@@ -538,11 +532,16 @@ func (q *Queries) ListOidcConnections(ctx context.Context, tenantID uuid.UUID) (
 }
 
 const markOidcConnectionLoginCodeUsed = `-- name: MarkOidcConnectionLoginCodeUsed :exec
-UPDATE auth.oidc_connection_login_codes SET used_at = NOW() WHERE code_hash = $1
+UPDATE auth.login_codes SET used_at = NOW() WHERE code_hash = $1 AND tenant_id = $2::uuid
 `
 
-func (q *Queries) MarkOidcConnectionLoginCodeUsed(ctx context.Context, codeHash string) error {
-	_, err := q.db.Exec(ctx, markOidcConnectionLoginCodeUsed, codeHash)
+type MarkOidcConnectionLoginCodeUsedParams struct {
+	CodeHash string
+	TenantID uuid.UUID
+}
+
+func (q *Queries) MarkOidcConnectionLoginCodeUsed(ctx context.Context, arg MarkOidcConnectionLoginCodeUsedParams) error {
+	_, err := q.db.Exec(ctx, markOidcConnectionLoginCodeUsed, arg.CodeHash, arg.TenantID)
 	return err
 }
 

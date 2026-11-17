@@ -26,7 +26,7 @@ func TestAdminListsPageAndConfigTellsTheLastRequest(t *testing.T) {
 	var people []uuid.UUID
 	for range 3 {
 		u := dbtest.User(t, tenant, tenant)
-		if _, err := pool.Exec(ctx, `UPDATE "user".users SET provisioned_via = 'scim', external_id = $2 WHERE id = $1`, u.ID, u.ID.String()); err != nil {
+		if _, err := pool.Exec(ctx, `UPDATE account.users SET provisioned_via = 'scim', external_id = $2 WHERE id = $1`, u.ID, u.ID.String()); err != nil {
 			t.Fatal(err)
 		}
 		people = append(people, u.ID)
@@ -40,7 +40,7 @@ func TestAdminListsPageAndConfigTellsTheLastRequest(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := pool.Exec(ctx, `UPDATE "user".users SET deleted_at = NOW() WHERE id = $1`, people[1]); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET deleted_at = NOW() WHERE id = $1`, people[1]); err != nil {
 		t.Fatal(err)
 	}
 

@@ -24,7 +24,7 @@ func TestRecipientLocaleStaysWithItsOrganisation(t *testing.T) {
 	anne := dbtest.User(t, home)
 	dirk := dbtest.User(t, uuid.Nil, other)
 	for _, id := range []uuid.UUID{anne.ID, dirk.ID} {
-		if _, err := pool.Exec(ctx, `UPDATE "user".users SET metadata = jsonb_build_object('locale', 'fr') WHERE id = $1`, id); err != nil {
+		if _, err := pool.Exec(ctx, `UPDATE account.users SET metadata = jsonb_build_object('locale', 'fr') WHERE id = $1`, id); err != nil {
 			t.Fatalf("set locale: %v", err)
 		}
 	}

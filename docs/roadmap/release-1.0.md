@@ -127,9 +127,10 @@ Social sign-in (GitHub, Facebook, X, Discord and Apple) has only been tested aga
 
 **Why we need it.** A backup that has never been restored is not one we can rely on. Part of Qeet ID's data is encrypted with keys that rotate, so a restore also needs the right key versions; otherwise stored secrets can't be read.
 
-The current candidate adds database migrations through 0243 (242 pairs in total; 0082 is
-intentionally absent). Some build indexes while the service keeps running (`CONCURRENTLY`), and an
-interrupted build can leave an invalid index that has to be cleaned up before retrying.
+The schema starts from a 12-file baseline (migrations 0001 to 0012, written in November 2026 before
+any database held real data); every change after it is a new migration. One that adds an index to
+an existing table builds it while the service keeps running (`CONCURRENTLY`), and an interrupted
+build can leave an invalid index that has to be cleaned up before retrying.
 
 **What Qeet ID has today:**
 
@@ -142,9 +143,9 @@ interrupted build can leave an invalid index that has to be cleaned up before re
 - Restore a backup into an isolated environment with the encryption and signing key versions it needs.
 - After the restore, check sign-in, reading stored secrets (for example SAML keys and webhook secrets), organisation isolation and audit-chain verification.
 - Measure how much data could be lost (recovery point objective, RPO) and how long recovery takes (recovery time objective, RTO).
-- Run every migration newer than the last production schema through 0243 on a copy of production
-  data; interrupt one concurrent index build and recover from it. Re-read the highest migration when
-  selecting the candidate instead of assuming 0243 remains final.
+- Run every migration newer than the last production schema on a copy of production data;
+  interrupt one concurrent index build and recover from it. Read the highest migration when
+  selecting the candidate.
 - Write down the rollback or roll-forward path.
 
 **Done when:**

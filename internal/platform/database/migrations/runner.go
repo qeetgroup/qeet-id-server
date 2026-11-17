@@ -3,7 +3,9 @@
 package migrations
 
 import (
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -104,6 +106,29 @@ func CheckCompatible(dbURL string) (Status, error) {
 		return st, err
 	}
 	return st, checkStatus(st)
+}
+
+// Fingerprint identifies the migrations this build carries by their names and
+// contents, so a database built from them can be told from one built before a
+// migration was edited.
+func Fingerprint() (string, error) {
+	h := sha256.New()
+	err := fs.WalkDir(sqlFiles, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		raw, err := fs.ReadFile(sqlFiles, path)
+		if err != nil {
+			return err
+		}
+		h.Write(fmt.Appendf(nil, "%s\x00%d\x00", path, len(raw)))
+		h.Write(raw)
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16], nil
 }
 
 // Latest returns the newest migration this build carries.

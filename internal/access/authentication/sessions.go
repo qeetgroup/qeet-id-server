@@ -361,7 +361,7 @@ func (s *Service) ListSessionsPageFor(ctx context.Context, userID, current uuid.
 		if err := s.pool.QueryRow(ctx, `
 			SELECT sess.created_at
 			FROM auth.sessions sess
-			JOIN "user".users u ON u.id = sess.user_id
+			JOIN account.users u ON u.id = sess.user_id
 			WHERE sess.id = $1 AND sess.user_id = $2 AND u.deleted_at IS NULL
 		`, cursorID, userID).Scan(&cursorAt); errors.Is(err, pgx.ErrNoRows) {
 			return nil, errs.ErrBadRequest.WithDetail("invalid session cursor")
@@ -383,7 +383,7 @@ func (s *Service) ListSessionsPageFor(ctx context.Context, userID, current uuid.
 		       COALESCE(sess.country, ''), COALESCE(sess.city, '')
 		FROM auth.sessions sess
 		CROSS JOIN LATERAL (SELECT LEAST(sess.last_seen_at + sess.idle_timeout, sess.expires_at) AS idle) ends
-		JOIN "user".users u ON u.id = sess.user_id
+		JOIN account.users u ON u.id = sess.user_id
 		WHERE sess.user_id = $1 AND u.deleted_at IS NULL AND sess.superseded_by IS NULL
 		  AND ($2::boolean = FALSE OR (sess.created_at, sess.id) < ($3, $4))
 		ORDER BY sess.created_at DESC, sess.id DESC
@@ -427,7 +427,7 @@ func (s *Service) ListSessionsPageFor(ctx context.Context, userID, current uuid.
 	var total int
 	if err := s.pool.QueryRow(ctx, `
 		SELECT count(*) FROM auth.sessions sess
-		JOIN "user".users u ON u.id = sess.user_id
+		JOIN account.users u ON u.id = sess.user_id
 		WHERE sess.user_id = $1 AND u.deleted_at IS NULL AND sess.superseded_by IS NULL
 	`, userID).Scan(&total); err != nil {
 		return nil, err

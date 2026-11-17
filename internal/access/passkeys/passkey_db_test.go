@@ -158,10 +158,10 @@ func TestPasskeySignupBeginAnswersAlikeForATakenAddress(t *testing.T) {
 	if refusals["a taken address"] != refusals["an address on a managed domain"] {
 		t.Errorf("the refusals differ: %q and %q", refusals["a taken address"], refusals["an address on a managed domain"])
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE lower(email) = lower($1)`, managed); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE lower(email) = lower($1)`, managed); n != 0 {
 		t.Errorf("%d accounts created on a managed domain, want none", n)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE lower(email) = lower($1)`, taken); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE lower(email) = lower($1)`, taken); n != 1 {
 		t.Errorf("%d accounts hold the taken address, want its own one", n)
 	}
 }

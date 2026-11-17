@@ -50,7 +50,7 @@ FROM tenant.security_policies WHERE tenant_id = @tenant_id;
 -- them): they set one up at their next sign-in.
 -- name: CountUsersWithoutSecondFactor :one
 SELECT count(*)::int
-FROM "user".users u
+FROM account.users u
 WHERE u.tenant_id = @tenant_id AND u.deleted_at IS NULL
   AND NOT EXISTS (SELECT 1 FROM auth.mfa_totp t WHERE t.user_id = u.id AND t.confirmed_at IS NOT NULL)
   AND NOT EXISTS (SELECT 1 FROM auth.mfa_recovery_codes r WHERE r.user_id = u.id AND r.used_at IS NULL)
@@ -107,10 +107,10 @@ SELECT count(*) AS enabled,
 FROM tenant.log_sinks WHERE tenant_id = @tenant_id AND enabled;
 
 -- name: CheckPurgeRequestCount :one
-SELECT count(*) FROM "user".purge_requests WHERE tenant_id = @tenant_id;
+SELECT count(*) FROM account.purge_requests WHERE tenant_id = @tenant_id;
 
 -- name: CheckExportRequestCount :one
-SELECT count(*) FROM "user".export_requests WHERE tenant_id = @tenant_id;
+SELECT count(*) FROM account.export_requests WHERE tenant_id = @tenant_id;
 
 -- -----------------------------------------------------------------------
 -- GDPR purge requests
@@ -121,17 +121,17 @@ SELECT count(*) FROM "user".export_requests WHERE tenant_id = @tenant_id;
 -- (time.Now().UTC().Add(s.grace)) to avoid pgtype.Interval parameter type issues.
 -- subject_id keeps the account's ID once the account itself is deleted, and
 -- subject_email and subject_name who it was filed for until they are erased.
-INSERT INTO "user".purge_requests (tenant_id, user_id, subject_id, requested_by, reason, grace_until,
+INSERT INTO account.purge_requests (tenant_id, user_id, subject_id, requested_by, reason, grace_until,
                                    subject_email, subject_name)
 SELECT @tenant_id, @subject_id::uuid, @subject_id::uuid, @requested_by, @reason, @grace_until, u.email, u.display_name
-FROM "user".users u WHERE u.id = @subject_id::uuid AND u.tenant_id = @tenant_id
+FROM account.users u WHERE u.id = @subject_id::uuid AND u.tenant_id = @tenant_id
 RETURNING id, tenant_id, subject_id, requested_by, reason, status,
           grace_until, completed_at, created_at, subject_email, subject_name;
 
 -- name: CancelPurgeRequest :one
 -- Cancel a pending purge request (e.g. the subject changed their mind),
 -- returning its user. No row when it is already completed or not found.
-UPDATE "user".purge_requests
+UPDATE account.purge_requests
 SET status = 'cancelled'
 WHERE id = @id AND tenant_id = @tenant_id AND status = 'pending'
 RETURNING subject_id;
@@ -141,7 +141,7 @@ RETURNING subject_id;
 -- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT id, tenant_id, subject_id, requested_by, reason, status,
        grace_until, completed_at, created_at, subject_email, subject_name
-FROM "user".purge_requests
+FROM account.purge_requests
 WHERE tenant_id = @tenant_id
 ORDER BY created_at DESC
 LIMIT 1001;
@@ -150,7 +150,7 @@ LIMIT 1001;
 -- Replace PII fields with redacted markers and soft-delete the user row,
 -- returning the address it had. Audit references are intentionally preserved;
 -- only personal data is erased.
-UPDATE "user".users u
+UPDATE account.users u
 SET email              = 'redacted-' || u.id::text || '@gdpr.invalid',
     phone              = NULL,
     display_name       = NULL,
@@ -162,7 +162,7 @@ SET email              = 'redacted-' || u.id::text || '@gdpr.invalid',
     status             = 'deleted',
     deleted_at         = COALESCE(u.deleted_at, NOW()),
     updated_at         = NOW()
-FROM (SELECT p.id, p.email FROM "user".users p WHERE p.id = @user_id FOR UPDATE) prior
+FROM (SELECT p.id, p.email FROM account.users p WHERE p.id = @user_id FOR UPDATE) prior
 WHERE u.id = prior.id
 RETURNING prior.email;
 
@@ -172,7 +172,7 @@ SET revoked_at = COALESCE(revoked_at, NOW())
 WHERE user_id = @user_id;
 
 -- name: CompletePurgeRequest :exec
-UPDATE "user".purge_requests
+UPDATE account.purge_requests
 SET status = 'completed', completed_at = NOW(), subject_email = NULL, subject_name = NULL
 WHERE id = @id;
 
@@ -182,14 +182,14 @@ WHERE id = @id;
 
 -- name: InsertExportRequest :one
 -- subject_id keeps the account's ID once the account itself is deleted.
-INSERT INTO "user".export_requests (tenant_id, user_id, subject_id, requested_by)
+INSERT INTO account.export_requests (tenant_id, user_id, subject_id, requested_by)
 VALUES (@tenant_id, @subject_id::uuid, @subject_id::uuid, @requested_by)
 RETURNING id, tenant_id, subject_id, requested_by, status, completed_at, created_at;
 
 -- name: ListExportRequests :many
 -- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT id, tenant_id, subject_id, requested_by, status, error, completed_at, created_at
-FROM "user".export_requests
+FROM account.export_requests
 WHERE tenant_id = @tenant_id
 ORDER BY created_at DESC
 LIMIT 1001;
@@ -197,18 +197,18 @@ LIMIT 1001;
 -- name: GetExportRequest :one
 SELECT id, tenant_id, subject_id, requested_by, status, payload, error,
        completed_at, created_at
-FROM "user".export_requests
+FROM account.export_requests
 WHERE id = @id AND tenant_id = @tenant_id;
 
 -- name: FailExportRequest :execrows
 -- Mark an export request the worker holds the lease on as failed.
-UPDATE "user".export_requests
+UPDATE account.export_requests
 SET status = 'failed', error = @error_msg, completed_at = NOW(),
     lease_owner = NULL, lease_until = NULL
 WHERE id = @id AND tenant_id = @tenant_id AND lease_owner = @lease_owner;
 
 -- name: ReadyExportRequest :exec
-UPDATE "user".export_requests
+UPDATE account.export_requests
 SET status = 'ready', payload = @payload, completed_at = NOW()
 WHERE id = @id;
 
@@ -216,9 +216,9 @@ WHERE id = @id;
 -- became ready before @cutoff, or whose account has been deleted, and marks
 -- them expired.
 -- name: ExpireReadyExports :execrows
-UPDATE "user".export_requests SET payload = NULL, status = 'expired'
+UPDATE account.export_requests SET payload = NULL, status = 'expired'
 WHERE ctid = ANY(ARRAY(
-    SELECT r.ctid FROM "user".export_requests r
+    SELECT r.ctid FROM account.export_requests r
     WHERE r.status = 'ready' AND (r.completed_at < @cutoff::timestamptz OR r.user_id IS NULL)
     LIMIT @max_rows));
 
@@ -229,7 +229,7 @@ WHERE ctid = ANY(ARRAY(
 -- name: GetUserProfileForExport :one
 SELECT email, phone, display_name, avatar_url, status, metadata,
        email_verified_at, phone_verified_at, created_at
-FROM "user".users
+FROM account.users
 WHERE id = @user_id AND tenant_id = @tenant_id;
 
 -- name: ListUserSessionsForExport :many
@@ -267,7 +267,7 @@ WHERE user_id = @user_id;
 -- and single sign-on identities, and the platform's own social sign-ins.
 -- name: ListUserIdentitiesForExport :many
 SELECT i.provider, i.subject, i.email, i.linked_at
-FROM "user".external_identities i
+FROM account.external_identities i
 WHERE i.user_id = @user_id AND (sqlc.narg('tenant_id')::uuid IS NULL OR i.tenant_id = sqlc.narg('tenant_id'))
 UNION ALL
 SELECT p.provider, p.subject, p.email, p.linked_at
@@ -336,7 +336,7 @@ ORDER BY generated_at DESC LIMIT 1;
 -- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT o.control_id, o.user_id, u.email, u.display_name, o.updated_at
 FROM tenant.compliance_control_owners o
-LEFT JOIN "user".users u ON u.id = o.user_id
+LEFT JOIN account.users u ON u.id = o.user_id
 WHERE o.tenant_id = @tenant_id
 ORDER BY o.control_id
 LIMIT 1001;
@@ -354,7 +354,7 @@ DELETE FROM tenant.compliance_control_owners WHERE tenant_id = @tenant_id AND co
 -- Whether the user is one of the tenant's people: its own, or holding a role
 -- there.
 SELECT EXISTS (
-    SELECT 1 FROM "user".users u WHERE u.id = @user_id AND u.deleted_at IS NULL
+    SELECT 1 FROM account.users u WHERE u.id = @user_id AND u.deleted_at IS NULL
       AND (u.tenant_id = @tenant_id OR EXISTS (
           SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = @tenant_id))
 );

@@ -32,7 +32,7 @@ func newOwner(t *testing.T, tenant uuid.UUID) dbtest.Account {
 func linkOwner(t *testing.T, tenant, conn uuid.UUID) dbtest.Account {
 	t.Helper()
 	a := newOwner(t, tenant)
-	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `INSERT INTO "user".external_identities (user_id, tenant_id, provider, connection_id, subject) VALUES ($1, $2, 'saml', $3, $4)`,
+	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `INSERT INTO account.external_identities (user_id, tenant_id, provider, connection_id, subject) VALUES ($1, $2, 'saml', $3, $4)`,
 		a.ID, tenant, conn, dbtest.Unique("okta|owner")); err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestSAMLCertificateRolloverByOwnerKeepsLinks(t *testing.T) {
 	if rec := dbtest.Do(t, as, http.MethodPost, "/tenants/"+tenant.String()+"/saml/"+conn.ID.String()+"/certificates", map[string]any{"certificate": next.certPEM}); rec.Code != http.StatusCreated {
 		t.Fatalf("an owner adds the next certificate: %d %s, want 201", rec.Code, rec.Body.String())
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE user_id = $1 AND connection_id = $2`, linked.ID, conn.ID); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE user_id = $1 AND connection_id = $2`, linked.ID, conn.ID); n != 1 {
 		t.Errorf("the linked owner has %d links to the connection, want 1", n)
 	}
 }

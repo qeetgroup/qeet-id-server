@@ -16,10 +16,10 @@ import (
 const addressHolder = `-- name: AddressHolder :one
 SELECT u.email, u.tenant_id,
        ((u.provisioned_via IS NOT DISTINCT FROM 'scim') OR EXISTS (
-           SELECT 1 FROM "user".external_identities e
+           SELECT 1 FROM account.external_identities e
            WHERE e.user_id = u.id AND e.tenant_id = u.tenant_id AND e.connection_id IS NOT NULL
        ))::bool AS provided
-FROM "user".users u WHERE u.id = $1
+FROM account.users u WHERE u.id = $1
 `
 
 type AddressHolderRow struct {
@@ -39,7 +39,7 @@ func (q *Queries) AddressHolder(ctx context.Context, userID uuid.UUID) (AddressH
 }
 
 const deleteEmailVerification = `-- name: DeleteEmailVerification :exec
-DELETE FROM "user".email_verifications WHERE id = $1
+DELETE FROM account.email_verifications WHERE id = $1
 `
 
 func (q *Queries) DeleteEmailVerification(ctx context.Context, id uuid.UUID) error {
@@ -48,7 +48,7 @@ func (q *Queries) DeleteEmailVerification(ctx context.Context, id uuid.UUID) err
 }
 
 const deletePhoneVerification = `-- name: DeletePhoneVerification :exec
-DELETE FROM "user".phone_verifications WHERE id = $1
+DELETE FROM account.phone_verifications WHERE id = $1
 `
 
 func (q *Queries) DeletePhoneVerification(ctx context.Context, id uuid.UUID) error {
@@ -58,7 +58,7 @@ func (q *Queries) DeletePhoneVerification(ctx context.Context, id uuid.UUID) err
 
 const emailCodeFailures = `-- name: EmailCodeFailures :one
 SELECT COALESCE(sum(attempts), 0)::int AS failures, COALESCE(min(created_at), NOW())::timestamptz AS oldest
-FROM "user".email_verifications
+FROM account.email_verifications
 WHERE user_id = $1 AND purpose = $2 AND attempts > 0
   AND (created_at > NOW() - INTERVAL '1 hour' OR expires_at > NOW())
 `
@@ -84,10 +84,10 @@ func (q *Queries) EmailCodeFailures(ctx context.Context, arg EmailCodeFailuresPa
 
 const emailCodeSends = `-- name: EmailCodeSends :one
 WITH mine AS (
-    SELECT v.created_at FROM "user".email_verifications v
+    SELECT v.created_at FROM account.email_verifications v
     WHERE v.user_id = $1 AND v.created_at > NOW() - INTERVAL '1 hour'
 ), theirs AS (
-    SELECT v.created_at FROM "user".email_verifications v
+    SELECT v.created_at FROM account.email_verifications v
     WHERE lower(v.email) = lower($2) AND v.created_at > NOW() - INTERVAL '1 hour'
 )
 SELECT
@@ -126,7 +126,7 @@ func (q *Queries) EmailCodeSends(ctx context.Context, arg EmailCodeSendsParams) 
 
 const emailTakenByOther = `-- name: EmailTakenByOther :one
 SELECT EXISTS(
-    SELECT 1 FROM "user".users WHERE lower(email) = lower($1) AND id <> $2
+    SELECT 1 FROM account.users WHERE lower(email) = lower($1) AND id <> $2
 )::boolean
 `
 
@@ -151,7 +151,7 @@ WITH resets AS (
     WHERE user_id = $1 AND used_at IS NULL AND expires_at > NOW() - INTERVAL '1 minute'
 )
 UPDATE auth.magic_links SET expires_at = NOW() - INTERVAL '1 minute'
-WHERE LOWER(email) = (SELECT LOWER(u.email) FROM "user".users u WHERE u.id = $1)
+WHERE LOWER(email) = (SELECT LOWER(u.email) FROM account.users u WHERE u.id = $1)
   AND used_at IS NULL AND expires_at > NOW() - INTERVAL '1 minute'
 `
 
@@ -165,7 +165,7 @@ func (q *Queries) ExpireRecoveryLinksForUser(ctx context.Context, userID uuid.UU
 
 const getLatestEmailChange = `-- name: GetLatestEmailChange :one
 SELECT id, email, expires_at, used_at
-FROM "user".email_verifications
+FROM account.email_verifications
 WHERE user_id = $1 AND code_hash = $2
 ORDER BY created_at DESC
 LIMIT 1
@@ -200,7 +200,7 @@ func (q *Queries) GetLatestEmailChange(ctx context.Context, arg GetLatestEmailCh
 
 const getLatestEmailVerification = `-- name: GetLatestEmailVerification :one
 SELECT id, expires_at, used_at
-FROM "user".email_verifications
+FROM account.email_verifications
 WHERE user_id = $1 AND code_hash = $2
 ORDER BY created_at DESC
 LIMIT 1
@@ -229,7 +229,7 @@ func (q *Queries) GetLatestEmailVerification(ctx context.Context, arg GetLatestE
 
 const getLatestPhoneVerification = `-- name: GetLatestPhoneVerification :one
 SELECT id, phone, expires_at, used_at
-FROM "user".phone_verifications
+FROM account.phone_verifications
 WHERE user_id = $1 AND code_hash = $2
 ORDER BY created_at DESC
 LIMIT 1
@@ -262,11 +262,11 @@ func (q *Queries) GetLatestPhoneVerification(ctx context.Context, arg GetLatestP
 
 const getUserEmail = `-- name: GetUserEmail :one
 
-SELECT email FROM "user".users WHERE id = $1
+SELECT email FROM account.users WHERE id = $1
 `
 
 // Queries for the verification domain.
-// All queries are static. Queries that touch "user".users are cross-schema reads
+// All queries are static. Queries that touch account.users are cross-schema reads
 // that are acceptable here (verification is a "user" subdomain and needs the address
 // on file). audit/outbox are not involved in this domain.
 // GetUserEmail fetches the email address for the given user (used by StartEmail
@@ -279,7 +279,7 @@ func (q *Queries) GetUserEmail(ctx context.Context, id uuid.UUID) (string, error
 }
 
 const getUserPhone = `-- name: GetUserPhone :one
-SELECT phone FROM "user".users WHERE id = $1
+SELECT phone FROM account.users WHERE id = $1
 `
 
 // GetUserPhone fetches the phone number for the given user (used by StartPhone
@@ -293,11 +293,11 @@ func (q *Queries) GetUserPhone(ctx context.Context, id uuid.UUID) (*string, erro
 
 const insertEmailVerification = `-- name: InsertEmailVerification :one
 WITH retired AS (
-    UPDATE "user".email_verifications
+    UPDATE account.email_verifications
     SET expires_at = LEAST(expires_at, NOW())
     WHERE user_id = $1 AND used_at IS NULL
 )
-INSERT INTO "user".email_verifications (user_id, email, code_hash, expires_at, purpose)
+INSERT INTO account.email_verifications (user_id, email, code_hash, expires_at, purpose)
 VALUES ($1, $2, $3, $4, $5)
 RETURNING id
 `
@@ -329,11 +329,11 @@ func (q *Queries) InsertEmailVerification(ctx context.Context, arg InsertEmailVe
 
 const insertPhoneVerification = `-- name: InsertPhoneVerification :one
 WITH retired AS (
-    UPDATE "user".phone_verifications
+    UPDATE account.phone_verifications
     SET expires_at = LEAST(expires_at, NOW())
     WHERE user_id = $1 AND used_at IS NULL
 )
-INSERT INTO "user".phone_verifications (user_id, phone, code_hash, expires_at)
+INSERT INTO account.phone_verifications (user_id, phone, code_hash, expires_at)
 VALUES ($1, $2, $3, $4)
 RETURNING id
 `
@@ -360,7 +360,7 @@ func (q *Queries) InsertPhoneVerification(ctx context.Context, arg InsertPhoneVe
 }
 
 const lockAccountForCodeSend = `-- name: LockAccountForCodeSend :exec
-SELECT 1 FROM "user".users WHERE id = $1 FOR NO KEY UPDATE
+SELECT 1 FROM account.users WHERE id = $1 FOR NO KEY UPDATE
 `
 
 // LockAccountForCodeSend holds the account while a code is counted against
@@ -371,7 +371,7 @@ func (q *Queries) LockAccountForCodeSend(ctx context.Context, userID uuid.UUID) 
 }
 
 const markEmailVerificationUsed = `-- name: MarkEmailVerificationUsed :exec
-UPDATE "user".email_verifications SET used_at = NOW() WHERE id = $1
+UPDATE account.email_verifications SET used_at = NOW() WHERE id = $1
 `
 
 func (q *Queries) MarkEmailVerificationUsed(ctx context.Context, id uuid.UUID) error {
@@ -380,7 +380,7 @@ func (q *Queries) MarkEmailVerificationUsed(ctx context.Context, id uuid.UUID) e
 }
 
 const markPhoneVerificationUsed = `-- name: MarkPhoneVerificationUsed :exec
-UPDATE "user".phone_verifications SET used_at = NOW() WHERE id = $1
+UPDATE account.phone_verifications SET used_at = NOW() WHERE id = $1
 `
 
 func (q *Queries) MarkPhoneVerificationUsed(ctx context.Context, id uuid.UUID) error {
@@ -389,7 +389,7 @@ func (q *Queries) MarkPhoneVerificationUsed(ctx context.Context, id uuid.UUID) e
 }
 
 const markUserEmailVerified = `-- name: MarkUserEmailVerified :execrows
-UPDATE "user".users
+UPDATE account.users
 SET email_verified_at = COALESCE(email_verified_at, NOW()), updated_at = NOW()
 WHERE id = $1 AND lower(email) = lower($2)
 `
@@ -410,7 +410,7 @@ func (q *Queries) MarkUserEmailVerified(ctx context.Context, arg MarkUserEmailVe
 }
 
 const markUserPhoneVerified = `-- name: MarkUserPhoneVerified :exec
-UPDATE "user".users
+UPDATE account.users
 SET phone_verified_at = COALESCE(phone_verified_at, NOW()), updated_at = NOW()
 WHERE id = $1
 `
@@ -422,7 +422,7 @@ func (q *Queries) MarkUserPhoneVerified(ctx context.Context, id uuid.UUID) error
 
 const phoneCodeFailures = `-- name: PhoneCodeFailures :one
 SELECT COALESCE(sum(attempts), 0)::int AS failures, COALESCE(min(created_at), NOW())::timestamptz AS oldest
-FROM "user".phone_verifications
+FROM account.phone_verifications
 WHERE user_id = $1 AND attempts > 0
   AND (created_at > NOW() - INTERVAL '1 hour' OR expires_at > NOW())
 `
@@ -442,10 +442,10 @@ func (q *Queries) PhoneCodeFailures(ctx context.Context, userID uuid.UUID) (Phon
 
 const phoneCodeSends = `-- name: PhoneCodeSends :one
 WITH mine AS (
-    SELECT v.created_at FROM "user".phone_verifications v
+    SELECT v.created_at FROM account.phone_verifications v
     WHERE v.user_id = $1 AND v.created_at > NOW() - INTERVAL '1 hour'
 ), theirs AS (
-    SELECT v.created_at FROM "user".phone_verifications v
+    SELECT v.created_at FROM account.phone_verifications v
     WHERE v.phone = $2 AND v.created_at > NOW() - INTERVAL '1 hour'
 )
 SELECT
@@ -485,7 +485,7 @@ func (q *Queries) PhoneCodeSends(ctx context.Context, arg PhoneCodeSendsParams) 
 }
 
 const setUserVerifiedPhone = `-- name: SetUserVerifiedPhone :exec
-UPDATE "user".users
+UPDATE account.users
 SET phone = $1, phone_verified_at = NOW(), updated_at = NOW()
 WHERE id = $2
 `
@@ -504,7 +504,7 @@ func (q *Queries) SetUserVerifiedPhone(ctx context.Context, arg SetUserVerifiedP
 }
 
 const updateUserEmail = `-- name: UpdateUserEmail :execrows
-UPDATE "user".users
+UPDATE account.users
 SET email = $1, email_verified_at = NOW(), updated_at = NOW()
 WHERE id = $2
 `

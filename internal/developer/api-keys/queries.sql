@@ -32,7 +32,7 @@ UPDATE auth.api_keys SET revoked_at = NOW() WHERE id = $1 AND tenant_id = $2 AND
 SELECT k.id, k.tenant_id, k.user_id, k.name, k.prefix, k.scopes, k.expires_at, k.last_used_at, k.revoked_at, k.created_at, k.key_hash
 FROM auth.api_keys k
 JOIN tenant.tenants t ON t.id = k.tenant_id AND t.status = 'active' AND t.deleted_at IS NULL
-LEFT JOIN "user".users u ON u.id = k.user_id
+LEFT JOIN account.users u ON u.id = k.user_id
 WHERE k.prefix = $1 AND k.revoked_at IS NULL
   AND (k.user_id IS NULL OR (u.status = 'active' AND u.deleted_at IS NULL));
 
@@ -43,7 +43,7 @@ WHERE k.prefix = $1 AND k.revoked_at IS NULL
 SELECT EXISTS (
     SELECT 1 FROM auth.api_keys k
     JOIN tenant.tenants t ON t.id = k.tenant_id AND t.status = 'active' AND t.deleted_at IS NULL
-    LEFT JOIN "user".users u ON u.id = k.user_id
+    LEFT JOIN account.users u ON u.id = k.user_id
     WHERE k.id = @id AND k.tenant_id = @tenant_id AND k.revoked_at IS NULL
       AND (k.expires_at IS NULL OR k.expires_at > NOW())
       AND (k.user_id IS NULL OR (u.status = 'active' AND u.deleted_at IS NULL))

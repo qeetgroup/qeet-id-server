@@ -25,7 +25,7 @@ SELECT count(*)::bigint FROM (
       AND ($5::timestamptz IS NULL OR e.created_at >= $5)
       AND ($6::timestamptz IS NULL OR e.created_at <= $6)
       AND ($7::text IS NULL OR e.search_vector @@ audit.search_query($7)
-       OR e.actor_user_id IN (SELECT su.id FROM "user".users su
+       OR e.actor_user_id IN (SELECT su.id FROM account.users su
            WHERE (su.email ILIKE $8::text || '%' OR su.display_name ILIKE '%' || $8::text || '%')
              AND (su.tenant_id = $1 OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = $1))))
       AND ($9::text[] IS NULL OR e.resource_type = ANY($9))
@@ -88,7 +88,7 @@ SELECT e.id, e.actor_user_id, e.actor_type, e.action, e.resource_type, e.resourc
        COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.tenant_id,
        u.display_name AS actor_display_name, u.email AS actor_email
 FROM audit.events e
-LEFT JOIN "user".users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
+LEFT JOIN account.users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
 WHERE e.tenant_id = $1 AND e.id = $2
 `
 
@@ -145,7 +145,7 @@ SELECT e.id, e.actor_user_id, e.actor_type, e.action, e.resource_type, e.resourc
        COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.tenant_id,
        u.display_name AS actor_display_name, u.email AS actor_email
 FROM audit.events e
-LEFT JOIN "user".users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
+LEFT JOIN account.users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
 WHERE e.tenant_id = $1
   AND ($2::text[] IS NULL OR e.action = ANY($2))
   AND ($3::uuid IS NULL OR e.actor_user_id = $3)
@@ -153,7 +153,7 @@ WHERE e.tenant_id = $1
   AND ($5::timestamptz IS NULL OR e.created_at >= $5)
   AND ($6::timestamptz IS NULL OR e.created_at <= $6)
   AND ($7::text IS NULL OR e.search_vector @@ audit.search_query($7)
-       OR e.actor_user_id IN (SELECT su.id FROM "user".users su
+       OR e.actor_user_id IN (SELECT su.id FROM account.users su
            WHERE (su.email ILIKE $8::text || '%' OR su.display_name ILIKE '%' || $8::text || '%')
              AND (su.tenant_id = $1 OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = $1))))
   AND ($9::text[] IS NULL OR e.resource_type = ANY($9))
@@ -285,7 +285,7 @@ SELECT e.id, e.actor_user_id, e.actor_type, e.action, e.resource_type, e.resourc
        COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.tenant_id,
        u.display_name AS actor_display_name, u.email AS actor_email
 FROM audit.events e
-LEFT JOIN "user".users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
+LEFT JOIN account.users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
 WHERE e.tenant_id = $1
   AND e.actor_user_id = $2
   AND e.created_at BETWEEN $3 AND $4
@@ -369,7 +369,7 @@ SELECT e.id, e.actor_user_id, e.actor_type, e.action, e.resource_type, e.resourc
        COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.tenant_id,
        u.display_name AS actor_display_name, u.email AS actor_email
 FROM audit.events e
-LEFT JOIN "user".users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
+LEFT JOIN account.users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
 WHERE e.tenant_id = $1
   AND e.request_id = $2
   AND e.id <> $3
@@ -448,7 +448,7 @@ SELECT e.id, e.actor_user_id, e.actor_type, e.action, e.resource_type, e.resourc
        COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.tenant_id,
        u.display_name AS actor_display_name, u.email AS actor_email
 FROM audit.events e
-LEFT JOIN "user".users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
+LEFT JOIN account.users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
 WHERE e.tenant_id = $1
   AND (e.created_at > $2 OR (e.created_at = $2 AND e.id > $3))
 ORDER BY e.created_at ASC, e.id ASC
@@ -527,7 +527,7 @@ WHERE audit.events.tenant_id = $1
   AND ($5::timestamptz IS NULL OR created_at >= $5)
   AND ($6::timestamptz IS NULL OR created_at <= $6)
   AND ($7::text IS NULL OR search_vector @@ audit.search_query($7)
-       OR actor_user_id IN (SELECT su.id FROM "user".users su
+       OR actor_user_id IN (SELECT su.id FROM account.users su
            WHERE (su.email ILIKE $8::text || '%' OR su.display_name ILIKE '%' || $8::text || '%')
              AND (su.tenant_id = $1 OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = $1))))
   AND ($9::text[] IS NULL OR resource_type = ANY($9))
@@ -614,7 +614,7 @@ WHERE audit.events.tenant_id = $2
   AND ($6::timestamptz IS NULL OR created_at >= $6)
   AND ($7::timestamptz IS NULL OR created_at <= $7)
   AND ($8::text IS NULL OR search_vector @@ audit.search_query($8)
-       OR actor_user_id IN (SELECT su.id FROM "user".users su
+       OR actor_user_id IN (SELECT su.id FROM account.users su
            WHERE (su.email ILIKE $9::text || '%' OR su.display_name ILIKE '%' || $9::text || '%')
              AND (su.tenant_id = $2 OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = $2))))
   AND ($10::text[] IS NULL OR resource_type = ANY($10))
@@ -707,7 +707,7 @@ WHERE audit.events.tenant_id = $1
   AND ($5::timestamptz IS NULL OR created_at >= $5)
   AND ($6::timestamptz IS NULL OR created_at <= $6)
   AND ($7::text IS NULL OR search_vector @@ audit.search_query($7)
-       OR actor_user_id IN (SELECT su.id FROM "user".users su
+       OR actor_user_id IN (SELECT su.id FROM account.users su
            WHERE (su.email ILIKE $8::text || '%' OR su.display_name ILIKE '%' || $8::text || '%')
              AND (su.tenant_id = $1 OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = $1))))
   AND ($9::text[] IS NULL OR resource_type = ANY($9))

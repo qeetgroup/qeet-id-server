@@ -26,7 +26,7 @@ func TestSignupRefusedOnADomainAnOrganisationManages(t *testing.T) {
 	tenant, manager := dbtest.Tenant(t), dbtest.Tenant(t)
 	domain := dbtest.Domain(t, manager)
 	accounts := func(email string) int {
-		return dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1`, email)
+		return dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, email)
 	}
 
 	for _, host := range []string{domain, "eu." + domain} {

@@ -441,7 +441,7 @@ func (h *Handler) testEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var recipient string
-	if err := h.Service.pool.QueryRow(r.Context(), `SELECT email FROM "user".users WHERE id=$1 AND email_verified_at IS NOT NULL AND status='active' AND deleted_at IS NULL`, *principal.UserID).Scan(&recipient); err != nil {
+	if err := h.Service.pool.QueryRow(r.Context(), `SELECT email FROM account.users WHERE id=$1 AND email_verified_at IS NOT NULL AND status='active' AND deleted_at IS NULL`, *principal.UserID).Scan(&recipient); err != nil {
 		httpx.WriteError(w, r, errs.ErrForbidden)
 		return
 	}

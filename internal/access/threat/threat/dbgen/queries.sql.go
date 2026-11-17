@@ -58,7 +58,7 @@ func (q *Queries) GetSecurityEventSummary(ctx context.Context, tenantID uuid.UUI
 
 const getUserForAnomaly = `-- name: GetUserForAnomaly :one
 
-SELECT id, tenant_id FROM "user".users
+SELECT id, tenant_id FROM account.users
 WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL AND tenant_id IS NOT NULL
 LIMIT 1
 `
@@ -81,7 +81,7 @@ func (q *Queries) GetUserForAnomaly(ctx context.Context, lower string) (GetUserF
 }
 
 const listTenantUsersForEmails = `-- name: ListTenantUsersForEmails :many
-SELECT id FROM "user".users
+SELECT id FROM account.users
 WHERE tenant_id = $1::uuid AND LOWER(email) = ANY($2::text[]) AND deleted_at IS NULL
 `
 
@@ -112,7 +112,7 @@ func (q *Queries) ListTenantUsersForEmails(ctx context.Context, arg ListTenantUs
 }
 
 const listTenantsForEmails = `-- name: ListTenantsForEmails :many
-SELECT DISTINCT tenant_id::uuid AS tenant_id FROM "user".users
+SELECT DISTINCT tenant_id::uuid AS tenant_id FROM account.users
 WHERE LOWER(email) = ANY($1::text[]) AND deleted_at IS NULL AND tenant_id IS NOT NULL
 `
 

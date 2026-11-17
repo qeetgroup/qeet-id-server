@@ -111,7 +111,7 @@ func (d *directory) ldapConnection() {
 			continue
 		}
 		d.success(d.ldap, "sign-in", "sign-in", "user", p.ID.String(), p.Joined.Add(-900*time.Millisecond))
-		batch.Queue(`INSERT INTO "user".external_identities (id, user_id, tenant_id, provider, connection_id, subject, email, metadata, linked_at)
+		batch.Queue(`INSERT INTO account.external_identities (id, user_id, tenant_id, provider, connection_id, subject, email, metadata, linked_at)
 			VALUES ($1, $2, $3, 'ldap', $4, $5, $6, $7, $8)`, uuid.New(), p.ID, o.ID, d.ldap, p.ExternalID, p.Email,
 			map[string]any{"connection": d.ldap}, p.Joined)
 		if p.Status == world.StatusActive {

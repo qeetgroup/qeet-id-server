@@ -79,9 +79,9 @@ func TestRefreshRefusedOnceInactive(t *testing.T) {
 		name, change string
 		want         error
 	}{
-		{"suspended account", `UPDATE "user".users SET status = 'suspended' WHERE id = $1`, errs.ErrAuthAccountSuspended},
-		{"deleted account", `UPDATE "user".users SET status = 'deleted', deleted_at = NOW() WHERE id = $1`, errs.ErrAuthAccountSuspended},
-		{"suspended organisation", `UPDATE tenant.tenants SET status = 'suspended' WHERE id = (SELECT tenant_id FROM "user".users WHERE id = $1)`, errs.ErrAuthTenantInactive},
+		{"suspended account", `UPDATE account.users SET status = 'suspended' WHERE id = $1`, errs.ErrAuthAccountSuspended},
+		{"deleted account", `UPDATE account.users SET status = 'deleted', deleted_at = NOW() WHERE id = $1`, errs.ErrAuthAccountSuspended},
+		{"suspended organisation", `UPDATE tenant.tenants SET status = 'suspended' WHERE id = (SELECT tenant_id FROM account.users WHERE id = $1)`, errs.ErrAuthTenantInactive},
 		{"expired refresh token", `UPDATE auth.refresh_tokens SET expires_at = NOW() - INTERVAL '1 second'
 			WHERE session_id IN (SELECT id FROM auth.sessions WHERE user_id = $1)`, errs.ErrAuthRefreshTokenInvalid},
 	} {

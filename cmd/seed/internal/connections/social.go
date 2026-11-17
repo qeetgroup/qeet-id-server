@@ -109,7 +109,7 @@ func (f *fed) linkSocial(o *world.Org, provider string, since time.Time) {
 		}
 		linked := f.workTime(from, w.Now.Add(-2*time.Hour), p.Loc)
 		subject, meta := f.socialSubject(provider, o)
-		batch.Queue(`INSERT INTO "user".external_identities (id, user_id, tenant_id, provider, subject, email, metadata, linked_at)
+		batch.Queue(`INSERT INTO account.external_identities (id, user_id, tenant_id, provider, subject, email, metadata, linked_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, uuid.New(), p.ID, o.ID, provider, subject, p.Email, meta, linked)
 	}
 	w.Check(w.Admin.SendBatch(w.Ctx, batch).Close(), "link "+provider+" identities in "+o.Spec.Slug)

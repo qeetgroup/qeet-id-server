@@ -495,7 +495,7 @@ func TestHistorySearchTakesWildcardsLiterally(t *testing.T) {
 	for _, name := range []string{"qa_b", "qaXb", "100%"} {
 		actor := dbtest.User(t, tenant, tenant)
 		id := uuid.New()
-		if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `UPDATE "user".users SET display_name = $2 WHERE id = $1`, actor.ID, name); err != nil {
+		if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `UPDATE account.users SET display_name = $2 WHERE id = $1`, actor.ID, name); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `

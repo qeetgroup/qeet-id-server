@@ -47,7 +47,7 @@ func orgTraces(t *testing.T, tenant uuid.UUID, a dbtest.Account) {
 		{`INSERT INTO auth.oidc_clients (tenant_id, client_id, name) VALUES ($1, $2, 'Payroll')`, []any{tenant, client}},
 		{`INSERT INTO auth.oidc_consents (user_id, client_id, scopes) VALUES ($1, $2, '{openid}')`, []any{a.ID, client}},
 		{`INSERT INTO auth.oidc_refresh_tokens (token_hash, client_id, user_id, tenant_id, expires_at) VALUES ($1, $2, $3, $4, NOW() + INTERVAL '1 hour')`, []any{dbtest.Unique("rt"), client, a.ID, tenant}},
-		{`INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject) VALUES ($1, $2, 'saml', $3)`, []any{a.ID, tenant, dbtest.Unique("sub")}},
+		{`INSERT INTO account.external_identities (user_id, tenant_id, provider, subject) VALUES ($1, $2, 'saml', $3)`, []any{a.ID, tenant, dbtest.Unique("sub")}},
 		{`INSERT INTO tenant.groups (id, tenant_id, name) VALUES ($1, $2, 'Finance')`, []any{group, tenant}},
 		{`INSERT INTO tenant.group_members (group_id, user_id, tenant_id) VALUES ($1, $2, $3)`, []any{group, a.ID, tenant}},
 	} {
@@ -160,14 +160,14 @@ func TestExportPayloadExpires(t *testing.T) {
 	if err := svc.exportSweepTick(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE "user".export_requests SET completed_at = $2 WHERE id = $1`,
+	if _, err := pool.Exec(ctx, `UPDATE account.export_requests SET completed_at = $2 WHERE id = $1`,
 		oldReq, time.Now().Add(-ExportRetention-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE "user".users SET status = 'deleted', deleted_at = NOW() WHERE id = $1`, gone.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET status = 'deleted', deleted_at = NOW() WHERE id = $1`, gone.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `DELETE FROM "user".users WHERE id = $1`, gone.ID); err != nil {
+	if _, err := pool.Exec(ctx, `DELETE FROM account.users WHERE id = $1`, gone.ID); err != nil {
 		t.Fatal(err)
 	}
 	n, err := ExpireExports(ctx, pool, ExportRetention)

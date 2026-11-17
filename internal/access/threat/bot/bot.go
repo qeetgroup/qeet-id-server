@@ -191,7 +191,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, limit int, curso
 				  AND e.created_at >= b.created_at AND e.created_at < b.created_at + $5::interval
 				ORDER BY e.created_at LIMIT 1), 'unknown') AS outcome
 		FROM auth.bot_events b
-		LEFT JOIN "user".users u ON u.id = b.user_id
+		LEFT JOIN account.users u ON u.id = b.user_id
 		WHERE b.tenant_id = $1 AND ($2 = '' OR b.verdict = $2) AND (b.created_at, b.id) < ($3, $4)
 		ORDER BY b.created_at DESC, b.id DESC LIMIT $6
 	`, tenantID, verdict, afterTs, afterID, outcomeWindow.String(), limit+1)

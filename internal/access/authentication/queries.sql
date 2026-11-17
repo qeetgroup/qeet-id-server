@@ -154,7 +154,7 @@ WHERE s.id = @session_id AND s.user_id = @user_id AND s.revoked_at IS NULL
 -- name: GetLoginSession :one
 SELECT s.id, s.user_id, s.expires_at, s.created_at
 FROM auth.login_sessions s
-JOIN "user".users u ON u.id = s.user_id
+JOIN account.users u ON u.id = s.user_id
 WHERE s.token_hash = @token_hash AND u.status = 'active' AND u.deleted_at IS NULL;
 
 -- name: GetLoginSessionUser :one
@@ -164,7 +164,7 @@ WHERE s.token_hash = @token_hash AND u.status = 'active' AND u.deleted_at IS NUL
 -- or the user or their organization is no longer active.
 SELECT s.user_id, u.tenant_id, s.created_at, COALESCE(s.second_factor, '')::text AS second_factor
 FROM auth.login_sessions s
-JOIN "user".users u ON u.id = s.user_id
+JOIN account.users u ON u.id = s.user_id
 LEFT JOIN tenant.tenants t ON t.id = u.tenant_id
 WHERE s.token_hash = @token_hash
   AND s.expires_at > NOW()
@@ -181,7 +181,7 @@ WITH ended AS (
     RETURNING id, user_id
 )
 SELECT ended.id, ended.user_id, u.tenant_id
-FROM ended LEFT JOIN "user".users u ON u.id = ended.user_id;
+FROM ended LEFT JOIN account.users u ON u.id = ended.user_id;
 
 -- ExpireAuthorizationCodesForLoginSession spends every code minted through
 -- the session that no application has redeemed yet, so none can be traded
@@ -224,7 +224,7 @@ DELETE FROM auth.trusted_devices WHERE ctid = ANY(ARRAY(
 -- active organisation: the organisation's own account, or holding a role there.
 -- name: CheckTenantMembership :one
 SELECT EXISTS (
-    SELECT 1 FROM "user".users account
+    SELECT 1 FROM account.users account
     JOIN tenant.tenants organization ON organization.id = @tenant_id::uuid
     WHERE account.id = @user_id
       AND account.status = 'active' AND account.deleted_at IS NULL
@@ -270,7 +270,7 @@ SELECT expires_at FROM auth.sessions WHERE id = @session_id AND user_id = @user_
 -- session takes only the foreign key's KEY SHARE lock on this row, so sign-ins
 -- are never blocked or deadlocked by it. pgx.ErrNoRows for an unknown user.
 -- name: LockUserForSessionRevocation :one
-SELECT id FROM "user".users WHERE id = @user_id FOR NO KEY UPDATE;
+SELECT id FROM account.users WHERE id = @user_id FOR NO KEY UPDATE;
 
 -- IsSessionLiveForUser reports whether the session exists, belongs to the
 -- user, has not been revoked and is not past its maximum age or idle timeout.
@@ -352,7 +352,7 @@ VALUES (@user_id, @password_hash);
 -- name: InsertTenantlessUser :one
 -- Tenant-less signup: creates the identity with tenant_id NULL (a literal, not a
 -- bind — membership lives in rbac.user_roles). display_name is nullable text.
-INSERT INTO "user".users (tenant_id, email, display_name)
+INSERT INTO account.users (tenant_id, email, display_name)
 VALUES (NULL, @email, @display_name)
 RETURNING id, created_at, updated_at;
 
@@ -482,7 +482,7 @@ SELECT u.mfa_required,
              AND ((ro.is_system AND ro.name = 'owner')
                   OR (p.key IS NOT NULL AND NOT (p.key = ANY(COALESCE(@member_permissions::text[], '{}')))))
        ) AS is_admin
-FROM "user".users u
+FROM account.users u
 LEFT JOIN tenant.security_policies sp ON sp.tenant_id = @tenant_id
 WHERE u.id = @user_id;
 
@@ -495,7 +495,7 @@ WITH resets AS (
     WHERE user_id = @user_id AND used_at IS NULL AND expires_at > NOW() - INTERVAL '1 minute'
 )
 UPDATE auth.magic_links SET expires_at = NOW() - INTERVAL '1 minute'
-WHERE LOWER(email) = (SELECT LOWER(u.email) FROM "user".users u WHERE u.id = @user_id)
+WHERE LOWER(email) = (SELECT LOWER(u.email) FROM account.users u WHERE u.id = @user_id)
   AND used_at IS NULL AND expires_at > NOW() - INTERVAL '1 minute';
 
 -- CountMFAAttempt counts one more second-factor attempt in the user's run of

@@ -130,7 +130,7 @@ const suspendedDataset = `WITH suspended AS (
  GREATEST((SELECT max(s.created_at) FROM auth.sessions s WHERE s.tenant_id=$1 AND s.user_id=u.id),
   (SELECT max(e.created_at) FROM audit.events e WHERE e.tenant_id=$1 AND e.actor_user_id=u.id AND e.action='auth.login_succeeded')) AS last_sign_in,
  COALESCE(u.tenant_id=$1,false) AS can_manage
- FROM "user".users u WHERE u.status='suspended' AND u.deleted_at IS NULL
+ FROM account.users u WHERE u.status='suspended' AND u.deleted_at IS NULL
  AND (u.tenant_id=$1 OR EXISTS(SELECT 1 FROM rbac.user_roles roles WHERE roles.tenant_id=$1 AND roles.user_id=u.id))
 ) `
 const suspendedWhere = `($2='' OR email ILIKE '%'||$2||'%' OR display_name ILIKE '%'||$2||'%' OR id::text ILIKE '%'||$2||'%') AND ($3='' OR reason=$3) AND ($4='' OR source=$4) AND ($5='' OR team=$5) AND ($6='' OR risk=$6) AND ($7='' OR review=$7)`
@@ -273,7 +273,7 @@ func (handler *Handler) updateWithEvidence(request *http.Request, tenantID, user
 	}
 	defer tx.Rollback(ctx)
 	var previous string
-	if err := tx.QueryRow(ctx, `SELECT status FROM "user".users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE`, tenantID, userID).Scan(&previous); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT status FROM account.users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE`, tenantID, userID).Scan(&previous); err != nil {
 		return nil, errs.ErrNotFound
 	}
 	if input.Status != nil && *input.Status == "active" && previous == "suspended" {
@@ -299,7 +299,7 @@ func (handler *Handler) updateWithEvidence(request *http.Request, tenantID, user
 		action := "user.reactivated"
 		if *input.Status == "suspended" {
 			action = "user.suspended"
-			if _, err := tx.Exec(ctx, `UPDATE "user".users SET suspension_source='manual' WHERE tenant_id=$1 AND id=$2`, tenantID, userID); err != nil {
+			if _, err := tx.Exec(ctx, `UPDATE account.users SET suspension_source='manual' WHERE tenant_id=$1 AND id=$2`, tenantID, userID); err != nil {
 				return nil, err
 			}
 		}
@@ -378,7 +378,7 @@ func (handler *Handler) reactivateUser(response http.ResponseWriter, request *ht
 	}
 	defer tx.Rollback(ctx)
 	var status string
-	err = tx.QueryRow(ctx, `SELECT status FROM "user".users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE`, tenantID, userID).Scan(&status)
+	err = tx.QueryRow(ctx, `SELECT status FROM account.users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE`, tenantID, userID).Scan(&status)
 	if errors.Is(err, pgx.ErrNoRows) {
 		httpx.WriteError(response, request, errs.ErrNotFound)
 		return
@@ -438,7 +438,7 @@ func (handler *Handler) reviewSuspension(response http.ResponseWriter, request *
 		return
 	}
 	defer tx.Rollback(ctx)
-	result, err := tx.Exec(ctx, `UPDATE "user".users SET suspension_reason=$3,suspension_risk=$4,suspension_review=$5,updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='suspended' AND deleted_at IS NULL`, tenantID, userID, input.Reason, input.Risk, input.Review)
+	result, err := tx.Exec(ctx, `UPDATE account.users SET suspension_reason=$3,suspension_risk=$4,suspension_review=$5,updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='suspended' AND deleted_at IS NULL`, tenantID, userID, input.Reason, input.Risk, input.Review)
 	if err != nil {
 		httpx.WriteError(response, request, err)
 		return

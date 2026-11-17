@@ -128,7 +128,7 @@ func (q *Queries) CountMAUWindows(ctx context.Context, tid pgtype.UUID) (CountMA
 const countMFARecoveryUsers = `-- name: CountMFARecoveryUsers :one
 SELECT COUNT(DISTINCT c.user_id)
 FROM auth.mfa_recovery_codes c
-JOIN "user".users u ON u.id = c.user_id
+JOIN account.users u ON u.id = c.user_id
 WHERE u.tenant_id = $1 AND u.deleted_at IS NULL AND c.used_at IS NULL
 `
 
@@ -142,7 +142,7 @@ func (q *Queries) CountMFARecoveryUsers(ctx context.Context, tid pgtype.UUID) (i
 const countMFATotpUsers = `-- name: CountMFATotpUsers :one
 SELECT COUNT(*)
 FROM auth.mfa_totp t
-JOIN "user".users u ON u.id = t.user_id
+JOIN account.users u ON u.id = t.user_id
 WHERE u.tenant_id = $1 AND u.deleted_at IS NULL AND t.confirmed_at IS NOT NULL
 `
 
@@ -181,7 +181,7 @@ const countTotalUsersWindows = `-- name: CountTotalUsersWindows :one
 SELECT
     COUNT(*) FILTER (WHERE deleted_at IS NULL) AS users_now,
     COUNT(*) FILTER (WHERE deleted_at IS NULL AND created_at <= NOW() - INTERVAL '30 days') AS users_prev
-FROM "user".users
+FROM account.users
 WHERE tenant_id = $1
 `
 

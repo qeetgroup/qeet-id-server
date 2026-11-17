@@ -147,7 +147,7 @@ func (s *Service) userBelongsToTenant(ctx context.Context, userID, tenantID uuid
 	var owned bool
 	err := s.pool.QueryRow(ctx, `
 		SELECT EXISTS (
-			SELECT 1 FROM "user".users
+			SELECT 1 FROM account.users
 			WHERE id = $1 AND tenant_id = $2
 		)
 	`, userID, tenantID).Scan(&owned)
@@ -243,14 +243,14 @@ func (s *Service) tick(ctx context.Context) error {
 	rows, err := s.pool.Query(ctx, `
 		WITH candidates AS (
 			SELECT id
-			FROM "user".purge_requests
+			FROM account.purge_requests
 			WHERE status = 'pending' AND grace_until <= NOW()
 			  AND (lease_until IS NULL OR lease_until <= NOW())
 			ORDER BY grace_until, created_at
 			LIMIT 50
 			FOR UPDATE SKIP LOCKED
 		)
-		UPDATE "user".purge_requests AS request
+		UPDATE account.purge_requests AS request
 		SET lease_owner = $1, lease_until = $2
 		FROM candidates
 		WHERE request.id = candidates.id
@@ -296,7 +296,7 @@ func (s *Service) purgeOne(ctx context.Context, requestID, userID uuid.UUID) err
 	var requestTenant uuid.UUID
 	if err := tx.QueryRow(ctx, `
 		SELECT tenant_id
-		FROM "user".purge_requests
+		FROM account.purge_requests
 		WHERE id = $1 AND subject_id = $2 AND status = 'pending' AND lease_owner = $3
 		FOR UPDATE
 	`, requestID, userID, s.workerID).Scan(&requestTenant); errors.Is(err, pgx.ErrNoRows) {
@@ -307,7 +307,7 @@ func (s *Service) purgeOne(ctx context.Context, requestID, userID uuid.UUID) err
 
 	var userTenant *uuid.UUID
 	err = tx.QueryRow(ctx, `
-		SELECT tenant_id FROM "user".users WHERE id = $1 FOR UPDATE
+		SELECT tenant_id FROM account.users WHERE id = $1 FOR UPDATE
 	`, userID).Scan(&userTenant)
 	gone := errors.Is(err, pgx.ErrNoRows)
 	if err != nil && !gone {
@@ -315,7 +315,7 @@ func (s *Service) purgeOne(ctx context.Context, requestID, userID uuid.UUID) err
 	}
 	if !gone && (userTenant == nil || *userTenant != requestTenant) {
 		if _, err := tx.Exec(ctx, `
-			UPDATE "user".purge_requests
+			UPDATE account.purge_requests
 			SET status = 'quarantined', quarantined_at = NOW(),
 			    quarantine_reason = 'tenant ownership mismatch detected by worker',
 			    lease_owner = NULL, lease_until = NULL
@@ -336,7 +336,7 @@ func (s *Service) purgeOne(ctx context.Context, requestID, userID uuid.UUID) err
 		}
 	}
 	tag, err := tx.Exec(ctx, `
-		UPDATE "user".purge_requests
+		UPDATE account.purge_requests
 		SET status = 'completed', completed_at = NOW(), lease_owner = NULL, lease_until = NULL,
 		    subject_email = NULL, subject_name = NULL
 		WHERE id = $1 AND status = 'pending' AND lease_owner = $2
@@ -508,13 +508,13 @@ func (s *Service) exportSweepTick(ctx context.Context) error {
 	rows, err := s.pool.Query(ctx, `
 		WITH candidates AS (
 			SELECT id
-			FROM "user".export_requests
+			FROM account.export_requests
 			WHERE status = 'pending' AND (lease_until IS NULL OR lease_until <= NOW())
 			ORDER BY created_at
 			LIMIT 20
 			FOR UPDATE SKIP LOCKED
 		)
-		UPDATE "user".export_requests AS request
+		UPDATE account.export_requests AS request
 		SET lease_owner = $1, lease_until = $2
 		FROM candidates
 		WHERE request.id = candidates.id
@@ -566,7 +566,7 @@ func (s *Service) buildExport(ctx context.Context, requestID, tenantID, userID u
 	}
 	defer tx.Rollback(ctx)
 	tag, err := tx.Exec(ctx, `
-		UPDATE "user".export_requests
+		UPDATE account.export_requests
 		SET status = 'ready', payload = $3, completed_at = NOW(),
 		    lease_owner = NULL, lease_until = NULL
 		WHERE id = $1 AND lease_owner = $2
@@ -751,7 +751,7 @@ func (s *Service) ExportSelf(ctx context.Context, userID uuid.UUID) (map[string]
 	var metadata []byte
 	if err := s.pool.QueryRow(ctx, `
 		SELECT email, phone, display_name, avatar_url, metadata, status, email_verified_at, phone_verified_at, created_at
-		FROM "user".users
+		FROM account.users
 		WHERE id = $1`, userID,
 	).Scan(&profile.Email, &profile.Phone, &profile.DisplayName, &profile.AvatarURL, &metadata, &profile.Status,
 		&profile.EmailVerifiedAt, &profile.PhoneVerifiedAt, &profile.CreatedAt); err != nil {

@@ -250,10 +250,10 @@ func TestUsageCountsHowPeopleSignIn(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO tenant.social_providers (tenant_id, provider, client_id, client_secret, encryption_version) VALUES ($1, 'google', 'cid', 'legacy-secret', 0)`, tenant); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO tenant.social_providers (tenant_id, provider, client_id, client_secret_ct, client_secret_nonce) VALUES ($1, 'google', 'cid', '\x00', '\x00')`, tenant); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject) VALUES ($1, $2, 'google', $3), ($4, $2, 'google', $5)`,
+	if _, err := pool.Exec(ctx, `INSERT INTO account.external_identities (user_id, tenant_id, provider, subject) VALUES ($1, $2, 'google', $3), ($4, $2, 'google', $5)`,
 		googleOnly.ID, tenant, uuid.NewString(), both.ID, uuid.NewString()); err != nil {
 		t.Fatal(err)
 	}
@@ -305,8 +305,8 @@ func TestEveryMethodOffNeedsSingleSignOn(t *testing.T) {
 	refused("with a draft and a disabled connection, and another organisation's active one")
 
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO tenant.ldap_connections (tenant_id, name, server_url, bind_dn, bind_password, base_dn, status)
-		VALUES ($1, 'Directory', 'ldaps://ldap.example.test', 'cn=service', 'secret', 'dc=example', 'active')
+		INSERT INTO tenant.ldap_connections (tenant_id, name, server_url, bind_dn, bind_password_ct, bind_password_nonce, base_dn, status)
+		VALUES ($1, 'Directory', 'ldaps://ldap.example.test', 'cn=service', '\x00', '\x00', 'dc=example', 'active')
 	`, tenant); err != nil {
 		t.Fatal(err)
 	}

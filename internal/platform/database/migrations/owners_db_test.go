@@ -39,19 +39,19 @@ func TestOrganisationsKeepAnOwnerButOffboardTheirOwn(t *testing.T) {
 	sideOwner := ownerRole(side)
 	dbtest.Assign(t, employee.ID, side, sideOwner)
 
-	if _, err := pool.Exec(ctx, `UPDATE "user".users SET status = 'suspended' WHERE id = $1`, boss.ID); !lastOwner(err) {
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET status = 'suspended' WHERE id = $1`, boss.ID); !lastOwner(err) {
 		t.Errorf("suspend the employer's last owner: %v, want QI409", err)
 	}
 	if _, err := pool.Exec(ctx, `DELETE FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2`, employee.ID, side); !lastOwner(err) {
 		t.Errorf("take the owner role from the side organisation's last owner: %v, want QI409", err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE "user".users SET status = 'suspended' WHERE id = $1`, employee.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET status = 'suspended' WHERE id = $1`, employee.ID); err != nil {
 		t.Errorf("the employer suspends its employee who owns an organisation elsewhere: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE "user".users SET status = 'active' WHERE id = $1`, employee.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET status = 'active' WHERE id = $1`, employee.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE "user".users SET deleted_at = NOW() WHERE id = $1`, employee.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET deleted_at = NOW() WHERE id = $1`, employee.ID); err != nil {
 		t.Errorf("the employer deletes that employee: %v", err)
 	}
 }

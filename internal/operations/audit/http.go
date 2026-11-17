@@ -96,7 +96,7 @@ func (filter ListFilter) where(tenantID uuid.UUID) (string, []any) {
 	if filter.Search != "" {
 		search, like := arg(filter.Search), arg(postgres.EscapeLike(filter.Search))
 		q += ` AND (search_vector @@ audit.search_query(` + search + `) OR actor_user_id IN (
-			SELECT su.id FROM "user".users su
+			SELECT su.id FROM account.users su
 			WHERE (su.email ILIKE ` + like + ` || '%' OR su.display_name ILIKE '%' || ` + like + ` || '%')
 			  AND (su.tenant_id = $1 OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = $1))))`
 	}

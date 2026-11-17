@@ -65,7 +65,7 @@ func (q *Queries) GetCredentialRevocation(ctx context.Context, id uuid.UUID) (pg
 
 const isOrganisationMember = `-- name: IsOrganisationMember :one
 SELECT (EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = $1 AND ur.tenant_id = $2)
-     OR EXISTS (SELECT 1 FROM "user".users u WHERE u.id = $1 AND u.tenant_id = $2 AND u.deleted_at IS NULL))::bool
+     OR EXISTS (SELECT 1 FROM account.users u WHERE u.id = $1 AND u.tenant_id = $2 AND u.deleted_at IS NULL))::bool
 `
 
 type IsOrganisationMemberParams struct {
@@ -86,7 +86,7 @@ const listCredentials = `-- name: ListCredentials :many
 SELECT c.id, c.subject, c.type, c.issued_at, c.expires_at, c.revoked_at,
        c.user_id, u.email AS user_email, u.display_name AS user_display_name
 FROM auth.credentials c
-LEFT JOIN "user".users u ON u.id = c.user_id
+LEFT JOIN account.users u ON u.id = c.user_id
 WHERE c.tenant_id = $1 ORDER BY c.issued_at DESC LIMIT 1001
 `
 

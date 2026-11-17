@@ -87,7 +87,7 @@ func (q *Queries) GetPasskeyCredentialsForCeremony(ctx context.Context, userID u
 }
 
 const getUserForWebAuthn = `-- name: GetUserForWebAuthn :one
-SELECT email, display_name, tenant_id FROM "user".users
+SELECT email, display_name, tenant_id FROM account.users
 WHERE id = $1 AND deleted_at IS NULL
 `
 
@@ -105,7 +105,7 @@ func (q *Queries) GetUserForWebAuthn(ctx context.Context, id uuid.UUID) (GetUser
 }
 
 const getUserIDByEmail = `-- name: GetUserIDByEmail :one
-SELECT id FROM "user".users
+SELECT id FROM account.users
 WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL
 `
 
@@ -184,7 +184,7 @@ func (q *Queries) InsertSignupWebAuthnSession(ctx context.Context, arg InsertSig
 }
 
 const insertUserFromSignup = `-- name: InsertUserFromSignup :one
-INSERT INTO "user".users (id, tenant_id, email, display_name)
+INSERT INTO account.users (id, tenant_id, email, display_name)
 VALUES ($1, $2, $3, $4)
 RETURNING id
 `

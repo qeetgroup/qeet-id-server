@@ -56,7 +56,7 @@ and on account-level tables a missing predicate is still a cross-tenant data exp
 
 ## Migrations
 
-`internal/platform/database/migrations/NNNN_description.{up,down}.sql` — highest is `0174` (`0082` is intentionally absent).
+`internal/platform/database/migrations/NNNN_description.{up,down}.sql` — `0001`–`0012` are the schema baseline; read the highest with `ls`.
 **Never edit an applied migration.** Additive first.
 
 ## Tests

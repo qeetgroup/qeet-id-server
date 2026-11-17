@@ -236,7 +236,7 @@ func TestIdPRefusesASuspendedAccount(t *testing.T) {
 	member := dbtest.User(t, tenant, tenant)
 	cookie := s.signIn(member.ID)
 	sp := registerSP(t, ctx, s.idp, tenant, "https://sp.example.test/metadata", "https://sp.example.test/acs")
-	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE "user".users SET status = 'suspended' WHERE id = $1`, member.ID); err != nil {
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE account.users SET status = 'suspended' WHERE id = $1`, member.ID); err != nil {
 		t.Fatal(err)
 	}
 	rec := idpGet(t, s.router, "/saml/idp/"+tenant.String()+"/sso?sp="+sp.ID.String(), cookie)

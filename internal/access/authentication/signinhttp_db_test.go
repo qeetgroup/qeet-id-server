@@ -205,10 +205,10 @@ func TestSignInAnswersAlikeOverHTTP(t *testing.T) {
 	a, _ := member(t)
 	suspended, _ := member(t)
 	deleted, _ := member(t)
-	if _, err := pool.Exec(ctx, `UPDATE "user".users SET status = 'suspended' WHERE id = $1`, suspended.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET status = 'suspended' WHERE id = $1`, suspended.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE "user".users SET status = 'deleted', deleted_at = NOW() WHERE id = $1`, deleted.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET status = 'deleted', deleted_at = NOW() WHERE id = $1`, deleted.ID); err != nil {
 		t.Fatal(err)
 	}
 	wrong := dbtest.Unique("Wr0ng-Secret")

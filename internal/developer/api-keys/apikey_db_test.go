@@ -111,10 +111,10 @@ func TestPersonalKeysStopWithTheirPerson(t *testing.T) {
 		name, change string
 		works        bool
 	}{
-		{"active", `UPDATE "user".users SET status = 'active' WHERE id = $1`, true},
-		{"suspended", `UPDATE "user".users SET status = 'suspended' WHERE id = $1`, false},
-		{"reactivated", `UPDATE "user".users SET status = 'active' WHERE id = $1`, true},
-		{"deleted", `UPDATE "user".users SET deleted_at = NOW() WHERE id = $1`, false},
+		{"active", `UPDATE account.users SET status = 'active' WHERE id = $1`, true},
+		{"suspended", `UPDATE account.users SET status = 'suspended' WHERE id = $1`, false},
+		{"reactivated", `UPDATE account.users SET status = 'active' WHERE id = $1`, true},
+		{"deleted", `UPDATE account.users SET deleted_at = NOW() WHERE id = $1`, false},
 	} {
 		if _, err := pool.Exec(ctx, step.change, a.ID); err != nil {
 			t.Fatal(err)

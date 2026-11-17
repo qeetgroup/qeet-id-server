@@ -25,11 +25,11 @@ WHERE id = $2 AND user_id = $3
 RETURNING id, user_id, name, transports, last_used_at, created_at;
 
 -- name: GetUserForWebAuthn :one
-SELECT email, display_name, tenant_id FROM "user".users
+SELECT email, display_name, tenant_id FROM account.users
 WHERE id = $1 AND deleted_at IS NULL;
 
 -- name: GetUserIDByEmail :one
-SELECT id FROM "user".users
+SELECT id FROM account.users
 WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL;
 
 -- name: GetPasskeyCredentialsForCeremony :many
@@ -66,7 +66,7 @@ RETURNING kind, data, expires_at, subject_id, pending_email, pending_display_nam
 -- name: InsertUserFromSignup :one
 -- The id is the WebAuthn user ID the signup passkey was registered under: the
 -- authenticator returns it as the user handle on every sign-in.
-INSERT INTO "user".users (id, tenant_id, email, display_name)
+INSERT INTO account.users (id, tenant_id, email, display_name)
 VALUES ($1, $2, $3, $4)
 RETURNING id;
 

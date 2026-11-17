@@ -304,7 +304,7 @@ func (s *Service) ChangePassword(ctx context.Context, in ChangePasswordInput) er
 	}
 	defer tx.Rollback(ctx)
 	var lockedUser uuid.UUID
-	if err := tx.QueryRow(ctx, `SELECT id FROM "user".users WHERE id = $1 FOR UPDATE`, in.UserID).Scan(&lockedUser); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id FROM account.users WHERE id = $1 FOR UPDATE`, in.UserID).Scan(&lockedUser); err != nil {
 		return err
 	}
 	var currentHash string

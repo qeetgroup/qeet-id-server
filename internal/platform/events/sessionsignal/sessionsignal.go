@@ -192,7 +192,7 @@ func EndTenantSessions(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) ([]Se
 // organisation and each one they hold a role in.
 func organisationsOf(ctx context.Context, tx pgx.Tx, userID uuid.UUID) ([]uuid.UUID, error) {
 	rows, err := tx.Query(ctx, `
-		SELECT tenant_id FROM "user".users WHERE id = $1 AND tenant_id IS NOT NULL
+		SELECT tenant_id FROM account.users WHERE id = $1 AND tenant_id IS NOT NULL
 		UNION
 		SELECT tenant_id FROM rbac.user_roles WHERE user_id = $1`, userID)
 	if err != nil {

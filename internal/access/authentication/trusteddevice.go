@@ -255,7 +255,7 @@ func (s *Service) IsMember(ctx context.Context, userID, tenantID uuid.UUID) (boo
 		return member, err
 	}
 	err = s.pool.QueryRow(ctx, `
-		SELECT EXISTS (SELECT 1 FROM "user".users WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL)
+		SELECT EXISTS (SELECT 1 FROM account.users WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL)
 	`, userID, tenantID).Scan(&member)
 	return member, err
 }

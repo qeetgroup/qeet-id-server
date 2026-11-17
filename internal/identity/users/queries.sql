@@ -7,7 +7,7 @@
 -- InsertUser is the user-row half of CreateWithCredential; the cross-context
 -- password credential is inserted by InsertPasswordCredential on the same tx.
 -- name: InsertUser :one
-INSERT INTO "user".users (tenant_id, email, phone, display_name, metadata)
+INSERT INTO account.users (tenant_id, email, phone, display_name, metadata)
 VALUES ($1, $2, $3, $4, $5)
 RETURNING id, tenant_id, email, email_verified_at, phone, phone_verified_at,
           display_name, status, metadata, created_at, updated_at;
@@ -23,12 +23,12 @@ VALUES ($1, $2);
 -- name: GetUserByID :one
 SELECT id, tenant_id, email, email_verified_at, phone, phone_verified_at,
        display_name, status, metadata, created_at, updated_at, avatar_url
-FROM "user".users WHERE id = $1 AND deleted_at IS NULL;
+FROM account.users WHERE id = $1 AND deleted_at IS NULL;
 
 -- name: GetUserByEmail :one
 SELECT id, tenant_id, email, email_verified_at, phone, phone_verified_at,
        display_name, status, metadata, created_at, updated_at
-FROM "user".users
+FROM account.users
 WHERE tenant_id = $1 AND LOWER(email) = LOWER($2) AND deleted_at IS NULL;
 
 -- GetUserByEmailGlobal looks up a user by email across all tenants (email is
@@ -36,7 +36,7 @@ WHERE tenant_id = $1 AND LOWER(email) = LOWER($2) AND deleted_at IS NULL;
 -- name: GetUserByEmailGlobal :one
 SELECT id, tenant_id, email, email_verified_at, phone, phone_verified_at,
        display_name, status, metadata, created_at, updated_at
-FROM "user".users
+FROM account.users
 WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL;
 
 -- ListUsersByTenant and ListUsersByTenantAfter are left hand-written in
@@ -45,7 +45,7 @@ WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL;
 -- unusable. Those two methods continue to use pool.Query with the original SQL.
 
 -- name: SoftDeleteUser :execrows
-UPDATE "user".users
+UPDATE account.users
 SET deleted_at = NOW(), status = 'deleted', updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL;
 
@@ -53,7 +53,7 @@ WHERE id = $1 AND deleted_at IS NULL;
 -- and returns what was deleted. The row is locked, so it runs in the same
 -- transaction as the session revocation and audit row.
 -- name: SoftDeleteUserBy :one
-UPDATE "user".users
+UPDATE account.users
 SET deleted_at = NOW(), status = 'deleted', deleted_by = sqlc.narg('deleted_by'), updated_at = NOW()
 WHERE id = @id AND deleted_at IS NULL
 RETURNING id, deleted_at, deleted_by;
@@ -62,7 +62,7 @@ RETURNING id, deleted_at, deleted_by;
 -- The tenant's deleted users, newest deletion first, after the cursor's
 -- (deleted_at, id) when before_ts is set.
 SELECT id, email, display_name, deleted_at, created_at, deleted_by
-FROM "user".users
+FROM account.users
 WHERE tenant_id = @tenant_id AND deleted_at IS NOT NULL
   AND (sqlc.narg('before_ts')::timestamptz IS NULL OR deleted_at < sqlc.narg('before_ts')
        OR (deleted_at = sqlc.narg('before_ts') AND id < sqlc.narg('before_id')::uuid))
@@ -70,15 +70,15 @@ ORDER BY deleted_at DESC, id DESC
 LIMIT @row_limit;
 
 -- name: RestoreUser :execrows
-UPDATE "user".users
+UPDATE account.users
 SET deleted_at = NULL, deleted_by = NULL, status = 'active', updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NOT NULL;
 
 -- name: PurgeUser :execrows
-DELETE FROM "user".users WHERE id = $1 AND deleted_at IS NOT NULL;
+DELETE FROM account.users WHERE id = $1 AND deleted_at IS NOT NULL;
 
 -- name: MarkEmailVerified :exec
-UPDATE "user".users
+UPDATE account.users
 SET email_verified_at = COALESCE(email_verified_at, NOW()), updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL;
 
@@ -119,7 +119,7 @@ SELECT
   (SELECT count(DISTINCT s.user_agent) FROM auth.sessions s WHERE s.user_id = u.id AND s.revoked_at IS NULL
      AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
      AND (s.tenant_id = @tenant_id::uuid OR (s.tenant_id IS NULL AND u.tenant_id = @tenant_id::uuid)))::int AS distinct_devices
-FROM "user".users u
+FROM account.users u
 WHERE u.id = @id AND u.deleted_at IS NULL;
 
 -- GetUserPasswordChangedAt returns when the user's password was last set/changed.
@@ -145,7 +145,7 @@ LIMIT 1;
 SELECT s.id, COALESCE(host(s.ip), '')::text AS ip, s.user_agent, s.created_at, s.last_seen_at,
        COALESCE(s.country, '')::text AS country, COALESCE(s.city, '')::text AS city
 FROM auth.sessions s
-JOIN "user".users u ON u.id = s.user_id
+JOIN account.users u ON u.id = s.user_id
 WHERE s.user_id = @user_id AND s.revoked_at IS NULL
   AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
   AND (s.tenant_id = @tenant_id::uuid OR (s.tenant_id IS NULL AND u.tenant_id = @tenant_id::uuid))
@@ -222,7 +222,7 @@ SELECT count(*)::int AS effective FROM (
 -- SetUserMfaRequired flips the users.mfa_required policy flag for a user. Returns
 -- the rows affected (0 = user not found / soft-deleted).
 -- name: SetUserMfaRequired :execrows
-UPDATE "user".users
+UPDATE account.users
 SET mfa_required = $2, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL;
 
@@ -234,9 +234,9 @@ WHERE id = $1 AND deleted_at IS NULL;
 -- name: GetUserStats :one
 WITH members AS (
   SELECT u.id, u.status, u.created_at
-  FROM "user".users u
+  FROM account.users u
   WHERE u.deleted_at IS NULL
-    AND u.id IN (SELECT h.id FROM "user".users h WHERE h.tenant_id = $1::uuid AND h.deleted_at IS NULL
+    AND u.id IN (SELECT h.id FROM account.users h WHERE h.tenant_id = $1::uuid AND h.deleted_at IS NULL
                  UNION SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.tenant_id = $1)
 ),
 mfa AS (
@@ -278,9 +278,9 @@ members AS (
        UNION ALL
        SELECT d.created_at FROM auth.mfa_push_devices d WHERE d.user_id = u.id
      ) e) AS mfa_at
-  FROM "user".users u
+  FROM account.users u
   WHERE u.deleted_at IS NULL
-    AND u.id IN (SELECT h.id FROM "user".users h WHERE h.tenant_id = $1::uuid AND h.deleted_at IS NULL
+    AND u.id IN (SELECT h.id FROM account.users h WHERE h.tenant_id = $1::uuid AND h.deleted_at IS NULL
                  UNION SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.tenant_id = $1)
 )
 SELECT
@@ -301,7 +301,7 @@ SELECT COALESCE(u.tenant_id = @tenant_id::uuid, false)::boolean AS home,
              ON member_role.id = membership.role_id AND member_role.tenant_id = membership.tenant_id
            WHERE membership.user_id = u.id AND membership.tenant_id = @tenant_id::uuid
        )::boolean AS member
-FROM "user".users u
+FROM account.users u
 WHERE u.id = @id;
 
 -- The writes that remove a member from one tenant, leaving their account and
@@ -341,7 +341,7 @@ UPDATE auth.sessions s SET revoked_at = NOW()
 WHERE s.id = @id AND s.user_id = @user_id AND s.revoked_at IS NULL
   AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
   AND (s.tenant_id = @tenant_id::uuid
-       OR (s.tenant_id IS NULL AND EXISTS (SELECT 1 FROM "user".users u WHERE u.id = s.user_id AND u.tenant_id = @tenant_id::uuid)))
+       OR (s.tenant_id IS NULL AND EXISTS (SELECT 1 FROM account.users u WHERE u.id = s.user_id AND u.tenant_id = @tenant_id::uuid)))
 RETURNING COALESCE(s.tenant_id, '00000000-0000-0000-0000-000000000000'::uuid)::uuid AS tenant_id;
 
 -- ---- Offboarding ----

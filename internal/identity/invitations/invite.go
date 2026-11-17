@@ -781,7 +781,7 @@ func (s *Service) grantAuthedAccept(ctx context.Context, tx pgx.Tx, qtx *dbgen.Q
 	// With no role, the invitation joins only someone whose home it is.
 	if !inv.RoleID.Valid {
 		var home bool
-		if err := tx.QueryRow(ctx, `SELECT tenant_id IS NOT DISTINCT FROM $2 FROM "user".users WHERE id = $1`, userID, inv.TenantID).Scan(&home); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT tenant_id IS NOT DISTINCT FROM $2 FROM account.users WHERE id = $1`, userID, inv.TenantID).Scan(&home); err != nil {
 			return nil, err
 		}
 		if !home {

@@ -243,7 +243,7 @@ func TestRiskEmailCodeSending(t *testing.T) {
 	mail := &poolMailbox{pool: pool}
 	svc.SetSender(mail)
 	a, _ := member(t)
-	if _, err := pool.Exec(ctx, `UPDATE "user".users SET email_verified_at = NOW() WHERE id = $1`, a.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET email_verified_at = NOW() WHERE id = $1`, a.ID); err != nil {
 		t.Fatal(err)
 	}
 	res, err := svc.Login(ctx, LoginInput{Email: a.Email, Password: testPassword})
@@ -449,7 +449,7 @@ func TestRiskRecordsOnlyIssuedSignIns(t *testing.T) {
 		svc.SetMFA(&poolFactors{pool: pool})
 		svc.SetSender(mail)
 		a, tenant := member(t)
-		if _, err := pool.Exec(ctx, `UPDATE "user".users SET email_verified_at = NOW() WHERE id = $1`, a.ID); err != nil {
+		if _, err := pool.Exec(ctx, `UPDATE account.users SET email_verified_at = NOW() WHERE id = $1`, a.ID); err != nil {
 			t.Fatal(err)
 		}
 		atSessionLimit(t, svc, a, tenant)
@@ -486,7 +486,7 @@ func (m *cancellingMailbox) Send(ctx context.Context, _ notifier.Message) error 
 func TestFailedSendUndoneAfterTheContextEnds(t *testing.T) {
 	pool := dbtest.Pool(t)
 	a, _ := member(t)
-	if _, err := pool.Exec(dbtest.Context(t), `UPDATE "user".users SET email_verified_at = NOW() WHERE id = $1`, a.ID); err != nil {
+	if _, err := pool.Exec(dbtest.Context(t), `UPDATE account.users SET email_verified_at = NOW() WHERE id = $1`, a.ID); err != nil {
 		t.Fatal(err)
 	}
 	challenge := func(t *testing.T, svc *Service) string {

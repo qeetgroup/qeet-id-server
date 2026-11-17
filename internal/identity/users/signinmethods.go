@@ -47,7 +47,7 @@ func countSignInMethods(ctx context.Context, q querier, userID uuid.UUID) (SignI
 		WITH allowed AS (
 		    SELECT COALESCE(ap.password_enabled, TRUE) AS password,
 		           COALESCE(ap.passkey_enabled, TRUE) AS passkey
-		    FROM "user".users u
+		    FROM account.users u
 		    LEFT JOIN tenant.auth_policy ap ON ap.tenant_id = u.tenant_id
 		    WHERE u.id = $1
 		)
@@ -56,7 +56,7 @@ func countSignInMethods(ctx context.Context, q querier, userID uuid.UUID) (SignI
 		       CASE WHEN COALESCE((SELECT passkey FROM allowed), TRUE)
 		            THEN (SELECT count(*) FROM auth.passkey_credentials WHERE user_id = $1)
 		            ELSE 0 END::int,
-		       ((SELECT count(*) FROM "user".external_identities ei
+		       ((SELECT count(*) FROM account.external_identities ei
 		         WHERE ei.user_id = $1
 		           AND (ei.provider IN ('saml', 'ldap') OR EXISTS (
 		                SELECT 1 FROM tenant.oidc_connections oc
@@ -79,7 +79,7 @@ func CountSignInMethods(ctx context.Context, pool *pgxpool.Pool, userID uuid.UUI
 // ErrNotFound for an account that does not exist. The methods span the
 // account's organisations, so tx must have begun with postgres.AcrossTenants.
 func LockSignInMethods(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (SignInMethods, error) {
-	if err := tx.QueryRow(ctx, `SELECT id FROM "user".users WHERE id = $1 FOR NO KEY UPDATE`, userID).Scan(&userID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id FROM account.users WHERE id = $1 FOR NO KEY UPDATE`, userID).Scan(&userID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return SignInMethods{}, errs.ErrNotFound
 		}

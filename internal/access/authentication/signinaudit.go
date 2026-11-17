@@ -147,7 +147,7 @@ func (s *Service) recordLocks(ctx context.Context, f SignInFailure, locks []Acco
 // it can't be read).
 func (s *Service) homeTenant(ctx context.Context, userID uuid.UUID) uuid.UUID {
 	var tenantID *uuid.UUID
-	if err := s.pool.QueryRow(ctx, `SELECT tenant_id FROM "user".users WHERE id = $1`, userID).Scan(&tenantID); err != nil || tenantID == nil {
+	if err := s.pool.QueryRow(ctx, `SELECT tenant_id FROM account.users WHERE id = $1`, userID).Scan(&tenantID); err != nil || tenantID == nil {
 		return uuid.Nil
 	}
 	return *tenantID

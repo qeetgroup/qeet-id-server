@@ -84,7 +84,7 @@ func (q *Queries) DeleteGroupMapping(ctx context.Context, arg DeleteGroupMapping
 const getAccountProfile = `-- name: GetAccountProfile :one
 
 
-SELECT email, display_name FROM "user".users
+SELECT email, display_name FROM account.users
 WHERE id = $1 AND tenant_id = $2::uuid AND deleted_at IS NULL
 FOR UPDATE
 `
@@ -323,7 +323,7 @@ func (q *Queries) SAMLConnectionExists(ctx context.Context, arg SAMLConnectionEx
 }
 
 const setDisplayName = `-- name: SetDisplayName :exec
-UPDATE "user".users SET display_name = $1, updated_at = NOW()
+UPDATE account.users SET display_name = $1, updated_at = NOW()
 WHERE id = $2 AND tenant_id = $3::uuid
 `
 
@@ -339,7 +339,7 @@ func (q *Queries) SetDisplayName(ctx context.Context, arg SetDisplayNameParams) 
 }
 
 const setEmail = `-- name: SetEmail :exec
-UPDATE "user".users SET email = $1, email_verified_at = NOW(), updated_at = NOW()
+UPDATE account.users SET email = $1, email_verified_at = NOW(), updated_at = NOW()
 WHERE id = $2 AND tenant_id = $3::uuid
 `
 

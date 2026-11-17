@@ -18,7 +18,7 @@ func TestAnErasureRequestNamesItsPersonUntilErased(t *testing.T) {
 	tenant := dbtest.Tenant(t)
 	admin := dbtest.User(t, tenant, tenant)
 	person := account(t, tenant)
-	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE "user".users SET display_name = 'Asha Iyer' WHERE id = $1`, person.ID); err != nil {
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE account.users SET display_name = 'Asha Iyer' WHERE id = $1`, person.ID); err != nil {
 		t.Fatal(err)
 	}
 	svc := NewService(dbtest.Pool(t), 30*24*time.Hour)

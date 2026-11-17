@@ -197,8 +197,8 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, in CreateInput) (*Subsc
 	}
 	err = tx.QueryRow(ctx, `
 		INSERT INTO tenant.webhook_subscriptions
-		    (id, tenant_id, url, secret, secret_ct, secret_nonce, encryption_version, events, created_by)
-		VALUES ($1, $2, $3, '', $4, $5, 1, $6, NULLIF($7::uuid, '00000000-0000-0000-0000-000000000000'))
+		    (id, tenant_id, url, secret_ct, secret_nonce, events, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7::uuid, '00000000-0000-0000-0000-000000000000'))
 		RETURNING id, tenant_id, url, events, disabled_at, created_at
 	`, id, in.TenantID, in.URL, ciphertext, nonce, in.Events, httpx.PrincipalUserID(ctx)).Scan(
 		&row.ID, &row.TenantID, &row.URL, &row.Events, &row.DisabledAt, &row.CreatedAt,
@@ -383,13 +383,6 @@ func (s *Service) RotateSecret(ctx context.Context, tx pgx.Tx, id, tenantID uuid
 	if err != nil {
 		return "", time.Time{}, err
 	}
-	previousCT, previousNonce := cur.SecretCt, cur.SecretNonce
-	if len(previousCT) == 0 {
-		// A secret stored before encryption is sealed as it steps aside.
-		if previousCT, previousNonce, err = s.box.Seal(tenantID, "webhook-signing", id.String(), []byte(cur.Secret)); err != nil {
-			return "", time.Time{}, err
-		}
-	}
 	secret, _, err := codes.URLToken()
 	if err != nil {
 		return "", time.Time{}, err
@@ -400,7 +393,7 @@ func (s *Service) RotateSecret(ctx context.Context, tx pgx.Tx, id, tenantID uuid
 	}
 	until := time.Now().UTC().Add(SecretRotationOverlap)
 	err = q.RotateWebhookSecret(ctx, dbgen.RotateWebhookSecretParams{
-		SecretCt: ct, SecretNonce: nonce, PreviousCt: previousCT, PreviousNonce: previousNonce,
+		SecretCt: ct, SecretNonce: nonce, PreviousCt: cur.SecretCt, PreviousNonce: cur.SecretNonce,
 		PreviousExpiresAt: pgtype.Timestamptz{Time: until, Valid: true}, ID: id, TenantID: tenantID,
 	})
 	return secret, until, err
@@ -622,7 +615,7 @@ func (s *Service) tick(ctx context.Context) error {
 		WHERE delivery.id = candidates.id AND subscription.id = delivery.subscription_id
 		RETURNING delivery.id, delivery.subscription_id, delivery.event_type,
 		          delivery.payload, delivery.attempt, subscription.id,
-		          subscription.tenant_id, subscription.url, subscription.secret,
+		          subscription.tenant_id, subscription.url,
 		          subscription.secret_ct, subscription.secret_nonce,
 		          subscription.previous_secret_ct, subscription.previous_secret_nonce,
 		          subscription.previous_secret_expires_at
@@ -632,7 +625,7 @@ func (s *Service) tick(ctx context.Context) error {
 	}
 	type dueDelivery struct {
 		ID, SubscriptionID, SecretID, TenantID uuid.UUID
-		EventType, URL, LegacySecret           string
+		EventType, URL                         string
 		Payload, SecretCT, SecretNonce         []byte
 		PreviousCT, PreviousNonce              []byte
 		PreviousUntil                          pgtype.Timestamptz
@@ -642,7 +635,7 @@ func (s *Service) tick(ctx context.Context) error {
 	for rows.Next() {
 		var item dueDelivery
 		if err := rows.Scan(&item.ID, &item.SubscriptionID, &item.EventType, &item.Payload, &item.Attempt,
-			&item.SecretID, &item.TenantID, &item.URL, &item.LegacySecret, &item.SecretCT, &item.SecretNonce,
+			&item.SecretID, &item.TenantID, &item.URL, &item.SecretCT, &item.SecretNonce,
 			&item.PreviousCT, &item.PreviousNonce, &item.PreviousUntil); err != nil {
 			return err
 		}
@@ -674,30 +667,14 @@ func (s *Service) tick(ctx context.Context) error {
 			}
 			continue
 		}
-		secretValue := it.LegacySecret
-		if len(it.SecretCT) > 0 {
-			if s.box == nil {
-				return errors.New("webhook secret encryption is unavailable")
-			}
-			plain, openErr := s.box.Open(it.TenantID, "webhook-signing", it.SecretID.String(), it.SecretCT, it.SecretNonce)
-			if openErr != nil {
-				return openErr
-			}
-			secretValue = string(plain)
-		} else if secretValue != "" && s.box != nil {
-			ct, nonce, sealErr := s.box.Seal(it.TenantID, "webhook-signing", it.SecretID.String(), []byte(secretValue))
-			if sealErr != nil {
-				return sealErr
-			}
-			if _, updateErr := s.pool.Exec(ctx, `
-				UPDATE tenant.webhook_subscriptions
-				SET secret = '', secret_ct = $2, secret_nonce = $3, encryption_version = 1
-				WHERE id = $1 AND secret_ct IS NULL
-			`, it.SecretID, ct, nonce); updateErr != nil {
-				return updateErr
-			}
+		if s.box == nil {
+			return errors.New("webhook secret encryption is unavailable")
 		}
-		secrets := []string{secretValue}
+		current, openErr := s.box.Open(it.TenantID, "webhook-signing", it.SecretID.String(), it.SecretCT, it.SecretNonce)
+		if openErr != nil {
+			return openErr
+		}
+		secrets := []string{string(current)}
 		if it.PreviousUntil.Valid && time.Now().Before(it.PreviousUntil.Time) {
 			previous, openErr := s.box.Open(it.TenantID, "webhook-signing", it.SecretID.String(), it.PreviousCT, it.PreviousNonce)
 			if openErr != nil {

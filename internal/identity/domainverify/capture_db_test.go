@@ -91,8 +91,8 @@ func TestRefuseCaptured(t *testing.T) {
 	team := "team." + domain
 	exec(t, `INSERT INTO tenant.domains (tenant_id, domain, verification_token, verified_at, sso_enabled) VALUES ($1, $2, 'test', NOW(), TRUE)`, other, team)
 	samlConnection(t, other, "active")
-	exec(t, `INSERT INTO tenant.ldap_connections (tenant_id, name, server_url, bind_dn, bind_password, base_dn, status)
-		VALUES ($1, 'Directory', 'ldaps://ldap.example.test', 'cn=service', 'secret', 'dc=example', 'active')`, other)
+	exec(t, `INSERT INTO tenant.ldap_connections (tenant_id, name, server_url, bind_dn, bind_password_ct, bind_password_nonce, base_dn, status)
+		VALUES ($1, 'Directory', 'ldaps://ldap.example.test', 'cn=service', '\x00', '\x00', 'dc=example', 'active')`, other)
 
 	if got, _ := captured(t, svc, member.Email); got {
 		t.Error("an address on a domain with SSO off is captured")
@@ -151,7 +151,7 @@ func TestRefuseCaptured(t *testing.T) {
 			t.Errorf("%s, an administrator single sign-on can't sign in, is captured", a.Email)
 		}
 	}
-	exec(t, `INSERT INTO "user".external_identities (user_id, tenant_id, provider, connection_id, subject, email) VALUES ($1, $2, 'saml', $3, 'okta|admin', $4)`,
+	exec(t, `INSERT INTO account.external_identities (user_id, tenant_id, provider, connection_id, subject, email) VALUES ($1, $2, 'saml', $3, 'okta|admin', $4)`,
 		admin.ID, tenant, active, admin.Email)
 	if got, _ := captured(t, svc, admin.Email); !got {
 		t.Error("an administrator linked to an active connection is not captured")
@@ -305,7 +305,7 @@ func TestOIDCConnectionsCapture(t *testing.T) {
 	if got, _ := captured(t, svc, admin.Email); got {
 		t.Error("an unlinked administrator is captured")
 	}
-	exec(t, `INSERT INTO "user".external_identities (user_id, tenant_id, provider, connection_id, subject, email) VALUES ($1, $2, 'oidc', $3, 'entra|admin', $4)`,
+	exec(t, `INSERT INTO account.external_identities (user_id, tenant_id, provider, connection_id, subject, email) VALUES ($1, $2, 'oidc', $3, 'entra|admin', $4)`,
 		admin.ID, tenant, active, admin.Email)
 	if got, _ := captured(t, svc, admin.Email); !got {
 		t.Error("an administrator linked to an active OpenID Connect connection is not captured")
@@ -336,8 +336,8 @@ func TestDiscoverRoutesByDomainAlone(t *testing.T) {
 	exec(t, `UPDATE tenant.domains SET sso_enabled = TRUE WHERE tenant_id = $1`, tenant)
 	exec(t, `INSERT INTO tenant.break_glass_members (tenant_id, user_id) VALUES ($1, $2)`, tenant, member.ID)
 	var ldap uuid.UUID
-	if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `INSERT INTO tenant.ldap_connections (tenant_id, name, server_url, bind_dn, bind_password, base_dn, status)
-		VALUES ($1, 'Directory', 'ldaps://ldap.example.test', 'cn=service', 'secret', 'dc=example', 'active') RETURNING id`, tenant).Scan(&ldap); err != nil {
+	if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `INSERT INTO tenant.ldap_connections (tenant_id, name, server_url, bind_dn, bind_password_ct, bind_password_nonce, base_dn, status)
+		VALUES ($1, 'Directory', 'ldaps://ldap.example.test', 'cn=service', '\x00', '\x00', 'dc=example', 'active') RETURNING id`, tenant).Scan(&ldap); err != nil {
 		t.Fatal(err)
 	}
 	want := []DiscoveredConnection{

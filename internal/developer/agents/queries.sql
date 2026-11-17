@@ -1,6 +1,4 @@
 -- Queries for the agents domain.
--- Dynamic SQL in transition() (disabled_at = NOW() vs NULL for suspend/resume)
--- is handled as two separate static queries below.
 
 -- GetAgentStatusByID finds no agent of a suspended or deleted organisation.
 -- name: GetAgentStatusByID :one
@@ -15,7 +13,7 @@ SELECT status FROM auth.agents WHERE id = @id AND tenant_id = @tenant_id;
 -- its own account, or holding a role there.
 -- name: SponsorBelongsToTenant :one
 SELECT EXISTS (
-    SELECT 1 FROM "user".users WHERE id = @user_id AND tenant_id = @tenant_id::uuid AND deleted_at IS NULL
+    SELECT 1 FROM account.users WHERE id = @user_id AND tenant_id = @tenant_id::uuid AND deleted_at IS NULL
     UNION ALL
     SELECT 1 FROM rbac.user_roles WHERE tenant_id = @tenant_id::uuid AND user_id = @user_id
 );
@@ -49,7 +47,7 @@ WHERE tenant_id = @tenant_id AND sponsor_user_id = @from_user_id AND status <> '
 DELETE FROM auth.agents WHERE id = @id AND tenant_id = @tenant_id;
 
 -- name: KillAllAgents :execrows
-UPDATE auth.agents SET status = 'suspended', disabled_at = NOW()
+UPDATE auth.agents SET status = 'suspended'
 WHERE tenant_id = $1 AND status = 'active';
 
 -- GetAgentForToken finds no agent of a suspended or deleted organisation.
@@ -73,18 +71,11 @@ WHERE id = @id AND tenant_id = @tenant_id AND status <> 'decommissioned'
 RETURNING name;
 
 -- name: ResumeAllAgents :execrows
-UPDATE auth.agents SET status = 'active', disabled_at = NULL
+UPDATE auth.agents SET status = 'active'
 WHERE tenant_id = $1 AND status = 'suspended';
 
--- Transition helpers: resume sets status active and clears disabled_at;
--- suspend/decommission sets the given status and stamps disabled_at = NOW().
-
--- name: ResumeAgent :exec
-UPDATE auth.agents SET status = 'active', disabled_at = NULL
-WHERE id = @id AND tenant_id = @tenant_id;
-
--- name: DeactivateAgent :exec
-UPDATE auth.agents SET status = @status, disabled_at = NOW()
+-- name: SetAgentStatus :exec
+UPDATE auth.agents SET status = @status
 WHERE id = @id AND tenant_id = @tenant_id;
 
 -- UpgradeAgentSecretHash replaces an Argon2id secret hash from before with its

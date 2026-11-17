@@ -15,7 +15,7 @@ import (
 
 const accountHomeElsewhere = `-- name: AccountHomeElsewhere :one
 SELECT EXISTS (
-    SELECT 1 FROM "user".users u
+    SELECT 1 FROM account.users u
     WHERE LOWER(u.email) = LOWER($1) AND u.deleted_at IS NULL
       AND u.tenant_id IS DISTINCT FROM $2::uuid
 )::bool
@@ -37,7 +37,7 @@ func (q *Queries) AccountHomeElsewhere(ctx context.Context, arg AccountHomeElsew
 }
 
 const activateInvitedAccount = `-- name: ActivateInvitedAccount :exec
-UPDATE "user".users SET status = 'active'
+UPDATE account.users SET status = 'active'
 WHERE id = $1
 `
 
@@ -134,7 +134,7 @@ func (q *Queries) DeclineInviteForEmail(ctx context.Context, arg DeclineInviteFo
 }
 
 const findUserIDByEmail = `-- name: FindUserIDByEmail :one
-SELECT id FROM "user".users WHERE LOWER(email) = LOWER($1)
+SELECT id FROM account.users WHERE LOWER(email) = LOWER($1)
 `
 
 // FindUserIDByEmail resolves an existing account by its (globally-unique) email;
@@ -149,7 +149,7 @@ func (q *Queries) FindUserIDByEmail(ctx context.Context, email string) (uuid.UUI
 
 const getInboxEmail = `-- name: GetInboxEmail :one
 SELECT email, (email_verified_at IS NOT NULL)::boolean AS verified
-FROM "user".users WHERE id = $1 AND deleted_at IS NULL
+FROM account.users WHERE id = $1 AND deleted_at IS NULL
 `
 
 type GetInboxEmailRow struct {
@@ -248,7 +248,7 @@ func (q *Queries) GetInviteRole(ctx context.Context, arg GetInviteRoleParams) (p
 }
 
 const getUserEmailByID = `-- name: GetUserEmailByID :one
-SELECT email FROM "user".users WHERE id = $1
+SELECT email FROM account.users WHERE id = $1
 `
 
 // GetUserEmailByID returns the caller's email so an authenticated accept can
@@ -312,7 +312,7 @@ type InsertInviteRow struct {
 
 // Queries for the invitations domain.
 // Static queries against tenant.invites live here and are compiled by sqlc into ./dbgen.
-// The cross-context writes inside Accept (user.users, auth.password_credentials,
+// The cross-context writes inside Accept (account.users, auth.password_credentials,
 // rbac.user_roles) also go through sqlc — run on the same pgx.Tx via q.WithTx(tx).
 // InsertInvite creates an invitation. One that carries a role is created only
 // when the role is the tenant's: pgx.ErrNoRows otherwise, for a missing and a
@@ -355,7 +355,7 @@ func (q *Queries) InsertInviteCredential(ctx context.Context, arg InsertInviteCr
 }
 
 const insertInvitedUser = `-- name: InsertInvitedUser :one
-INSERT INTO "user".users (tenant_id, email, display_name, status)
+INSERT INTO account.users (tenant_id, email, display_name, status)
 VALUES ($1, $2, NULLIF($3, ''), 'active')
 RETURNING id
 `
@@ -430,7 +430,7 @@ func (q *Queries) InviteSenderByToken(ctx context.Context, tokenHash string) (In
 
 const inviterActive = `-- name: InviterActive :one
 SELECT EXISTS (
-    SELECT 1 FROM "user".users u
+    SELECT 1 FROM account.users u
     WHERE u.id = $1 AND u.status = 'active' AND u.deleted_at IS NULL
       AND (u.tenant_id = $2::uuid OR EXISTS (
           SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = $2::uuid))
@@ -565,7 +565,7 @@ func (q *Queries) LockSeats(ctx context.Context, tenantID uuid.UUID) error {
 const lookupInvite = `-- name: LookupInvite :one
 SELECT i.id, i.tenant_id, i.email, i.status, i.expires_at,
        t.name AS tenant_name, t.slug AS tenant_slug,
-       EXISTS (SELECT 1 FROM "user".users u WHERE LOWER(u.email) = LOWER(i.email)) AS account_exists
+       EXISTS (SELECT 1 FROM account.users u WHERE LOWER(u.email) = LOWER(i.email)) AS account_exists
 FROM tenant.invites i
 JOIN tenant.tenants t ON t.id = i.tenant_id
 WHERE i.token_hash = $1

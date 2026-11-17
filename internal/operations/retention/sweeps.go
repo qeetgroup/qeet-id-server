@@ -33,32 +33,20 @@ var SignInSweeps = []Sweep{
 		SELECT c.ctid FROM auth.magic_links c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))`},
 	{"password resets", `DELETE FROM auth.password_resets WHERE ctid = ANY(ARRAY(
 		SELECT c.ctid FROM auth.password_resets c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))`},
-	{"email verifications", `DELETE FROM "user".email_verifications WHERE ctid = ANY(ARRAY(
-		SELECT c.ctid FROM "user".email_verifications c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))`},
-	{"phone verifications", `DELETE FROM "user".phone_verifications WHERE ctid = ANY(ARRAY(
-		SELECT c.ctid FROM "user".phone_verifications c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))`},
+	{"email verifications", `DELETE FROM account.email_verifications WHERE ctid = ANY(ARRAY(
+		SELECT c.ctid FROM account.email_verifications c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))`},
+	{"phone verifications", `DELETE FROM account.phone_verifications WHERE ctid = ANY(ARRAY(
+		SELECT c.ctid FROM account.phone_verifications c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))`},
 	{"SAML requests", `DELETE FROM auth.saml_authn_requests WHERE ctid = ANY(ARRAY(
 		SELECT c.ctid FROM auth.saml_authn_requests c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))`},
-	{"SAML sign-in codes", `DELETE FROM auth.saml_login_codes WHERE ctid = ANY(ARRAY(
-		SELECT c.ctid FROM auth.saml_login_codes c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))`},
-	{"OIDC connection sign-in states", `DELETE FROM auth.oidc_connection_states WHERE ctid = ANY(ARRAY(
-		SELECT c.ctid FROM auth.oidc_connection_states c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))`},
-	{"OIDC connection sign-in codes", `DELETE FROM auth.oidc_connection_login_codes WHERE ctid = ANY(ARRAY(
-		SELECT c.ctid FROM auth.oidc_connection_login_codes c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))`},
-	{"social sign-in codes", `DELETE FROM auth.social_login_codes WHERE ctid = ANY(ARRAY(
-		SELECT c.ctid FROM auth.social_login_codes c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))`},
-	{"social sign-in states", `DELETE FROM auth.social_oauth_states WHERE ctid = ANY(ARRAY(
-		SELECT c.ctid FROM auth.social_oauth_states c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))`},
-	{"platform social sign-in codes", `DELETE FROM auth.platform_social_codes WHERE ctid = ANY(ARRAY(
-		SELECT c.ctid FROM auth.platform_social_codes c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))`},
-	{"platform social sign-in states", `DELETE FROM auth.platform_social_states WHERE ctid = ANY(ARRAY(
-		SELECT c.ctid FROM auth.platform_social_states c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))`},
+	{"federated sign-in codes", `DELETE FROM auth.login_codes WHERE ctid = ANY(ARRAY(
+		SELECT c.ctid FROM auth.login_codes c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))`},
+	{"federated sign-in states", `DELETE FROM auth.oauth_states WHERE ctid = ANY(ARRAY(
+		SELECT c.ctid FROM auth.oauth_states c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))`},
 	{"platform social link codes", `DELETE FROM auth.platform_social_link_codes WHERE ctid = ANY(ARRAY(
 		SELECT c.ctid FROM auth.platform_social_link_codes c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))`},
 	{"connected-account states", `DELETE FROM tenant.token_vault_connect_states WHERE ctid = ANY(ARRAY(
 		SELECT c.ctid FROM tenant.token_vault_connect_states c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))`},
-	{"passkey challenges", `DELETE FROM auth.passkey_challenges WHERE ctid = ANY(ARRAY(
-		SELECT c.ctid FROM auth.passkey_challenges c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))`},
 	{"second-factor sign-ins", `DELETE FROM auth.mfa_login_challenges WHERE ctid = ANY(ARRAY(
 		SELECT c.ctid FROM auth.mfa_login_challenges c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))`},
 	{"failed sign-in counts", `DELETE FROM auth.login_attempts WHERE ctid = ANY(ARRAY(

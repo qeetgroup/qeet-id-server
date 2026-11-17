@@ -7,16 +7,16 @@
 -- ==========================================================================
 
 -- name: GetAccountProfile :one
-SELECT email, display_name FROM "user".users
+SELECT email, display_name FROM account.users
 WHERE id = @id AND tenant_id = @tenant_id::uuid AND deleted_at IS NULL
 FOR UPDATE;
 
 -- name: SetDisplayName :exec
-UPDATE "user".users SET display_name = @display_name, updated_at = NOW()
+UPDATE account.users SET display_name = @display_name, updated_at = NOW()
 WHERE id = @id AND tenant_id = @tenant_id::uuid;
 
 -- name: SetEmail :exec
-UPDATE "user".users SET email = @email, email_verified_at = NOW(), updated_at = NOW()
+UPDATE account.users SET email = @email, email_verified_at = NOW(), updated_at = NOW()
 WHERE id = @id AND tenant_id = @tenant_id::uuid;
 
 -- ==========================================================================

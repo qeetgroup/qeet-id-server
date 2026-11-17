@@ -280,7 +280,7 @@ func TestSignInRefreshesProfile(t *testing.T) {
 		t.Helper()
 		var email, name string
 		var verified bool
-		if err := pool.QueryRow(ctx, `SELECT email, COALESCE(display_name, ''), email_verified_at IS NOT NULL FROM "user".users WHERE id = $1`, f.person.ID).Scan(&email, &name, &verified); err != nil {
+		if err := pool.QueryRow(ctx, `SELECT email, COALESCE(display_name, ''), email_verified_at IS NOT NULL FROM account.users WHERE id = $1`, f.person.ID).Scan(&email, &name, &verified); err != nil {
 			t.Fatal(err)
 		}
 		return email, name, verified

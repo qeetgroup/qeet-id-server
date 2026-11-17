@@ -1,6 +1,6 @@
 -- Queries for the invitations domain.
 -- Static queries against tenant.invites live here and are compiled by sqlc into ./dbgen.
--- The cross-context writes inside Accept (user.users, auth.password_credentials,
+-- The cross-context writes inside Accept (account.users, auth.password_credentials,
 -- rbac.user_roles) also go through sqlc — run on the same pgx.Tx via q.WithTx(tx).
 
 -- InsertInvite creates an invitation. One that carries a role is created only
@@ -96,7 +96,7 @@ SELECT tenant_id, role_id, invited_by, status, expires_at FROM tenant.invites WH
 -- and still belongs to its organisation: at home there or holding a role.
 -- name: InviterActive :one
 SELECT EXISTS (
-    SELECT 1 FROM "user".users u
+    SELECT 1 FROM account.users u
     WHERE u.id = @user_id AND u.status = 'active' AND u.deleted_at IS NULL
       AND (u.tenant_id = @tenant_id::uuid OR EXISTS (
           SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = @tenant_id::uuid))
@@ -140,14 +140,14 @@ UPDATE tenant.invites SET status = 'accepted', accepted_at = NOW() WHERE id = $1
 -- pgx.ErrNoRows means no account exists yet. Used by Accept to branch between
 -- creating a new user and attaching a membership to an existing one.
 -- name: FindUserIDByEmail :one
-SELECT id FROM "user".users WHERE LOWER(email) = LOWER(@email);
+SELECT id FROM account.users WHERE LOWER(email) = LOWER(@email);
 
 -- AccountHomeElsewhere reports whether an account holds @email and has a home
 -- other than @tenant_id, so an invitation with no role would join it to
 -- nothing.
 -- name: AccountHomeElsewhere :one
 SELECT EXISTS (
-    SELECT 1 FROM "user".users u
+    SELECT 1 FROM account.users u
     WHERE LOWER(u.email) = LOWER(@email) AND u.deleted_at IS NULL
       AND u.tenant_id IS DISTINCT FROM @tenant_id::uuid
 )::bool;
@@ -155,19 +155,19 @@ SELECT EXISTS (
 -- GetUserEmailByID returns the caller's email so an authenticated accept can
 -- confirm the invite was addressed to them.
 -- name: GetUserEmailByID :one
-SELECT email FROM "user".users WHERE id = @user_id;
+SELECT email FROM account.users WHERE id = @user_id;
 
 -- GetInboxEmail is the address the in-app invitations inbox is keyed on, and
 -- whether the account has proven it. Anyone can sign up with any address, so an
 -- unproven one opens nothing.
 -- name: GetInboxEmail :one
 SELECT email, (email_verified_at IS NOT NULL)::boolean AS verified
-FROM "user".users WHERE id = @user_id AND deleted_at IS NULL;
+FROM account.users WHERE id = @user_id AND deleted_at IS NULL;
 
 -- InsertInvitedUser creates a brand-new invited account (no prior user). Its
 -- address is left unverified; a code or link sent to it later verifies it.
 -- name: InsertInvitedUser :one
-INSERT INTO "user".users (tenant_id, email, display_name, status)
+INSERT INTO account.users (tenant_id, email, display_name, status)
 VALUES (@tenant_id, @email, NULLIF(@display_name, ''), 'active')
 RETURNING id;
 
@@ -189,7 +189,7 @@ ON CONFLICT (user_id, tenant_id, role_id) DO NOTHING;
 -- name: LookupInvite :one
 SELECT i.id, i.tenant_id, i.email, i.status, i.expires_at,
        t.name AS tenant_name, t.slug AS tenant_slug,
-       EXISTS (SELECT 1 FROM "user".users u WHERE LOWER(u.email) = LOWER(i.email)) AS account_exists
+       EXISTS (SELECT 1 FROM account.users u WHERE LOWER(u.email) = LOWER(i.email)) AS account_exists
 FROM tenant.invites i
 JOIN tenant.tenants t ON t.id = i.tenant_id
 WHERE i.token_hash = @token_hash;
@@ -198,5 +198,5 @@ WHERE i.token_hash = @token_hash;
 -- invitation. Its address stays unverified, as the password path's
 -- InsertInvitedUser leaves it.
 -- name: ActivateInvitedAccount :exec
-UPDATE "user".users SET status = 'active'
+UPDATE account.users SET status = 'active'
 WHERE id = @user_id;

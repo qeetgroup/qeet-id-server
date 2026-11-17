@@ -78,7 +78,7 @@ func TestBulkImportRowErrorsCarryCodes(t *testing.T) {
 			t.Errorf("errors[%d] = %+v, want %+v", i, res.Errors[i], w)
 		}
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE tenant_id = $1 AND email = $2`, tenant, created); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE tenant_id = $1 AND email = $2`, tenant, created); n != 1 {
 		t.Errorf("the valid row created %d users, want 1", n)
 	}
 
@@ -190,14 +190,14 @@ func TestBulkImportGivesARoleAndReturnsIDs(t *testing.T) {
 		t.Errorf("%d role grants audited, want 2", n)
 	}
 
-	before := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE tenant_id = $1`, tenant)
+	before := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE tenant_id = $1`, tenant)
 	if rec := dbtest.Do(t, serve(fakeRoles{refuse: errs.ErrRBACGrantExceedsCaller}), http.MethodPost, "/users/bulk", map[string]any{"users": rows(1), "role_id": role}); rec.Code != http.StatusForbidden {
 		t.Errorf("a role the caller can't give: %d, want 403", rec.Code)
 	}
 	if rec := dbtest.Do(t, serve(fakeRoles{}), http.MethodPost, "/users/bulk", map[string]any{"users": rows(1), "role_id": foreign}); rec.Code != http.StatusNotFound {
 		t.Errorf("another organisation's role: %d, want 404", rec.Code)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE tenant_id = $1`, tenant); n != before {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE tenant_id = $1`, tenant); n != before {
 		t.Errorf("refused imports made %d users", n-before)
 	}
 	dbtest.Decode(t, dbtest.Do(t, serve(nil), http.MethodPost, "/users/bulk", map[string]any{"users": rows(1)}), &res)

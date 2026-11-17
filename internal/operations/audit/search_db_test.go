@@ -22,7 +22,7 @@ func TestAuditSearchFindsWords(t *testing.T) {
 	pool := dbtest.Pool(t)
 	tenant := dbtest.Tenant(t)
 	priya := dbtest.UserAt(t, dbtest.Unique("priya")+"@qeet.example", tenant, tenant)
-	if _, err := pool.Exec(ctx, `UPDATE "user".users SET display_name = 'Priya Rao' WHERE id = $1`, priya.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET display_name = 'Priya Rao' WHERE id = $1`, priya.ID); err != nil {
 		t.Fatal(err)
 	}
 	insert := func(action, ua, ip, meta string, actor *uuid.UUID) uuid.UUID {

@@ -18,7 +18,7 @@ import (
 func (s *Service) refuseInactiveAccount(ctx context.Context, userID, tenantID uuid.UUID, method, ip, ua string) error {
 	var status string
 	var deleted bool
-	err := s.pool.QueryRow(ctx, `SELECT status, deleted_at IS NOT NULL FROM "user".users WHERE id = $1`, userID).
+	err := s.pool.QueryRow(ctx, `SELECT status, deleted_at IS NOT NULL FROM account.users WHERE id = $1`, userID).
 		Scan(&status, &deleted)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return errs.ErrAuthAccountInactive

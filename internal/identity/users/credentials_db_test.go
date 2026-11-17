@@ -27,7 +27,7 @@ func TestCredentialChangesNeedAnAccountOfOneOrganisation(t *testing.T) {
 	shared := dbtest.User(t, tenant, tenant, other)
 	for _, u := range []uuid.UUID{solo.ID, shared.ID} {
 		session(t, u, tenant, "")
-		exec(t, `INSERT INTO auth.mfa_totp (user_id, secret, confirmed_at) VALUES ($1, 'secret', NOW())`, u)
+		exec(t, `INSERT INTO auth.mfa_totp (user_id, secret_ct, secret_nonce, confirmed_at) VALUES ($1, '\x00', '\x00', NOW())`, u)
 	}
 	session(t, shared.ID, other, "")
 	mailbox := &dbtest.Mailbox{}
@@ -107,13 +107,13 @@ func TestAdminPhoneChangeDropsItsVerification(t *testing.T) {
 	tenant := dbtest.Tenant(t)
 	admin := dbtest.User(t, tenant, tenant)
 	target := dbtest.User(t, tenant, tenant)
-	exec(t, `UPDATE "user".users SET phone = '+14155550100', phone_verified_at = NOW() WHERE id = $1`, target.ID)
+	exec(t, `UPDATE account.users SET phone = '+14155550100', phone_verified_at = NOW() WHERE id = $1`, target.ID)
 	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), testHandler(t, nil).Mount)
 	rec := dbtest.Do(t, as, http.MethodPatch, "/users/"+target.ID.String(), map[string]any{"phone": "+14155550199"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("change the phone: %d %s", rec.Code, rec.Body.String())
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND phone = '+14155550199' AND phone_verified_at IS NULL`, target.ID); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND phone = '+14155550199' AND phone_verified_at IS NULL`, target.ID); n != 1 {
 		t.Errorf("the new number is stored as verified: %s", rec.Body.String())
 	}
 }
@@ -207,12 +207,12 @@ func TestSignInMethodsCountWhatTheOrganisationAllows(t *testing.T) {
 	}
 	dbtest.SetPassword(t, u.ID, "Kx7mQ2vLp9Wz")
 	exec(t, `INSERT INTO auth.passkey_credentials (user_id, credential_id, public_key) VALUES ($1, convert_to(gen_random_uuid()::text, 'UTF8'), '\x02')`, u.ID)
-	exec(t, `INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject) VALUES ($1, $2, 'saml', 'saml-subject'), ($1, $2, 'google', 'google-subject')`, u.ID, tenant)
+	exec(t, `INSERT INTO account.external_identities (user_id, tenant_id, provider, subject) VALUES ($1, $2, 'saml', 'saml-subject'), ($1, $2, 'google', 'google-subject')`, u.ID, tenant)
 	exec(t, `INSERT INTO auth.platform_social_identities (user_id, provider, subject) VALUES ($1, 'github', $2)`, u.ID, dbtest.Unique("github"))
 	if m := count(); m != (SignInMethods{Password: true, Passkeys: 1, LinkedIdentities: 2}) {
 		t.Errorf("counted %+v, want the password, the passkey, SAML and the platform identity, not Google with no provider", m)
 	}
-	exec(t, `INSERT INTO tenant.social_providers (tenant_id, provider, client_id, client_secret) VALUES ($1, 'google', 'id', 'secret')`, tenant)
+	exec(t, `INSERT INTO tenant.social_providers (tenant_id, provider, client_id, client_secret_ct, client_secret_nonce) VALUES ($1, 'google', 'id', '\x00', '\x00')`, tenant)
 	exec(t, `INSERT INTO tenant.auth_policy (tenant_id, password_enabled, passkey_enabled) VALUES ($1, FALSE, FALSE)`, tenant)
 	if m := count(); m != (SignInMethods{LinkedIdentities: 3}) || m.Total() != 3 {
 		t.Errorf("counted %+v, want only the three linked identities once the organisation turns off passwords and passkeys", m)
@@ -239,7 +239,7 @@ func TestSignInMethodsCountWhatTheOrganisationAllows(t *testing.T) {
 	`, tenant).Scan(&conn); err != nil {
 		t.Fatal(err)
 	}
-	exec(t, `INSERT INTO "user".external_identities (user_id, tenant_id, provider, connection_id, subject) VALUES ($1, $2, 'oidc', $3, 'oidc-subject'), ($1, $2, 'oidc', NULL, 'unconnected')`, u.ID, tenant, conn)
+	exec(t, `INSERT INTO account.external_identities (user_id, tenant_id, provider, connection_id, subject) VALUES ($1, $2, 'oidc', $3, 'oidc-subject'), ($1, $2, 'oidc', NULL, 'unconnected')`, u.ID, tenant, conn)
 	if m := count(); m.LinkedIdentities != 4 {
 		t.Errorf("counted %+v, want the connection's link as a fourth way in", m)
 	}

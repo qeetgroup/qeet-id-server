@@ -191,7 +191,7 @@ func (s *Service) StartPasswordReset(ctx context.Context, email string, from Res
 	var tenantID *uuid.UUID
 	var stored string
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, tenant_id, email FROM "user".users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL`, email,
+		`SELECT id, tenant_id, email FROM account.users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL`, email,
 	).Scan(&userID, &tenantID, &stored)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil

@@ -14,7 +14,7 @@ import (
 )
 
 const cancelPurgeRequest = `-- name: CancelPurgeRequest :one
-UPDATE "user".purge_requests
+UPDATE account.purge_requests
 SET status = 'cancelled'
 WHERE id = $1 AND tenant_id = $2 AND status = 'pending'
 RETURNING subject_id
@@ -47,7 +47,7 @@ func (q *Queries) CheckAuditEventCount(ctx context.Context, tenantID pgtype.UUID
 }
 
 const checkExportRequestCount = `-- name: CheckExportRequestCount :one
-SELECT count(*) FROM "user".export_requests WHERE tenant_id = $1
+SELECT count(*) FROM account.export_requests WHERE tenant_id = $1
 `
 
 func (q *Queries) CheckExportRequestCount(ctx context.Context, tenantID uuid.UUID) (int64, error) {
@@ -151,7 +151,7 @@ func (q *Queries) CheckPasswordMinLength(ctx context.Context, tenantID uuid.UUID
 }
 
 const checkPurgeRequestCount = `-- name: CheckPurgeRequestCount :one
-SELECT count(*) FROM "user".purge_requests WHERE tenant_id = $1
+SELECT count(*) FROM account.purge_requests WHERE tenant_id = $1
 `
 
 func (q *Queries) CheckPurgeRequestCount(ctx context.Context, tenantID uuid.UUID) (int64, error) {
@@ -241,7 +241,7 @@ func (q *Queries) CheckSessionTimeout(ctx context.Context, tenantID uuid.UUID) (
 }
 
 const completePurgeRequest = `-- name: CompletePurgeRequest :exec
-UPDATE "user".purge_requests
+UPDATE account.purge_requests
 SET status = 'completed', completed_at = NOW(), subject_email = NULL, subject_name = NULL
 WHERE id = $1
 `
@@ -253,7 +253,7 @@ func (q *Queries) CompletePurgeRequest(ctx context.Context, id uuid.UUID) error 
 
 const countUsersWithoutSecondFactor = `-- name: CountUsersWithoutSecondFactor :one
 SELECT count(*)::int
-FROM "user".users u
+FROM account.users u
 WHERE u.tenant_id = $1 AND u.deleted_at IS NULL
   AND NOT EXISTS (SELECT 1 FROM auth.mfa_totp t WHERE t.user_id = u.id AND t.confirmed_at IS NOT NULL)
   AND NOT EXISTS (SELECT 1 FROM auth.mfa_recovery_codes r WHERE r.user_id = u.id AND r.used_at IS NULL)
@@ -316,9 +316,9 @@ func (q *Queries) DeleteControlOwner(ctx context.Context, arg DeleteControlOwner
 }
 
 const expireReadyExports = `-- name: ExpireReadyExports :execrows
-UPDATE "user".export_requests SET payload = NULL, status = 'expired'
+UPDATE account.export_requests SET payload = NULL, status = 'expired'
 WHERE ctid = ANY(ARRAY(
-    SELECT r.ctid FROM "user".export_requests r
+    SELECT r.ctid FROM account.export_requests r
     WHERE r.status = 'ready' AND (r.completed_at < $1::timestamptz OR r.user_id IS NULL)
     LIMIT $2))
 `
@@ -340,7 +340,7 @@ func (q *Queries) ExpireReadyExports(ctx context.Context, arg ExpireReadyExports
 }
 
 const failExportRequest = `-- name: FailExportRequest :execrows
-UPDATE "user".export_requests
+UPDATE account.export_requests
 SET status = 'failed', error = $1, completed_at = NOW(),
     lease_owner = NULL, lease_until = NULL
 WHERE id = $2 AND tenant_id = $3 AND lease_owner = $4
@@ -400,7 +400,7 @@ func (q *Queries) GetEvidenceRun(ctx context.Context, arg GetEvidenceRunParams) 
 const getExportRequest = `-- name: GetExportRequest :one
 SELECT id, tenant_id, subject_id, requested_by, status, payload, error,
        completed_at, created_at
-FROM "user".export_requests
+FROM account.export_requests
 WHERE id = $1 AND tenant_id = $2
 `
 
@@ -457,7 +457,7 @@ const getUserProfileForExport = `-- name: GetUserProfileForExport :one
 
 SELECT email, phone, display_name, avatar_url, status, metadata,
        email_verified_at, phone_verified_at, created_at
-FROM "user".users
+FROM account.users
 WHERE id = $1 AND tenant_id = $2
 `
 
@@ -626,7 +626,7 @@ func (q *Queries) InsertEvidenceRun(ctx context.Context, arg InsertEvidenceRunPa
 
 const insertExportRequest = `-- name: InsertExportRequest :one
 
-INSERT INTO "user".export_requests (tenant_id, user_id, subject_id, requested_by)
+INSERT INTO account.export_requests (tenant_id, user_id, subject_id, requested_by)
 VALUES ($1, $2::uuid, $2::uuid, $3)
 RETURNING id, tenant_id, subject_id, requested_by, status, completed_at, created_at
 `
@@ -668,10 +668,10 @@ func (q *Queries) InsertExportRequest(ctx context.Context, arg InsertExportReque
 
 const insertPurgeRequest = `-- name: InsertPurgeRequest :one
 
-INSERT INTO "user".purge_requests (tenant_id, user_id, subject_id, requested_by, reason, grace_until,
+INSERT INTO account.purge_requests (tenant_id, user_id, subject_id, requested_by, reason, grace_until,
                                    subject_email, subject_name)
 SELECT $1, $2::uuid, $2::uuid, $3, $4, $5, u.email, u.display_name
-FROM "user".users u WHERE u.id = $2::uuid AND u.tenant_id = $1
+FROM account.users u WHERE u.id = $2::uuid AND u.tenant_id = $1
 RETURNING id, tenant_id, subject_id, requested_by, reason, status,
           grace_until, completed_at, created_at, subject_email, subject_name
 `
@@ -732,7 +732,7 @@ func (q *Queries) InsertPurgeRequest(ctx context.Context, arg InsertPurgeRequest
 
 const isTenantMember = `-- name: IsTenantMember :one
 SELECT EXISTS (
-    SELECT 1 FROM "user".users u WHERE u.id = $1 AND u.deleted_at IS NULL
+    SELECT 1 FROM account.users u WHERE u.id = $1 AND u.deleted_at IS NULL
       AND (u.tenant_id = $2 OR EXISTS (
           SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = $2))
 )
@@ -841,7 +841,7 @@ func (q *Queries) ListComplianceAudits(ctx context.Context, arg ListComplianceAu
 const listControlOwners = `-- name: ListControlOwners :many
 SELECT o.control_id, o.user_id, u.email, u.display_name, o.updated_at
 FROM tenant.compliance_control_owners o
-LEFT JOIN "user".users u ON u.id = o.user_id
+LEFT JOIN account.users u ON u.id = o.user_id
 WHERE o.tenant_id = $1
 ORDER BY o.control_id
 LIMIT 1001
@@ -941,7 +941,7 @@ func (q *Queries) ListEvidenceRuns(ctx context.Context, arg ListEvidenceRunsPara
 
 const listExportRequests = `-- name: ListExportRequests :many
 SELECT id, tenant_id, subject_id, requested_by, status, error, completed_at, created_at
-FROM "user".export_requests
+FROM account.export_requests
 WHERE tenant_id = $1
 ORDER BY created_at DESC
 LIMIT 1001
@@ -991,7 +991,7 @@ func (q *Queries) ListExportRequests(ctx context.Context, tenantID uuid.UUID) ([
 const listPurgeRequests = `-- name: ListPurgeRequests :many
 SELECT id, tenant_id, subject_id, requested_by, reason, status,
        grace_until, completed_at, created_at, subject_email, subject_name
-FROM "user".purge_requests
+FROM account.purge_requests
 WHERE tenant_id = $1
 ORDER BY created_at DESC
 LIMIT 1001
@@ -1185,7 +1185,7 @@ func (q *Queries) ListUserGroupsForExport(ctx context.Context, arg ListUserGroup
 const listUserIdentitiesForExport = `-- name: ListUserIdentitiesForExport :many
 
 SELECT i.provider, i.subject, i.email, i.linked_at
-FROM "user".external_identities i
+FROM account.external_identities i
 WHERE i.user_id = $1 AND ($2::uuid IS NULL OR i.tenant_id = $2)
 UNION ALL
 SELECT p.provider, p.subject, p.email, p.linked_at
@@ -1460,7 +1460,7 @@ func (q *Queries) ListUserSignInsForExport(ctx context.Context, arg ListUserSign
 }
 
 const purgeUserPII = `-- name: PurgeUserPII :one
-UPDATE "user".users u
+UPDATE account.users u
 SET email              = 'redacted-' || u.id::text || '@gdpr.invalid',
     phone              = NULL,
     display_name       = NULL,
@@ -1472,7 +1472,7 @@ SET email              = 'redacted-' || u.id::text || '@gdpr.invalid',
     status             = 'deleted',
     deleted_at         = COALESCE(u.deleted_at, NOW()),
     updated_at         = NOW()
-FROM (SELECT p.id, p.email FROM "user".users p WHERE p.id = $1 FOR UPDATE) prior
+FROM (SELECT p.id, p.email FROM account.users p WHERE p.id = $1 FOR UPDATE) prior
 WHERE u.id = prior.id
 RETURNING prior.email
 `
@@ -1488,7 +1488,7 @@ func (q *Queries) PurgeUserPII(ctx context.Context, userID uuid.UUID) (string, e
 }
 
 const readyExportRequest = `-- name: ReadyExportRequest :exec
-UPDATE "user".export_requests
+UPDATE account.export_requests
 SET status = 'ready', payload = $1, completed_at = NOW()
 WHERE id = $2
 `

@@ -20,14 +20,14 @@ WHERE id = @id AND tenant_id = @tenant_id;
 
 -- name: GetHookForCall :one
 -- A hook's URL and secrets, to call it outside a sign-in.
-SELECT id, url, secret, secret_ct, secret_nonce, fail_open,
+SELECT id, url, secret_ct, secret_nonce, fail_open,
        previous_secret_ct, previous_secret_nonce, previous_secret_expires_at
 FROM tenant.auth_hooks WHERE id = @id AND tenant_id = @tenant_id;
 
 -- LockHookSecret holds one of the tenant's hooks while its secret is replaced,
 -- returning the secret it has now.
 -- name: LockHookSecret :one
-SELECT secret, secret_ct, secret_nonce FROM tenant.auth_hooks
+SELECT secret_ct, secret_nonce FROM tenant.auth_hooks
 WHERE id = @id AND tenant_id = @tenant_id FOR UPDATE;
 
 -- name: SetHookEndpoint :execrows
@@ -36,10 +36,8 @@ WHERE id = @id AND tenant_id = @tenant_id FOR UPDATE;
 -- previous_expires_at.
 UPDATE tenant.auth_hooks
 SET url = COALESCE(sqlc.narg('url'), url),
-    secret = CASE WHEN sqlc.narg('secret_ct')::bytea IS NULL THEN secret ELSE '' END,
     secret_ct = COALESCE(sqlc.narg('secret_ct')::bytea, secret_ct),
     secret_nonce = COALESCE(sqlc.narg('secret_nonce')::bytea, secret_nonce),
-    encryption_version = CASE WHEN sqlc.narg('secret_ct')::bytea IS NULL THEN encryption_version ELSE 1 END,
     previous_secret_ct = CASE WHEN sqlc.narg('secret_ct')::bytea IS NULL THEN previous_secret_ct ELSE sqlc.narg('previous_ct')::bytea END,
     previous_secret_nonce = CASE WHEN sqlc.narg('secret_ct')::bytea IS NULL THEN previous_secret_nonce ELSE sqlc.narg('previous_nonce')::bytea END,
     previous_secret_expires_at = CASE WHEN sqlc.narg('secret_ct')::bytea IS NULL THEN previous_secret_expires_at
@@ -61,14 +59,8 @@ DELETE FROM tenant.auth_hooks WHERE id = @id AND tenant_id = @tenant_id;
 -- ListEnabledSignInHooks returns the tenant's enabled sign-in hooks with their
 -- secrets, oldest first: the order Run calls them in.
 -- name: ListEnabledSignInHooks :many
-SELECT id, url, secret, secret_ct, secret_nonce, fail_open,
+SELECT id, url, secret_ct, secret_nonce, fail_open,
        previous_secret_ct, previous_secret_nonce, previous_secret_expires_at
 FROM tenant.auth_hooks
 WHERE tenant_id = @tenant_id AND enabled AND trigger = 'post_login'
 ORDER BY created_at, id;
-
--- SealHookSecret replaces a hook's plaintext secret with its encrypted form.
--- name: SealHookSecret :exec
-UPDATE tenant.auth_hooks
-SET secret = '', secret_ct = @secret_ct, secret_nonce = @secret_nonce, encryption_version = 1
-WHERE id = @id AND tenant_id = @tenant_id AND secret_ct IS NULL;

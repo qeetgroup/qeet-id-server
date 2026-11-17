@@ -20,20 +20,19 @@ import (
 var accountLevelTables = map[string]bool{
 	"audit.events":                  true, // one hash chain per organisation and one platform chain
 	"platform.tenant_purges":        true, // the record of a purged organisation, kept after it is gone
+	"auth.login_codes":              true, // sign-in, before an organisation applies
 	"auth.login_context_history":    true, // a person's sign-in history, across organisations
 	"auth.magic_links":              true, // sign-in, before an organisation applies
 	"auth.mfa_login_challenges":     true, // sign-in, before an organisation applies
 	"auth.mfa_push_pairings":        true, // a person's devices
 	"auth.notifications":            true, // a person's inbox, across organisations
+	"auth.oauth_states":             true, // sign-in, before an organisation applies
 	"auth.oidc_authorization_codes": true, // the hosted login, across organisations
 	"auth.oidc_ciba_requests":       true, // ended with every sign-in of the person
 	"auth.oidc_device_codes":        true, // ended with every sign-in of the person
 	"auth.oidc_logout_deliveries":   true, // background delivery
 	"auth.oidc_refresh_tokens":      true, // a person's application grants, across organisations
-	"auth.saml_login_codes":         true, // sign-in, before an organisation applies
 	"auth.sessions":                 true, // a person's sessions, across organisations
-	"auth.social_login_codes":       true, // sign-in, before an organisation applies
-	"auth.social_oauth_states":      true, // sign-in, before an organisation applies
 	"auth.trusted_devices":          true, // a person's devices, across organisations
 	"platform.email_messages":       true, // platform delivery records
 	"platform.email_suppressions":   true, // platform suppression list
@@ -41,10 +40,10 @@ var accountLevelTables = map[string]bool{
 	"platform.sales_leads":          true, // the public contact form
 	"rbac.user_roles":               true, // a person's memberships, across organisations
 	"tenant.signup_checkouts":       true, // sign-up, before the organisation exists
-	"user.export_requests":          true, // a person's own data
-	"user.external_identities":      true, // a person's linked accounts
-	"user.purge_requests":           true, // a person's own data
-	"user.users":                    true, // accounts are platform-wide
+	"account.export_requests":       true, // a person's own data
+	"account.external_identities":   true, // a person's linked accounts
+	"account.purge_requests":        true, // a person's own data
+	"account.users":                 true, // accounts are platform-wide
 }
 
 // TestTenantTablesHaveRowSecurity checks that every table with a tenant_id has

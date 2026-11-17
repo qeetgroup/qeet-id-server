@@ -232,7 +232,7 @@ SELECT t.id, t.client_id, COALESCE(c.name, '') AS client_name, t.user_id,
 FROM auth.oidc_refresh_tokens t
 LEFT JOIN auth.oidc_consents k ON k.user_id = t.user_id AND k.client_id = t.client_id
 LEFT JOIN auth.oidc_clients c ON c.client_id = t.client_id
-LEFT JOIN "user".users u ON u.id = t.user_id
+LEFT JOIN account.users u ON u.id = t.user_id
 WHERE t.tenant_id = @tenant_id
   AND t.revoked_at IS NULL AND t.replaced_by IS NULL AND t.expires_at > NOW()
   AND (sqlc.narg('client_id')::text IS NULL OR t.client_id = sqlc.narg('client_id'))
@@ -308,7 +308,7 @@ SELECT d.id, d.client_id, COALESCE(c.name, '') AS client_name, d.user_code, d.st
        COALESCE(u.email, '') AS user_email, d.scopes,
        d.created_at, d.expires_at, d.last_polled_at, d.consumed_at
 FROM auth.oidc_device_codes d
-LEFT JOIN "user".users u ON u.id = d.user_id
+LEFT JOIN account.users u ON u.id = d.user_id
 LEFT JOIN auth.oidc_clients c ON c.client_id = d.client_id AND c.tenant_id = d.tenant_id
 WHERE d.tenant_id = @tenant_id
 ORDER BY d.created_at DESC
@@ -333,7 +333,7 @@ WHERE tenant_id = @tenant_id AND client_id = @client_id
 -- GetUserByEmailInTenant finds the member of the tenant with the address (its
 -- own account, or one holding a role there), as a browser sign-in would.
 -- name: GetUserByEmailInTenant :one
-SELECT u.id FROM "user".users u
+SELECT u.id FROM account.users u
 WHERE LOWER(u.email) = LOWER(@email) AND u.deleted_at IS NULL
   AND (u.tenant_id = @tenant_id::uuid
        OR EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.tenant_id = @tenant_id::uuid AND ur.user_id = u.id));
@@ -406,13 +406,13 @@ RETURNING id, user_id, client_id, redirect_uri, scopes, state, nonce, code_chall
 -- GetAccountStanding is what decides whether a user may still be issued tokens:
 -- the same suspended-or-deleted rule the first-party refresh applies.
 -- name: GetAccountStanding :one
-SELECT status, (deleted_at IS NOT NULL)::boolean AS deleted FROM "user".users WHERE id = @id;
+SELECT status, (deleted_at IS NOT NULL)::boolean AS deleted FROM account.users WHERE id = @id;
 
 -- IsActiveTenantMember reports whether an active account is a member of an
 -- active tenant: the tenant's own account, or holding a role there.
 -- name: IsActiveTenantMember :one
 SELECT EXISTS (
-    SELECT 1 FROM "user".users u
+    SELECT 1 FROM account.users u
     JOIN tenant.tenants t ON t.id = @tenant_id::uuid
     WHERE u.id = @user_id
       AND u.status = 'active' AND u.deleted_at IS NULL
@@ -426,7 +426,7 @@ SELECT EXISTS (
 SELECT EXISTS (
     SELECT 1 FROM auth.oidc_clients c
     JOIN tenant.tenants t ON t.id = c.tenant_id
-    JOIN "user".users u ON u.id = @user_id
+    JOIN account.users u ON u.id = @user_id
     WHERE c.client_id = @client_id
       AND u.status = 'active' AND u.deleted_at IS NULL
       AND t.status = 'active' AND t.deleted_at IS NULL
@@ -543,7 +543,7 @@ SELECT EXISTS (
 -- name: GetUserinfo :one
 SELECT email, email_verified_at, phone, phone_verified_at, display_name, avatar_url, updated_at,
        COALESCE(metadata->>'locale', '')::text AS locale
-FROM "user".users WHERE id = @id AND deleted_at IS NULL AND status = 'active';
+FROM account.users WHERE id = @id AND deleted_at IS NULL AND status = 'active';
 
 -- ==========================================================================
 -- Sign-out notices (OpenID Connect Back- and Front-Channel Logout)

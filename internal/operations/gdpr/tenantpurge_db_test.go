@@ -81,10 +81,10 @@ func TestPurgingADeletedOrganisation(t *testing.T) {
 	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.tenants WHERE id = $1`, gone); n != 0 {
 		t.Error("the purged organisation is still there")
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1`, homeOnly.ID); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1`, homeOnly.ID); n != 0 {
 		t.Error("an account whose only organisation was purged is still there")
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND tenant_id IS NULL AND deleted_at IS NULL`, alsoElsewhere.ID); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND tenant_id IS NULL AND deleted_at IS NULL`, alsoElsewhere.ID); n != 1 {
 		t.Error("an account also of another organisation wasn't kept with no home organisation")
 	}
 	for _, u := range []uuid.UUID{alsoElsewhere.ID, guest.ID} {

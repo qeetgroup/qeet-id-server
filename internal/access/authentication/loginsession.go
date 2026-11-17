@@ -38,7 +38,7 @@ func (s *Service) loginSessionLifetime(ctx context.Context, userID uuid.UUID) (t
 	var orgMax, orgIdle *int64
 	err := s.pool.QueryRow(ctx, `
 		SELECT EXTRACT(EPOCH FROM sp.session_max_age)::bigint, EXTRACT(EPOCH FROM sp.session_idle_timeout)::bigint
-		FROM "user".users u
+		FROM account.users u
 		JOIN tenant.security_policies sp ON sp.tenant_id = u.tenant_id
 		WHERE u.id = $1`, userID).Scan(&orgMax, &orgIdle)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {

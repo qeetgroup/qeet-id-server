@@ -172,13 +172,13 @@ func (s *Service) listProvisioned(ctx context.Context, tenantID uuid.UUID, email
 	}
 
 	var total int
-	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM "user".users WHERE `+where, args...).Scan(&total); err != nil {
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM account.users WHERE `+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
 	args = append(args, count, start-1) // SCIM startIndex is 1-based
 	rows, err := s.pool.Query(ctx, `
-		SELECT `+userRowCols+` FROM "user".users WHERE `+where+`
+		SELECT `+userRowCols+` FROM account.users WHERE `+where+`
 		ORDER BY created_at DESC, id DESC
 		LIMIT $`+strconv.Itoa(len(args)-1)+` OFFSET $`+strconv.Itoa(len(args)), args...)
 	if err != nil {
@@ -269,13 +269,13 @@ func (h *Handler) adminListUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	var total int
-	if err := h.Service.pool.QueryRow(ctx, `SELECT count(*) FROM "user".users WHERE tenant_id = $1 AND deleted_at IS NULL AND provisioned_via = $2`,
+	if err := h.Service.pool.QueryRow(ctx, `SELECT count(*) FROM account.users WHERE tenant_id = $1 AND deleted_at IS NULL AND provisioned_via = $2`,
 		tenantID, provisionedScim).Scan(&total); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	rows, err := h.Service.pool.Query(ctx, `
-		SELECT id, email, display_name, status, external_id, created_at FROM "user".users
+		SELECT id, email, display_name, status, external_id, created_at FROM account.users
 		WHERE tenant_id = $1 AND deleted_at IS NULL AND provisioned_via = $2 AND (created_at, id) < ($3, $4)
 		ORDER BY created_at DESC, id DESC LIMIT $5`, tenantID, provisionedScim, before, beforeID, limit+1)
 	if err != nil {
@@ -337,7 +337,7 @@ func (h *Handler) adminListGroups(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := h.Service.pool.Query(ctx, `
 		SELECT g.id, g.name, g.external_id, g.created_at, g.updated_at,
-		       (SELECT count(*) FROM tenant.group_members gm JOIN "user".users u ON u.id = gm.user_id
+		       (SELECT count(*) FROM tenant.group_members gm JOIN account.users u ON u.id = gm.user_id
 		        WHERE gm.group_id = g.id AND gm.tenant_id = g.tenant_id AND u.deleted_at IS NULL)::int
 		FROM tenant.groups g
 		WHERE g.tenant_id = $1 AND g.provisioned_via = 'scim' AND (g.created_at, g.id) < ($2, $3)
@@ -822,7 +822,7 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 			writeSCIMErr(w, http.StatusInternalServerError, "create failed")
 			return
 		}
-		if _, err := tx.Exec(ctx, `UPDATE "user".users SET suspension_source='scim',suspension_reason='provider' WHERE tenant_id=$1 AND id=$2`, tid, u.ID); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE account.users SET suspension_source='scim',suspension_reason='provider' WHERE tenant_id=$1 AND id=$2`, tid, u.ID); err != nil {
 			writeSCIMErr(w, http.StatusInternalServerError, "create failed")
 			return
 		}
@@ -1333,7 +1333,7 @@ func (h *Handler) applyUserChange(w http.ResponseWriter, r *http.Request, tenant
 			return false
 		}
 		if _, err := tx.Exec(ctx, `
-			UPDATE "user".users SET email = $3, email_verified_at = NOW(), updated_at = NOW()
+			UPDATE account.users SET email = $3, email_verified_at = NOW(), updated_at = NOW()
 			WHERE id = $1 AND tenant_id = $2`, userID, tenantID, c.email); err != nil {
 			if pgxerr.IsUnique(err) {
 				writeSCIMTypedErr(w, http.StatusConflict, "uniqueness", "userName already exists")
@@ -1344,7 +1344,7 @@ func (h *Handler) applyUserChange(w http.ResponseWriter, r *http.Request, tenant
 		}
 	}
 	if in.Status != nil && *in.Status == "suspended" {
-		if _, err := tx.Exec(ctx, `UPDATE "user".users SET suspension_source='scim',suspension_reason='provider' WHERE tenant_id=$1 AND id=$2 AND suspension_source='unknown'`, tenantID, userID); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE account.users SET suspension_source='scim',suspension_reason='provider' WHERE tenant_id=$1 AND id=$2 AND suspension_source='unknown'`, tenantID, userID); err != nil {
 			writeSCIMErr(w, http.StatusInternalServerError, "update failed")
 			return false
 		}

@@ -191,8 +191,8 @@ func asOf(w *world.World, r evidenceRun) time.Time {
 			}
 			set(gdpr.ControlPass, "audit forwarding configured: %s", strings.Join(parts, ", "))
 		case control == "A.18.1-GDPR":
-			purges := count(`SELECT count(*) FROM "user".purge_requests WHERE tenant_id = $1 AND created_at <= $2`)
-			exports := count(`SELECT count(*) FROM "user".export_requests WHERE tenant_id = $1 AND created_at <= $2`)
+			purges := count(`SELECT count(*) FROM account.purge_requests WHERE tenant_id = $1 AND created_at <= $2`)
+			exports := count(`SELECT count(*) FROM account.export_requests WHERE tenant_id = $1 AND created_at <= $2`)
 			if purges+exports == 0 {
 				set(gdpr.ControlNA, "data-subject rights (right-to-erasure, data portability) are implemented but no requests have been processed for this tenant yet")
 			} else {

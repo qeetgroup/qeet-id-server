@@ -33,7 +33,7 @@ func TestEmailVerification(t *testing.T) {
 	a := dbtest.User(t, tenant, tenant)
 	who := Requester{Actor: audit.Actor{UserID: &a.ID, Type: "user"}, TenantID: &tenant}
 	verified := func() int {
-		return dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND email_verified_at IS NOT NULL`, a.ID)
+		return dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND email_verified_at IS NOT NULL`, a.ID)
 	}
 
 	if err := svc.StartEmail(ctx, a.ID, "", who); err != nil {
@@ -150,7 +150,7 @@ func wrongCode(code string) string {
 // age moves userID's codes in table back by d, as if sent d earlier.
 func age(t *testing.T, table string, userID uuid.UUID, d time.Duration) {
 	t.Helper()
-	if _, err := dbtest.Pool(t).Exec(context.Background(), `UPDATE "user".`+table+`
+	if _, err := dbtest.Pool(t).Exec(context.Background(), `UPDATE account.`+table+`
 		SET created_at = created_at - $2::interval, expires_at = expires_at - $2::interval WHERE user_id = $1`,
 		userID, d.String()); err != nil {
 		t.Fatal(err)
@@ -262,7 +262,7 @@ func TestCodesToOneAddressAreCappedPerHour(t *testing.T) {
 		if n := mail.Len() - sent; n != 5 {
 			t.Errorf("%s: %d messages sent, want 5", name, n)
 		}
-		if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE "user".email_verifications SET created_at = created_at - INTERVAL '61 minutes'
+		if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE account.email_verifications SET created_at = created_at - INTERVAL '61 minutes'
 			WHERE lower(email) = lower($1)`, address); err != nil {
 			t.Fatal(err)
 		}
@@ -377,7 +377,7 @@ func TestPhoneVerificationSendsAreCapped(t *testing.T) {
 	}
 	c, who := person()
 	limited("a sixth code to one number from a sixth account", svc.StartPhone(ctx, c.ID, number, who), 3600)
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".phone_verifications WHERE phone = $1`, number); n != 5 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.phone_verifications WHERE phone = $1`, number); n != 5 {
 		t.Errorf("%d codes stored for the number, want 5", n)
 	}
 }
@@ -419,7 +419,7 @@ func TestPhoneVerificationNeedsSMSInThePlan(t *testing.T) {
 	}
 	deliverable = false
 	refused("with no SMS provider", svc.StartPhone(ctx, a.ID, phoneNumber(), in(&paid)), errs.ErrVerifyDeliveryUnavailable)
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".phone_verifications WHERE user_id = $1`, a.ID); n != 0 || mail.Len() != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.phone_verifications WHERE user_id = $1`, a.ID); n != 0 || mail.Len() != 0 {
 		t.Fatalf("%d codes stored and %d sent for refused requests, want none", n, mail.Len())
 	}
 	deliverable = true

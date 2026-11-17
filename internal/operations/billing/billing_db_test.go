@@ -450,7 +450,7 @@ func TestCompleteCheckoutUsesOneConnection(t *testing.T) {
 	svc.SetOrgProvisioner(orgProvisioner{pool: pool})
 	tenant := dbtest.Tenant(t)
 	tenantCheckout, err := svc.q.InsertBillingCheckout(ctx, dbgen.InsertBillingCheckoutParams{
-		TenantID: tenant, Provider: "sandbox", PlanCode: "starter", Currency: "USD", AmountMinor: 2900,
+		TenantID: tenant, Provider: "sandbox", PlanCode: "starter", Currency: "USD", AmountMinor: 2900, TaxType: TaxTypeNone,
 	})
 	if err != nil {
 		t.Fatalf("stage tenant checkout: %v", err)

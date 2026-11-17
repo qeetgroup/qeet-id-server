@@ -15,7 +15,7 @@ import (
 
 const countRipeDeletedUsers = `-- name: CountRipeDeletedUsers :one
 SELECT count(*)
-FROM "user".users
+FROM account.users
 WHERE tenant_id = $1
   AND deleted_at IS NOT NULL
   AND deleted_at < NOW() - make_interval(days => $2)
@@ -39,7 +39,7 @@ const getRetentionPolicy = `-- name: GetRetentionPolicy :one
 
 SELECT p.deleted_users_enabled, p.deleted_users_days, p.updated_at, p.updated_by, u.email AS updated_by_email
 FROM tenant.retention_policy p
-LEFT JOIN "user".users u ON u.id = p.updated_by
+LEFT JOIN account.users u ON u.id = p.updated_by
 WHERE p.tenant_id = $1
 `
 
@@ -52,7 +52,7 @@ type GetRetentionPolicyRow struct {
 }
 
 // Queries for the retention domain.
-// Static queries against tenant.retention_policy and "user".users live here
+// Static queries against tenant.retention_policy and account.users live here
 // and are compiled by sqlc into ./dbgen.
 func (q *Queries) GetRetentionPolicy(ctx context.Context, tenantID uuid.UUID) (GetRetentionPolicyRow, error) {
 	row := q.db.QueryRow(ctx, getRetentionPolicy, tenantID)
@@ -99,7 +99,7 @@ func (q *Queries) ListEnabledRetentionPolicies(ctx context.Context) ([]ListEnabl
 }
 
 const listRipeDeletedUsers = `-- name: ListRipeDeletedUsers :many
-SELECT id FROM "user".users
+SELECT id FROM account.users
 WHERE tenant_id = $1
   AND deleted_at IS NOT NULL
   AND deleted_at < NOW() - make_interval(days => $2)
@@ -143,7 +143,7 @@ func (q *Queries) ListRipeDeletedUsers(ctx context.Context, arg ListRipeDeletedU
 }
 
 const purgeRipeDeletedUser = `-- name: PurgeRipeDeletedUser :execrows
-DELETE FROM "user".users
+DELETE FROM account.users
 WHERE id = $1 AND tenant_id = $2
   AND deleted_at IS NOT NULL
   AND deleted_at < NOW() - make_interval(days => $3)

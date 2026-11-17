@@ -251,7 +251,7 @@ var credentialKinds = map[string]string{
 	"email/SMS codes":  `SELECT count(*) FROM auth.mfa_otp_factors WHERE user_id = $1`,
 	"push devices":     `SELECT count(*) FROM auth.mfa_push_devices WHERE user_id = $1`,
 	"push pairings":    `SELECT count(*) FROM auth.mfa_push_pairings WHERE user_id = $1 AND used_at IS NULL`,
-	"linked accounts":  `SELECT count(*) FROM "user".external_identities WHERE user_id = $1`,
+	"linked accounts":  `SELECT count(*) FROM account.external_identities WHERE user_id = $1`,
 	"console sign-ins": `SELECT count(*) FROM auth.platform_social_identities WHERE user_id = $1`,
 	"API keys":         `SELECT count(*) FROM auth.api_keys WHERE user_id = $1 AND revoked_at IS NULL`,
 }
@@ -266,12 +266,12 @@ func giveCredentials(t *testing.T, a dbtest.Account, tenant uuid.UUID) {
 		args []any
 	}{
 		{`INSERT INTO auth.passkey_credentials (user_id, credential_id, public_key, name) VALUES ($1, convert_to($2, 'UTF8'), '\x00', 'Laptop')`, []any{a.ID, a.ID.String()}},
-		{`INSERT INTO auth.mfa_totp (user_id, secret, confirmed_at) VALUES ($1, 'secret', NOW())`, []any{a.ID}},
+		{`INSERT INTO auth.mfa_totp (user_id, secret_ct, secret_nonce, confirmed_at) VALUES ($1, '\x00', '\x00', NOW())`, []any{a.ID}},
 		{`INSERT INTO auth.mfa_recovery_codes (user_id, code_hash) VALUES ($1, 'hash')`, []any{a.ID}},
 		{`INSERT INTO auth.mfa_otp_factors (user_id, channel, destination) VALUES ($1, 'sms', '+15550100')`, []any{a.ID}},
-		{`INSERT INTO auth.mfa_push_devices (user_id, platform, push_token, device_token) VALUES ($1, 'ios', 'push', 'device')`, []any{a.ID}},
+		{`INSERT INTO auth.mfa_push_devices (user_id, platform, push_token_ct, push_token_nonce, push_token_hash, device_token_hash) VALUES ($1, 'ios', '\x00', '\x00', 'push', 'device')`, []any{a.ID}},
 		{`INSERT INTO auth.mfa_push_pairings (user_id, code_hash, expires_at) VALUES ($1, $2, NOW() + INTERVAL '1 hour')`, []any{a.ID, dbtest.Unique("pair")}},
-		{`INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject, email) VALUES ($1, $2, 'github', $3, $4)`, []any{a.ID, tenant, dbtest.Unique("gh"), a.Email}},
+		{`INSERT INTO account.external_identities (user_id, tenant_id, provider, subject, email) VALUES ($1, $2, 'github', $3, $4)`, []any{a.ID, tenant, dbtest.Unique("gh"), a.Email}},
 		{`INSERT INTO auth.platform_social_identities (user_id, provider, subject, email) VALUES ($1, 'google', $2, $3)`, []any{a.ID, dbtest.Unique("g"), a.Email}},
 		{`INSERT INTO auth.api_keys (tenant_id, user_id, name, prefix, key_hash) VALUES ($1, $2, 'laptop', $3, 'hash')`, []any{tenant, a.ID, dbtest.Unique("qk")}},
 	} {
@@ -333,7 +333,7 @@ func TestResetOfAVerifiedAccountKeepsItsPasskeys(t *testing.T) {
 	tenant := dbtest.Tenant(t)
 	owner := dbtest.User(t, tenant, tenant)
 	giveCredentials(t, owner, tenant)
-	if _, err := pool.Exec(ctx, `UPDATE "user".users SET email_verified_at = NOW() WHERE id = $1`, owner.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET email_verified_at = NOW() WHERE id = $1`, owner.ID); err != nil {
 		t.Fatal(err)
 	}
 	before := heldCredentials(t, owner)

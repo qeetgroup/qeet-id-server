@@ -30,7 +30,7 @@ type Querier interface {
 func HomeIn(ctx context.Context, q Querier, userID, tenantID uuid.UUID) (bool, error) {
 	var ok bool
 	err := q.QueryRow(ctx, `
-		SELECT EXISTS (SELECT 1 FROM "user".users WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL)
+		SELECT EXISTS (SELECT 1 FROM account.users WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL)
 	`, userID, tenantID).Scan(&ok)
 	return ok, err
 }
@@ -43,7 +43,7 @@ func AddressVerified(ctx context.Context, q Querier, userID uuid.UUID) (bool, er
 	var ok bool
 	err := q.QueryRow(ctx, `
 		SELECT email_verified_at IS NOT NULL OR provisioned_via IS NOT DISTINCT FROM 'scim'
-		FROM "user".users WHERE id = $1`, userID).Scan(&ok)
+		FROM account.users WHERE id = $1`, userID).Scan(&ok)
 	return ok, err
 }
 
@@ -51,7 +51,7 @@ func AddressVerified(ctx context.Context, q Querier, userID uuid.UUID) (bool, er
 // organisation's identity provider adopting the account vouched for it.
 func MarkAddressVerified(ctx context.Context, q Querier, userID uuid.UUID) error {
 	_, err := q.Exec(ctx, `
-		UPDATE "user".users SET email_verified_at = NOW(), updated_at = NOW()
+		UPDATE account.users SET email_verified_at = NOW(), updated_at = NOW()
 		WHERE id = $1 AND email_verified_at IS NULL`, userID)
 	return err
 }
@@ -105,7 +105,7 @@ type ActOn func(ctx context.Context, caller *httpx.Principal, tenantID, targetID
 func LinkedAdministrators(ctx context.Context, q Querier, tenantID, connID uuid.UUID, provider string) ([]uuid.UUID, error) {
 	var ids []uuid.UUID
 	err := q.QueryRow(ctx, `
-		SELECT coalesce(array_agg(DISTINCT e.user_id), '{}') FROM "user".external_identities e
+		SELECT coalesce(array_agg(DISTINCT e.user_id), '{}') FROM account.external_identities e
 		WHERE e.tenant_id = $1
 		  AND (e.connection_id = $2 OR ($2 = '00000000-0000-0000-0000-000000000000'::uuid AND e.connection_id IS NULL AND e.provider = $3))
 		  AND (EXISTS (

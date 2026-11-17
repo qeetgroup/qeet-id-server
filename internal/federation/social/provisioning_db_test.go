@@ -98,7 +98,7 @@ func claims(email string) userInfo {
 // proved reports whether the account's address is marked verified.
 func proved(t *testing.T, id uuid.UUID) bool {
 	t.Helper()
-	return dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND email_verified_at IS NOT NULL`, id) == 1
+	return dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND email_verified_at IS NOT NULL`, id) == 1
 }
 
 // TestOIDCSocialProviderDoesNotVerifyAnAddressItsOrganisationDoesNotManage
@@ -134,7 +134,7 @@ func TestOIDCSocialProviderDoesNotVerifyAnAddressItsOrganisationDoesNotManage(t 
 	if got, err := signIn("okta", verified(t, elsewhere)); !errors.Is(err, errs.ErrSocialEmailUnverified) {
 		t.Errorf("an account on a domain the organisation doesn't manage = %s, %v; want %v", got, err, errs.ErrSocialEmailUnverified)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE user_id = $1`, elsewhere.ID); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE user_id = $1`, elsewhere.ID); n != 0 {
 		t.Errorf("%d identities linked to an account the provider can't vouch for, want none", n)
 	}
 	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, tenant, tenant)
@@ -168,7 +168,7 @@ func TestInboxClosedToAnAddressOnlyAProviderAsserted(t *testing.T) {
 		t.Fatalf("sign-up through the organisation's provider: %v; want a one-time code", q)
 	}
 	var id uuid.UUID
-	if err := pool.QueryRow(ctx, `SELECT id FROM "user".users WHERE email = $1`, invitee).Scan(&id); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id FROM account.users WHERE email = $1`, invitee).Scan(&id); err != nil {
 		t.Fatalf("the account the sign-up created: %v", err)
 	}
 
@@ -198,7 +198,7 @@ func TestSocialSignUpRefusedOnADomainAnotherOrganisationManages(t *testing.T) {
 	addProvider(t, f, tenant, "corp")
 	taken := dbtest.Unique("x") + "@" + domain
 	target, q := redirectQuery(t, f.signIn(t, "corp", "/social/corp/start?tenant_id="+tenant.String(), claims(taken)))
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1`, taken); target != "https://login.example.test/sign-in" || q.Get("error") != "social" || q.Get("code") != "" || n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, taken); target != "https://login.example.test/sign-in" || q.Get("error") != "social" || q.Get("code") != "" || n != 0 {
 		t.Errorf("sign-up through the routes went to %s %v, %d accounts; want the hosted login with error=social and no account", target, q, n)
 	}
 
@@ -206,13 +206,13 @@ func TestSocialSignUpRefusedOnADomainAnotherOrganisationManages(t *testing.T) {
 		for _, host := range []string{domain, "eu." + domain} {
 			email := dbtest.Unique("x") + "@" + host
 			_, err := svc.findOrCreateUser(ctx, tenant, provider, claims(email))
-			if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1`, email); !errors.Is(err, errs.ErrUserDomainManaged) || n != 0 {
+			if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, email); !errors.Is(err, errs.ErrUserDomainManaged) || n != 0 {
 				t.Errorf("%s sign-up at %s: %v, %d accounts; want %v and no account", provider, host, err, n, errs.ErrUserDomainManaged)
 			}
 		}
 	}
 	email := dbtest.Unique("own") + "@" + domain
-	if id, err := svc.findOrCreateUser(ctx, manager, "okta", claims(email)); err != nil || dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND tenant_id = $2`, id, manager) != 1 {
+	if id, err := svc.findOrCreateUser(ctx, manager, "okta", claims(email)); err != nil || dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND tenant_id = $2`, id, manager) != 1 {
 		t.Errorf("sign-up through the managing organisation's own provider: %v; want an account in it", err)
 	}
 }
@@ -231,11 +231,11 @@ func TestSocialSignUpRefusedOnACapturedDomain(t *testing.T) {
 		return email, err
 	}
 
-	if email, err := signUp(); err != nil || dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1`, email) != 1 {
+	if email, err := signUp(); err != nil || dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, email) != 1 {
 		t.Errorf("sign-up on the organisation's domain before it requires single sign-on: %v; want an account", err)
 	}
 	requireSSO(t, tenant)
-	if email, err := signUp(); !errors.Is(err, errs.ErrAuthSSORequired) || dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1`, email) != 0 {
+	if email, err := signUp(); !errors.Is(err, errs.ErrAuthSSORequired) || dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, email) != 0 {
 		t.Errorf("sign-up on a domain that requires single sign-on: %v; want %v and no account", err, errs.ErrAuthSSORequired)
 	}
 }
@@ -272,7 +272,7 @@ func TestSocialDoesNotAdoptAnAdministrator(t *testing.T) {
 	}
 	owner := account(ownerRole)
 	linked := func(a dbtest.Account) int {
-		return dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE user_id = $1`, a.ID)
+		return dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE user_id = $1`, a.ID)
 	}
 
 	for name, a := range map[string]dbtest.Account{
@@ -338,7 +338,7 @@ func TestSocialSignInRefusedOnACapturedDomain(t *testing.T) {
 	if q := signIn(adoptedAs); q.Get("code") != "" {
 		t.Errorf("adopting a member on a captured domain: %v; want no code", q)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE user_id = $1`, adopted.ID); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE user_id = $1`, adopted.ID); n != 0 {
 		t.Errorf("%d identities linked to a member on a captured domain, want none", n)
 	}
 	if q := signIn(exemptAs); q.Get("code") == "" {

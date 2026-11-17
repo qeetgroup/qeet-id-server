@@ -109,7 +109,7 @@ func newHistory(w *world.World) *history {
 	rows.Close()
 
 	rows, err = w.Admin.Query(w.Ctx, `
-		SELECT tenant_id, user_id FROM "user".external_identities
+		SELECT tenant_id, user_id FROM account.external_identities
 		WHERE tenant_id = ANY($1) AND provider NOT LIKE 'ldap%'`, ids)
 	w.Check(err, "read linked social accounts")
 	for rows.Next() {

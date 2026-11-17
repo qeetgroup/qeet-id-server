@@ -301,7 +301,7 @@ func (q *Queries) DenyDevice(ctx context.Context, id uuid.UUID) error {
 }
 
 const getAccountStanding = `-- name: GetAccountStanding :one
-SELECT status, (deleted_at IS NOT NULL)::boolean AS deleted FROM "user".users WHERE id = $1
+SELECT status, (deleted_at IS NOT NULL)::boolean AS deleted FROM account.users WHERE id = $1
 `
 
 type GetAccountStandingRow struct {
@@ -689,7 +689,7 @@ func (q *Queries) GetRefreshTokenForIntrospect(ctx context.Context, tokenHash st
 
 const getUserByEmailInTenant = `-- name: GetUserByEmailInTenant :one
 
-SELECT u.id FROM "user".users u
+SELECT u.id FROM account.users u
 WHERE LOWER(u.email) = LOWER($1) AND u.deleted_at IS NULL
   AND (u.tenant_id = $2::uuid
        OR EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.tenant_id = $2::uuid AND ur.user_id = u.id))
@@ -715,7 +715,7 @@ func (q *Queries) GetUserByEmailInTenant(ctx context.Context, arg GetUserByEmail
 const getUserinfo = `-- name: GetUserinfo :one
 SELECT email, email_verified_at, phone, phone_verified_at, display_name, avatar_url, updated_at,
        COALESCE(metadata->>'locale', '')::text AS locale
-FROM "user".users WHERE id = $1 AND deleted_at IS NULL AND status = 'active'
+FROM account.users WHERE id = $1 AND deleted_at IS NULL AND status = 'active'
 `
 
 type GetUserinfoRow struct {
@@ -1164,7 +1164,7 @@ const isActiveClientMember = `-- name: IsActiveClientMember :one
 SELECT EXISTS (
     SELECT 1 FROM auth.oidc_clients c
     JOIN tenant.tenants t ON t.id = c.tenant_id
-    JOIN "user".users u ON u.id = $1
+    JOIN account.users u ON u.id = $1
     WHERE c.client_id = $2
       AND u.status = 'active' AND u.deleted_at IS NULL
       AND t.status = 'active' AND t.deleted_at IS NULL
@@ -1188,7 +1188,7 @@ func (q *Queries) IsActiveClientMember(ctx context.Context, arg IsActiveClientMe
 
 const isActiveTenantMember = `-- name: IsActiveTenantMember :one
 SELECT EXISTS (
-    SELECT 1 FROM "user".users u
+    SELECT 1 FROM account.users u
     JOIN tenant.tenants t ON t.id = $1::uuid
     WHERE u.id = $2
       AND u.status = 'active' AND u.deleted_at IS NULL
@@ -1319,7 +1319,7 @@ SELECT d.id, d.client_id, COALESCE(c.name, '') AS client_name, d.user_code, d.st
        COALESCE(u.email, '') AS user_email, d.scopes,
        d.created_at, d.expires_at, d.last_polled_at, d.consumed_at
 FROM auth.oidc_device_codes d
-LEFT JOIN "user".users u ON u.id = d.user_id
+LEFT JOIN account.users u ON u.id = d.user_id
 LEFT JOIN auth.oidc_clients c ON c.client_id = d.client_id AND c.tenant_id = d.tenant_id
 WHERE d.tenant_id = $1
 ORDER BY d.created_at DESC
@@ -1385,7 +1385,7 @@ SELECT t.id, t.client_id, COALESCE(c.name, '') AS client_name, t.user_id,
 FROM auth.oidc_refresh_tokens t
 LEFT JOIN auth.oidc_consents k ON k.user_id = t.user_id AND k.client_id = t.client_id
 LEFT JOIN auth.oidc_clients c ON c.client_id = t.client_id
-LEFT JOIN "user".users u ON u.id = t.user_id
+LEFT JOIN account.users u ON u.id = t.user_id
 WHERE t.tenant_id = $1
   AND t.revoked_at IS NULL AND t.replaced_by IS NULL AND t.expires_at > NOW()
   AND ($2::text IS NULL OR t.client_id = $2)
