@@ -69,7 +69,7 @@ contracts:
   openapi:
     path: api/openapi/
     format: openapi-3.1
-    documents: 5 # auth, management, federation, developer, operations
+    documents: 5 # access, identity, federation, developer, operations: one per bounded context
     version: "0.2.0" # info.version of all five; 1.0.0 at the 1.0.0 release, then its own semver
     coverage_gate: internal/bootstrap/openapi_coverage_test.go
     source: api/openapi/src/ # the documents are generated from here: make openapi

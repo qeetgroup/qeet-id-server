@@ -33,6 +33,8 @@ get:
       $ref: ../../../shared/responses/Forbidden.yaml
     "404":
       $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
 patch:
   operationId: updateOidcConnection
   description: >-
@@ -84,8 +86,12 @@ patch:
       $ref: ../../../shared/responses/Forbidden.yaml
     "404":
       $ref: ../../../shared/responses/NotFound.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
     "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
 delete:
   operationId: deleteOidcConnection
   description: >-
@@ -118,3 +124,5 @@ delete:
       $ref: ../../../shared/responses/Forbidden.yaml
     "404":
       $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

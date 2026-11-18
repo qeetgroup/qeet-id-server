@@ -1,0 +1,140 @@
+get:
+  operationId: listAccessDecisions
+  summary: List access decisions
+  description: >-
+    The access decisions the organization asked of GET /v1/check (source check),
+    the relationship check (relation_check), AuthZEN evaluation and evaluations
+    (authzen) and ABAC evaluate (abac_evaluate, or abac_draft with an unsaved
+    policy), newest first, a page at a time: who asked (caller_type, caller_id
+    and, for an application's token, caller_client), about which subject,
+    resource and action, the answer, and the model, rule and reason that decided
+    it. Decisions the platform makes guarding its own routes are not kept. They
+    are kept for 30 days and written within a second or so of being answered; at
+    a surge too great to keep up with, some may not be kept. Requires
+    policy.read, since rule names the ABAC policy that decided.
+  tags:
+    - AuthZEN
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: subject
+      in: query
+      required: false
+      description: Only decisions about this subject (a user id, or type:id).
+      schema:
+        type: string
+    - name: source
+      in: query
+      required: false
+      schema:
+        type: string
+        enum:
+          - check
+          - relation_check
+          - authzen
+          - abac_evaluate
+          - abac_draft
+    - name: allowed
+      in: query
+      required: false
+      description: Only allowed (true) or refused (false) decisions.
+      schema:
+        type: boolean
+    - name: days
+      in: query
+      required: false
+      description: Decisions of the last 1 to 30 days; 30 by default.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 30
+    - name: limit
+      in: query
+      required: false
+      description: Page size, 1 to 200. A larger value is lowered to 200; a smaller or malformed one gets the default.
+      schema:
+        type: integer
+    - name: cursor
+      in: query
+      required: false
+      description: The next_cursor of the previous page.
+      schema:
+        type: string
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "200":
+      description: Decisions
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - items
+            properties:
+              items:
+                type: array
+                items:
+                  type: object
+                  required:
+                    - id
+                    - decided_at
+                    - source
+                    - subject
+                    - resource
+                    - action
+                    - allowed
+                    - model
+                  properties:
+                    id:
+                      type: string
+                      format: uuid
+                    decided_at:
+                      type: string
+                      format: date-time
+                    source:
+                      type: string
+                      enum:
+                        - check
+                        - relation_check
+                        - authzen
+                        - abac_evaluate
+                        - abac_draft
+                    caller_type:
+                      type: string
+                      description: user, api_key, service or agent.
+                    caller_id:
+                      type: string
+                      format: uuid
+                    caller_client:
+                      type: string
+                      description: The application whose token asked, when one did.
+                    subject:
+                      type: string
+                    resource:
+                      type: string
+                      description: '"permission" for a permission check, else type:id.'
+                    action:
+                      type: string
+                      description: The permission key, relation or action.
+                    allowed:
+                      type: boolean
+                    model:
+                      type: string
+                      description: "rbac, rebac, abac or none: the model that decided."
+                    rule:
+                      type: string
+                      description: The role, relation or ABAC policy that decided.
+                    reason_code:
+                      type: string
+              next_cursor:
+                type: string
+                description: Present when there is another page.
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -1,0 +1,14 @@
+type: object
+additionalProperties: false
+required:
+  - credential
+  - name
+  - session_id
+properties:
+  credential: {}
+  name:
+    type: string
+    minLength: 1
+  session_id:
+    type: string
+    format: uuid

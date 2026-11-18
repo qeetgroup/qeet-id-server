@@ -19,3 +19,5 @@ get:
       description: >-
         HTML error page (invalid/expired state, or the provider returned an
         error)
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

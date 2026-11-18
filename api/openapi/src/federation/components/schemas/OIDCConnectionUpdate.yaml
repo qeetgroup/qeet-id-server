@@ -1,25 +1,40 @@
 type: object
+additionalProperties: false
 properties:
   name:
-    type: string
+    type:
+      - string
+      - "null"
   issuer:
-    type: string
+    type:
+      - string
+      - "null"
     format: uri
   discovery_url:
-    type: string
+    type:
+      - string
+      - "null"
   client_id:
-    type: string
+    type:
+      - string
+      - "null"
   client_secret:
-    type: string
+    type:
+      - string
+      - "null"
     writeOnly: true
     description: A new client secret; absent or empty keeps the stored one.
   scopes:
-    type: array
+    type:
+      - array
+      - "null"
     maxItems: 20
     items:
       type: string
   allowed_idp_tenant_ids:
-    type: array
+    type:
+      - array
+      - "null"
     maxItems: 50
     items:
       type: string
@@ -27,8 +42,11 @@ properties:
   claim_mapping:
     $ref: ./OIDCClaimMapping.yaml
   status:
-    type: string
+    type:
+      - string
+      - "null"
     enum:
       - draft
       - active
       - disabled
+      - null

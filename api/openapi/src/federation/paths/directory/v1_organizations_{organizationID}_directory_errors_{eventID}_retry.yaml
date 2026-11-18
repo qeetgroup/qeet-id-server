@@ -30,6 +30,8 @@ post:
             properties:
               succeeded:
                 type: boolean
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       description: Authentication required
     "403":
@@ -38,3 +40,5 @@ post:
       description: Error not found in this organization
     "409":
       description: Operation cannot be retried or is already closed
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

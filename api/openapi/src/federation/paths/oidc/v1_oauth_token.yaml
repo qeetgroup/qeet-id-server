@@ -132,5 +132,7 @@ post:
       $ref: ../../components/responses/OAuthBadRequest.yaml
     "401":
       $ref: ../../components/responses/OAuthUnauthorized.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
     "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

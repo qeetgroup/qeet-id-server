@@ -1,0 +1,67 @@
+post:
+  operationId: sendSignInMfaPush
+  summary: Send a push approval request
+  description: >-
+    Sends a sign-in approval request to the challenged person's push devices;
+    only its approval completes the challenge, and only once. Complete with
+    push: true. Used by both sign-in flows. Each phone is sent a high-priority
+    push that lives as long as the request can be answered (two minutes); a
+    phone the push service reports as no longer having the app is retired. When
+    the request reaches none of the person's phones it is closed and the call
+    answers 502 mfa.push_delivery_failed, so the person can use another way to
+    verify. The answer carries a two-digit number to show on the sign-in screen:
+    the phone must send it back to approve. A person is sent at most five
+    requests in ten minutes, and none for the rest of an hour in which they
+    denied three; past that the call answers 429 mfa.push_limited.
+  tags:
+    - Auth
+  security: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          additionalProperties: false
+          required:
+            - mfa_token
+          properties:
+            mfa_token:
+              type: string
+              minLength: 1
+  responses:
+    "200":
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              expires_at:
+                type: string
+                format: date-time
+              number:
+                type: integer
+                description: >-
+                  Show it on the sign-in screen; the phone sends it back to
+                  approve.
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+    "502":
+      description: >-
+        The request reached none of the person's phones
+        (mfa.push_delivery_failed)
+      content:
+        application/json:
+          schema:
+            $ref: ../../../shared/schemas/Error.yaml

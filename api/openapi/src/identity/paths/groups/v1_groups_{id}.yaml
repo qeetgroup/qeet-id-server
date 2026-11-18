@@ -1,0 +1,88 @@
+patch:
+  operationId: updateGroup
+  summary: Update group
+  tags:
+    - Groups
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: false
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/GroupUpdateInput.yaml
+  description: >-
+    Changes only the fields sent: an omitted name, description or parent_id
+    keeps its value, and "parent_id": null makes the group top-level. A new
+    parent must be one of the organization's own groups (404 group.parent_not_found
+    otherwise) and not the group itself or one of its subgroups (400
+    group.cycle). Renaming to a name another of the organization's groups uses,
+    ignoring case, answers 409 group.name_exists.
+  responses:
+    "200":
+      description: Updated
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/Group.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "409":
+      $ref: ../../../shared/responses/Conflict.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+delete:
+  operationId: deleteGroup
+  summary: Delete group
+  tags:
+    - Groups
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  description: >-
+    Deletes one of the organization's groups and its subgroups; members keep
+    their accounts. Requires group.write and a fresh second factor (step-up).
+    Deleting takes the group's roles from its members, so it is held to the
+    rule for giving them: only an owner deletes a group holding the owner role
+    (403 rbac.owner_only), and nobody deletes one whose roles carry a
+    permission they lack (403 rbac.grant_exceeds_caller).
+  responses:
+    "204":
+      description: No Content
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

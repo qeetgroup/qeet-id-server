@@ -10,6 +10,7 @@ groups:
         for: 2m
         labels: { severity: critical }
         annotations:
+          runbook_url: "https://github.com/qeetgroup/qeet-id-server/blob/develop/observability/README.md#qeetidtargetdown"
           summary: "qeet-id target down"
           description: "Prometheus cannot scrape {{ $labels.instance }} for 2m."
       - alert: QeetIdNoMetrics
@@ -17,6 +18,7 @@ groups:
         for: 5m
         labels: { severity: critical }
         annotations:
+          runbook_url: "https://github.com/qeetgroup/qeet-id-server/blob/develop/observability/README.md#qeetidnometrics"
           summary: "qeet-id has no scrape target"
           description: "No qeet-id target is being scraped: check service discovery."
 
@@ -32,6 +34,7 @@ groups:
         for: 5m
         labels: { severity: critical }
         annotations:
+          runbook_url: "https://github.com/qeetgroup/qeet-id-server/blob/develop/observability/README.md#qeetidhigherrorrate"
           summary: "qeet-id 5xx error rate above 5%"
           description: "5xx ratio is {{ $value | humanizePercentage }} over the last 5m."
 
@@ -43,6 +46,7 @@ groups:
         for: 10m
         labels: { severity: warning }
         annotations:
+          runbook_url: "https://github.com/qeetgroup/qeet-id-server/blob/develop/observability/README.md#qeetidhighlatencyp99"
           summary: "qeet-id p99 latency above 1s"
           description: "p99 request latency is {{ $value }}s over the last 5m."
 
@@ -53,6 +57,7 @@ groups:
         for: 10m
         labels: { severity: warning }
         annotations:
+          runbook_url: "https://github.com/qeetgroup/qeet-id-server/blob/develop/observability/README.md#qeetidhighgoroutines"
           summary: "qeet-id goroutine count high"
           description: "{{ $value }} goroutines: a possible leak, such as unbounded outbound calls."
       - alert: QeetIdRestarting
@@ -60,6 +65,7 @@ groups:
         expr: increase(kube_pod_container_status_restarts_total{container="qeet-id"}[15m]) > 2
         labels: { severity: warning }
         annotations:
+          runbook_url: "https://github.com/qeetgroup/qeet-id-server/blob/develop/observability/README.md#qeetidrestarting"
           summary: "qeet-id pod restarting"
           description: "{{ $labels.pod }} restarted more than twice in 15m."
 
@@ -70,6 +76,7 @@ groups:
         expr: increase(audit_verify_failures_total{job="qeet-id"}[30m]) > 0
         labels: { severity: critical }
         annotations:
+          runbook_url: "https://github.com/qeetgroup/qeet-id-server/blob/develop/observability/README.md#qeetidauditchainbroken"
           summary: "an audit chain failed verification"
           description: "audit_verify_failures_total rose: read the stored verification run for the broken chain."
       - alert: QeetIdAuditVerificationStale
@@ -77,6 +84,7 @@ groups:
         for: 15m
         labels: { severity: warning }
         annotations:
+          runbook_url: "https://github.com/qeetgroup/qeet-id-server/blob/develop/observability/README.md#qeetidauditverificationstale"
           summary: "audit chains not verified for 6h"
           description: "The audit-chain-verify job hasn't succeeded for {{ $value | humanizeDuration }}."
       - alert: QeetIdSessionRevocationsNotAnnounced
@@ -84,6 +92,7 @@ groups:
         expr: increase(session_revocation_signal_failures_total{job="qeet-id"}[15m]) > 0
         labels: { severity: critical }
         annotations:
+          runbook_url: "https://github.com/qeetgroup/qeet-id-server/blob/develop/observability/README.md#qeetidsessionrevocationsnotannounced"
           summary: "session revocations failed to announce"
           description: "{{ $value }} revocation signals failed ({{ $labels.reason }})."
       - alert: QeetIdSigningKeySyncFailing
@@ -91,6 +100,7 @@ groups:
         for: 5m
         labels: { severity: critical }
         annotations:
+          runbook_url: "https://github.com/qeetgroup/qeet-id-server/blob/develop/observability/README.md#qeetidsigningkeysyncfailing"
           summary: "signing-key registry sync failing"
           description: "This instance can't read the shared signing-key registry; tokens from a rotated key may be refused."
       - alert: QeetIdSignInLockoutSpike
@@ -99,6 +109,7 @@ groups:
         for: 5m
         labels: { severity: warning }
         annotations:
+          runbook_url: "https://github.com/qeetgroup/qeet-id-server/blob/develop/observability/README.md#qeetidsigninlockoutspike"
           summary: "sign-in lockouts spiking"
           description: "{{ $value }} lockouts in 5m: check the threat and bot views for a spraying source."
 
@@ -110,6 +121,7 @@ groups:
         for: 5m
         labels: { severity: critical }
         annotations:
+          runbook_url: "https://github.com/qeetgroup/qeet-id-server/blob/develop/observability/README.md#qeetidtokenendpointerrors"
           summary: "token endpoint failing"
           description: "{{ $value }} token requests failed with a server error in 10m: applications can't sign people in."
       - alert: QeetIdWebhookBacklogStale
@@ -117,18 +129,21 @@ groups:
         for: 10m
         labels: { severity: warning }
         annotations:
+          runbook_url: "https://github.com/qeetgroup/qeet-id-server/blob/develop/observability/README.md#qeetidwebhookbacklogstale"
           summary: "webhook deliveries waiting over an hour"
           description: "The oldest pending delivery has waited {{ $value | humanizeDuration }}: check the dispatcher and failing endpoints."
       - alert: QeetIdOutboxDeadLetters
         expr: increase(outbox_dead_lettered_total{job="qeet-id"}[15m]) > 0
         labels: { severity: warning }
         annotations:
+          runbook_url: "https://github.com/qeetgroup/qeet-id-server/blob/develop/observability/README.md#qeetidoutboxdeadletters"
           summary: "outbox events dead-lettered"
           description: "Events gave up after their retries: replay them with `scheduler replay-dead-letters`."
       - alert: QeetIdScheduledJobFailing
         expr: increase(scheduled_job_failures_total{job="qeet-id"}[30m]) > 0
         labels: { severity: warning }
         annotations:
+          runbook_url: "https://github.com/qeetgroup/qeet-id-server/blob/develop/observability/README.md#qeetidscheduledjobfailing"
           summary: "scheduled job {{ $labels.exported_job }} failing"
           description: "{{ $labels.exported_job }} failed {{ $value }} times in 30m."
       - alert: QeetIdSIEMForwardLagging
@@ -136,11 +151,13 @@ groups:
         for: 10m
         labels: { severity: warning }
         annotations:
+          runbook_url: "https://github.com/qeetgroup/qeet-id-server/blob/develop/observability/README.md#qeetidsiemforwardlagging"
           summary: "SIEM forwarding behind by more than 15m"
           description: "Audit events reach the organizations' SIEM {{ $value | humanizeDuration }} late."
       - alert: QeetIdGDPRErasureFailing
         expr: increase(gdpr_erasure_failures_total{job="qeet-id"}[1h]) > 0
         labels: { severity: warning }
         annotations:
+          runbook_url: "https://github.com/qeetgroup/qeet-id-server/blob/develop/observability/README.md#qeetidgdprerasurefailing"
           summary: "GDPR erasures failing"
           description: "An erasure request failed and will be retried; it has a legal deadline."

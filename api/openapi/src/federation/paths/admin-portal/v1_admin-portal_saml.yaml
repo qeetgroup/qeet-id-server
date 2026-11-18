@@ -26,6 +26,8 @@ get:
       $ref: ../../../shared/responses/Unauthorized.yaml
     "403":
       $ref: ../../../shared/responses/Forbidden.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
 post:
   operationId: createPortalSamlConnection
   summary: Create connection (portal)
@@ -59,6 +61,8 @@ post:
         application/json:
           schema:
             $ref: ../../components/schemas/AdminPortalSAMLConnection.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
     "402":
@@ -67,5 +71,9 @@ post:
         (billing.upgrade_required).
     "403":
       $ref: ../../../shared/responses/Forbidden.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
     "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

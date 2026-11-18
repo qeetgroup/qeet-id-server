@@ -111,7 +111,7 @@ const autoSubmit = `document.forms[0].submit()`
 // postFormCSP is the API's script-free policy, letting exactly autoSubmit run.
 var postFormCSP = func() string {
 	sum := sha256.Sum256([]byte(autoSubmit))
-	return "default-src 'none'; script-src 'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'; frame-ancestors 'none'"
+	return "default-src 'none'; script-src 'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'; frame-ancestors 'none'; base-uri 'none'"
 }()
 
 // writePostForm answers with the HTTP-POST binding page: a form carrying the
@@ -132,7 +132,7 @@ func writePostForm(w http.ResponseWriter, acs, samlResponse, relayState string) 
 }
 
 // errorPageCSP lets the SSO error page show its text and nothing else.
-const errorPageCSP = "default-src 'none'; frame-ancestors 'none'"
+const errorPageCSP = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
 
 // writeSSOError answers the SSO endpoint's browser, which asks for HTML, with a
 // page saying why it can't sign in and the error's code; anything else, or an

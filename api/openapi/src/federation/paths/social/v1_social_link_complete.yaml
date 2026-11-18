@@ -23,11 +23,13 @@ post:
       application/json:
         schema:
           type: object
+          additionalProperties: false
           required:
             - code
           properties:
             code:
               type: string
+              minLength: 1
               description: The link_code from the callback's redirect.
   responses:
     "200":
@@ -49,3 +51,7 @@ post:
       $ref: ../../../shared/responses/Forbidden.yaml
     "409":
       $ref: ../../../shared/responses/Conflict.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

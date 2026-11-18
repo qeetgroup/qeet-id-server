@@ -36,10 +36,14 @@ get:
                 format: uuid
               updated_by_email:
                 type: string
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
     "403":
       $ref: ../../../shared/responses/Forbidden.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
 put:
   operationId: setQeetAiSettings
   summary: Set Qeet AI settings
@@ -62,6 +66,7 @@ put:
       application/json:
         schema:
           type: object
+          additionalProperties: false
           properties:
             conversation_retention_days:
               type:
@@ -94,9 +99,15 @@ put:
                 format: uuid
               updated_by_email:
                 type: string
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
     "403":
       $ref: ../../../shared/responses/Forbidden.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
     "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

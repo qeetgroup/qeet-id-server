@@ -1,4 +1,5 @@
 type: object
+additionalProperties: false
 required:
   - base_dn
   - bind_dn
@@ -14,23 +15,32 @@ required:
 properties:
   base_dn:
     type: string
+    minLength: 1
   bind_dn:
     type: string
+    minLength: 1
   bind_password:
     type: string
+    minLength: 1
   email_attribute:
     type: string
+    minLength: 1
   name:
     type: string
+    minLength: 1
   name_attribute:
     type: string
+    minLength: 1
   server_url:
     type: string
+    minLength: 1
   skip_tls_verify:
     type: boolean
   start_tls:
     type: boolean
   status:
     type: string
+    minLength: 1
   user_filter:
     type: string
+    minLength: 1

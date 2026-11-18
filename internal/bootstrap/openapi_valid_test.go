@@ -11,7 +11,7 @@ import (
 )
 
 // openAPIDocuments are the API documents in api/openapi, one per bounded context.
-var openAPIDocuments = []string{"auth.yaml", "management.yaml", "federation.yaml", "developer.yaml", "operations.yaml"}
+var openAPIDocuments = []string{"access.yaml", "identity.yaml", "federation.yaml", "developer.yaml", "operations.yaml"}
 
 // openAPIDir is the api/openapi directory, found from this file so the tests
 // run from any working directory.

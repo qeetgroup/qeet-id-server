@@ -21,6 +21,7 @@ post:
       application/json:
         schema:
           type: object
+          additionalProperties: false
           required:
             - id
             - approve
@@ -40,6 +41,8 @@ post:
             properties:
               status:
                 type: string
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
     "403":
@@ -48,3 +51,7 @@ post:
       $ref: ../../../shared/responses/NotFound.yaml
     "409":
       $ref: ../../../shared/responses/Conflict.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

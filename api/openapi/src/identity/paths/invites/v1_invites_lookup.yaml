@@ -1,0 +1,67 @@
+post:
+  operationId: lookUpInvite
+  summary: Look up an invitation (public)
+  description: >-
+    Previews the invitation an emailed link names, so the acceptance screen can
+    show the organization and address and offer the ways of accepting it. A
+    password is offered where the organization allows password sign-in, and a
+    passkey where it allows passkeys. account_exists means an account already
+    holds the address, so the invitee signs in and accepts as themselves.
+    Refused like acceptance: invite.link_invalid, invite.invalid (no longer
+    pending, or its sender may no longer give it), invite.expired. Read-only. The token travels in the body so it
+    stays out of logs.
+  tags:
+    - Invites
+  security: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          additionalProperties: false
+          required:
+            - token
+          properties:
+            token:
+              type: string
+              minLength: 1
+  responses:
+    "200":
+      description: The invitation
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              organization:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  slug:
+                    type: string
+              email:
+                type: string
+              expires_at:
+                type: string
+                format: date-time
+              account_exists:
+                type: boolean
+              methods:
+                type: object
+                properties:
+                  password:
+                    type: boolean
+                  passkey:
+                    type: boolean
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

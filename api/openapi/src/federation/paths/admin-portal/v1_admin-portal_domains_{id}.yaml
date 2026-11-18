@@ -25,6 +25,7 @@ patch:
       application/json:
         schema:
           type: object
+          additionalProperties: false
           required:
             - sso_enabled
           properties:
@@ -45,3 +46,7 @@ patch:
       $ref: ../../../shared/responses/Forbidden.yaml
     "404":
       $ref: ../../../shared/responses/NotFound.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

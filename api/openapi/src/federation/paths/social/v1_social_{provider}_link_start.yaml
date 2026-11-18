@@ -16,6 +16,7 @@ post:
       required: true
       schema:
         type: string
+        pattern: '^[^/\\]+$'
   security:
     - bearerAuth: []
   responses:
@@ -30,6 +31,8 @@ post:
                 type: string
             required:
               - authorize_url
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
     "404":

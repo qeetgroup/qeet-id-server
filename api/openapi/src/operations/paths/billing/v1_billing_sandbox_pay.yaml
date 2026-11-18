@@ -19,7 +19,11 @@ post:
   responses:
     "302":
       description: Redirect to checkout success URL
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "404":
       $ref: ../../../shared/responses/NotFound.yaml
     "413":
       description: Form body too large
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

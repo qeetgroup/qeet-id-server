@@ -1,0 +1,51 @@
+get:
+  operationId: getBrandingLogo
+  summary: An organization's uploaded logo (public)
+  description: >-
+    The image an organization uploaded as its logo (a PNG, JPEG, WEBP or SVG
+    data URL in its branding), served so its emails and hosted pages can link to
+    it: those get this address, with ?v= a hash of the image, in place of the
+    data URL. Needs no credential, like the logo it shows. 404 when the
+    organization uploaded none, links its logo by URL instead, or its plan lacks
+    custom_branding. Served with X-Content-Type-Options nosniff and a sandboxing
+    Content-Security-Policy, so an SVG's scripts never run; cacheable for an
+    hour.
+  tags:
+    - Branding
+  security: []
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: v
+      in: query
+      required: false
+      description: >-
+        The image's version, so a new upload isn't served from a cache; any
+        value is accepted.
+      schema:
+        type: string
+  responses:
+    "200":
+      description: The image
+      content:
+        image/png:
+          schema:
+            type: string
+            format: binary
+        image/jpeg:
+          schema:
+            type: string
+            format: binary
+        image/webp:
+          schema:
+            type: string
+            format: binary
+        image/svg+xml:
+          schema:
+            type: string
+            format: binary
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

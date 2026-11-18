@@ -1,0 +1,103 @@
+get:
+  operationId: listRoleHolders
+  summary: Who holds a role
+  description: >-
+    One page of the people holding one of the organization's roles, by email,
+    with whether they hold it directly and the groups they hold it through, and
+    every group granted the role. Needs role.read. 404 for a role of another
+    organization.
+  tags:
+    - RBAC
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: roleID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: limit
+      description: Page size, 1 to 500 (default 100). A larger value is lowered to 500; a smaller or malformed one gets the default.
+      in: query
+      required: false
+      schema:
+        type: integer
+        default: 100
+    - name: cursor
+      in: query
+      required: false
+      description: The next_cursor of the previous page.
+      schema:
+        type: string
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "200":
+      description: The role's holders
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - people
+              - groups
+            properties:
+              people:
+                type: array
+                items:
+                  type: object
+                  required:
+                    - user_id
+                    - email
+                    - display_name
+                    - direct
+                    - via_groups
+                  properties:
+                    user_id:
+                      type: string
+                      format: uuid
+                    email:
+                      type: string
+                    display_name:
+                      type: string
+                    direct:
+                      type: boolean
+                    via_groups:
+                      type: array
+                      items:
+                        type: object
+                        required:
+                          - id
+                          - name
+                        properties:
+                          id:
+                            type: string
+                            format: uuid
+                          name:
+                            type: string
+              groups:
+                type: array
+                items:
+                  type: object
+                  required:
+                    - id
+                    - name
+                  properties:
+                    id:
+                      type: string
+                      format: uuid
+                    name:
+                      type: string
+              next_cursor:
+                type: string
+    "400":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

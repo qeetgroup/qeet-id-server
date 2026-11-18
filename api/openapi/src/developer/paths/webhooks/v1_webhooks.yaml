@@ -61,6 +61,8 @@ post:
             last_status_code: null
           schema:
             $ref: ../../components/schemas/WebhookSubscription.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
     "403":
@@ -73,6 +75,8 @@ post:
         (idempotency.in_progress); retry shortly. Or the first request stopped
         before answering and may have taken effect
         (idempotency.outcome_unknown): check, then retry with a new key.
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
     "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
     "429":

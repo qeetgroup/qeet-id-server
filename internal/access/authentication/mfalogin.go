@@ -37,8 +37,8 @@ func (c MFAChallenge) Body() map[string]any {
 	body := map[string]any{
 		"mfa_required": true,
 		"mfa_token":    c.MFAToken,
-		"methods":      c.Methods,
-		"factors":      c.Factors,
+		"methods":      orEmpty(c.Methods),
+		"factors":      orEmpty(c.Factors),
 	}
 	if c.EnrollmentRequired {
 		body["enrollment_required"] = true
@@ -47,6 +47,14 @@ func (c MFAChallenge) Body() map[string]any {
 		}
 	}
 	return body
+}
+
+// orEmpty is list, or an empty one in place of nil, so the answer has [] where the API documents an array.
+func orEmpty[T any](list []T) []T {
+	if list == nil {
+		return []T{}
+	}
+	return list
 }
 
 // methodsOf is the distinct factor types, in order — the challenge's methods.

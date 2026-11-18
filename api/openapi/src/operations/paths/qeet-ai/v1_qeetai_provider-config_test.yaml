@@ -18,6 +18,7 @@ post:
       application/json:
         schema:
           type: object
+          additionalProperties: false
           required:
             - provider
             - model
@@ -31,15 +32,22 @@ post:
                 - azure
             model:
               type: string
+              minLength: 1
             api_key:
               type: string
+              minLength: 1
               writeOnly: true
             base_url:
-              type: string
+              type:
+                - string
+                - "null"
               description: Required for azure; must be an allowed outbound destination.
             max_tokens:
-              type: integer
-              description: Defaults to 4096; at most 200000.
+              type:
+                - integer
+                - "null"
+              format: int64
+              description: Defaults to 4096 for 0 or less; a larger value than 200000 is lowered to it.
   responses:
     "200":
       description: The provider accepted the credentials.
@@ -56,3 +64,7 @@ post:
       $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

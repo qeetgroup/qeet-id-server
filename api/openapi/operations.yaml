@@ -181,11 +181,9 @@ paths:
         - name: limit
           in: query
           required: false
-          description: Maximum events to return (1–200; default 50).
+          description: Page size, 1 to 200 (default 50). A larger value is lowered to 200; a smaller or malformed one gets the default.
           schema:
             type: integer
-            minimum: 1
-            maximum: 200
             default: 50
         - name: types
           in: query
@@ -239,6 +237,9 @@ paths:
           description: Events from this address.
           schema:
             type: string
+            anyOf:
+              - format: ipv4
+              - format: ipv6
         - name: actor
           in: query
           required: false
@@ -289,6 +290,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/activity/stream:
     get:
       operationId: streamActivity
@@ -347,10 +350,14 @@ paths:
             text/event-stream:
               schema:
                 type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/activity/summary:
     get:
       operationId: getActivitySummary
@@ -438,6 +445,9 @@ paths:
           required: false
           schema:
             type: string
+            anyOf:
+              - format: ipv4
+              - format: ipv6
         - name: bucket
           in: query
           required: false
@@ -456,10 +466,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ActivitySummaryResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/activity/{id}/related:
     get:
       operationId: listRelatedActivity
@@ -478,11 +492,9 @@ paths:
         - name: window
           in: query
           required: false
-          description: Half-width of the same-actor correlation window in seconds (60–3600; default 300).
+          description: 60 to 3600 (default 300); a larger value is lowered to 3600.
           schema:
             type: integer
-            minimum: 60
-            maximum: 3600
             default: 300
       security:
         - bearerAuth: []
@@ -502,6 +514,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/activity/{id}:
     get:
       operationId: getActivityEvent
@@ -535,6 +549,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/service-health:
     get:
       operationId: getServiceHealth
@@ -643,10 +659,14 @@ paths:
                             - string
                             - "null"
                           format: date-time
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/analytics/overview:
     get:
       operationId: getAnalyticsOverview
@@ -694,6 +714,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Overview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -718,6 +740,7 @@ paths:
           description: Search query (1+ characters after trimming).
           schema:
             type: string
+            minLength: 1
         - name: types
           in: query
           required: false
@@ -734,11 +757,9 @@ paths:
         - name: limit
           in: query
           required: false
-          description: Maximum results to return (1–50; default 20).
+          description: Page size, 1 to 50 (default 20). A larger value is lowered to 50; a smaller or malformed one gets the default.
           schema:
             type: integer
-            minimum: 1
-            maximum: 50
             default: 20
       security:
         - bearerAuth: []
@@ -755,6 +776,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/audit:
     get:
       operationId: listAuditEvents
@@ -817,11 +840,9 @@ paths:
         - name: limit
           in: query
           required: false
-          description: Page size. Defaults to 50; the server clamps values above 200.
+          description: Page size, 1 to 200 (default 50). A larger value is lowered to 200; a smaller or malformed one gets the default.
           schema:
             type: integer
-            minimum: 1
-            maximum: 200
             default: 50
         - name: cursor
           in: query
@@ -891,6 +912,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/audit/verify:
     get:
       operationId: verifyPlatformAuditChain
@@ -975,10 +998,14 @@ paths:
                   last_run_scope:
                     type: string
                     description: all (a full walk) or incremental; empty before any run.
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/audit/verify:
     get:
       operationId: verifyAuditChain
@@ -998,10 +1025,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AuditVerifyResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/audit/anomalies:
     get:
       operationId: listAuditAnomalies
@@ -1022,11 +1053,9 @@ paths:
         - name: limit
           in: query
           required: false
-          description: Page size. Defaults to 50; the server clamps values above 200.
+          description: Page size, 1 to 200 (default 50). A larger value is lowered to 200; a smaller or malformed one gets the default.
           schema:
             type: integer
-            minimum: 1
-            maximum: 200
             default: 50
         - $ref: "#/components/parameters/Cursor"
       security:
@@ -1046,10 +1075,14 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/AuditAnomaly"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/audit/anomalies/summary:
     get:
       operationId: getAuditAnomalySummary
@@ -1069,10 +1102,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Summary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/audit/anomalies/{id}/resolve:
     post:
       operationId: resolveAuditAnomaly
@@ -1094,12 +1131,16 @@ paths:
       responses:
         "204":
           description: Resolved
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/audit/anomaly-settings:
     get:
       operationId: getAuditAnomalySettings
@@ -1119,10 +1160,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AuditAnomalySettings"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     put:
       operationId: setAuditAnomalySettings
       description: Replaces the organization's anomaly-detection configuration. The score threshold must be between 0 and 1 and the minimum baseline count must be non-negative, otherwise the request is rejected as unprocessable. Changes take effect on the next background scoring pass, and the stored settings are returned.
@@ -1147,12 +1192,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AuditAnomalySettings"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/compliance/{framework}/evidence:
     post:
       operationId: generateComplianceEvidence
@@ -1181,11 +1232,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/EvidenceRun"
         "400":
-          $ref: "#/components/responses/Unprocessable"
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     get:
       operationId: listComplianceEvidence
       summary: List compliance evidence runs
@@ -1219,10 +1272,14 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/EvidenceRun"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/compliance/controls/owners:
     get:
       operationId: listControlOwners
@@ -1249,12 +1306,16 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/ControlOwner"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/compliance/controls/{controlID}/owner:
     put:
       operationId: setControlOwner
@@ -1269,6 +1330,7 @@ paths:
           required: true
           schema:
             type: string
+            pattern: ^[^/\\]+$
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -1278,6 +1340,7 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required:
                 - user_id
               properties:
@@ -1287,14 +1350,20 @@ paths:
       responses:
         "204":
           description: Owner set
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     delete:
       operationId: removeControlOwner
       summary: Remove a control's owner
@@ -1308,18 +1377,23 @@ paths:
           required: true
           schema:
             type: string
+            pattern: ^[^/\\]+$
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
         "204":
           description: Owner removed
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/compliance/audits:
     get:
       operationId: listExternalAudits
@@ -1354,12 +1428,16 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/ExternalAudit"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     post:
       operationId: recordExternalAudit
       summary: Record an external audit or certificate
@@ -1377,6 +1455,7 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required:
                 - framework
                 - kind
@@ -1395,18 +1474,25 @@ paths:
                     - certificate
                 body:
                   type: string
+                  minLength: 1
                   maxLength: 200
                 scope:
-                  type: string
+                  type:
+                    - string
+                    - "null"
                   maxLength: 2000
                 reference:
-                  type: string
+                  type:
+                    - string
+                    - "null"
                   maxLength: 200
                 issued_on:
                   type: string
                   format: date
                 expires_on:
-                  type: string
+                  type:
+                    - string
+                    - "null"
                   format: date
       responses:
         "201":
@@ -1415,14 +1501,20 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ExternalAudit"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/compliance/audits/{id}:
     delete:
       operationId: deleteExternalAudit
@@ -1444,12 +1536,16 @@ paths:
       responses:
         "204":
           description: Deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/compliance/evidence/{id}:
     get:
       operationId: getComplianceEvidence
@@ -1475,12 +1571,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/EvidenceRun"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/retention:
     get:
       operationId: getRetentionPolicy
@@ -1500,6 +1600,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RetentionPolicy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1534,12 +1636,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RetentionPolicy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
         "429":
@@ -1571,6 +1677,8 @@ paths:
                     type: integer
                   ripe_deleted_users:
                     type: integer
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1605,6 +1713,8 @@ paths:
                 properties:
                   purged:
                     type: integer
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1638,12 +1748,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Request"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
         "429":
@@ -1668,6 +1782,8 @@ paths:
       responses:
         "204":
           description: No Content
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1706,6 +1822,8 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/Request"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1726,7 +1844,7 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
@@ -1739,12 +1857,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ExportRequest"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
         "429":
@@ -1777,6 +1899,8 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/ExportRequest"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1812,6 +1936,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ExportRequest"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1913,6 +2039,8 @@ paths:
                     format: date-time
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/account/delete:
     post:
       operationId: deleteMyAccount
@@ -1928,14 +2056,26 @@ paths:
           application/json:
             schema:
               type: object
-              additionalProperties: true
+              additionalProperties: false
+              properties:
+                password:
+                  type:
+                    - string
+                    - "null"
+                  description: The account password, required when the account has one; a password-less account sends none.
       responses:
         "204":
           description: Account data erased and sessions revoked
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
         "503":
           $ref: "#/components/responses/Overloaded"
   /v1/organizations/{organizationID}/log-sinks:
@@ -1964,10 +2104,14 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/Sink"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     post:
       operationId: createLogSink
       description: Registers a destination that forwards the organization's audit events to an external SIEM (Splunk HEC, Datadog, or a generic HTTP endpoint). The endpoint must be valid and the sink type recognized, otherwise the request is rejected as unprocessable. Any supplied token is encrypted at rest; forwarding starts from creation time with no backfill of historical events, and delivery is at-least-once. Each event carries its actor, resource, address, user agent, request id and metadata. One instance at a time forwards a sink, in batches until it catches up; a sink that refuses or can't be reached waits longer after each failure (10 seconds, doubling, up to an hour) and shows last_error until a batch is delivered.
@@ -1985,6 +2129,7 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required:
                 - type
                 - endpoint
@@ -1999,7 +2144,9 @@ paths:
                   type: string
                   format: uri
                 token:
-                  type: string
+                  type:
+                    - string
+                    - "null"
       responses:
         "201":
           description: Sink created (streams new audit events from now)
@@ -2007,12 +2154,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Sink"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/log-sinks/test:
     post:
       operationId: testUnsavedLogSink
@@ -2031,6 +2184,7 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required:
                 - type
                 - endpoint
@@ -2045,7 +2199,9 @@ paths:
                   type: string
                   format: uri
                 token:
-                  type: string
+                  type:
+                    - string
+                    - "null"
                   writeOnly: true
       responses:
         "200":
@@ -2075,6 +2231,10 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/log-sinks/{id}/test:
     post:
       operationId: testLogSink
@@ -2115,12 +2275,16 @@ paths:
                     description: Why it wasn't delivered.
                   duration_ms:
                     type: integer
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/log-sinks/{id}:
     patch:
       operationId: updateLogSink
@@ -2145,18 +2309,27 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               properties:
                 enabled:
-                  type: boolean
+                  type:
+                    - boolean
+                    - "null"
       responses:
         "200":
           description: Updated
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     delete:
       operationId: deleteLogSink
       description: Permanently removes the identified log sink and stops any further forwarding to its destination. Returns 404 when the sink does not exist for the organization. Stored credentials for the destination are discarded; already-delivered events are unaffected.
@@ -2177,12 +2350,16 @@ paths:
       responses:
         "204":
           description: Removed
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/notifications:
     get:
       operationId: listNotifications
@@ -2210,6 +2387,8 @@ paths:
                     type: integer
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/notifications/mark-all-read:
     post:
       operationId: markAllNotificationsRead
@@ -2224,6 +2403,8 @@ paths:
           description: All notifications marked read
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/rate-limits:
     get:
       operationId: getRateLimits
@@ -2243,10 +2424,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OrganizationRateLimits"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     put:
       operationId: setRateLimits
       description: Stores per-organization overrides for the request rate limits applied to the organization, its users, and its API keys, replacing any previous override. Values are validated before being persisted. Overrides take precedence over the platform defaults; remove them with the reset operation to fall back to those defaults.
@@ -2271,12 +2456,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OrganizationRateLimits"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     delete:
       operationId: resetRateLimits
       description: Removes the organization's rate-limit overrides so the platform default limits apply again. Succeeds even when no override is currently set. The change is written to the audit log and propagated to the limiter.
@@ -2291,10 +2482,14 @@ paths:
       responses:
         "204":
           description: Overrides cleared
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/email/messages:
     get:
       operationId: listEmailMessages
@@ -2311,12 +2506,11 @@ paths:
             type: string
             format: email
         - name: limit
+          description: Page size, 1 to 100 (default 50). A larger value is lowered to 100; a smaller or malformed one gets the default.
           in: query
           required: false
           schema:
             type: integer
-            minimum: 1
-            maximum: 100
             default: 50
         - $ref: "#/components/parameters/Cursor"
       security:
@@ -2363,6 +2557,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/email/suppressions:
     get:
       operationId: listEmailSuppressions
@@ -2373,12 +2569,11 @@ paths:
       parameters:
         - $ref: "#/components/parameters/OrganizationID"
         - name: limit
+          description: Page size, 1 to 100 (default 50). A larger value is lowered to 100; a smaller or malformed one gets the default.
           in: query
           required: false
           schema:
             type: integer
-            minimum: 1
-            maximum: 100
             default: 50
         - $ref: "#/components/parameters/Cursor"
       security:
@@ -2398,10 +2593,14 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/EmailSuppression"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/email/suppressions/{id}:
     delete:
       operationId: deleteEmailSuppression
@@ -2423,12 +2622,16 @@ paths:
       responses:
         "204":
           description: Cleared
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/email-templates:
     get:
       operationId: listEmailTemplates
@@ -2462,6 +2665,8 @@ paths:
                         type: boolean
                       test_email:
                         type: boolean
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -2485,6 +2690,7 @@ paths:
           required: true
           schema:
             type: string
+            pattern: ^[^/\\]+$
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -2496,6 +2702,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/EmailResolvedTemplate"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -2518,6 +2726,7 @@ paths:
           required: true
           schema:
             type: string
+            pattern: ^[^/\\]+$
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -2529,6 +2738,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/EmailResolvedTemplate"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -2551,6 +2762,7 @@ paths:
           required: true
           schema:
             type: string
+            pattern: ^[^/\\]+$
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -2569,12 +2781,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/EmailResolvedTemplate"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
         "429":
@@ -2592,6 +2808,7 @@ paths:
           required: true
           schema:
             type: string
+            pattern: ^[^/\\]+$
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -2601,16 +2818,21 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               properties:
                 vars:
-                  type: object
+                  type:
+                    - object
+                    - "null"
                   maxProperties: 32
                   description: Each value is limited to 4096 UTF-8 bytes.
                   additionalProperties:
                     type: string
                     maxLength: 4096
                 locale:
-                  type: string
+                  type:
+                    - string
+                    - "null"
                 draft:
                   $ref: "#/components/schemas/EmailEditorInput"
         description: Omit draft to preview saved content; include it to preview unsaved edits.
@@ -2631,12 +2853,16 @@ paths:
                     type: string
                   locale:
                     type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
         "429":
@@ -2657,6 +2883,7 @@ paths:
           required: true
           schema:
             type: string
+            pattern: ^[^/\\]+$
       description: Requires branding.write, a user principal with a verified active account, and a configured mail transport. The destination is resolved server-side, never accepted from input. Sends inert sample links and codes; limited to one request per organization/user per minute on each server instance. Records an audit event before attempting delivery. An accepted response means the provider accepted the message, not that it reached the inbox.
       requestBody:
         required: true
@@ -2664,13 +2891,16 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required:
                 - draft
               properties:
                 draft:
                   $ref: "#/components/schemas/EmailEditorInput"
                 locale:
-                  type: string
+                  type:
+                    - string
+                    - "null"
       responses:
         "202":
           description: Mail transport accepted the test
@@ -2683,12 +2913,16 @@ paths:
                     type: string
                     enum:
                       - accepted
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
         "429":
@@ -2754,10 +2988,14 @@ paths:
                         last_used_at:
                           type: string
                           format: date-time
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/qeetai/settings:
     get:
       operationId: getQeetAiSettings
@@ -2793,10 +3031,14 @@ paths:
                     format: uuid
                   updated_by_email:
                     type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     put:
       operationId: setQeetAiSettings
       summary: Set Qeet AI settings
@@ -2814,6 +3056,7 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               properties:
                 conversation_retention_days:
                   type:
@@ -2844,12 +3087,18 @@ paths:
                     format: uuid
                   updated_by_email:
                     type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/qeetai/status:
     get:
       operationId: getQeetAiStatus
@@ -2868,6 +3117,8 @@ paths:
                 $ref: "#/components/schemas/QeetAIStatus"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/qeetai/conversations:
     get:
       operationId: listConversations
@@ -2893,6 +3144,8 @@ paths:
                       $ref: "#/components/schemas/QeetAIConversation"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     post:
       operationId: createConversation
       summary: Create conversation
@@ -2907,9 +3160,12 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               properties:
                 title:
-                  type: string
+                  type:
+                    - string
+                    - "null"
                   description: Optional title; defaults to "New conversation".
       responses:
         "201":
@@ -2918,8 +3174,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/QeetAIConversation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "402":
+          $ref: "#/components/responses/PaymentRequired"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/qeetai/conversations/{conversationID}:
     get:
       operationId: getConversation
@@ -2950,10 +3214,14 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/QeetAIMessage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     patch:
       operationId: updateConversation
       summary: Update conversation
@@ -2975,11 +3243,16 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               properties:
                 title:
-                  type: string
+                  type:
+                    - string
+                    - "null"
                 pinned:
-                  type: boolean
+                  type:
+                    - boolean
+                    - "null"
       responses:
         "200":
           description: Updated conversation
@@ -2987,10 +3260,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/QeetAIConversation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     delete:
       operationId: deleteConversation
       summary: Delete conversation
@@ -3009,10 +3288,14 @@ paths:
       responses:
         "204":
           description: Deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/qeetai/conversations/{conversationID}/messages:
     post:
       operationId: sendConversationMessage
@@ -3042,12 +3325,17 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               properties:
                 message:
-                  type: string
+                  type:
+                    - string
+                    - "null"
                   description: User text input for this turn (mutually exclusive with tool_results).
                 tool_results:
-                  type: array
+                  type:
+                    - array
+                    - "null"
                   description: Tool execution results from the previous turn (continuation after client-side tool execution). Mutually exclusive with message.
                   items:
                     type: object
@@ -3067,7 +3355,9 @@ paths:
                           message:
                             type: string
                 context:
-                  type: object
+                  type:
+                    - object
+                    - "null"
                   description: Console context for grounding (current route, selection). Treated as untrusted; never used for authorization.
                   additionalProperties: true
       responses:
@@ -3077,8 +3367,12 @@ paths:
             text/event-stream:
               schema:
                 type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "402":
+          $ref: "#/components/responses/PaymentRequired"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -3087,6 +3381,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/qeetai/provider-config:
     get:
       operationId: getAiProviderConfig
@@ -3137,6 +3435,8 @@ paths:
                     description: Whether the deployment has a key to fall back on.
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     put:
       operationId: setAiProviderConfig
       description: Stores the organization's own AI provider credentials so the assistant runs against the organization's key rather than the platform fallback, which unlocks it regardless of plan. Secrets are encrypted at rest and are never returned in full by the read endpoint. Restricted to organization administrators; validate the credentials with the test operation before saving.
@@ -3152,7 +3452,36 @@ paths:
           application/json:
             schema:
               type: object
-              additionalProperties: true
+              additionalProperties: false
+              required:
+                - provider
+                - model
+                - api_key
+              properties:
+                provider:
+                  type: string
+                  enum:
+                    - anthropic
+                    - openai
+                    - azure
+                model:
+                  type: string
+                  minLength: 1
+                api_key:
+                  type: string
+                  minLength: 1
+                  writeOnly: true
+                base_url:
+                  type:
+                    - string
+                    - "null"
+                  description: Required for azure; must be an allowed outbound destination.
+                max_tokens:
+                  type:
+                    - integer
+                    - "null"
+                  format: int64
+                  description: Defaults to 4096 for 0 or less; a larger value than 200000 is lowered to it.
       responses:
         "200":
           description: The organization's effective provider configuration, its key masked.
@@ -3191,8 +3520,16 @@ paths:
                   platform_fallback:
                     type: boolean
                     description: Whether the deployment has a key to fall back on.
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     delete:
       operationId: deleteAiProviderConfig
       description: Removes the organization's bring-your-own-key AI provider configuration, reverting to the deployment's platform fallback where one is available. Restricted to organization administrators. Once removed, assistant availability again depends on the organization's plan.
@@ -3207,6 +3544,10 @@ paths:
           description: Provider configuration deleted
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/qeetai/provider-config/test:
     post:
       operationId: testAiProviderConfig
@@ -3223,6 +3564,7 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required:
                 - provider
                 - model
@@ -3236,15 +3578,22 @@ paths:
                     - azure
                 model:
                   type: string
+                  minLength: 1
                 api_key:
                   type: string
+                  minLength: 1
                   writeOnly: true
                 base_url:
-                  type: string
+                  type:
+                    - string
+                    - "null"
                   description: Required for azure; must be an allowed outbound destination.
                 max_tokens:
-                  type: integer
-                  description: Defaults to 4096; at most 200000.
+                  type:
+                    - integer
+                    - "null"
+                  format: int64
+                  description: Defaults to 4096 for 0 or less; a larger value than 200000 is lowered to it.
       responses:
         "200":
           description: The provider accepted the credentials.
@@ -3261,6 +3610,10 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/billing/checkout:
     post:
       operationId: startCheckout
@@ -3280,6 +3633,7 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required:
                 - plan_code
                 - currency
@@ -3288,10 +3642,14 @@ paths:
               properties:
                 plan_code:
                   type: string
+                  minLength: 1
                 currency:
                   type: string
+                  minLength: 1
                 country:
-                  type: string
+                  type:
+                    - string
+                    - "null"
                   description: ISO-3166-1 alpha-2 billing country; selects the payment provider. Omitted → currency-based routing.
                 success_url:
                   type: string
@@ -3309,6 +3667,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CheckoutResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -3317,8 +3677,12 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           description: "A request with this Idempotency-Key is still being processed (idempotency.in_progress); retry shortly. Or the first request stopped before answering and may have taken effect (idempotency.outcome_unknown): check, then retry with a new key."
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/webhooks/ses:
     post:
       operationId: receiveSesEvents
@@ -3346,6 +3710,10 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/billing/webhooks/{provider}:
     post:
       operationId: receivePaymentWebhook
@@ -3373,10 +3741,16 @@ paths:
       responses:
         "200":
           description: Event acknowledged
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/billing/plans:
     get:
       operationId: listPlans
@@ -3438,6 +3812,8 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/Invoice"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -3473,6 +3849,7 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required:
                 - success_url
                 - cancel_url
@@ -3507,6 +3884,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
         "429":
@@ -3537,6 +3916,8 @@ paths:
                     oneOf:
                       - $ref: "#/components/schemas/PaymentMethod"
                       - type: "null"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -3564,6 +3945,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Subscription"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -3590,14 +3973,17 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required:
                 - currency
                 - plan_code
               properties:
                 currency:
                   type: string
+                  minLength: 1
                 plan_code:
                   type: string
+                  minLength: 1
       description: Puts the organization on plan_code, priced in currency; no payment is taken here. A free plan starts a new period with a zero invoice. A paid plan that costs no more than the organization's active subscription in the same currency and billing interval takes over the period already paid for, while it lasts, with no new invoice; the current plan itself changes nothing. Any other paid plan, such as one that costs more, must go through checkout (POST /v1/organizations/{organizationID}/billing/checkout) and is refused with 402 billing.checkout_required, unless invoice-only billing (BILLING_ALLOW_UNPAID_ACTIVATION) is on and no card provider serves the currency, which activates it with an open invoice.
       responses:
         "200":
@@ -3606,6 +3992,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Subscription"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "402":
@@ -3614,6 +4002,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
         "429":
@@ -3642,6 +4032,8 @@ paths:
                 properties:
                   cancel_at_period_end:
                     type: boolean
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -3667,7 +4059,48 @@ paths:
           application/json:
             schema:
               type: object
-              additionalProperties: true
+              additionalProperties: false
+              required:
+                - org_name
+                - org_slug
+                - plan_code
+                - currency
+                - success_url
+                - cancel_url
+              properties:
+                org_name:
+                  type: string
+                  minLength: 1
+                org_slug:
+                  type: string
+                  minLength: 1
+                plan_code:
+                  type: string
+                  minLength: 1
+                region:
+                  type:
+                    - string
+                    - "null"
+                currency:
+                  type: string
+                  pattern: ^\s*[A-Za-z]{3}\s*$
+                  description: An ISO 4217 code, such as INR or USD.
+                country:
+                  type:
+                    - string
+                    - "null"
+                  pattern: ^[A-Za-z]{2}$
+                  description: An ISO 3166-1 alpha-2 code, such as IN.
+                success_url:
+                  type: string
+                  minLength: 1
+                  format: uri
+                  description: An absolute http or https URL, where the browser returns after paying.
+                cancel_url:
+                  type: string
+                  minLength: 1
+                  format: uri
+                  description: An absolute http or https URL, where the browser returns if the payment is abandoned.
       responses:
         "200":
           description: Hosted checkout information
@@ -3675,10 +4108,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CheckoutResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/billing/razorpay/verify:
     post:
       operationId: verifyRazorpayPayment
@@ -3693,12 +4132,40 @@ paths:
           application/json:
             schema:
               type: object
-              additionalProperties: true
+              additionalProperties: false
+              required:
+                - razorpay_payment_id
+                - razorpay_payment_link_id
+                - razorpay_payment_link_reference_id
+                - razorpay_payment_link_status
+                - razorpay_signature
+              properties:
+                razorpay_payment_id:
+                  type: string
+                  minLength: 1
+                razorpay_payment_link_id:
+                  type: string
+                  minLength: 1
+                razorpay_payment_link_reference_id:
+                  type: string
+                  minLength: 1
+                razorpay_payment_link_status:
+                  type: string
+                  minLength: 1
+                razorpay_signature:
+                  type: string
+                  minLength: 1
       responses:
         "200":
           description: Signed callback accepted
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/billing/sandbox/checkout:
     get:
       operationId: getSandboxCheckout
@@ -3716,6 +4183,8 @@ paths:
                 type: string
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/billing/sandbox/pay:
     post:
       operationId: completeSandboxCheckout
@@ -3734,10 +4203,14 @@ paths:
       responses:
         "302":
           description: Redirect to checkout success URL
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
         "413":
           description: Form body too large
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/billing/profile:
     get:
       operationId: getBillingProfile
@@ -3757,10 +4230,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BillingProfile"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     put:
       operationId: setBillingProfile
       description: Creates or replaces the organization's billing profile and returns the stored result. Scoped to the organization named in the path. These details feed invoice generation, so keep them accurate for the organization's jurisdiction.
@@ -3785,10 +4262,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BillingProfile"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/billing/trial:
     post:
       operationId: startTrial
@@ -3807,14 +4290,18 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required:
                 - plan_code
               properties:
                 plan_code:
                   type: string
+                  minLength: 1
                   description: The plan to try, starter or pro (or their _year plans); any other plan is refused with billing.trial_not_eligible.
                 currency:
-                  type: string
+                  type:
+                    - string
+                    - "null"
                   description: ISO 4217 code of a currency the plan is priced in, such as INR; USD when omitted or not a valid code.
       responses:
         "200":
@@ -3823,10 +4310,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Subscription"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/entitlements:
     get:
       operationId: getEntitlements
@@ -3896,6 +4389,8 @@ paths:
                       orgs: 1
                       mau: 10000
                       audit_retention_days: 7
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -3930,10 +4425,14 @@ paths:
                     type: object
                     additionalProperties:
                       type: integer
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/sales/leads:
     post:
       operationId: submitSalesLead
@@ -3949,12 +4448,45 @@ paths:
           application/json:
             schema:
               type: object
-              additionalProperties: true
+              additionalProperties: false
+              required:
+                - email
+              properties:
+                name:
+                  type:
+                    - string
+                    - "null"
+                email:
+                  type: string
+                  minLength: 1
+                  description: The work email the sales team replies to.
+                company:
+                  type:
+                    - string
+                    - "null"
+                team_size:
+                  type:
+                    - string
+                    - "null"
+                message:
+                  type:
+                    - string
+                    - "null"
+                source:
+                  type:
+                    - string
+                    - "null"
       responses:
         "202":
           description: Lead accepted
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/critical-events:
     get:
       operationId: listCriticalEvents
@@ -4001,6 +4533,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 components:
   securitySchemes:
     bearerAuth:
@@ -4959,6 +5493,7 @@ components:
           type: string
     GdprCreateInput:
       type: object
+      additionalProperties: false
       required:
         - reason
         - organization_id
@@ -4966,6 +5501,7 @@ components:
       properties:
         reason:
           type: string
+          minLength: 1
         organization_id:
           type: string
           format: uuid
@@ -5035,13 +5571,15 @@ components:
           description: How many days a request waits before the erasure runs.
     ExportInput:
       type: object
+      additionalProperties: false
       required:
-        - organization_id
         - user_id
       properties:
         organization_id:
-          type: string
-          format: uuid
+          type:
+            - string
+            - "null"
+          description: Accepted and ignored; the export is always in the caller's organization.
         user_id:
           type: string
           format: uuid
@@ -5778,21 +6316,6 @@ components:
               request_id: api-1/Kx9fQ2mW7a-000131
           schema:
             $ref: "#/components/schemas/Error"
-    NotFound:
-      description: Resource not found
-      headers:
-        X-Request-Id:
-          $ref: "#/components/headers/RequestId"
-      content:
-        application/json:
-          example:
-            error:
-              code: not_found
-              message: We couldn't find what you're looking for.
-              translation_key: not_found
-              request_id: api-1/Kx9fQ2mW7a-000131
-          schema:
-            $ref: "#/components/schemas/Error"
     TooManyRequests:
       description: Rate limit exceeded
       headers:
@@ -5828,6 +6351,30 @@ components:
               message: The request was invalid.
               translation_key: bad_request
               request_id: api-1/Kx9fQ2mW7a-000131
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Resource not found
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          example:
+            error:
+              code: not_found
+              message: We couldn't find what you're looking for.
+              translation_key: not_found
+              request_id: api-1/Kx9fQ2mW7a-000131
+          schema:
+            $ref: "#/components/schemas/Error"
+    PayloadTooLarge:
+      description: The body is larger than this API accepts (`request_body_too_large`).
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
           schema:
             $ref: "#/components/schemas/Error"
     Overloaded:

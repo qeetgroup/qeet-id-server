@@ -29,9 +29,12 @@ post:
       application/json:
         schema:
           type: object
+          additionalProperties: false
           properties:
             overlap_hours:
-              type: integer
+              type:
+                - integer
+                - "null"
               minimum: 0
               maximum: 720
               description: How long the old token keeps working, in hours. Default 168.

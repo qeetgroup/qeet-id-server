@@ -150,6 +150,20 @@ services:
       - ./observability/blackbox/blackbox.yml:/etc/blackbox/blackbox.yml:ro
     extra_hosts: ["host.docker.internal:host-gateway"]
 
+  # SonarQube Community Build for local code analysis (make sonar-up, then make sonar). Its own
+  # database (embedded), so it needs nothing else; first sign-in is admin / admin.
+  sonarqube:
+    profiles: [sonar]
+    image: sonarqube:26.10.0.133078-community@sha256:f95aaa9016dd4e92c7d70691167a6d96dbb5d8acffd61eba1cb4335d364a7840
+    environment:
+      SONAR_ES_BOOTSTRAP_CHECKS_DISABLE: "true"
+    volumes:
+      - sonardata:/opt/sonarqube/data
+      - sonarextensions:/opt/sonarqube/extensions
+      - sonarlogs:/opt/sonarqube/logs
+    ports:
+      - "127.0.0.1:${SONAR_PORT:-9000}:9000"
+
 volumes:
   pgdata:
   promdata:
@@ -157,3 +171,6 @@ volumes:
   tempodata:
   grafanadata:
   pyroscopedata:
+  sonardata:
+  sonarextensions:
+  sonarlogs:

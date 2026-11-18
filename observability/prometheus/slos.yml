@@ -44,6 +44,7 @@ groups:
           (qeetid:request_errors:ratio_rate6h > 6 * 0.001 and qeetid:request_errors:ratio_rate30m > 6 * 0.001)
         labels: { severity: critical }
         annotations:
+          runbook_url: "https://github.com/qeetgroup/qeet-id-server/blob/develop/observability/README.md#qeetidavailabilitybudgetburnfast"
           summary: "availability error budget burning fast"
           description: "At this rate the 30-day 99.9% budget is gone within days. 5xx ratio (1h): {{ $value | humanizePercentage }}."
       # Ticket: 10% of the budget in 3d (1x) or in 1d (3x).
@@ -54,6 +55,7 @@ groups:
           (qeetid:request_errors:ratio_rate3d > 1 * 0.001 and qeetid:request_errors:ratio_rate6h > 1 * 0.001)
         labels: { severity: warning }
         annotations:
+          runbook_url: "https://github.com/qeetgroup/qeet-id-server/blob/develop/observability/README.md#qeetidavailabilitybudgetburnslow"
           summary: "availability error budget burning"
           description: "The 30-day 99.9% budget will run out before the month ends at this rate."
 
@@ -77,6 +79,7 @@ groups:
         expr: qeetid:signin_token_slow:ratio_rate1h > 14.4 * 0.01 and qeetid:signin_token_slow:ratio_rate5m > 14.4 * 0.01
         labels: { severity: critical }
         annotations:
+          runbook_url: "https://github.com/qeetgroup/qeet-id-server/blob/develop/observability/README.md#qeetidsigninlatencybudgetburnfast"
           summary: "sign-in and token latency budget burning fast"
           description: "{{ $value | humanizePercentage }} of sign-ins and token requests took over 0.5s in the last hour."
       - alert: QeetIdSignInLatencyBudgetBurnSlow
@@ -84,5 +87,6 @@ groups:
         for: 30m
         labels: { severity: warning }
         annotations:
+          runbook_url: "https://github.com/qeetgroup/qeet-id-server/blob/develop/observability/README.md#qeetidsigninlatencybudgetburnslow"
           summary: "sign-in and token latency budget burning"
           description: "{{ $value | humanizePercentage }} of sign-ins and token requests took over 0.5s in the last 6h."

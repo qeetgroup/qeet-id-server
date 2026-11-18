@@ -18,9 +18,42 @@ post:
       application/json:
         schema:
           type: object
-          additionalProperties: true
+          additionalProperties: false
+          required:
+            - email
+          properties:
+            name:
+              type:
+                - string
+                - "null"
+            email:
+              type: string
+              minLength: 1
+              description: The work email the sales team replies to.
+            company:
+              type:
+                - string
+                - "null"
+            team_size:
+              type:
+                - string
+                - "null"
+            message:
+              type:
+                - string
+                - "null"
+            source:
+              type:
+                - string
+                - "null"
   responses:
     "202":
       description: Lead accepted
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

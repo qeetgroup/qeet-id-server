@@ -5,8 +5,8 @@
 telemetry: "off"
 
 apis:
-  auth: { root: auth/openapi.yaml }
-  management: { root: management/openapi.yaml }
+  access: { root: access/openapi.yaml }
+  identity: { root: identity/openapi.yaml }
   federation: { root: federation/openapi.yaml }
   developer: { root: developer/openapi.yaml }
   operations: { root: operations/openapi.yaml }

@@ -38,3 +38,5 @@ post:
       $ref: ../../../shared/responses/Forbidden.yaml
     "404":
       $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

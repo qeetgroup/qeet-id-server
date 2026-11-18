@@ -1,0 +1,93 @@
+patch:
+  operationId: renameRole
+  summary: Rename a role
+  description: >-
+    Renames a custom role or changes its description; a field left out stays as
+    it is. A built-in role (owner, admin, member, viewer) can't be changed (403
+    rbac.system_role_fixed), a name another role of the organization has is
+    refused with 409 rbac.role_name_exists, and a role of another organization
+    answers 404. Audited as role.updated with the old and new value of each
+    field that changed; a request that changes nothing records nothing. Needs
+    role.write and a recent sign-in (step-up).
+  tags:
+    - RBAC
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: roleID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/RoleUpdate.yaml
+  responses:
+    "200":
+      description: The role
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/Role.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "409":
+      $ref: ../../../shared/responses/Conflict.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+delete:
+  operationId: deleteRole
+  summary: Delete a role
+  description: >-
+    Deletes a custom role. It is refused with 409 rbac.role_in_use while anyone
+    holds it, any group is granted it, or an invitation that can still be
+    accepted or resent offers it, with how many of each (metadata people,
+    groups, invitations): give them another role first, since someone whose only
+    role it is would leave the organization with it. A built-in role (owner,
+    admin, member, viewer) can't be deleted (403 rbac.system_role_fixed), and a
+    role of another organization answers 404. Audited as role.deleted with its
+    name. Needs role.write and a recent sign-in (step-up).
+  tags:
+    - RBAC
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: roleID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "204":
+      description: Deleted
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "409":
+      $ref: ../../../shared/responses/Conflict.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

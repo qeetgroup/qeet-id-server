@@ -20,12 +20,11 @@ get:
         type: string
         format: email
     - name: limit
+      description: Page size, 1 to 100 (default 50). A larger value is lowered to 100; a smaller or malformed one gets the default.
       in: query
       required: false
       schema:
         type: integer
-        minimum: 1
-        maximum: 100
         default: 50
     - $ref: ../../../shared/parameters/Cursor.yaml
   security:
@@ -76,3 +75,5 @@ get:
       $ref: ../../../shared/responses/Unauthorized.yaml
     "403":
       $ref: ../../../shared/responses/Forbidden.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

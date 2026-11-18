@@ -1,0 +1,83 @@
+get:
+  operationId: getPairingCode
+  summary: Check a pairing code
+  description: >-
+    Reports one of the caller's pairing codes: pending (it can still link a
+    phone), linked (it did; device_id names the phone) or expired (it timed out,
+    was replaced by a newer code, or was withdrawn). Someone else's code reads
+    as not found.
+  tags:
+    - MFA
+  security:
+    - bearerAuth: []
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    "200":
+      description: The pairing code's state
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - id
+              - status
+              - expires_at
+            properties:
+              id:
+                type: string
+                format: uuid
+              status:
+                type: string
+                enum:
+                  - pending
+                  - linked
+                  - expired
+              expires_at:
+                type: string
+                format: date-time
+              device_id:
+                type: string
+                format: uuid
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+delete:
+  operationId: withdrawPairingCode
+  summary: Withdraw a pairing code
+  description: >-
+    Stops one of the caller's unused pairing codes working, as when the screen
+    showing it is closed. A code that already linked a phone is left as it is:
+    remove the phone instead. Someone else's code reads as not found.
+  tags:
+    - MFA
+  security:
+    - bearerAuth: []
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    "204":
+      description: The code no longer works
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

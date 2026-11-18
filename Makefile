@@ -11,6 +11,7 @@ DEVTOOL = go run ./cmd/devtool
 	db-up db-down db-reset seed seed-reset migrate-down \
 	test test-db lint fmt fmt-check sqlc sqlc-check openapi openapi-check postman ci \
 	vuln sast secrets scan-image \
+	load dast fuzz-api sonar-up sonar sonar-down \
 	obs-up obs-down
 
 # List the commands with one line each.
@@ -139,6 +140,36 @@ secrets:
 # Build the server image and scan it and the Dockerfile (Trivy, Docker).
 scan-image:
 	@$(DEVTOOL) scan-image
+
+# ── Load and security testing (against a running local server; see .env.example's tools list) ──
+
+# Load-test it with k6: sign-in, renewal, reads and discovery, failing when an SLO is missed.
+load:
+	@$(DEVTOOL) load
+
+# Scan it with OWASP ZAP from the API documents (reports in bin/reports/zap). It sends attacks and
+# changes data: use a throwaway server. SCAN_TOKEN reaches the signed-in routes.
+dast:
+	@$(DEVTOOL) dast
+
+# Fuzz it with Schemathesis from the API documents: no 5xx, every answer as documented (reports in
+# bin/reports/schemathesis). It changes data too.
+fuzz-api:
+	@$(DEVTOOL) fuzz-api
+
+# ── Code analysis ────────────────────────────────────────────────────────────────────────────────
+
+# Start a local SonarQube Community Build on http://localhost:9000 (first sign-in admin / admin).
+sonar-up:
+	@$(DEVTOOL) sonar-up
+
+# Analyse the code with SonarQube, with the unit tests' coverage. Needs SONAR_TOKEN (a SonarQube token).
+sonar:
+	@$(DEVTOOL) sonar
+
+# Stop the local SonarQube.
+sonar-down:
+	@$(DEVTOOL) sonar-down
 
 # ── Observability ────────────────────────────────────────────────────────────────────────────────
 

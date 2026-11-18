@@ -21,12 +21,16 @@ get:
         application/json:
           schema:
             $ref: ../../components/schemas/WebhookSubscription.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
     "403":
       $ref: ../../../shared/responses/Forbidden.yaml
     "404":
       $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
 delete:
   operationId: disableWebhook
   summary: Disable webhook
@@ -48,6 +52,8 @@ delete:
   responses:
     "204":
       description: No Content
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
     "403":

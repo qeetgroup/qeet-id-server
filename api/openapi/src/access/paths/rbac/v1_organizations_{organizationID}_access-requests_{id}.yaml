@@ -1,0 +1,41 @@
+get:
+  operationId: getAccessRequest
+  summary: Get an access request
+  description: >-
+    One of the organization's requests: who asked, for which role and how long,
+    why, and its answer. Needs role.read.
+  tags:
+    - RBAC
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "200":
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - access_request
+            properties:
+              access_request:
+                $ref: ../../components/schemas/AccessRequest.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

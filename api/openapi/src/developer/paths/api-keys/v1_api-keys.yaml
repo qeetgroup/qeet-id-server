@@ -91,5 +91,9 @@ post:
         (idempotency.in_progress); retry shortly. Or the first request stopped
         before answering and may have taken effect
         (idempotency.outcome_unknown): check, then retry with a new key.
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
     "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

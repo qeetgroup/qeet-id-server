@@ -19,5 +19,7 @@ get:
   responses:
     "302":
       description: Redirect to the validated post-logout address, or the signed-out page
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

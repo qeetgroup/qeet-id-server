@@ -1,0 +1,137 @@
+delete:
+  operationId: deleteSsoSession
+  description: >-
+    Signs the browser out of the hosted login: ends the hosted-login SSO session
+    behind the qe_ls cookie and what it started — the refresh grants
+    applications received through it are revoked and its unredeemed
+    authorization codes can no longer be redeemed — then clears the cookie. The
+    sign-out is recorded in the audit log (auth.signed_out). Other browsers,
+    bearer-token API sessions and grants started elsewhere are unaffected; sign
+    API sessions out with the logout call, or everything with sign out
+    everywhere. Without a session cookie nothing is ended and the response is
+    the same. If the sign-out cannot be completed an error is returned and the
+    cookie kept, so it can be retried. Access tokens already issued stay valid
+    until they expire.
+  summary: Destroy SSO session (logout)
+  tags:
+    - Auth
+  security: []
+  responses:
+    "204":
+      description: Signed out (or there was no session to end), cookie cleared
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+    "403":
+      description: >-
+        The request failed the CSRF check (`csrf_failed`): it came from an origin
+        that is not allowed, or did not echo the qe_csrf cookie in the
+        X-CSRF-Token header. Nothing was signed out.
+      content:
+        application/json:
+          schema:
+            $ref: ../../../shared/schemas/Error.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+post:
+  operationId: createSsoSession
+  description: >-
+    Establishes a hosted-login SSO session and sets the HttpOnly qe_ls cookie so
+    the browser can continue into the OAuth authorize and consent flow. When the
+    account has a second factor enrolled, no cookie is set yet and a short-lived
+    mfa_token is returned; complete it at the session-MFA call before the cookie
+    is issued. Because this is a cookie session, later state-changing calls made
+    with it are subject to CSRF protection. End the session with the
+    corresponding destroy-session call.
+
+
+    Sign-in lockout: failed password sign-ins are counted per account and source
+    network (the client IP behind the trusted proxies; an IPv4 address or an
+    IPv6 /64). Reaching the threshold within the window locks the account for
+    that network for the lock duration, so a stranger on another network cannot
+    lock the owner out. The threshold, window and duration are those of the
+    organization of the OAuth client named by `client_id` (its authentication policy),
+    or the platform defaults when no client is named. Failures from any mix of
+    networks also lock the account everywhere at a looser cap (4 times the
+    platform threshold), and a source network that fails against too many
+    distinct accounts (30 within 15 minutes) is refused password sign-in for 15
+    minutes. An
+    address with no account is counted and answered exactly like a wrong
+    password, and so is a wrong password for a suspended or otherwise inactive
+    account (401 auth.invalid_credentials); only the right password is refused
+    with 403 auth.account_inactive. When the counters cannot be read or written
+    the sign-in is refused with 503 auth.sign_in_unavailable (fail closed). When
+    the organization of the named client_id has switched password sign-in off,
+    the request is refused with 403 auth.method_disabled before any password is
+    checked (the same answer for any account or none); without a client_id, the
+    account's own organization decides once the password is verified. While the
+    address rules of that client's organization are on, an address they refuse
+    is answered 403 auth.address_not_allowed before any password is checked, and
+    no cookie is set; the account's own organization's address rules then apply
+    as well, whichever application asked, since the session reaches the
+    account's self-service routes. A body not sent as JSON is refused (415
+    unsupported_media_type). Failed attempts are recorded as for POST
+    /v1/auth/login. On a domain whose organization requires single sign-on, the
+    sign-in is refused with 403 auth.sso_required before any account is looked
+    up or password checked, and nothing is counted against the lockout (see the
+    SSORequired response).
+  summary: Create SSO session
+  tags:
+    - Auth
+  security: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/SessionRequest.yaml
+  responses:
+    "200":
+      description: |
+        Either the SSO cookie was set (`{user_id}`) or an MFA challenge to
+        complete at POST /v1/auth/session/mfa — when the user holds a second
+        factor, or must have one (see MFAChallenge). No cookie is set until
+        then.
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - type: object
+                required:
+                  - user_id
+                properties:
+                  user_id:
+                    type: string
+                    format: uuid
+              - $ref: ../../../shared/schemas/MFAChallenge.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "415":
+      $ref: ../../components/responses/UnsupportedMediaType.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      description: >-
+        The account is locked for this network or everywhere
+        (`auth.account_locked`), or the source network is throttled for spraying
+        (`too_many_requests`). The same answer whatever the password and whether
+        the address has an account.
+      content:
+        application/json:
+          schema:
+            $ref: ../../../shared/schemas/Error.yaml
+    "503":
+      $ref: ../../components/responses/SignInUnavailable.yaml

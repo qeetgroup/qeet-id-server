@@ -14,3 +14,5 @@ post:
       description: All notifications marked read
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

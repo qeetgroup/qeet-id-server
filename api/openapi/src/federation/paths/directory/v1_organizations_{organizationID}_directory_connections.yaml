@@ -115,5 +115,7 @@ get:
       description: Authentication and organization scope required
     "403":
       description: Organization mismatch or missing connection.read permission
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
     "500":
       description: Directory inventory could not be loaded

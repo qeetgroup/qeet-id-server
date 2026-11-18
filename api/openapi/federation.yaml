@@ -192,6 +192,10 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /oauth/revoke:
     post:
       operationId: revokeToken
@@ -230,6 +234,10 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/oauth/authorize:
     get:
       operationId: authorize
@@ -310,6 +318,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     post:
       operationId: authorizeWithPost
       description: The authorization request sent as a form, which OpenID Connect Core 3.1.2.1 requires an authorization endpoint to accept beside GET. It takes the same parameters as GET, in the body, and answers 303 to the GET form of the same request, where the request is checked and the hosted-login session cookie is read (a cross-site POST doesn't carry it). No session is needed and nothing is changed here.
@@ -361,6 +371,10 @@ paths:
           description: Redirect to the GET form of the same authorization request
         "400":
           $ref: "#/components/responses/BadRequest"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/oauth/authorize/decision:
     post:
       operationId: submitConsent
@@ -376,6 +390,7 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required:
                 - request_id
                 - approve
@@ -404,6 +419,10 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/oauth/authorize/request:
     get:
       operationId: getConsentRequest
@@ -438,6 +457,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/oauth/device:
     get:
       operationId: getDeviceVerification
@@ -474,6 +495,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/oauth/device/decision:
     post:
       operationId: submitDeviceDecision
@@ -489,12 +512,14 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required:
                 - user_code
                 - approve
               properties:
                 user_code:
                   type: string
+                  minLength: 1
                 approve:
                   type: boolean
       responses:
@@ -520,6 +545,10 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/oauth/device_authorization:
     post:
       operationId: startDeviceAuthorization
@@ -560,6 +589,10 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/oauth/bc-authorize:
     post:
       operationId: startBackchannelAuthentication
@@ -614,6 +647,10 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/oauth/bc-authorize/pending:
     get:
       operationId: listMyPendingBackchannelRequests
@@ -641,6 +678,8 @@ paths:
                       $ref: "#/components/schemas/CIBAPendingRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/oauth/bc-authorize/decision:
     post:
       operationId: submitBackchannelDecision
@@ -656,6 +695,7 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required:
                 - id
                 - approve
@@ -675,6 +715,8 @@ paths:
                 properties:
                   status:
                     type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -683,6 +725,10 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/oauth/login-context:
     get:
       operationId: getLoginContext
@@ -758,6 +804,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/oauth/logout/continue:
     get:
       operationId: continueSignOut
@@ -775,6 +823,8 @@ paths:
       responses:
         "302":
           description: Redirect to the validated post-logout address, or the signed-out page
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "429":
           $ref: "#/components/responses/TooManyRequests"
   /v1/oauth/logout:
@@ -809,7 +859,9 @@ paths:
         "302":
           description: Redirect to post_logout_redirect_uri
         "400":
-          $ref: "#/components/responses/BadRequest"
+          $ref: "#/components/responses/OAuthBadRequest"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     post:
       operationId: endSessionWithPost
       description: "Identical to GET /v1/oauth/logout for relying parties that issue the logout request as a POST: it ends the hosted-login SSO session and the application grants and unredeemed codes it started, clears the cookie, then redirects to a registered post_logout_redirect_uri with state when supplied, or to the hosted logged-out page. Advertised as end_session_endpoint in discovery."
@@ -858,7 +910,11 @@ paths:
         "302":
           description: Redirect to post_logout_redirect_uri
         "400":
-          $ref: "#/components/responses/BadRequest"
+          $ref: "#/components/responses/OAuthBadRequest"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/oauth/token:
     post:
       operationId: requestToken
@@ -922,6 +978,8 @@ paths:
           $ref: "#/components/responses/OAuthBadRequest"
         "401":
           $ref: "#/components/responses/OAuthUnauthorized"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "429":
           $ref: "#/components/responses/TooManyRequests"
   /v1/oauth/userinfo:
@@ -967,6 +1025,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     post:
       operationId: getUserInfoWithPost
       description: 'Returns the OpenID Connect UserInfo claims for the signed-in user of the presented bearer access token, with Qeet acting as the OpenID provider: sub and organization_id, plus the standard claims the token''s scopes grant: email gives email and email_verified; profile gives name, picture, locale (where known) and updated_at; phone gives phone_number and phone_number_verified. No claim is returned without its scope. A token without the openid scope is refused with 403 oidc.insufficient_scope and WWW-Authenticate: Bearer error="insufficient_scope"; a missing, invalid or expired token, or one whose account has been suspended or deleted, gets 401 with error="invalid_token". GET and POST answer alike (OIDC Core 5.3.1). Advertised as userinfo_endpoint in discovery, with the claims in claims_supported. Accepts an access token issued to an application (one carrying client_id), the one authenticated endpoint that does. A browser may call it from an origin one of the applications allows (web_origins), without credentials.'
@@ -1009,6 +1069,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/oidc/clients:
     post:
       operationId: registerOidcClient
@@ -1050,8 +1112,12 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/oidc/clients/{id}:
     delete:
       operationId: unregisterOidcClient
@@ -1072,12 +1138,16 @@ paths:
       responses:
         "204":
           description: Client deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/oidc/signing-keys:
     get:
       operationId: listSigningKeys
@@ -1104,6 +1174,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/service-principals:
     post:
       operationId: createServicePrincipal
@@ -1159,8 +1231,12 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "409":
           description: "A request with this Idempotency-Key is still being processed (idempotency.in_progress); retry shortly. Or the first request stopped before answering and may have taken effect (idempotency.outcome_unknown): check, then retry with a new key."
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/service-principals/{id}:
     delete:
       operationId: disableServicePrincipal
@@ -1181,6 +1257,8 @@ paths:
       responses:
         "204":
           description: No Content
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1215,9 +1293,12 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               properties:
                 overlap_hours:
-                  type: integer
+                  type:
+                    - integer
+                    - "null"
                   minimum: 0
                   maximum: 168
                   description: How long the old secret goes on working beside the new one. Defaults to 24; 0 stops it at once.
@@ -1250,14 +1331,20 @@ paths:
                     description: When the old secret stops working.
                   warning:
                     type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/service-principals/{id}/enable:
     post:
       operationId: enableServicePrincipal
@@ -1279,12 +1366,16 @@ paths:
       responses:
         "204":
           description: Enabled
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/oauth/devices:
     get:
       operationId: listDeviceAuthorizations
@@ -1311,12 +1402,16 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/OAuthDeviceAuthorization"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/oauth/devices/{id}:
     delete:
       operationId: revokeDeviceAuthorization
@@ -1338,12 +1433,16 @@ paths:
       responses:
         "204":
           description: Device authorization revoked
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/oidc/clients:
     get:
       operationId: listOidcClients
@@ -1370,12 +1469,16 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/OIDCClient"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     post:
       operationId: createOidcClient
       description: Registers an OIDC relying-party client under the organization in the path, the admin-UI counterpart to POST /v1/oidc/clients. A confidential client's secret is returned once at creation and is not recoverable afterward; roll it later with the rotate-secret endpoint. Creation is audited. A public client can't hold token exchange or CIBA (400 oidc.unsupported_flow).
@@ -1418,8 +1521,12 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/oidc/clients/{id}:
     get:
       operationId: getOidcClient
@@ -1445,12 +1552,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OIDCClient"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     patch:
       operationId: updateOidcClient
       description: "Applies a partial update to an OIDC client in the organization; omitted fields are left unchanged. Changes are confined to the organization in the path and are audited. Use the rotate-secret endpoint to change the client secret, which this endpoint does not accept or return. The edited client is held to the same rules as registration: supported grant types, valid redirect URIs, and no token exchange or CIBA for a public client. pkce_exempt_until sets (a date-time) or clears (null) a confidential application's exemption from sending a PKCE code_challenge; it must end in the future and within 90 days, else 422 oidc.pkce_exemption_invalid, and a public application can't have one."
@@ -1489,8 +1600,12 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     delete:
       operationId: deleteOidcClient
       description: Deletes an OIDC client scoped to the organization in the path; the deletion is audited. Tokens and grants held by the client stop being honoured. The by-id variant DELETE /v1/oidc/clients/{id} performs the same deletion using the caller's JWT organization.
@@ -1511,12 +1626,16 @@ paths:
       responses:
         "204":
           description: Client deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/oidc/clients/{id}/auth-failures:
     get:
       operationId: listOidcClientSecretFailures
@@ -1560,12 +1679,16 @@ paths:
                           type: string
                         reason:
                           type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/oidc/resources:
     get:
       operationId: listOidcResources
@@ -1592,10 +1715,14 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/OIDCResource"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     post:
       operationId: registerOidcResource
       summary: Register a resource
@@ -1613,6 +1740,7 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required:
                 - identifier
               properties:
@@ -1620,9 +1748,13 @@ paths:
                   type: string
                   format: uri
                 name:
-                  type: string
+                  type:
+                    - string
+                    - "null"
                 server_client_id:
-                  type: string
+                  type:
+                    - string
+                    - "null"
       responses:
         "201":
           description: Registered
@@ -1630,14 +1762,20 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OIDCResource"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "409":
           $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/oidc/resources/{id}:
     delete:
       operationId: deleteOidcResource
@@ -1659,12 +1797,16 @@ paths:
       responses:
         "204":
           description: Removed
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/oidc/clients/{id}/rotate-secret:
     post:
       operationId: rotateOidcClientSecret
@@ -1700,6 +1842,8 @@ paths:
                     type: string
                   warning:
                     type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1708,6 +1852,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/oidc/clients/shadow-ai:
     get:
       operationId: listShadowAiClients
@@ -1736,10 +1882,14 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/ShadowAICandidate"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/oidc/clients/{id}/review:
     post:
       operationId: acknowledgeShadowAiClient
@@ -1761,12 +1911,16 @@ paths:
       responses:
         "204":
           description: No Content
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/oauth/grants:
     get:
       operationId: listOauthGrants
@@ -1785,11 +1939,9 @@ paths:
         - name: limit
           in: query
           required: false
-          description: Page size, 1 to 500; 100 by default.
+          description: Page size, 1 to 500. A larger value is lowered to 500; a smaller or malformed one gets the default.
           schema:
             type: integer
-            minimum: 1
-            maximum: 500
         - name: cursor
           in: query
           required: false
@@ -1827,6 +1979,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/oauth/grants/{id}:
     delete:
       operationId: revokeOauthGrant
@@ -1848,12 +2002,16 @@ paths:
       responses:
         "204":
           description: Grant revoked
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/oauth/grants/revoke:
     post:
       operationId: revokeOauthGrants
@@ -1872,15 +2030,20 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               properties:
                 ids:
-                  type: array
+                  type:
+                    - array
+                    - "null"
                   maxItems: 100
                   items:
                     type: string
                     format: uuid
                 client_id:
-                  type: string
+                  type:
+                    - string
+                    - "null"
       responses:
         "200":
           description: Revoked
@@ -1893,12 +2056,18 @@ paths:
                 properties:
                   revoked:
                     type: integer
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/service-principals:
     get:
       operationId: listServicePrincipals
@@ -1927,6 +2096,8 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/ServicePrincipal"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1965,10 +2136,14 @@ paths:
                 oneOf:
                   - $ref: "#/components/schemas/TokenPair"
                   - $ref: "#/components/schemas/MFAChallenge"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
         "429":
@@ -2021,6 +2196,8 @@ paths:
       responses:
         "204":
           description: No Content
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -2040,6 +2217,7 @@ paths:
           required: true
           schema:
             type: string
+            pattern: ^[^/\\]+$
       security:
         - bearerAuth: []
       responses:
@@ -2054,6 +2232,8 @@ paths:
                     type: string
                 required:
                   - authorize_url
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -2075,11 +2255,13 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required:
                 - code
               properties:
                 code:
                   type: string
+                  minLength: 1
                   description: The link_code from the callback's redirect.
       responses:
         "200":
@@ -2101,6 +2283,10 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "409":
           $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/social/identities/{id}:
     delete:
       operationId: unlinkSocialIdentity
@@ -2121,6 +2307,8 @@ paths:
       responses:
         "204":
           description: No Content
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -2146,23 +2334,36 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               properties:
                 provider:
-                  type: string
+                  type:
+                    - string
+                    - "null"
                 client_id:
-                  type: string
+                  type:
+                    - string
+                    - "null"
                 client_secret:
-                  type: string
+                  type:
+                    - string
+                    - "null"
                   writeOnly: true
                   description: Required for a new provider. On a provider that exists, empty keeps the stored secret. For Apple, the .p8 private key.
                 discovery_url:
-                  type: string
+                  type:
+                    - string
+                    - "null"
                   description: An OpenID Connect provider's public https discovery URL; ignored for github, facebook, x, discord and apple.
                 apple_team_id:
-                  type: string
+                  type:
+                    - string
+                    - "null"
                   description: Apple's team ID; required for apple.
                 apple_key_id:
-                  type: string
+                  type:
+                    - string
+                    - "null"
                   description: The ID of the key client_secret holds; required for apple.
         description: Adds a provider to the caller's organization, or replaces the settings of one it has.
       description: "Adds a social provider, or replaces the settings of one the organization already has. Replacing keeps whether the provider is switched on, and an empty client_secret keeps the stored one. The secret is stored encrypted and never returned. A provider named github, facebook, x, discord or apple uses that provider's own OAuth 2.0 flow and needs no discovery URL (kind names it); any other name is an OpenID Connect provider found by discovery_url. For apple, client_id is the Services ID and client_secret the .p8 private key with apple_team_id and apple_key_id: the server signs Apple's short-lived client secret from them for each sign-in, and a key that can't sign one is refused with 422. X signs in with PKCE. An address from GitHub, X (confirmed_email) or Discord (verified) counts as verified; one from Facebook doesn't, so it can make a new account but never sign in to an existing one by its address. An OpenID Connect provider's endpoints are the organization's choice, so its word verifies an address only on a domain the organization has verified: elsewhere it too can make a new account, its address unverified, but never sign in to an existing one by its address. Audited as social_provider.created or social_provider.updated (the fields saved and whether the secret was replaced, never its value). Changing what the connection trusts (an OpenID Connect provider's discovery_url, including setting one up again under a name it had before) is acting on every account linked to it, as the changed connection could sign in as any of them: while an administrator is linked, it needs a caller who outranks each one (403 rbac.trust_change_outranks_caller otherwise)."
@@ -2173,12 +2374,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Provider"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
         "429":
@@ -2195,6 +2400,7 @@ paths:
           required: true
           schema:
             type: string
+            pattern: ^[^/\\]+$
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -2204,23 +2410,36 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               properties:
                 enabled:
-                  type: boolean
+                  type:
+                    - boolean
+                    - "null"
                   description: false switches the provider off — it is no longer offered and sign-in through it is refused — until switched on again; other saves keep it off.
                 client_id:
-                  type: string
+                  type:
+                    - string
+                    - "null"
                 client_secret:
-                  type: string
+                  type:
+                    - string
+                    - "null"
                   writeOnly: true
                   description: Replaces the stored secret; omitted or empty keeps it. For Apple, a new .p8 key, which must sign with the team and key IDs.
                 discovery_url:
-                  type: string
+                  type:
+                    - string
+                    - "null"
                   description: An OpenID Connect provider's alone; ignored for the others.
                 apple_team_id:
-                  type: string
+                  type:
+                    - string
+                    - "null"
                 apple_key_id:
-                  type: string
+                  type:
+                    - string
+                    - "null"
       description: "Changes only the fields given on one of the caller's organization's social providers — switch it off or on, replace its secret, or change its client ID or discovery URL. Takes effect for the next sign-in; other providers are unaffected. A switched-off provider reads to a signing-in user exactly like one that was never set up. Audited as social_provider.updated (fields changed, whether the secret was replaced), social_provider.disabled and social_provider.enabled. 404 for a provider the organization does not have. Switching it off is refused with 409 social.provider_in_use (metadata.people: how many) while anyone in the organization can sign in only through it, as removing it is; give them another way in first. Changing what the connection trusts (an OpenID Connect provider's discovery_url) is acting on every account linked to it, as the changed connection could sign in as any of them: while an administrator is linked, it needs a caller who outranks each one (403 rbac.trust_change_outranks_caller otherwise)."
       responses:
         "200":
@@ -2229,6 +2448,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Provider"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -2237,6 +2458,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
         "429":
@@ -2252,6 +2475,7 @@ paths:
           required: true
           schema:
             type: string
+            pattern: ^[^/\\]+$
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -2259,6 +2483,8 @@ paths:
       responses:
         "204":
           description: Removed
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -2282,10 +2508,13 @@ paths:
           required: true
           schema:
             type: string
+            pattern: ^[^/\\]+$
       security: []
       responses:
         "302":
           description: OK
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
         "422":
@@ -2305,6 +2534,7 @@ paths:
           required: true
           schema:
             type: string
+            pattern: ^[^/\\]+$
       requestBody:
         required: true
         content:
@@ -2326,6 +2556,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "413":
           description: Form body too large
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/social/platform/providers:
     get:
       operationId: listPlatformSocialProviders
@@ -2362,11 +2594,14 @@ paths:
           required: true
           schema:
             type: string
+            pattern: ^[^/\\]+$
       security: []
       description: Begins a social sign-in and redirects the browser to the provider. ?organization (slug) or ?organization_id names the organization; without either it is the console's own sign-in, where ?intent=signup allows creating an account. ?return_to opts into the hosted flow. The browser is given an HttpOnly binding cookie (qe_social, __Host- prefixed outside dev, SameSite=None so a form_post callback carries it) naming the sign-in, which the callback requires.
       responses:
         "302":
           description: OK
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
         "422":
@@ -2401,6 +2636,8 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/Provider"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -2444,6 +2681,8 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/ExternalIdentity"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -2489,6 +2728,12 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "402":
           description: The organization's plan does not include enterprise SSO (billing.upgrade_required).
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /saml/exchange:
     post:
       operationId: exchangeSamlCode
@@ -2503,11 +2748,13 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required:
                 - code
               properties:
                 code:
                   type: string
+                  minLength: 1
       responses:
         "200":
           description: Token pair
@@ -2526,6 +2773,10 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /saml/session:
     post:
       operationId: createSamlSession
@@ -2540,11 +2791,13 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required:
                 - code
               properties:
                 code:
                   type: string
+                  minLength: 1
                   description: The saml_code from the URL fragment.
       responses:
         "200":
@@ -2571,6 +2824,10 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /saml/idp/{organizationID}/metadata:
     get:
       operationId: getSamlIdpMetadata
@@ -2585,11 +2842,15 @@ paths:
         "200":
           description: IdP metadata XML
           content:
-            application/xml:
+            application/samlmetadata+xml:
               schema:
                 type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /saml/idp/{organizationID}/certificate:
     get:
       operationId: getSamlIdpCertificate
@@ -2607,8 +2868,12 @@ paths:
             application/x-pem-file:
               schema:
                 type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /saml/idp/{organizationID}/sso:
     get:
       operationId: startSamlIdpSso
@@ -2654,6 +2919,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     post:
       operationId: startSamlIdpSsoWithPost
       description: "The organization's SAML SingleSignOnService over the HTTP-POST binding, with Qeet acting as the Identity Provider; equivalent to GET /saml/idp/{organizationID}/sso for Service Providers that send the AuthnRequest via POST. Only SPs of the organization in the path are matched. The user is authenticated by the hosted-login SSO cookie, with a redirect to the hosted login when no session exists; that sign-in returns to GET /saml/idp/{organizationID}/sso carrying the request and RelayState, so the flow resumes. A posted request over 256 KiB is refused with saml.authn_request_invalid. Any supplied AssertionConsumerServiceURL must match the SP's registered ACS. On success it returns an auto-submitting form that POSTs a signed SAMLResponse to that ACS. Who is signed in, and what the assertion says, is as for GET /saml/idp/{organizationID}/sso: an SP with assignment_required refuses anyone not assigned to it with an audited 403 saml.sp_not_assigned. An unknown or inactive organization, or an unknown SP, returns 404. The organization's plan must include enterprise SSO at every sign-in (402 billing.upgrade_required), and its address rules and second-factor requirement apply as for GET."
@@ -2701,6 +2968,10 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /saml/login/{id}:
     get:
       operationId: startSamlSignIn
@@ -2725,10 +2996,14 @@ paths:
       responses:
         "302":
           description: Redirect to the external IdP with an AuthnRequest
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "402":
           description: The organization's plan does not include enterprise SSO (billing.upgrade_required).
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /saml/metadata/{id}:
     get:
       operationId: getSamlSpMetadata
@@ -2748,11 +3023,15 @@ paths:
         "200":
           description: SP metadata XML
           content:
-            application/xml:
+            application/samlmetadata+xml:
               schema:
                 type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/saml:
     get:
       operationId: listSamlConnections
@@ -2779,10 +3058,14 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/SAMLConnection"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     post:
       operationId: createSamlConnection
       description: "Creates an inbound SAML connection in the organization with the external IdP's entity id, SSO URL and signing certificate so Qeet can act as the Service Provider for that IdP. A name alone creates a draft before the IdP's details are known, since the IdP needs the connection's addresses first: the answer carries them (sp_entity_id, acs_url, sp_metadata_url), and the IdP's details are added later by PATCH, its metadata or its certificates. Any one of the IdP's details brings the rest with it (422 saml.connection_fields_required), and a connection without them is a draft only (422 saml.connection_incomplete). Validate the configuration with the connection test endpoint, then drive sign-in via GET /saml/login/{id}. Scoped to the organization in the path. A status, when given, must be draft, active or disabled (422 saml.status_invalid). The organization's plan must include enterprise SSO (402 billing.upgrade_required, metadata.feature sso), and every sign-in through the connection checks it again."
@@ -2815,8 +3098,12 @@ paths:
           description: The organization's plan does not include enterprise SSO (billing.upgrade_required).
         "403":
           $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/saml-providers:
     get:
       operationId: listSamlApps
@@ -2843,10 +3130,14 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/SAMLServiceProvider"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     post:
       operationId: registerSamlApp
       description: "Registers a downstream Service Provider in the organization, including its entity id, ACS URL and NameID format, so it can obtain signed assertions from Qeet acting as the Identity Provider. Registered SPs are matched by AuthnRequest issuer or SP reference at the organization's IdP SSO endpoint, /saml/idp/{organizationID}/sso; the entity id need be unique only within the organization. Give the SP administrator the organization's IdP metadata from /saml/idp/{organizationID}/metadata to complete the trust. The ACS URL, where signed assertions are posted, must be an absolute https URL without user information (plain http only to localhost), or the answer is 422 saml.acs_url_invalid. A status, when given, must be draft, active or disabled (422 saml.status_invalid), and an entity id already registered in the organization is refused with 409 saml.sp_entity_id_taken. The NameID format is emailAddress (the default), persistent or unspecified (422 saml.name_id_format_invalid otherwise), and name_id_attribute names where its value comes from: email, user_id, persistent_id (an opaque value made for each person at this SP, which never changes) or metadata.<key>. An emailAddress NameID is always the email and a persistent one persistent_id (its default) or user_id; another combination is refused with 422 saml.name_id_attribute_invalid. attributes, when given, replaces the default email and name attributes; an empty list sends none, and an invalid one is refused with 422 saml.attributes_invalid naming each field at fault. assignment_required limits sign-in to the people and groups assigned to the SP. The registration is audited as saml.sp_created with these settings."
@@ -2879,8 +3170,12 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "409":
           $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/saml-providers/{id}:
     delete:
       operationId: deleteSamlApp
@@ -2902,12 +3197,16 @@ paths:
       responses:
         "204":
           description: Deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     get:
       operationId: getSamlApp
       description: Returns a single registered downstream Service Provider's configuration in the organization, from the IdP-side registry where Qeet acts as the Identity Provider. Update it with PATCH or remove it with DELETE.
@@ -2932,12 +3231,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SAMLServiceProvider"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     patch:
       operationId: updateSamlApp
       description: Updates a registered downstream Service Provider's configuration in the organization, such as its entity id, ACS URL, NameID settings or status, on the IdP side where Qeet acts as the Identity Provider. Changes are confined to the organization in the path and are audited as saml.sp_updated, naming the fields changed and the new entity id, ACS URL, NameID, attribute and assignment settings. A new ACS URL is checked as on registration (422 saml.acs_url_invalid), and so are the NameID settings and attributes. A new NameID format without a name_id_attribute moves the attribute to the format's default when the current one doesn't fit it (persistent_id for persistent, email for emailAddress); a name_id_attribute given must fit the format (422 saml.name_id_attribute_invalid). attributes replaces the whole list, and assignment_required turns assigned-people-only sign-in on or off; the people and groups assigned stay either way.
@@ -2976,8 +3279,12 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/saml/import:
     post:
       operationId: importSamlConnection
@@ -3015,8 +3322,12 @@ paths:
                 $ref: "#/components/schemas/Error"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/saml/{id}/metadata:
     post:
       operationId: applySamlIdpMetadata
@@ -3041,12 +3352,17 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               properties:
                 metadata_url:
-                  type: string
+                  type:
+                    - string
+                    - "null"
                   format: uri
                 metadata_xml:
-                  type: string
+                  type:
+                    - string
+                    - "null"
       responses:
         "200":
           description: Connection updated
@@ -3062,8 +3378,12 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/saml/{id}/certificates:
     post:
       operationId: addSamlCertificate
@@ -3088,11 +3408,13 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required:
                 - certificate
               properties:
                 certificate:
                   type: string
+                  minLength: 1
                   description: PEM or base64 DER X.509 signing certificate
       responses:
         "201":
@@ -3111,8 +3433,12 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/saml/{id}/certificates/{certificateID}:
     delete:
       operationId: removeSamlCertificate
@@ -3150,6 +3476,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/saml-providers/{id}/assignments:
     get:
       operationId: listSamlAppAssignments
@@ -3183,6 +3511,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/saml-providers/{id}/assignments/users/{userID}:
     post:
       operationId: assignSamlAppToUser
@@ -3218,6 +3548,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     delete:
       operationId: unassignSamlAppFromUser
       description: Removes a person's own assignment to one of the organization's downstream Service Providers; one through a group they belong to stays. A person not assigned themselves answers 404. The removal is audited as saml.sp_user_unassigned, and needs a recent step-up.
@@ -3252,6 +3584,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/saml-providers/{id}/assignments/groups/{groupID}:
     post:
       operationId: assignSamlAppToGroup
@@ -3287,6 +3621,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     delete:
       operationId: unassignSamlAppFromGroup
       description: Removes a group's assignment to one of the organization's downstream Service Providers; its members assigned themselves stay assigned. A group not assigned answers 404. The removal is audited as saml.sp_group_unassigned, and needs a recent step-up.
@@ -3321,6 +3657,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/saml/{id}/test:
     post:
       operationId: testSamlConnection
@@ -3346,12 +3684,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TestResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/saml/{id}/group-mappings:
     get:
       operationId: listSamlGroupMappings
@@ -3386,12 +3728,16 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/SSOGroupMapping"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     post:
       operationId: createSamlGroupMapping
       summary: Map an IdP group
@@ -3432,8 +3778,12 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/saml/{id}/group-mappings/{mappingID}:
     delete:
       operationId: deleteSamlGroupMapping
@@ -3469,6 +3819,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/saml/{id}:
     delete:
       operationId: deleteSamlConnection
@@ -3490,12 +3842,16 @@ paths:
       responses:
         "204":
           description: Deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     get:
       operationId: getSamlConnection
       description: Returns a single inbound SAML connection's configuration in the organization, where Qeet acts as the Service Provider consuming an external IdP. Update it with PATCH, validate it with the connection test endpoint, or remove it with DELETE.
@@ -3520,12 +3876,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SAMLConnection"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     patch:
       operationId: updateSamlConnection
       description: "Applies a partial update to an inbound SAML connection in the organization, covering the IdP entity id, SSO URL, signing certificate, attribute mappings or status, with Qeet acting as the Service Provider. A new idp_certificate replaces every certificate the connection trusts; to roll over without an outage, use the certificates endpoints instead. Changes are confined to the organization in the path and are audited. Re-run the connection test endpoint after changing IdP details. An active connection needs the IdP's entity ID, SSO URL and a certificate: turning on one without them is refused with 422 saml.connection_incomplete. Changing what the connection trusts (a new idp_entity_id or idp_certificate) is acting on every account linked to it, as the changed connection could sign in as any of them: while an administrator is linked, it needs a caller who outranks each one (403 rbac.trust_change_outranks_caller otherwise)."
@@ -3564,8 +3924,12 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/oidc-connections:
     get:
       operationId: listOidcConnections
@@ -3592,10 +3956,14 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/OIDCConnection"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     post:
       operationId: createOidcConnection
       description: "Creates an OpenID Connect connection in the organization, a draft unless a status is given. The issuer must be an absolute https URL without a query or fragment (422 oidc_connection.issuer_invalid); the discovery document is read from discovery_url, or from the issuer's /.well-known/openid-configuration when none is given (422 oidc_connection.discovery_url_invalid). The client secret is stored encrypted and never returned. Scopes default to openid, email and profile, and openid is always asked for (422 oidc_connection.scopes_invalid). allowed_idp_tenant_ids are the provider's own tenant IDs (the tid claim, as Microsoft Entra ID issues it) a token must name: an Entra issuer that serves every organization (common, organizations or consumers) is refused without them (422 oidc_connection.idp_tenant_ids_required), or anyone with a Microsoft account could sign in. claim_mapping names the claims read for the email address (required, default email), name, given and family names and groups. Missing fields answer 422 oidc_connection.fields_required, an unknown status 422 oidc_connection.status_invalid. The organization's plan must include single sign-on (402 billing.upgrade_required). Audited as oidc_connection.created. Requires connection.write. Needs a recent step-up."
@@ -3632,8 +4000,12 @@ paths:
                 $ref: "#/components/schemas/Error"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/oidc-connections/{id}:
     get:
       operationId: getOidcConnection
@@ -3667,6 +4039,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     patch:
       operationId: updateOidcConnection
       description: "Changes the given fields of one of the organization's OpenID Connect connections, checked as on create; an absent field is kept, as is the client secret when client_secret is absent or empty. Only an active connection signs anyone in. A change that would leave a Microsoft issuer serving every organization without allowed_idp_tenant_ids is refused (422 oidc_connection.idp_tenant_ids_required). Audited as oidc_connection.updated with the fields changed. Another organization's connection answers 404. Requires connection.write. Needs a recent step-up. Changing what the connection trusts (its issuer, discovery_url, client_id or allowed_idp_tenant_ids) is acting on every account linked to it, as the changed connection could sign in as any of them: while an administrator is linked, it needs a caller who outranks each one (403 rbac.trust_change_outranks_caller otherwise)."
@@ -3705,8 +4079,12 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     delete:
       operationId: deleteOidcConnection
       description: Deletes one of the organization's OpenID Connect connections, with the sign-ins and login codes it has in flight. Its people no longer sign in through it. Audited as oidc_connection.deleted. Another organization's connection answers 404. Requires connection.write. Needs a recent step-up.
@@ -3735,6 +4113,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/sso/discovery:
     post:
       operationId: discoverSso
@@ -3749,6 +4129,7 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required:
                 - email
               properties:
@@ -3805,6 +4186,8 @@ paths:
                           description: For a credentials connection, where the hosted login posts the same user name and password for its session.
         "400":
           $ref: "#/components/responses/BadRequest"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
         "429":
@@ -3907,11 +4290,13 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required:
                 - code
               properties:
                 code:
                   type: string
+                  minLength: 1
       responses:
         "200":
           description: Token pair
@@ -3930,6 +4315,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "429":
           $ref: "#/components/responses/TooManyRequests"
   /v1/oidc-connections/session:
@@ -3946,11 +4333,13 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required:
                 - code
               properties:
                 code:
                   type: string
+                  minLength: 1
                   description: The oidc_code from the URL fragment.
       responses:
         "200":
@@ -3977,6 +4366,10 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /ldap/{id}/session:
     post:
       operationId: createLdapSession
@@ -3998,12 +4391,14 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required:
                 - username
                 - password
               properties:
                 username:
                   type: string
+                  minLength: 1
                 password:
                   type: string
                   format: password
@@ -4028,6 +4423,10 @@ paths:
           description: The organization's plan does not include LDAP (billing.upgrade_required).
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "429":
           $ref: "#/components/responses/TooManyRequests"
   /ldap/{id}/authenticate:
@@ -4050,12 +4449,14 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required:
                 - username
                 - password
               properties:
                 username:
                   type: string
+                  minLength: 1
                 password:
                   type: string
                   format: password
@@ -4073,36 +4474,7 @@ paths:
               schema:
                 oneOf:
                   - $ref: "#/components/schemas/TokenPair"
-                  - type: object
-                    description: The same challenge a password sign-in answers with (MFAChallenge in the authentication API).
-                    properties:
-                      mfa_required:
-                        type: boolean
-                      mfa_token:
-                        type: string
-                      methods:
-                        type: array
-                        items:
-                          type: string
-                          enum:
-                            - totp
-                            - recovery_code
-                            - email
-                            - sms
-                            - passkey
-                            - push
-                      factors:
-                        type: array
-                        description: Exactly the second factors this person can complete the challenge with. Empty for an enrolment challenge.
-                        items:
-                          $ref: "#/components/schemas/LoginFactor"
-                      enrollment_required:
-                        type: boolean
-                      enrollment_due_at:
-                        type: string
-                        format: date-time
-                        description: On an enrolment challenge in the organization's grace period, when it ends.
-                    additionalProperties: true
+                  - $ref: "#/components/schemas/MFAChallenge"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -4125,6 +4497,8 @@ paths:
                 $ref: "#/components/schemas/Error"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
         "429":
@@ -4167,6 +4541,8 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/LdapConnection"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -4201,12 +4577,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/LdapConnection"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
         "429":
@@ -4232,6 +4612,8 @@ paths:
       responses:
         "204":
           description: No Content
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -4266,6 +4648,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/LdapConnection"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -4306,12 +4690,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/LdapConnection"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
         "429":
@@ -4346,6 +4734,8 @@ paths:
                 properties:
                   ok:
                     type: boolean
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -4390,12 +4780,16 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/SSOGroupMapping"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     post:
       operationId: createLdapGroupMapping
       summary: Map a directory group
@@ -4436,8 +4830,12 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/ldap/{id}/group-mappings/{mappingID}:
     delete:
       operationId: deleteLdapGroupMapping
@@ -4473,6 +4871,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/directory/connections/{connectionID}/mappings:
     get:
       operationId: listProfileMappings
@@ -4490,6 +4890,7 @@ paths:
           required: true
           schema:
             type: string
+            pattern: ^[^/\\]+$
       responses:
         "200":
           description: Rules and supported profile target types
@@ -4508,12 +4909,16 @@ paths:
                     type: object
                     additionalProperties:
                       type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           description: Authentication required
         "403":
           description: Organization mismatch or missing connection.read
         "404":
           description: Connection not found in this organization
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     post:
       operationId: createProfileMapping
       summary: Create a profile mapping
@@ -4530,6 +4935,7 @@ paths:
           required: true
           schema:
             type: string
+            pattern: ^[^/\\]+$
       requestBody:
         required: true
         content:
@@ -4553,8 +4959,12 @@ paths:
           description: Connection not found in this organization
         "409":
           description: Duplicate enabled target or rule limit reached
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           description: "Mapping refused: validation_failed, with error.fields[0].field naming the property at fault (source_attribute, target_field, value_type, transform or pattern) and error.fields[0].code the reason: directory.mapping_source_invalid, directory.mapping_source_credential, directory.mapping_target_unsupported, directory.mapping_value_type_mismatch, directory.mapping_transform_unsupported, directory.mapping_pattern_unexpected or directory.mapping_pattern_invalid."
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/directory/connections/{connectionID}/mappings/{mappingID}:
     put:
       operationId: setProfileMapping
@@ -4572,6 +4982,7 @@ paths:
           required: true
           schema:
             type: string
+            pattern: ^[^/\\]+$
         - name: mappingID
           in: path
           required: true
@@ -4601,8 +5012,12 @@ paths:
           description: Connection not found
         "409":
           description: Stale version, missing mapping or duplicate enabled target
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           description: "Mapping refused: validation_failed, with error.fields[0].field naming the property at fault (source_attribute, target_field, value_type, transform or pattern) and error.fields[0].code the reason: directory.mapping_source_invalid, directory.mapping_source_credential, directory.mapping_target_unsupported, directory.mapping_value_type_mismatch, directory.mapping_transform_unsupported, directory.mapping_pattern_unexpected or directory.mapping_pattern_invalid."
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     delete:
       operationId: deleteProfileMapping
       description: Deletes a single profile attribute-mapping rule from a directory connection, scoped to the organization and connection in the path and requiring connection.write. The removal is audited in the same transaction, and subsequent SCIM writes and LDAP provisioning no longer apply the rule. Returns 404 when the mapping does not exist in this organization and connection.
@@ -4619,6 +5034,7 @@ paths:
           required: true
           schema:
             type: string
+            pattern: ^[^/\\]+$
         - name: mappingID
           in: path
           required: true
@@ -4628,12 +5044,16 @@ paths:
       responses:
         "204":
           description: Mapping removed and audited
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           description: Authentication required
         "403":
           description: Organization mismatch or missing connection.write
         "404":
           description: Mapping not found in this organization and connection
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/directory/connections/{connectionID}/mappings/preview:
     post:
       operationId: previewProfileMappings
@@ -4651,12 +5071,14 @@ paths:
           required: true
           schema:
             type: string
+            pattern: ^[^/\\]+$
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required:
                 - source
               properties:
@@ -4750,6 +5172,8 @@ paths:
           description: Connection not found
         "413":
           description: Source exceeds the supported size
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/directory/errors:
     get:
       operationId: listDirectoryErrors
@@ -4795,11 +5219,10 @@ paths:
             type: string
             maxLength: 200
         - name: limit
+          description: Page size, 1 to 100 (default 25). A larger value is lowered to 100; a smaller or malformed one gets the default.
           in: query
           schema:
             type: integer
-            minimum: 1
-            maximum: 100
             default: 25
         - $ref: "#/components/parameters/Cursor"
       responses:
@@ -4863,6 +5286,8 @@ paths:
           description: Authentication required
         "403":
           description: Organization mismatch or missing connection.read
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/directory/errors/{eventID}/resolve:
     post:
       operationId: resolveDirectoryError
@@ -4891,6 +5316,8 @@ paths:
                 properties:
                   succeeded:
                     type: boolean
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           description: Authentication required
         "403":
@@ -4899,6 +5326,8 @@ paths:
           description: Error not found in this organization
         "409":
           description: Error already closed
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/directory/errors/{eventID}/retry:
     post:
       operationId: retryDirectoryError
@@ -4927,6 +5356,8 @@ paths:
                 properties:
                   succeeded:
                     type: boolean
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           description: Authentication required
         "403":
@@ -4935,6 +5366,8 @@ paths:
           description: Error not found in this organization
         "409":
           description: Operation cannot be retried or is already closed
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/directory/activity:
     get:
       operationId: listDirectoryActivity
@@ -4973,11 +5406,10 @@ paths:
             type: string
             maxLength: 200
         - name: limit
+          description: Page size, 1 to 100 (default 25). A larger value is lowered to 100; a smaller or malformed one gets the default.
           in: query
           schema:
             type: integer
-            minimum: 1
-            maximum: 100
             default: 25
         - $ref: "#/components/parameters/Cursor"
       responses:
@@ -5037,6 +5469,8 @@ paths:
           description: Authentication required
         "403":
           description: Organization mismatch or missing connection.read
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/directory/alerts:
     get:
       operationId: listDirectoryAlerts
@@ -5065,10 +5499,14 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/DirectoryAlert"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           description: Authentication required
         "403":
           description: Organization mismatch or missing connection.read
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     post:
       operationId: createDirectoryAlert
       summary: Create a directory failure alert
@@ -5086,6 +5524,7 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required:
                 - name
                 - threshold
@@ -5117,6 +5556,10 @@ paths:
           description: Organization mismatch or missing connection.write
         "404":
           description: Connection not found in this organization
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/directory/alerts/{alertID}:
     patch:
       operationId: updateDirectoryAlert
@@ -5141,20 +5584,29 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               properties:
                 name:
-                  type: string
+                  type:
+                    - string
+                    - "null"
                   minLength: 1
                   maxLength: 100
                 connection_id:
-                  type: string
+                  type:
+                    - string
+                    - "null"
                   description: A connection of the organization, or "" for every connection.
                 threshold:
-                  type: integer
+                  type:
+                    - integer
+                    - "null"
                   minimum: 1
                   maximum: 100
                 enabled:
-                  type: boolean
+                  type:
+                    - boolean
+                    - "null"
       responses:
         "200":
           description: The alert as changed
@@ -5170,6 +5622,10 @@ paths:
           description: Organization mismatch or missing connection.write
         "404":
           description: No such alert in the organization, or an unknown connection
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     delete:
       operationId: deleteDirectoryAlert
       summary: Remove a directory failure alert
@@ -5190,12 +5646,16 @@ paths:
       responses:
         "204":
           description: Removed
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           description: Authentication required
         "403":
           description: Organization mismatch or missing connection.write
         "404":
           description: No such alert in the organization
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/directory/profiles/{userID}:
     get:
       operationId: getDirectoryProfile
@@ -5253,6 +5713,8 @@ paths:
           description: Authentication required
         "403":
           description: Organization mismatch or missing user.read
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/directory/connections:
     get:
       operationId: listDirectoryConnections
@@ -5361,6 +5823,8 @@ paths:
           description: Authentication and organization scope required
         "403":
           description: Organization mismatch or missing connection.read permission
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
         "500":
           description: Directory inventory could not be loaded
   /scim/v2/Groups:
@@ -5393,9 +5857,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/SCIMListResponse"
         "400":
-          $ref: "#/components/responses/BadRequest"
+          $ref: "#/components/responses/SCIMBadRequest"
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          $ref: "#/components/responses/SCIMUnauthorized"
+        "403":
+          $ref: "#/components/responses/SCIMForbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     post:
       operationId: createScimGroup
       description: Provisions a new group in the organization identified by the SCIM bearer token, with Qeet acting as the SCIM 2.0 server for an external IdP. The group, and every later change to it and its members, is audited (group.created, group.updated, group.member_added, group.member_removed, group.deleted; actor scim). Mounted at the root under /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope, not the standard Qeet error shape.
@@ -5418,11 +5886,15 @@ paths:
               schema:
                 $ref: "#/components/schemas/SCIMGroup"
         "400":
-          $ref: "#/components/responses/BadRequest"
+          $ref: "#/components/responses/SCIMBadRequest"
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          $ref: "#/components/responses/SCIMUnauthorized"
+        "403":
+          $ref: "#/components/responses/SCIMForbidden"
         "409":
           $ref: "#/components/responses/SCIMConflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /scim/v2/Groups/{id}:
     delete:
       operationId: deleteScimGroup
@@ -5443,9 +5915,13 @@ paths:
         "204":
           description: Deleted
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          $ref: "#/components/responses/SCIMUnauthorized"
+        "403":
+          $ref: "#/components/responses/SCIMForbidden"
         "404":
-          $ref: "#/components/responses/NotFound"
+          $ref: "#/components/responses/SCIMNotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     get:
       operationId: getScimGroup
       description: Returns a single provisioned group by id for the organization identified by the SCIM bearer token, with Qeet acting as the SCIM server. Mounted at the root under /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope rather than the standard Qeet error shape.
@@ -5469,9 +5945,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/SCIMGroup"
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          $ref: "#/components/responses/SCIMUnauthorized"
+        "403":
+          $ref: "#/components/responses/SCIMForbidden"
         "404":
-          $ref: "#/components/responses/NotFound"
+          $ref: "#/components/responses/SCIMNotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     patch:
       operationId: patchScimGroup
       description: Applies a SCIM PatchOp to a group, typically a membership add or remove or an attribute change, for the organization identified by the SCIM bearer token, with Qeet acting as the SCIM server. Mounted at the root under /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope, not the standard Qeet error shape. Adding someone holding no role to a group that carries one takes a seat; when the plan's seats are all taken the whole change is refused with 403 in that envelope and nothing changes.
@@ -5501,13 +5981,17 @@ paths:
               schema:
                 $ref: "#/components/schemas/SCIMGroup"
         "400":
-          $ref: "#/components/responses/BadRequest"
+          $ref: "#/components/responses/SCIMBadRequest"
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          $ref: "#/components/responses/SCIMUnauthorized"
+        "403":
+          $ref: "#/components/responses/SCIMForbidden"
         "404":
-          $ref: "#/components/responses/NotFound"
+          $ref: "#/components/responses/SCIMNotFound"
         "409":
           $ref: "#/components/responses/SCIMConflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     put:
       operationId: replaceScimGroup
       description: Replaces a group's attributes wholesale with the supplied SCIM representation for the organization identified by the SCIM bearer token, with Qeet acting as the SCIM server. Use PATCH for incremental membership or attribute changes. Mounted at the root under /scim/v2; errors use the RFC 7644 SCIM error envelope, not the standard Qeet error shape. A member set that gives someone a first role, through the group's, beyond the plan's seats is refused with 403 in that envelope and nothing changes.
@@ -5537,13 +6021,17 @@ paths:
               schema:
                 $ref: "#/components/schemas/SCIMGroup"
         "400":
-          $ref: "#/components/responses/BadRequest"
+          $ref: "#/components/responses/SCIMBadRequest"
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          $ref: "#/components/responses/SCIMUnauthorized"
+        "403":
+          $ref: "#/components/responses/SCIMForbidden"
         "404":
-          $ref: "#/components/responses/NotFound"
+          $ref: "#/components/responses/SCIMNotFound"
         "409":
           $ref: "#/components/responses/SCIMConflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /scim/v2/ResourceTypes:
     get:
       operationId: listScimResourceTypes
@@ -5562,7 +6050,11 @@ paths:
                 type: object
                 additionalProperties: true
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          $ref: "#/components/responses/SCIMUnauthorized"
+        "403":
+          $ref: "#/components/responses/SCIMForbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /scim/v2/Schemas:
     get:
       operationId: listScimSchemas
@@ -5581,7 +6073,11 @@ paths:
                 type: object
                 additionalProperties: true
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          $ref: "#/components/responses/SCIMUnauthorized"
+        "403":
+          $ref: "#/components/responses/SCIMForbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /scim/v2/ServiceProviderConfig:
     get:
       operationId: getScimServiceProviderConfig
@@ -5600,7 +6096,11 @@ paths:
                 type: object
                 additionalProperties: true
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          $ref: "#/components/responses/SCIMUnauthorized"
+        "403":
+          $ref: "#/components/responses/SCIMForbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /scim/v2/Users:
     get:
       operationId: listScimUsers
@@ -5634,9 +6134,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/SCIMListResponse"
         "400":
-          $ref: "#/components/responses/BadRequest"
+          $ref: "#/components/responses/SCIMBadRequest"
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          $ref: "#/components/responses/SCIMUnauthorized"
+        "403":
+          $ref: "#/components/responses/SCIMForbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     post:
       operationId: createScimUser
       description: "Provisions a new user in the organization identified by the SCIM bearer token, with Qeet acting as the SCIM 2.0 server for an external IdP. Mounted at the root under /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope, not the standard Qeet error shape. A userName belonging to an account already at home in the organization (invited, or signed in with single sign-on) adopts that account: it is tagged as provisioned with the externalId and updated, and answered 201. When nothing vouched for that account's address yet (its holder never proved it, and the directory didn't provision it), adoption also removes every credential and sign-in set up on it (recorded as auth.credentials_removed), so whoever registered the address first keeps no way in; the person signs in through the organization's identity provider, or resets the password. The response is unchanged. A userName taken elsewhere, or on a domain another organization has verified, is refused with 409."
@@ -5695,11 +6199,15 @@ paths:
               schema:
                 $ref: "#/components/schemas/SCIMUser"
         "400":
-          $ref: "#/components/responses/BadRequest"
+          $ref: "#/components/responses/SCIMBadRequest"
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          $ref: "#/components/responses/SCIMUnauthorized"
+        "403":
+          $ref: "#/components/responses/SCIMForbidden"
         "409":
-          $ref: "#/components/responses/Conflict"
+          $ref: "#/components/responses/SCIMUserConflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /scim/v2/Users/{id}:
     delete:
       operationId: deleteScimUser
@@ -5720,9 +6228,13 @@ paths:
         "204":
           description: Deprovisioned
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          $ref: "#/components/responses/SCIMUnauthorized"
+        "403":
+          $ref: "#/components/responses/SCIMForbidden"
         "404":
-          $ref: "#/components/responses/NotFound"
+          $ref: "#/components/responses/SCIMNotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     get:
       operationId: getScimUser
       description: Returns a single provisioned user by id for the organization identified by the SCIM bearer token, with Qeet acting as the SCIM server. Mounted at the root under /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope rather than the standard Qeet error shape.
@@ -5746,9 +6258,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/SCIMUser"
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          $ref: "#/components/responses/SCIMUnauthorized"
+        "403":
+          $ref: "#/components/responses/SCIMForbidden"
         "404":
-          $ref: "#/components/responses/NotFound"
+          $ref: "#/components/responses/SCIMNotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     patch:
       operationId: patchScimUser
       description: "Applies a SCIM PatchOp to a user for the organization identified by the SCIM bearer token; setting active to false (a boolean, or the string Entra sends) is the deprovisioning path IdPs rely on and suspends the account, ending every way it signs in as an administrator's suspension does; displayName, name.givenName/familyName/formatted, externalId and userName (or the primary email) are applied too, a new userName only on a domain the organization has verified (400 invalidValue otherwise), counted verified, with links sent to the old address ending; and displayName may also be updated, with Qeet acting as the SCIM server. Mounted at the root under /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope, not the standard Qeet error shape. An account that owns the organization is never changed or deleted by the directory (403). A new userName for an account that administers the organization (any administrative permission, directly or through a group) is refused with 403 and nothing changes: its address is changed in the console, as single sign-on never moves it either. Setting active to true lifts only a suspension the directory set: one an administrator, a policy or another directory set stands, while the rest of the change applies."
@@ -5778,11 +6294,15 @@ paths:
               schema:
                 $ref: "#/components/schemas/SCIMUser"
         "400":
-          $ref: "#/components/responses/BadRequest"
+          $ref: "#/components/responses/SCIMBadRequest"
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          $ref: "#/components/responses/SCIMUnauthorized"
+        "403":
+          $ref: "#/components/responses/SCIMForbidden"
         "404":
-          $ref: "#/components/responses/NotFound"
+          $ref: "#/components/responses/SCIMNotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     put:
       operationId: replaceScimUser
       description: "Replaces a user's attributes wholesale with the supplied SCIM representation for the organization identified by the SCIM bearer token, with Qeet acting as the SCIM server. Use PATCH for targeted changes such as deprovisioning. Mounted at the root under /scim/v2; errors use the RFC 7644 SCIM error envelope, not the standard Qeet error shape. An account that owns the organization is never changed or deleted by the directory (403). A new userName for an account that administers the organization (any administrative permission, directly or through a group) is refused with 403 and nothing changes: its address is changed in the console, as single sign-on never moves it either. Setting active to true lifts only a suspension the directory set: one an administrator, a policy or another directory set stands, while the rest of the change applies."
@@ -5812,11 +6332,15 @@ paths:
               schema:
                 $ref: "#/components/schemas/SCIMUser"
         "400":
-          $ref: "#/components/responses/BadRequest"
+          $ref: "#/components/responses/SCIMBadRequest"
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          $ref: "#/components/responses/SCIMUnauthorized"
+        "403":
+          $ref: "#/components/responses/SCIMForbidden"
         "404":
-          $ref: "#/components/responses/NotFound"
+          $ref: "#/components/responses/SCIMNotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/scim:
     get:
       operationId: getScimConfig
@@ -5836,6 +6360,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ConfigView"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -5861,6 +6387,8 @@ paths:
       responses:
         "204":
           description: No Content
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -5902,6 +6430,8 @@ paths:
                     $ref: "#/components/schemas/ConfigView"
                   token:
                     type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -5940,6 +6470,8 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/SCIMToken"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -5965,6 +6497,7 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required:
                 - name
               properties:
@@ -6070,9 +6603,12 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               properties:
                 overlap_hours:
-                  type: integer
+                  type:
+                    - integer
+                    - "null"
                   minimum: 0
                   maximum: 720
                   description: How long the old token keeps working, in hours. Default 168.
@@ -6133,11 +6669,9 @@ paths:
         - name: limit
           in: query
           required: false
-          description: Page size, 1 to 200; 50 by default.
+          description: Page size, 1 to 200. A larger value is lowered to 200; a smaller or malformed one gets the default.
           schema:
             type: integer
-            minimum: 1
-            maximum: 200
         - name: cursor
           in: query
           required: false
@@ -6199,6 +6733,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/scim/users:
     get:
       operationId: listProvisionedUsers
@@ -6210,11 +6746,9 @@ paths:
         - name: limit
           in: query
           required: false
-          description: Page size, 1 to 200; 50 by default.
+          description: Page size, 1 to 200. A larger value is lowered to 200; a smaller or malformed one gets the default.
           schema:
             type: integer
-            minimum: 1
-            maximum: 200
         - name: cursor
           in: query
           required: false
@@ -6283,10 +6817,14 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/AdminPortalLink"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     post:
       operationId: createAdminPortalLink
       summary: Generate an admin portal link
@@ -6304,6 +6842,7 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required:
                 - capabilities
               properties:
@@ -6316,7 +6855,9 @@ paths:
                       - scim
                       - domain_verification
                 ttl_seconds:
-                  type: integer
+                  type:
+                    - integer
+                    - "null"
                   maximum: 86400
                   description: How long the link lasts, in seconds, from 900 to 86400. Omitted or 0 means an hour.
       responses:
@@ -6340,12 +6881,18 @@ paths:
                   url:
                     type: string
                     format: uri
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/admin-portal/links/{id}:
     delete:
       operationId: revokeAdminPortalLink
@@ -6367,12 +6914,16 @@ paths:
       responses:
         "204":
           description: Revoked
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/admin-portal/session:
     post:
       operationId: createPortalSession
@@ -6407,6 +6958,8 @@ paths:
                     type: string
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     delete:
       operationId: deletePortalSession
       description: Revokes the current admin-portal session and clears its session cookie, ending the external IT admin's portal access. Authenticated by the portal session cookie. A new session requires exchanging a fresh link token at POST /v1/admin-portal/session.
@@ -6422,6 +6975,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/admin-portal/context:
     get:
       operationId: getPortalContext
@@ -6440,6 +6995,8 @@ paths:
                 $ref: "#/components/schemas/AdminPortalContext"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/admin-portal/saml:
     get:
       operationId: listPortalSamlConnections
@@ -6467,6 +7024,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     post:
       operationId: createPortalSamlConnection
       summary: Create connection (portal)
@@ -6488,14 +7047,20 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AdminPortalSAMLConnection"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "402":
           description: The organization's plan does not include enterprise SSO (billing.upgrade_required).
         "403":
           $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/admin-portal/saml/{id}:
     get:
       operationId: getPortalSamlConnection
@@ -6519,12 +7084,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AdminPortalSAMLConnection"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     patch:
       operationId: updatePortalSamlConnection
       description: Updates a SAML connection from the cookie-authenticated admin portal; the link's capabilities must include saml, and the change is confined to the organization bound to the portal session and is audited. It lets an external IT admin adjust IdP details without a Qeet ID account; validate the result with the portal test endpoint. A new IdP SSO URL or certificate is checked as on create (422 saml.sso_url_invalid, saml.certificate_invalid). A portal session is no person who could outrank anyone, so it changes what the connection trusts (a new idp_entity_id or idp_certificate) only while no administrator is linked to it (403 rbac.trust_change_outranks_caller otherwise).
@@ -6553,14 +7122,20 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AdminPortalSAMLConnection"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     delete:
       operationId: deletePortalSamlConnection
       description: Deletes a SAML connection from the cookie-authenticated admin portal; the link's capabilities must include saml, and the deletion is confined to the organization bound to the portal session and is audited. It mirrors the organization-admin delete-connection endpoint for an account-less external IT admin.
@@ -6579,12 +7154,16 @@ paths:
       responses:
         "204":
           description: Deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/admin-portal/saml/{id}/test:
     post:
       operationId: testPortalSamlConnection
@@ -6608,12 +7187,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TestResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/admin-portal/saml/{id}/test-sign-ins:
     post:
       operationId: startPortalSamlTestSignIn
@@ -6642,6 +7225,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SAMLTestSignIn"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -6650,6 +7235,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/admin-portal/saml/{id}/test-sign-ins/{testID}:
     get:
       operationId: getPortalSamlTestSignIn
@@ -6679,12 +7266,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SAMLTestSignIn"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/admin-portal/scim:
     get:
       operationId: getPortalScimConfig
@@ -6705,6 +7296,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/admin-portal/scim/token:
     post:
       operationId: replaceAllPortalScimTokens
@@ -6733,6 +7326,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     delete:
       operationId: revokeAllPortalScimTokens
       description: Revokes the organization's SCIM provisioning token from the cookie-authenticated admin portal, immediately stopping inbound SCIM provisioning until a new token is issued; the link's capabilities must include scim. To keep provisioning running, rotate to a fresh token instead with POST /v1/admin-portal/scim/token. Scoped to the organization bound to the portal session.
@@ -6748,6 +7343,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/admin-portal/domains:
     get:
       operationId: listPortalDomains
@@ -6775,6 +7372,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     post:
       operationId: claimPortalDomain
       summary: Claim a domain (portal)
@@ -6789,11 +7388,13 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required:
                 - domain
               properties:
                 domain:
                   type: string
+                  minLength: 1
       responses:
         "201":
           description: Domain claimed; publish the returned TXT record, then verify
@@ -6801,14 +7402,20 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Domain"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "409":
           $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/admin-portal/domains/{id}/verify:
     post:
       operationId: verifyPortalDomain
@@ -6832,6 +7439,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Domain"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -6842,6 +7451,8 @@ paths:
           $ref: "#/components/responses/Conflict"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/admin-portal/domains/{id}:
     patch:
       operationId: updatePortalDomain
@@ -6864,6 +7475,7 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required:
                 - sso_enabled
               properties:
@@ -6884,6 +7496,10 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 components:
   securitySchemes:
     bearerAuth:
@@ -7075,6 +7691,29 @@ components:
           type: array
           items:
             type: string
+    OAuthError:
+      type: object
+      description: An RFC 6749 §5.2 token error.
+      required:
+        - error
+      additionalProperties: false
+      properties:
+        error:
+          type: string
+          enum:
+            - invalid_request
+            - invalid_client
+            - invalid_grant
+            - unauthorized_client
+            - unsupported_grant_type
+            - invalid_scope
+            - invalid_target
+            - authorization_pending
+            - slow_down
+            - access_denied
+            - expired_token
+        error_description:
+          type: string
     OAuthTokenRequest:
       type: object
       required:
@@ -7153,31 +7792,9 @@ components:
         issued_token_type:
           type: string
           description: RFC 8693 token-exchange answers only; the type of the issued token, urn:ietf:params:oauth:token-type:access_token.
-    OAuthError:
-      type: object
-      description: An RFC 6749 §5.2 token error.
-      required:
-        - error
-      additionalProperties: false
-      properties:
-        error:
-          type: string
-          enum:
-            - invalid_request
-            - invalid_client
-            - invalid_grant
-            - unauthorized_client
-            - unsupported_grant_type
-            - invalid_scope
-            - invalid_target
-            - authorization_pending
-            - slow_down
-            - access_denied
-            - expired_token
-        error_description:
-          type: string
     OIDCClientCreate:
       type: object
+      additionalProperties: false
       required:
         - organization_id
         - name
@@ -7188,46 +7805,63 @@ components:
           format: uuid
         name:
           type: string
+          minLength: 1
         type:
           type: string
           enum:
             - public
             - confidential
         redirect_uris:
-          type: array
+          type:
+            - array
+            - "null"
           items:
             type: string
             format: uri
         post_logout_uris:
-          type: array
+          type:
+            - array
+            - "null"
           items:
             type: string
             format: uri
         grant_types:
-          type: array
+          type:
+            - array
+            - "null"
           description: "Any of authorization_code, refresh_token, urn:ietf:params:oauth:grant-type:device_code, token exchange (token_exchange or urn:ietf:params:oauth:grant-type:token-exchange; confidential only) and urn:openid:params:grant-type:ciba (confidential only). client_credentials is refused with oidc.grant_type_unsupported: a machine caller is a service principal, which gets its tokens from POST /v1/oauth/token."
           items:
             type: string
         scopes:
-          type: array
+          type:
+            - array
+            - "null"
           description: "The scopes the application may request. offline_access needs no entry: an application registered for refresh_token may always request it. Listing offline_access opts the application in to OpenID Connect Core §11: it then gets a refresh token only for a request granted offline_access, where otherwise every grant to an application registered for refresh_token comes with one."
           items:
             type: string
         backchannel_logout_uri:
-          type: string
+          type:
+            - string
+            - "null"
           format: uri
           description: Receives a signed logout token (OpenID Connect Back-Channel Logout, with sid) when someone the application signed in signs out; "" for none.
         frontchannel_logout_uri:
-          type: string
+          type:
+            - string
+            - "null"
           format: uri
           description: Loaded by the hosted signed-out page (with iss and sid) when someone the application signed in signs out; "" for none.
         logo_uri:
-          type: string
+          type:
+            - string
+            - "null"
           format: uri
           maxLength: 2048
           description: The application's logo, an https URL, shown on the hosted sign-in page; "" for none (set "" to clear).
         client_uri:
-          type: string
+          type:
+            - string
+            - "null"
           format: uri
           maxLength: 2048
           description: The application's home page, an https URL; the hosted sign-in page shows its host. "" for none (set "" to clear).
@@ -7346,6 +7980,7 @@ components:
           description: When the key became the active signing key; null for a candidate that never was, or a key the registry doesn't hold.
     ServicePrincipalCreate:
       type: object
+      additionalProperties: false
       required:
         - organization_id
         - name
@@ -7355,10 +7990,15 @@ components:
           format: uuid
         name:
           type: string
+          minLength: 1
         description:
-          type: string
+          type:
+            - string
+            - "null"
         scopes:
-          type: array
+          type:
+            - array
+            - "null"
           items:
             type: string
     ServicePrincipal:
@@ -7455,27 +8095,38 @@ components:
           description: When the device redeemed the approval for tokens; null until then.
     OIDCClientUpdate:
       type: object
+      additionalProperties: false
       description: Partial (COALESCE-style) update; omitted fields are left unchanged.
       properties:
         name:
-          type: string
+          type:
+            - string
+            - "null"
         redirect_uris:
-          type: array
+          type:
+            - array
+            - "null"
           items:
             type: string
             format: uri
         post_logout_uris:
-          type: array
+          type:
+            - array
+            - "null"
           items:
             type: string
             format: uri
         grant_types:
-          type: array
+          type:
+            - array
+            - "null"
           description: "Any of authorization_code, refresh_token, urn:ietf:params:oauth:grant-type:device_code, token exchange (token_exchange or urn:ietf:params:oauth:grant-type:token-exchange; confidential only) and urn:openid:params:grant-type:ciba (confidential only). client_credentials is refused with oidc.grant_type_unsupported: a machine caller is a service principal, which gets its tokens from POST /v1/oauth/token."
           items:
             type: string
         scopes:
-          type: array
+          type:
+            - array
+            - "null"
           description: "The scopes the application may request. offline_access needs no entry: an application registered for refresh_token may always request it. Listing offline_access opts the application in to OpenID Connect Core §11: it then gets a refresh token only for a request granted offline_access, where otherwise every grant to an application registered for refresh_token comes with one."
           items:
             type: string
@@ -7486,20 +8137,28 @@ components:
           format: date-time
           description: Sets (a date-time, within 90 days) or clears (null) a confidential application's PKCE exemption; omitted, unchanged.
         backchannel_logout_uri:
-          type: string
+          type:
+            - string
+            - "null"
           format: uri
           description: Receives a signed logout token (OpenID Connect Back-Channel Logout, with sid) when someone the application signed in signs out; "" for none.
         frontchannel_logout_uri:
-          type: string
+          type:
+            - string
+            - "null"
           format: uri
           description: Loaded by the hosted signed-out page (with iss and sid) when someone the application signed in signs out; "" for none.
         logo_uri:
-          type: string
+          type:
+            - string
+            - "null"
           format: uri
           maxLength: 2048
           description: The application's logo, an https URL, shown on the hosted sign-in page; "" for none (set "" to clear).
         client_uri:
-          type: string
+          type:
+            - string
+            - "null"
           format: uri
           maxLength: 2048
           description: The application's home page, an https URL; the hosted sign-in page shows its host. "" for none (set "" to clear).
@@ -7614,11 +8273,13 @@ components:
           format: uuid
     exchangeInput:
       type: object
+      additionalProperties: false
       required:
         - code
       properties:
         code:
           type: string
+          minLength: 1
     TokenPair:
       type: object
       required:
@@ -7681,6 +8342,11 @@ components:
     MFAChallenge:
       type: object
       description: "A sign-in stopped before its session: the account holds a second factor, or must have one — its organization requires MFA (of everyone, or of administrators) or it is marked as requiring it. Complete it at POST /v1/auth/mfa (token sign-in) or /v1/auth/session/mfa (hosted login). Each challenge is audited as auth.mfa_challenged with its reason (enrolled, organization_required, admin_required or user_required) and how the first factor was proven (password, magic_link, social or ldap); meeting it as auth.mfa_verified."
+      required:
+        - mfa_required
+        - mfa_token
+        - methods
+        - factors
       properties:
         mfa_required:
           type: boolean
@@ -7899,30 +8565,46 @@ components:
           format: date-time
     SAMLConnectionCreate:
       type: object
+      additionalProperties: false
       description: The name, with all of the IdP's entity ID, SSO URL and certificate, or none of them for a draft.
       required:
         - name
       properties:
         name:
           type: string
+          minLength: 1
         idp_entity_id:
-          type: string
+          type:
+            - string
+            - "null"
         idp_sso_url:
-          type: string
+          type:
+            - string
+            - "null"
           format: uri
         idp_certificate:
-          type: string
+          type:
+            - string
+            - "null"
           description: PEM or base64 DER X.509 signing certificate. On update it becomes the only certificate the connection trusts; add and remove certificates one at a time with the certificates endpoints.
         email_attribute:
-          type: string
+          type:
+            - string
+            - "null"
         name_attribute:
-          type: string
+          type:
+            - string
+            - "null"
         groups_attribute:
-          type: string
+          type:
+            - string
+            - "null"
           maxLength: 256
           description: The attribute carrying the person's groups; empty reads the common ones (see SAMLConnection). Over 256 characters is refused with 422 validation_failed.
         status:
-          type: string
+          type:
+            - string
+            - "null"
     SAMLAttributeMapping:
       type: object
       required:
@@ -8013,6 +8695,7 @@ components:
           format: date-time
     SAMLServiceProviderCreate:
       type: object
+      additionalProperties: false
       required:
         - name
         - entity_id
@@ -8020,61 +8703,93 @@ components:
       properties:
         name:
           type: string
+          minLength: 1
         entity_id:
           type: string
+          minLength: 1
         acs_url:
           type: string
           format: uri
         name_id_format:
-          type: string
+          type:
+            - string
+            - "null"
           description: urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress (the default), urn:oasis:names:tc:SAML:2.0:nameid-format:persistent or urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified
         name_id_attribute:
-          type: string
+          type:
+            - string
+            - "null"
           description: Where the NameID comes from — email, user_id, persistent_id or metadata.<key>; by default persistent_id for a persistent NameID and email otherwise
         certificate:
-          type: string
+          type:
+            - string
+            - "null"
           description: The app's own certificate (PEM). It must be kept for require_signed_requests, encrypt_assertions or both (422 saml.certificate_unused otherwise), and either needs one (422 saml.certificate_required); encryption needs an RSA key (422 saml.encryption_key_unsupported).
         require_signed_requests:
-          type: boolean
+          type:
+            - boolean
+            - "null"
           description: Refuse sign-in requests not signed with the certificate; off by default
         encrypt_assertions:
-          type: boolean
+          type:
+            - boolean
+            - "null"
           description: Encrypt each assertion to the certificate; off by default
         attributes:
-          type: array
+          type:
+            - array
+            - "null"
           maxItems: 50
           description: The attributes to send; absent sends the default email (from email) and name (from display_name), an empty list none
           items:
             $ref: "#/components/schemas/SAMLAttributeMapping"
         assignment_required:
-          type: boolean
+          type:
+            - boolean
+            - "null"
           description: Sign in only the people assigned to the SP; off by default
     SAMLConnectionImport:
       type: object
+      additionalProperties: false
       required:
         - name
       properties:
         name:
           type: string
+          minLength: 1
         metadata_url:
-          type: string
+          type:
+            - string
+            - "null"
           format: uri
           description: Where to fetch the IdP's metadata from, and refresh it from later. Give this or metadata_xml.
         metadata_xml:
-          type: string
+          type:
+            - string
+            - "null"
           description: The IdP's SAML 2.0 metadata document. Give this or metadata_url.
         idp_entity_id:
-          type: string
+          type:
+            - string
+            - "null"
           description: The entity id of the IdP to use, when the metadata describes several.
         email_attribute:
-          type: string
+          type:
+            - string
+            - "null"
         name_attribute:
-          type: string
+          type:
+            - string
+            - "null"
         groups_attribute:
-          type: string
+          type:
+            - string
+            - "null"
           description: The assertion attribute carrying a person's groups; empty reads the common ones.
         status:
-          type: string
+          type:
+            - string
+            - "null"
     SAMLServiceProviderAssignments:
       type: object
       properties:
@@ -8167,6 +8882,7 @@ components:
           format: date-time
     SSOGroupMappingCreate:
       type: object
+      additionalProperties: false
       required:
         - idp_group
         - group_id
@@ -8252,6 +8968,7 @@ components:
           format: date-time
     OIDCConnectionCreate:
       type: object
+      additionalProperties: false
       required:
         - name
         - issuer
@@ -8260,23 +8977,32 @@ components:
       properties:
         name:
           type: string
+          minLength: 1
         issuer:
           type: string
           format: uri
         discovery_url:
-          type: string
+          type:
+            - string
+            - "null"
         client_id:
           type: string
+          minLength: 1
         client_secret:
           type: string
+          minLength: 1
           writeOnly: true
         scopes:
-          type: array
+          type:
+            - array
+            - "null"
           maxItems: 20
           items:
             type: string
         allowed_idp_tenant_ids:
-          type: array
+          type:
+            - array
+            - "null"
           maxItems: 50
           items:
             type: string
@@ -8284,35 +9010,53 @@ components:
         claim_mapping:
           $ref: "#/components/schemas/OIDCClaimMapping"
         status:
-          type: string
+          type:
+            - string
+            - "null"
           enum:
             - draft
             - active
             - disabled
+            - null
           default: draft
     OIDCConnectionUpdate:
       type: object
+      additionalProperties: false
       properties:
         name:
-          type: string
+          type:
+            - string
+            - "null"
         issuer:
-          type: string
+          type:
+            - string
+            - "null"
           format: uri
         discovery_url:
-          type: string
+          type:
+            - string
+            - "null"
         client_id:
-          type: string
+          type:
+            - string
+            - "null"
         client_secret:
-          type: string
+          type:
+            - string
+            - "null"
           writeOnly: true
           description: A new client secret; absent or empty keeps the stored one.
         scopes:
-          type: array
+          type:
+            - array
+            - "null"
           maxItems: 20
           items:
             type: string
         allowed_idp_tenant_ids:
-          type: array
+          type:
+            - array
+            - "null"
           maxItems: 50
           items:
             type: string
@@ -8320,11 +9064,14 @@ components:
         claim_mapping:
           $ref: "#/components/schemas/OIDCClaimMapping"
         status:
-          type: string
+          type:
+            - string
+            - "null"
           enum:
             - draft
             - active
             - disabled
+            - null
     LdapConnection:
       type: object
       required:
@@ -8383,6 +9130,7 @@ components:
           type: string
     LdapCreateInput:
       type: object
+      additionalProperties: false
       required:
         - base_dn
         - bind_dn
@@ -8398,28 +9146,38 @@ components:
       properties:
         base_dn:
           type: string
+          minLength: 1
         bind_dn:
           type: string
+          minLength: 1
         bind_password:
           type: string
+          minLength: 1
         email_attribute:
           type: string
+          minLength: 1
         name:
           type: string
+          minLength: 1
         name_attribute:
           type: string
+          minLength: 1
         server_url:
           type: string
+          minLength: 1
         skip_tls_verify:
           type: boolean
         start_tls:
           type: boolean
         status:
           type: string
+          minLength: 1
         user_filter:
           type: string
+          minLength: 1
     LdapUpdateInput:
       type: object
+      additionalProperties: false
       required:
         - base_dn
         - bind_dn
@@ -8693,6 +9451,27 @@ components:
           items:
             type: object
             additionalProperties: true
+    SCIMError:
+      type: object
+      description: An RFC 7644 §3.12 SCIM error.
+      required:
+        - schemas
+        - status
+      properties:
+        schemas:
+          type: array
+          items:
+            type: string
+            enum:
+              - urn:ietf:params:scim:api:messages:2.0:Error
+        status:
+          type: string
+          example: "409"
+        scimType:
+          type: string
+          example: uniqueness
+        detail:
+          type: string
     SCIMGroup:
       type: object
       required:
@@ -8724,27 +9503,6 @@ components:
         meta:
           type: object
           additionalProperties: true
-    SCIMError:
-      type: object
-      description: An RFC 7644 §3.12 SCIM error.
-      required:
-        - schemas
-        - status
-      properties:
-        schemas:
-          type: array
-          items:
-            type: string
-            enum:
-              - urn:ietf:params:scim:api:messages:2.0:Error
-        status:
-          type: string
-          example: "409"
-        scimType:
-          type: string
-          example: uniqueness
-        detail:
-          type: string
     SCIMPatchOp:
       type: object
       required:
@@ -9304,6 +10062,15 @@ components:
               request_id: api-1/Kx9fQ2mW7a-000131
           schema:
             $ref: "#/components/schemas/Error"
+    PayloadTooLarge:
+      description: The body is larger than this API accepts (`request_body_too_large`).
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
     NotFound:
       description: Resource not found
       headers:
@@ -9394,8 +10161,53 @@ components:
               request_id: api-1/Kx9fQ2mW7a-000131
           schema:
             $ref: "#/components/schemas/Error"
+    SCIMBadRequest:
+      description: "RFC 7644 error: the request or a value in it is invalid, such as a malformed filter or PATCH operation (scimType names which, where RFC 7644 has one)."
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/scim+json:
+          schema:
+            $ref: "#/components/schemas/SCIMError"
+    SCIMUnauthorized:
+      description: "RFC 7644 error: no SCIM token was sent, or it is not one of an organization's active SCIM tokens."
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/scim+json:
+          schema:
+            $ref: "#/components/schemas/SCIMError"
+    SCIMForbidden:
+      description: "RFC 7644 error: the organization's plan does not include SCIM provisioning."
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/scim+json:
+          schema:
+            $ref: "#/components/schemas/SCIMError"
     SCIMConflict:
       description: "RFC 7644 error with scimType uniqueness: the externalId is taken, or a group without an externalId takes a displayName, ignoring case, that another group without one uses (including when the change clears the externalId)."
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/scim+json:
+          schema:
+            $ref: "#/components/schemas/SCIMError"
+    SCIMNotFound:
+      description: "RFC 7644 error: the organization has no such user or group."
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/scim+json:
+          schema:
+            $ref: "#/components/schemas/SCIMError"
+    SCIMUserConflict:
+      description: "RFC 7644 error: the userName is taken (scimType uniqueness), or is on a domain another organization manages."
       headers:
         X-Request-Id:
           $ref: "#/components/headers/RequestId"

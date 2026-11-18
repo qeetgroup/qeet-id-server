@@ -1,0 +1,99 @@
+delete:
+  operationId: removeGroupMember
+  summary: Remove member
+  tags:
+    - Groups
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: userID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  description: >-
+    Removes a user from a group. Requires group.write and a fresh second factor
+    (step-up). Removing takes the group's roles from them, so it is held to the
+    rule for giving them, as adding is (403 rbac.owner_only for a group holding
+    the owner role, 403 rbac.grant_exceeds_caller for one whose roles carry a
+    permission the caller lacks), and to their standing: nobody removes someone
+    who outranks them (403 rbac.target_is_owner or rbac.target_outranks_caller).
+    Someone whose identity provider still asserts a group mapped to this one
+    rejoins it at their next single sign-on.
+  responses:
+    "204":
+      description: No Content
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+post:
+  operationId: addGroupMember
+  summary: Add member
+  tags:
+    - Groups
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: userID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  description: >-
+    Adds a user to one of the caller's groups. The user must be a live member of
+    the caller's organization, or have it as their home organization; otherwise the call
+    answers 404 group.user_not_found, the same for a missing id as for another
+    organization's user. Adding someone already in the group is a no-op, except that a
+    membership a single sign-on made becomes the administrator's, so the
+    person's sign-ins no longer remove it. Joining a group gives its roles, so
+    the caller must hold every permission they carry (403
+    rbac.grant_exceeds_caller naming one), and only an owner adds someone to a
+    group holding the owner role (403 rbac.owner_only). Like the other routes
+    that hand out authority, it needs a recent step-up. Someone holding no role
+    who joins a group that carries one takes a seat; when the plan's seats are
+    all taken they are not added (402 billing.plan_limit, metadata resource
+    seats).
+  responses:
+    "204":
+      description: Added
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "402":
+      description: >-
+        The plan has no seat left for someone the group would give a first role
+        (billing.plan_limit).
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

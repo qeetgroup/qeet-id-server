@@ -1,0 +1,49 @@
+delete:
+  operationId: forgetUserTrustedDevice
+  summary: Forget one of a member's remembered devices
+  description: >-
+    Forgets one device a member has remembered in the caller's organization.
+    Requires the user.credentials permission; 404 for a device that is not
+    theirs there. Audited as auth.trusted_device_revoked. Refused with 403
+    rbac.target_is_owner when the member is an owner and the caller isn't, and
+    403 rbac.target_outranks_caller when they hold a permission the caller
+    doesn't.
+  tags:
+    - Users
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: deviceID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "200":
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              forgotten:
+                type: integer
+                description: How many devices were forgotten.
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

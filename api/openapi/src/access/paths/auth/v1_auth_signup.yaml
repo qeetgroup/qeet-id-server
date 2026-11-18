@@ -1,0 +1,64 @@
+post:
+  operationId: signUp
+  description: >-
+    Registers a new user from an email and password and returns a token pair
+    alongside the created user record. The password must meet the platform
+    baseline (8 characters), the offline strength baseline and, when enabled,
+    the breached-password check (422 naming the rule that failed). The new user
+    is organization-less: no organization is created here, so the returned token carries no
+    organization scope. Create an organization through the Identity Management API before any
+    organization-scoped call, after which the creator becomes the organization owner. An
+    address that already has an account is refused with a neutral 422
+    unprocessable that does not name the reason (it suggests signing in or
+    resetting the password), every attempt takes at least the same minimum time,
+    and the endpoint is rate limited. An address on a domain an organization has
+    verified gets the same answer and no account: that organization creates its
+    people's accounts. On a domain whose organization requires
+    single sign-on, the sign-up is refused with 403 auth.sso_required before
+    anything else is checked, and nothing is created: the identity provider
+    creates the account (see the SSORequired response).
+  summary: Sign up
+  tags:
+    - Auth
+  security: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        example:
+          email: ada@example.com
+          password: corr3ct-h0rse-battery
+          display_name: Ada Lovelace
+        schema:
+          $ref: ../../components/schemas/SignupRequest.yaml
+  responses:
+    "201":
+      description: Created; token pair + user
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+      content:
+        application/json:
+          example:
+            access_token: eyJhbGciOiJFUzI1NiIsImtpZCI6ImsxIn0.eyJzdWIiOiIwMThmMmE3MCJ9.FAKE-signature
+            token_type: Bearer
+            expires_at: "2026-09-24T11:15:00Z"
+            refresh_token: rt_2b9f4c7a1e6d8035b4c2a1908f7e6d5c
+            session_id: 018f2a70-5b6c-7d8e-9f01-2a3b4c5d6e7f
+            user_id: 018f2a70-1a2b-7c3d-9e4f-5a6b7c8d9e0f
+          schema:
+            $ref: ../../components/schemas/SignupResponse.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "403":
+      $ref: ../../components/responses/SSORequired.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+    "503":
+      $ref: ../../../shared/responses/Overloaded.yaml

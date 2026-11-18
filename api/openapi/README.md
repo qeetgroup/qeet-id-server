@@ -1,12 +1,13 @@
 # api/openapi/
 
 The Qeet ID REST contract: **five self-contained, bounded-context OpenAPI 3.1
-documents**. There is no monolithic `openapi.yaml`.
+documents**, one per bounded context of `internal/` and named for it. There is no monolithic
+`openapi.yaml`.
 
 | File                               | Context    | Surface                                                                                              |
 | ---------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------- |
-| [auth.yaml](auth.yaml)             | access     | Login/session, RBAC, ReBAC, MFA, passkeys, IP rules, auth/security policy, threats                   |
-| [management.yaml](management.yaml) | identity   | Users, organizations, groups, invites, verification, branding, domain verification                   |
+| [access.yaml](access.yaml)         | access     | Login/session, RBAC, ReBAC, MFA, passkeys, IP rules, auth/security policy, threats                   |
+| [identity.yaml](identity.yaml)     | identity   | Users, organizations, groups, invites, verification, branding, domain verification                   |
 | [federation.yaml](federation.yaml) | federation | OIDC, SAML, SCIM, LDAP, social login                                                                 |
 | [developer.yaml](developer.yaml)   | developer  | API keys, webhooks, secrets vault, verifiable credentials, auth hooks, agents                        |
 | [operations.yaml](operations.yaml) | operations | Audit, analytics, billing, GDPR, email templates, retention, log sinks (SIEM), notifications, health |
@@ -22,7 +23,7 @@ component its paths use, and every `$ref` in it points inside the same file.
 src/
 ├── shared/                         definitions used by more than one document
 │   ├── schemas/  responses/  parameters/  securitySchemes/
-├── developer/                      one folder per document (auth, management, …)
+├── developer/                      one folder per document (access, identity, …)
 │   ├── openapi.yaml                info, servers, tags, and the ordered list of paths
 │   ├── paths/<tag>/<path>.yaml     one file per path, holding all of its methods
 │   └── components/<section>/       definitions only this document uses

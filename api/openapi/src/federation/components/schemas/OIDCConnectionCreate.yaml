@@ -1,4 +1,5 @@
 type: object
+additionalProperties: false
 required:
   - name
   - issuer
@@ -7,23 +8,32 @@ required:
 properties:
   name:
     type: string
+    minLength: 1
   issuer:
     type: string
     format: uri
   discovery_url:
-    type: string
+    type:
+      - string
+      - "null"
   client_id:
     type: string
+    minLength: 1
   client_secret:
     type: string
+    minLength: 1
     writeOnly: true
   scopes:
-    type: array
+    type:
+      - array
+      - "null"
     maxItems: 20
     items:
       type: string
   allowed_idp_tenant_ids:
-    type: array
+    type:
+      - array
+      - "null"
     maxItems: 50
     items:
       type: string
@@ -31,9 +41,12 @@ properties:
   claim_mapping:
     $ref: ./OIDCClaimMapping.yaml
   status:
-    type: string
+    type:
+      - string
+      - "null"
     enum:
       - draft
       - active
       - disabled
+      - null
     default: draft

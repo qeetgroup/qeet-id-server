@@ -35,9 +35,13 @@ get:
   responses:
     "302":
       description: Redirect to the external IdP with an AuthnRequest
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "402":
       description: >-
         The organization's plan does not include enterprise SSO
         (billing.upgrade_required).
     "404":
       $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

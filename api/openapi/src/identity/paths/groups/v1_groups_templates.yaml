@@ -1,0 +1,93 @@
+get:
+  operationId: listGroupTemplates
+  summary: List group templates
+  tags:
+    - Groups
+  description: >-
+    Reusable group structures that can be applied to create a whole tree at
+    once.
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "200":
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - items
+            properties:
+              truncated:
+                $ref: ../../../shared/schemas/Truncated.yaml
+              items:
+                type: array
+                items:
+                  $ref: ../../components/schemas/GroupTemplate.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+post:
+  operationId: createGroupTemplate
+  summary: Create a group template
+  tags:
+    - Groups
+  description: >-
+    Stores a named tree of groups. Up to 6 levels deep and 200 groups. A
+    template that uses one group name twice, ignoring case and surrounding
+    spaces, answers 422 validation_failed (field nodes, code duplicate_name).
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          additionalProperties: false
+          required:
+            - name
+            - nodes
+          properties:
+            name:
+              type: string
+              minLength: 1
+            description:
+              type:
+                - string
+                - "null"
+            nodes:
+              type: array
+              minItems: 1
+              items:
+                $ref: ../../components/schemas/GroupTemplateNode.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "200":
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/GroupTemplate.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

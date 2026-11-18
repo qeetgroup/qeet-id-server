@@ -44,14 +44,19 @@ post:
       application/json:
         schema:
           type: object
+          additionalProperties: false
           properties:
             message:
-              type: string
+              type:
+                - string
+                - "null"
               description: >-
                 User text input for this turn (mutually exclusive with
                 tool_results).
             tool_results:
-              type: array
+              type:
+                - array
+                - "null"
               description: >-
                 Tool execution results from the previous turn (continuation
                 after client-side tool execution). Mutually exclusive with
@@ -74,7 +79,9 @@ post:
                       message:
                         type: string
             context:
-              type: object
+              type:
+                - object
+                - "null"
               description: >-
                 Console context for grounding (current route, selection).
                 Treated as untrusted; never used for authorization.
@@ -88,8 +95,12 @@ post:
         text/event-stream:
           schema:
             type: string
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
+    "402":
+      $ref: ../../../shared/responses/PaymentRequired.yaml
     "404":
       $ref: ../../../shared/responses/NotFound.yaml
     "409":
@@ -101,3 +112,7 @@ post:
         application/json:
           schema:
             $ref: ../../../shared/schemas/Error.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

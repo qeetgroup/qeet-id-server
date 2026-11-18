@@ -167,7 +167,9 @@ func SecurityHeaders(enableHSTS bool) func(http.Handler) http.Handler {
 			h.Set("X-Frame-Options", "DENY")
 			h.Set("X-Content-Type-Options", "nosniff")
 			h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
-			h.Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+			// form-action and base-uri don't fall back to default-src, so they are named: the API
+			// serves no forms of its own (the SAML pages that do set their own policy).
+			h.Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 			h.Set("Cross-Origin-Opener-Policy", "same-origin")
 			h.Set("Cross-Origin-Resource-Policy", "cross-origin")
 			h.Set("Permissions-Policy", permissionsPolicy)

@@ -1,0 +1,9 @@
+type:
+  - object
+  - "null"
+additionalProperties: false
+properties:
+  email:
+    type:
+      - string
+      - "null"

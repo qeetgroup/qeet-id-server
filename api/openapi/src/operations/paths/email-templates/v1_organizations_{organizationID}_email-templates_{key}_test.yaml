@@ -13,6 +13,7 @@ post:
       required: true
       schema:
         type: string
+        pattern: '^[^/\\]+$'
   description: >-
     Requires branding.write, a user principal with a verified active account,
     and a configured mail transport. The destination is resolved server-side,
@@ -26,13 +27,16 @@ post:
       application/json:
         schema:
           type: object
+          additionalProperties: false
           required:
             - draft
           properties:
             draft:
               $ref: ../../components/schemas/EmailEditorInput.yaml
             locale:
-              type: string
+              type:
+                - string
+                - "null"
   responses:
     "202":
       description: Mail transport accepted the test
@@ -45,12 +49,16 @@ post:
                 type: string
                 enum:
                   - accepted
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
     "403":
       $ref: ../../../shared/responses/Forbidden.yaml
     "404":
       $ref: ../../../shared/responses/NotFound.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
     "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
     "429":

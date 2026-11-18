@@ -23,11 +23,9 @@ get:
     - name: limit
       in: query
       required: false
-      description: Maximum events to return (1–200; default 50).
+      description: Page size, 1 to 200 (default 50). A larger value is lowered to 200; a smaller or malformed one gets the default.
       schema:
         type: integer
-        minimum: 1
-        maximum: 200
         default: 50
     - name: types
       in: query
@@ -89,6 +87,9 @@ get:
       description: Events from this address.
       schema:
         type: string
+        anyOf:
+          - format: ipv4
+          - format: ipv6
     - name: actor
       in: query
       required: false
@@ -150,3 +151,5 @@ get:
       $ref: ../../../shared/responses/Unauthorized.yaml
     "403":
       $ref: ../../../shared/responses/Forbidden.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

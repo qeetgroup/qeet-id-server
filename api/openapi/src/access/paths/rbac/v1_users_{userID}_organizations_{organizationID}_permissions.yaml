@@ -1,0 +1,51 @@
+get:
+  operationId: listEffectivePermissions
+  description: >-
+    Returns the flattened set of permission keys a user effectively holds in a
+    organization, combining direct role assignments with roles inherited through group
+    membership, and in grants every grant behind them: each permission with the
+    role granting it, held directly or through which group (one entry per role
+    and group, so a permission granted twice appears twice). Use it to explain
+    why a user can or cannot perform an action, complementing the
+    single-permission decision from the permission-check call. It is read-only
+    and reflects the grants in force at call time. Needs role.read.
+  summary: Effective permissions
+  tags:
+    - RBAC
+  parameters:
+    - name: userID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "200":
+      description: Effective permissions
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              permissions:
+                type: array
+                items:
+                  type: string
+              grants:
+                type: array
+                items:
+                  $ref: ../../components/schemas/AuthzGrantStep.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

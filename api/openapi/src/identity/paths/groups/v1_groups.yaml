@@ -1,0 +1,56 @@
+post:
+  operationId: createGroup
+  summary: Create group
+  tags:
+    - Groups
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: false
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/GroupCreateInput.yaml
+  description: >-
+    Creates a group in the caller's organization. A parent_id must name one of the
+    organization's own groups; otherwise the call answers 404 group.parent_not_found,
+    the same for a missing id as for another organization's group. The name is stored
+    trimmed, and a blank one answers 422 validation_failed. A name another of
+    the organization's groups already uses, ignoring case and surrounding
+    spaces, answers 409 group.name_exists; groups an identity provider
+    provisions over SCIM with an externalId don't count. Send an Idempotency-Key
+    header to retry it safely: a retry with the same key and body within 24
+    hours gets the first answer, marked Idempotent-Replayed: true; the same key
+    with another body answers 422 idempotency.key_reused, one still being
+    processed 409 idempotency.in_progress, and one whose first request stopped
+    before answering 409 idempotency.outcome_unknown: check whether it took
+    effect, then retry with a new key.
+  parameters:
+    - $ref: ../../../shared/parameters/IdempotencyKey.yaml
+  responses:
+    "201":
+      description: Created
+      headers:
+        Idempotent-Replayed:
+          $ref: ../../../shared/headers/IdempotentReplayed.yaml
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/Group.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "409":
+      $ref: ../../../shared/responses/Conflict.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

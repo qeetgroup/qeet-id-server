@@ -1,0 +1,39 @@
+type: object
+additionalProperties: false
+properties:
+  name:
+    type:
+      - string
+      - "null"
+    minLength: 1
+    maxLength: 200
+  status:
+    type:
+      - string
+      - "null"
+    enum:
+      - active
+      - suspended
+      - null
+  plan:
+    type:
+      - string
+      - "null"
+    enum:
+      - free
+      - pro
+      - enterprise
+      - null
+  region:
+    type:
+      - string
+      - "null"
+    description: >-
+      Read-only: the same value is accepted, as a form sends every field back;
+      another is refused with 422 organization.region_read_only.
+    maxLength: 64
+  metadata:
+    type:
+      - object
+      - "null"
+    additionalProperties: true

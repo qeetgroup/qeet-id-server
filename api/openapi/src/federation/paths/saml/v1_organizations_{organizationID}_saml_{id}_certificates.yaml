@@ -34,11 +34,13 @@ post:
       application/json:
         schema:
           type: object
+          additionalProperties: false
           required:
             - certificate
           properties:
             certificate:
               type: string
+              minLength: 1
               description: PEM or base64 DER X.509 signing certificate
   responses:
     "201":
@@ -57,5 +59,9 @@ post:
       $ref: ../../../shared/responses/NotFound.yaml
     "409":
       $ref: ../../../shared/responses/Conflict.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
     "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

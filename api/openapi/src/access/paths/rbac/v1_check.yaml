@@ -1,0 +1,98 @@
+get:
+  operationId: checkPermission
+  description: >-
+    Evaluates whether a user may use a permission in an organization, composing every
+    model: an ABAC deny policy (resource type and action read from the key, so
+    doc:write is resource doc, action write) refuses and stops; otherwise a role
+    granting the permission, or an ABAC allow policy, permits; otherwise it is
+    refused. An engine error refuses. The response names the deciding model and
+    rule in decided_by; the ABAC policy is named only to a caller holding
+    policy.read. Pass explain=true to add the role grant paths, a reason on
+    denial and the step-by-step trace. This is a read-only decision and changes
+    no state.
+  summary: Permission check
+  tags:
+    - RBAC
+  parameters:
+    - in: query
+      name: user_id
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - in: query
+      name: organization_id
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - in: query
+      name: permission
+      required: true
+      schema:
+        type: string
+    - in: query
+      name: explain
+      required: false
+      description: >-
+        When "true", also return the role grant path(s), a reason on denial and
+        the decision's trace.
+      schema:
+        type: string
+        enum:
+          - "true"
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "200":
+      description: >-
+        Decision: {allowed, decided_by}. With explain=true also paths, reason
+        (on denial) and trace.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              allowed:
+                type: boolean
+              decided_by:
+                $ref: ../../components/schemas/AuthzDecidedBy.yaml
+              paths:
+                type: array
+                items:
+                  $ref: ../../components/schemas/AuthzGrantStep.yaml
+              reason:
+                type: string
+                description: >-
+                  Set only on a denial, with explain=true, in English. Show
+                  reason_code's meaning instead.
+              reason_code:
+                type: string
+                enum:
+                  - authz.no_role_grant
+                  - authz.denied_by_policy
+                  - authz.attribute_absent
+                  - authz.condition_error
+                description: >-
+                  Set with reason. authz.no_role_grant when no role grants the
+                  permission; an ABAC code when a policy refused it.
+              reason_params:
+                type: object
+                additionalProperties: true
+                description: >-
+                  With an ABAC code, the policy (policy_id, policy_name,
+                  priority), to a caller holding policy.read.
+              trace:
+                type: array
+                items:
+                  type: string
+                description: >-
+                  With explain=true. Each step in order, prefixed with its model
+                  (organization, abac, rbac, rebac, none).
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

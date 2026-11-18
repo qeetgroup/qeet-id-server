@@ -20,11 +20,9 @@ get:
     - name: limit
       in: query
       required: false
-      description: Page size. Defaults to 50; the server clamps values above 200.
+      description: Page size, 1 to 200 (default 50). A larger value is lowered to 200; a smaller or malformed one gets the default.
       schema:
         type: integer
-        minimum: 1
-        maximum: 200
         default: 50
     - $ref: ../../../shared/parameters/Cursor.yaml
   security:
@@ -44,7 +42,11 @@ get:
                 type: array
                 items:
                   $ref: ../../components/schemas/AuditAnomaly.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
     "403":
       $ref: ../../../shared/responses/Forbidden.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -10,6 +10,7 @@ delete:
       required: true
       schema:
         type: string
+        pattern: '^[^/\\]+$'
   security:
     - bearerAuth: []
     - apiKeyAuth: []
@@ -23,6 +24,8 @@ delete:
         application/json:
           schema:
             $ref: ../../components/schemas/EmailResolvedTemplate.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
     "403":
@@ -45,6 +48,7 @@ get:
       required: true
       schema:
         type: string
+        pattern: '^[^/\\]+$'
   security:
     - bearerAuth: []
     - apiKeyAuth: []
@@ -58,6 +62,8 @@ get:
         application/json:
           schema:
             $ref: ../../components/schemas/EmailResolvedTemplate.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
     "403":
@@ -80,6 +86,7 @@ put:
       required: true
       schema:
         type: string
+        pattern: '^[^/\\]+$'
   security:
     - bearerAuth: []
     - apiKeyAuth: []
@@ -104,12 +111,16 @@ put:
         application/json:
           schema:
             $ref: ../../components/schemas/EmailResolvedTemplate.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
     "403":
       $ref: ../../../shared/responses/Forbidden.yaml
     "404":
       $ref: ../../../shared/responses/NotFound.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
     "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
     "429":

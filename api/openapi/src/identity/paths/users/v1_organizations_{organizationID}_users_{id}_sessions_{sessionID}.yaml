@@ -1,0 +1,46 @@
+delete:
+  operationId: revokeUserSession
+  tags:
+    - Users
+  summary: End one of a user's sessions
+  description: >-
+    Ends one of the user's live sessions, as GET /v1/users/{id}/sessions lists
+    them: one in the caller's organization, or an account-level one when it is
+    the user's home organization. Its refresh tokens stop working at once;
+    access tokens it was issued are refused as the session's end is noticed.
+    Requires session.revoke. The person must not outrank the caller: only an
+    owner signs out an owner (403 rbac.target_is_owner), and the caller must
+    hold every permission the person holds here (403 rbac.target_outranks_caller
+    naming one). A session that isn't theirs there, or has already ended,
+    answers 404. Audited as session.admin_revoked with the session's ID, and
+    announced to session.revoked subscribers with reason admin_revoked.
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: sessionID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    "204":
+      description: Ended
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

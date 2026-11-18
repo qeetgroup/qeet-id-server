@@ -1,4 +1,5 @@
 type: object
+additionalProperties: false
 required:
   - events
   - url
@@ -10,8 +11,11 @@ properties:
     items:
       type: string
   organization_id:
-    type: string
+    type:
+      - string
+      - "null"
     format: uuid
     description: Ignored; the organization is the caller's.
   url:
     type: string
+    minLength: 1

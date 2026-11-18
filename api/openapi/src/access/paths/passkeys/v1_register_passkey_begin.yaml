@@ -1,0 +1,72 @@
+post:
+  operationId: beginPasskeySignUpInOrganization
+  description: >-
+    Starts the passwordless counterpart to hosted organization signup, returning the
+    WebAuthn credential-creation options for a passkey scoped to the supplied
+    organization. It is gated by the organization's self-registration policy and is refused
+    when self-registration is disabled. Finish the ceremony by returning the
+    signed attestation to the organization-scoped passkey-register finish call. Where
+    the organization has passkeys switched off, it is refused with 403
+    passkey.disabled before a ceremony starts. The answer here is the same
+    whether or not the address has an account, and starting claims nothing; an
+    address already taken, or on a domain another organization has verified
+    (only that organization creates accounts there), is refused at the finish
+    call with the neutral 422 unprocessable of POST /v1/auth/signup, which does
+    not name the reason. Every attempt here takes at least the same minimum
+    time. On a domain whose organization
+    requires single sign-on, the ceremony is refused with 403 auth.sso_required
+    and nothing is created (see the SSORequired response).
+  summary: Passkey-first signup begin (organization-scoped hosted signup)
+  tags:
+    - Passkeys
+  security: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          additionalProperties: false
+          required:
+            - organization_id
+            - email
+          properties:
+            organization_id:
+              type: string
+              format: uuid
+            email:
+              type: string
+              minLength: 1
+            display_name:
+              type:
+                - string
+                - "null"
+    description: >-
+      Starts a passwordless counterpart to POST /auth/register — gated by the
+      organization's self_registration_enabled policy.
+  responses:
+    "200":
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - publicKey
+              - session_id
+            properties:
+              publicKey:
+                $ref: ../../../shared/schemas/PublicKeyCredentialCreationOptions.yaml
+              session_id:
+                type: string
+                format: uuid
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "403":
+      $ref: ../../../shared/responses/Forbidden.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "422":
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

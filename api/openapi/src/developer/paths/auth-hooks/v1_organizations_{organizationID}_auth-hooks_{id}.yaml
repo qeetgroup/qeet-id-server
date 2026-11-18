@@ -28,17 +28,26 @@ patch:
       application/json:
         schema:
           type: object
+          additionalProperties: false
           properties:
             url:
-              type: string
+              type:
+                - string
+                - "null"
               format: uri
             secret:
-              type: string
+              type:
+                - string
+                - "null"
               description: A new signing secret; write-only.
             enabled:
-              type: boolean
+              type:
+                - boolean
+                - "null"
             fail_open:
-              type: boolean
+              type:
+                - boolean
+                - "null"
               description: >-
                 What a sign-in does when the hook gives no answer: it can't be
                 read, its signing secret can't be opened, the call fails or
@@ -63,12 +72,18 @@ patch:
                 type: boolean
               fail_open:
                 type: boolean
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
     "403":
       $ref: ../../../shared/responses/Forbidden.yaml
     "404":
       $ref: ../../../shared/responses/NotFound.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
 delete:
   operationId: deleteAuthHook
   description: Deletes an authentication hook so it no longer runs during auth flows.
@@ -89,9 +104,13 @@ delete:
   responses:
     "204":
       description: Removed
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
     "403":
       $ref: ../../../shared/responses/Forbidden.yaml
     "404":
       $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

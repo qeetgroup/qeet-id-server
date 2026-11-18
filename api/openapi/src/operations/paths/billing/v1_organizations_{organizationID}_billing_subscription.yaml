@@ -28,6 +28,8 @@ get:
         application/json:
           schema:
             $ref: ../../components/schemas/Subscription.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
     "403":
@@ -54,14 +56,17 @@ put:
       application/json:
         schema:
           type: object
+          additionalProperties: false
           required:
             - currency
             - plan_code
           properties:
             currency:
               type: string
+              minLength: 1
             plan_code:
               type: string
+              minLength: 1
   description: >-
     Puts the organization on plan_code, priced in currency; no payment is taken here.
     A free plan starts a new period with a zero invoice. A paid plan that costs
@@ -80,6 +85,8 @@ put:
         application/json:
           schema:
             $ref: ../../components/schemas/Subscription.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
     "402":
@@ -88,6 +95,8 @@ put:
       $ref: ../../../shared/responses/Forbidden.yaml
     "404":
       $ref: ../../../shared/responses/NotFound.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
     "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
     "429":

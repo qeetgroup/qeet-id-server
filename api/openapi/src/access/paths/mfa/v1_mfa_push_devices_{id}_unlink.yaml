@@ -1,0 +1,49 @@
+post:
+  operationId: unlinkPushDevice
+  summary: Unlink this phone
+  description: >-
+    Called by the mobile app to remove the phone it runs on from the account,
+    proving it is that device with the device_token it was given when linked
+    (the app holds no signed-in session). Works with a credential past its
+    expiry, since removing itself grants nothing. 401 mfa.push_unauthorized when
+    the device or credential does not match. Audited as
+    mfa.push_device_unlinked. The account holder is emailed that it happened,
+    with what to do if it wasn't them.
+  tags:
+    - MFA
+  security: []
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          additionalProperties: false
+          required:
+            - user_id
+            - device_token
+          properties:
+            user_id:
+              type: string
+              format: uuid
+            device_token:
+              type: string
+              minLength: 1
+  responses:
+    "204":
+      description: The phone is no longer linked
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

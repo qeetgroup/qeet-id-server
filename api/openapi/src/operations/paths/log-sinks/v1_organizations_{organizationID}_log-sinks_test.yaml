@@ -20,6 +20,7 @@ post:
       application/json:
         schema:
           type: object
+          additionalProperties: false
           required:
             - type
             - endpoint
@@ -34,7 +35,9 @@ post:
               type: string
               format: uri
             token:
-              type: string
+              type:
+                - string
+                - "null"
               writeOnly: true
   responses:
     "200":
@@ -64,3 +67,7 @@ post:
       $ref: ../../../shared/responses/Unauthorized.yaml
     "403":
       $ref: ../../../shared/responses/Forbidden.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

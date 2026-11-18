@@ -26,6 +26,7 @@ post:
       application/json:
         schema:
           type: object
+          additionalProperties: false
           required:
             - email
           properties:
@@ -88,6 +89,8 @@ post:
                         posts the same user name and password for its session.
     "400":
       $ref: ../../../shared/responses/BadRequest.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
     "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
     "429":

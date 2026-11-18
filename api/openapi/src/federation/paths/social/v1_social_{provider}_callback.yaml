@@ -57,10 +57,13 @@ get:
       required: true
       schema:
         type: string
+        pattern: '^[^/\\]+$'
   security: []
   responses:
     "302":
       description: OK
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "404":
       $ref: ../../../shared/responses/NotFound.yaml
     "422":
@@ -83,6 +86,7 @@ post:
       required: true
       schema:
         type: string
+        pattern: '^[^/\\]+$'
   requestBody:
     required: true
     content:
@@ -104,3 +108,5 @@ post:
       $ref: ../../../shared/responses/BadRequest.yaml
     "413":
       description: Form body too large
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

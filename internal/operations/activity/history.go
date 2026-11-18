@@ -169,24 +169,29 @@ func parseListFilter(r *http.Request) (ListFilter, error) {
 		}
 		f.IP = &addr
 	}
+	// A filter that doesn't parse is refused, as resource_id and ip are: dropping it would answer
+	// unfiltered events as if they matched.
 	if raw := r.URL.Query().Get("actor"); raw != "" {
-		if id, err := uuid.Parse(raw); err == nil {
-			f.ActorID = id
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			return ListFilter{}, errs.ErrBadRequest.WithDetail("invalid actor")
 		}
+		f.ActorID = id
 	}
 	if raw := r.URL.Query().Get("subject"); raw != "" {
-		if id, err := uuid.Parse(raw); err == nil {
-			f.Subject = &id
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			return ListFilter{}, errs.ErrBadRequest.WithDetail("invalid subject")
 		}
+		f.Subject = &id
 	}
-	if raw := r.URL.Query().Get("from"); raw != "" {
-		if t, err := time.Parse(time.RFC3339, raw); err == nil {
-			f.From = &t
-		}
-	}
-	if raw := r.URL.Query().Get("to"); raw != "" {
-		if t, err := time.Parse(time.RFC3339, raw); err == nil {
-			f.To = &t
+	for name, at := range map[string]**time.Time{"from": &f.From, "to": &f.To} {
+		if raw := r.URL.Query().Get(name); raw != "" {
+			t, err := time.Parse(time.RFC3339, raw)
+			if err != nil {
+				return ListFilter{}, errs.ErrBadRequest.WithDetail(name + " must be an RFC 3339 time")
+			}
+			*at = &t
 		}
 	}
 	return f, nil

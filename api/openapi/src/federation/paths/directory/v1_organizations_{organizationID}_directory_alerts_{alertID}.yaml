@@ -24,20 +24,29 @@ patch:
       application/json:
         schema:
           type: object
+          additionalProperties: false
           properties:
             name:
-              type: string
+              type:
+                - string
+                - "null"
               minLength: 1
               maxLength: 100
             connection_id:
-              type: string
+              type:
+                - string
+                - "null"
               description: A connection of the organization, or "" for every connection.
             threshold:
-              type: integer
+              type:
+                - integer
+                - "null"
               minimum: 1
               maximum: 100
             enabled:
-              type: boolean
+              type:
+                - boolean
+                - "null"
   responses:
     "200":
       description: The alert as changed
@@ -53,6 +62,10 @@ patch:
       description: Organization mismatch or missing connection.write
     "404":
       description: No such alert in the organization, or an unknown connection
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
 delete:
   operationId: deleteDirectoryAlert
   summary: Remove a directory failure alert
@@ -75,9 +88,13 @@ delete:
   responses:
     "204":
       description: Removed
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       description: Authentication required
     "403":
       description: Organization mismatch or missing connection.write
     "404":
       description: No such alert in the organization
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

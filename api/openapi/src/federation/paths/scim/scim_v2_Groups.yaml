@@ -34,9 +34,13 @@ get:
           schema:
             $ref: ../../components/schemas/SCIMListResponse.yaml
     "400":
-      $ref: ../../../shared/responses/BadRequest.yaml
+      $ref: ../../components/responses/SCIMBadRequest.yaml
     "401":
-      $ref: ../../../shared/responses/Unauthorized.yaml
+      $ref: ../../components/responses/SCIMUnauthorized.yaml
+    "403":
+      $ref: ../../components/responses/SCIMForbidden.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
 post:
   operationId: createScimGroup
   description: >-
@@ -65,8 +69,12 @@ post:
           schema:
             $ref: ../../components/schemas/SCIMGroup.yaml
     "400":
-      $ref: ../../../shared/responses/BadRequest.yaml
+      $ref: ../../components/responses/SCIMBadRequest.yaml
     "401":
-      $ref: ../../../shared/responses/Unauthorized.yaml
+      $ref: ../../components/responses/SCIMUnauthorized.yaml
+    "403":
+      $ref: ../../components/responses/SCIMForbidden.yaml
     "409":
       $ref: ../../components/responses/SCIMConflict.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

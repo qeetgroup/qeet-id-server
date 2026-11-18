@@ -93,6 +93,9 @@ get:
       required: false
       schema:
         type: string
+        anyOf:
+          - format: ipv4
+          - format: ipv6
     - name: bucket
       in: query
       required: false
@@ -113,7 +116,11 @@ get:
         application/json:
           schema:
             $ref: ../../components/schemas/ActivitySummaryResponse.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
     "403":
       $ref: ../../../shared/responses/Forbidden.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -1,4 +1,5 @@
 type: object
+additionalProperties: false
 required:
   - organization_id
   - name
@@ -16,7 +17,9 @@ properties:
     minLength: 1
     maxLength: 200
   scopes:
-    type: array
+    type:
+      - array
+      - "null"
     items:
       type: string
   expires_at:

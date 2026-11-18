@@ -232,6 +232,12 @@ func (h *Handler) magicResend(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	// An empty token names no link, so it is refused like any invalid one; the neutral answer below
+	// is for a well-formed token, which can't reveal whether the link exists.
+	if strings.TrimSpace(in.Token) == "" {
+		httpx.WriteError(w, r, ErrMagicLinkInvalid)
+		return
+	}
 	if err := h.Service.ResendMagicLink(r.Context(), in.Token, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return

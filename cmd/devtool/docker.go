@@ -77,6 +77,67 @@ func seedReset() error {
 	return run("go", "run", "./cmd/seed")
 }
 
+// k6Image is the pinned k6 that runs the load test; K6_IMAGE overrides it.
+func k6Image() string {
+	return envOr("K6_IMAGE", "grafana/k6:2.3.0@sha256:2dd4756ec6e14e62778916e1eb850108e4b499304c02df56760fa0bdb0fba0b8")
+}
+
+// loadTest runs tests/load/load.js against a running local server (make dev) with k6 in Docker, and
+// writes its summary to bin/reports/load-summary.json. LOAD_BASE_URL and LOAD_DURATION override
+// where and how long; it fails when a service level objective is missed.
+func loadTest() error {
+	dir, err := repoDir()
+	if err != nil {
+		return err
+	}
+	reports := filepath.Join(dir, "bin", "reports")
+	if err := os.MkdirAll(reports, 0o750); err != nil {
+		return err
+	}
+	base := envOr("LOAD_BASE_URL", "http://host.docker.internal:"+envOr("HTTP_PORT", "4001"))
+	return run("docker", "run", "--rm", "--add-host=host.docker.internal:host-gateway",
+		"-v", filepath.Join(dir, "tests", "load")+":/scripts:ro", "-v", reports+":/reports",
+		"-e", "BASE_URL="+base, "-e", "DURATION="+envOr("LOAD_DURATION", "1m"),
+		k6Image(), "run", "--summary-export=/reports/load-summary.json", "/scripts/load.js")
+}
+
+// The pinned SonarQube scanner; SONAR_SCANNER_IMAGE overrides it.
+func sonarScannerImage() string {
+	return envOr("SONAR_SCANNER_IMAGE", "sonarsource/sonar-scanner-cli:12.3.1.4302_8.3.1@sha256:38207bba3d98c8ce6f6c051ea2b9f05a24480da78c9ee5945ceafc3d9de02b88")
+}
+
+func sonarUp() error {
+	if err := run("docker", "compose", "--profile", "sonar", "up", "-d", "sonarqube"); err != nil {
+		return err
+	}
+	fmt.Printf("SonarQube http://localhost:%s (first sign-in admin / admin; it starts in about a minute). "+
+		"Create a token under My Account › Security, set SONAR_TOKEN in .env, then run make sonar.\n", envOr("SONAR_PORT", "9000"))
+	return nil
+}
+
+func sonarDown() error { return run("docker", "compose", "--profile", "sonar", "stop", "sonarqube") }
+
+// sonar runs the unit tests for coverage, then the SonarQube scanner (Docker) over the repository
+// with sonar-project.properties. SONAR_TOKEN is passed to the scanner by name, never on its command line.
+func sonar() error {
+	if os.Getenv("SONAR_TOKEN") == "" {
+		return errors.New("SONAR_TOKEN is unset: create a token in SonarQube (My Account › Security) and set it in .env")
+	}
+	dir, err := repoDir()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "bin", "reports"), 0o750); err != nil {
+		return err
+	}
+	if err := run("go", "test", "-count=1", "-coverprofile="+filepath.Join("bin", "reports", "coverage.out"), "./..."); err != nil {
+		return err
+	}
+	host := envOr("SONAR_HOST_URL", "http://host.docker.internal:"+envOr("SONAR_PORT", "9000"))
+	return run("docker", "run", "--rm", "--add-host=host.docker.internal:host-gateway",
+		"-e", "SONAR_HOST_URL="+host, "-e", "SONAR_TOKEN", "-v", dir+":/usr/src", sonarScannerImage())
+}
+
 // obsServices are the local observability stack's services (docker-compose.yml, profile observability).
 var obsServices = []string{"otel-collector", "prometheus", "alertmanager", "loki", "tempo", "pyroscope", "alloy", "grafana", "postgres-exporter", "blackbox-exporter"}
 

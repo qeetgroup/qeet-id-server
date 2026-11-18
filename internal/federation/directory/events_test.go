@@ -34,7 +34,7 @@ func TestOperationClassificationAndFilterBounds(test *testing.T) {
 			test.Fatalf("sign-in status %d classified %s/%s, want a critical failure", status, outcome, severity)
 		}
 	}
-	for _, query := range []string{"days=0", "days=91", "limit=0", "limit=101", "cursor=not-a-cursor", "status=invalid"} {
+	for _, query := range []string{"days=0", "days=91", "cursor=not-a-cursor", "status=invalid"} {
 		if _, err := parseEventFilter(httptest.NewRequest(http.MethodGet, "/?"+query, nil)); err == nil {
 			test.Fatalf("accepted invalid filter %s", query)
 		}
@@ -43,5 +43,11 @@ func TestOperationClassificationAndFilterBounds(test *testing.T) {
 	filter, err := parseEventFilter(httptest.NewRequest(http.MethodGet, "/?days=30&limit=50&cursor="+paging.EncodeTimeUUID(at, id)+"&status=failed", nil))
 	if err != nil || filter.Limit != 50 || !filter.After.Set || !filter.After.Time.Equal(at) || filter.After.ID != id || filter.Status != "failed" {
 		test.Fatalf("invalid parsed filter: %+v %v", filter, err)
+	}
+	// A limit out of range is brought into it, as on every list: the default for 0, the maximum above it.
+	for query, want := range map[string]int{"limit=0": 25, "limit=101": 100} {
+		if filter, err := parseEventFilter(httptest.NewRequest(http.MethodGet, "/?"+query, nil)); err != nil || filter.Limit != want {
+			test.Errorf("%s: limit %d, %v; want %d", query, filter.Limit, err, want)
+		}
 	}
 }

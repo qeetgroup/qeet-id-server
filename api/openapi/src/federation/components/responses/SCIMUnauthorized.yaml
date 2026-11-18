@@ -1,0 +1,10 @@
+description: >-
+  RFC 7644 error: no SCIM token was sent, or it is not one of an organization's
+  active SCIM tokens.
+headers:
+  X-Request-Id:
+    $ref: ../../../shared/headers/RequestId.yaml
+content:
+  application/scim+json:
+    schema:
+      $ref: ../schemas/SCIMError.yaml

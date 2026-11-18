@@ -1,0 +1,6 @@
+name: limit
+in: query
+required: false
+schema:
+  type: integer
+description: Page size, 1 to 200. A larger value is lowered to 200; a smaller or malformed one gets the default.

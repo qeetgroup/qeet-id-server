@@ -8,11 +8,9 @@ get:
     - name: limit
       in: query
       required: false
-      description: Page size, 1 to 200; 50 by default.
+      description: Page size, 1 to 200. A larger value is lowered to 200; a smaller or malformed one gets the default.
       schema:
         type: integer
-        minimum: 1
-        maximum: 200
     - name: cursor
       in: query
       required: false

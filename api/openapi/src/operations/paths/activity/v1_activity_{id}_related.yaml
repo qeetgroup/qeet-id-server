@@ -19,13 +19,9 @@ get:
     - name: window
       in: query
       required: false
-      description: >-
-        Half-width of the same-actor correlation window in seconds (60–3600;
-        default 300).
+      description: 60 to 3600 (default 300); a larger value is lowered to 3600.
       schema:
         type: integer
-        minimum: 60
-        maximum: 3600
         default: 300
   security:
     - bearerAuth: []
@@ -45,3 +41,5 @@ get:
       $ref: ../../../shared/responses/Forbidden.yaml
     "404":
       $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

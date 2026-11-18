@@ -1,20 +1,29 @@
 type: object
+additionalProperties: false
 description: Partial (COALESCE-style) update; omitted fields are left unchanged.
 properties:
   name:
-    type: string
+    type:
+      - string
+      - "null"
   redirect_uris:
-    type: array
+    type:
+      - array
+      - "null"
     items:
       type: string
       format: uri
   post_logout_uris:
-    type: array
+    type:
+      - array
+      - "null"
     items:
       type: string
       format: uri
   grant_types:
-    type: array
+    type:
+      - array
+      - "null"
     description: >-
       Any of authorization_code, refresh_token,
       urn:ietf:params:oauth:grant-type:device_code, token exchange
@@ -26,7 +35,9 @@ properties:
     items:
       type: string
   scopes:
-    type: array
+    type:
+      - array
+      - "null"
     description: >-
       The scopes the application may request. offline_access needs no entry: an
       application registered for refresh_token may always request it. Listing
@@ -45,26 +56,34 @@ properties:
       Sets (a date-time, within 90 days) or clears (null) a confidential
       application's PKCE exemption; omitted, unchanged.
   backchannel_logout_uri:
-    type: string
+    type:
+      - string
+      - "null"
     format: uri
     description: >-
       Receives a signed logout token (OpenID Connect Back-Channel Logout, with
       sid) when someone the application signed in signs out; "" for none.
   frontchannel_logout_uri:
-    type: string
+    type:
+      - string
+      - "null"
     format: uri
     description: >-
       Loaded by the hosted signed-out page (with iss and sid) when someone the
       application signed in signs out; "" for none.
   logo_uri:
-    type: string
+    type:
+      - string
+      - "null"
     format: uri
     maxLength: 2048
     description: >-
       The application's logo, an https URL, shown on the hosted sign-in page; ""
       for none (set "" to clear).
   client_uri:
-    type: string
+    type:
+      - string
+      - "null"
     format: uri
     maxLength: 2048
     description: >-

@@ -104,8 +104,14 @@ func (h *Handler) deleteSelf(w http.ResponseWriter, r *http.Request) {
 	// A stolen access token alone must not delete the account: require the
 	// password when the account has one. Password-less (social or passkey)
 	// accounts pass on the session alone.
+	// The body is optional (a password-less account sends none), but one that is sent must be valid.
 	var in deleteSelfInput
-	_ = httpx.DecodeJSON(r, &in)
+	if r.ContentLength != 0 {
+		if err := httpx.DecodeJSON(r, &in); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+	}
 	hasPassword, ok, err := h.reauth.ReauthPassword(r.Context(), *p.UserID, in.Password)
 	if err != nil {
 		httpx.WriteError(w, r, err)

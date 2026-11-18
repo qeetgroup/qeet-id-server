@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"reflect"
-	"strconv"
 	"strings"
 	"time"
 
@@ -100,13 +99,7 @@ func parseSuspensionFilters(request *http.Request) (SuspensionFilters, error) {
 	if !validSuspensionValue(filter.Review, "", "pending", "reviewed", "external") {
 		return filter, errs.ErrBadRequest
 	}
-	if raw := query.Get("limit"); raw != "" {
-		value, err := strconv.Atoi(raw)
-		if err != nil || value < 1 || value > 100 {
-			return filter, errs.ErrBadRequest
-		}
-		filter.Limit = value
-	}
+	filter.Limit = paging.Limit(query, filter.Limit, 100)
 	after, err := paging.ParseCursor(query)
 	if err != nil {
 		return filter, err

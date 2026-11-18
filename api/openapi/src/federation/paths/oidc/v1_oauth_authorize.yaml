@@ -135,6 +135,8 @@ get:
       $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
 post:
   operationId: authorizeWithPost
   description: >-
@@ -192,3 +194,7 @@ post:
       description: Redirect to the GET form of the same authorization request
     "400":
       $ref: ../../../shared/responses/BadRequest.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -28,3 +28,5 @@ get:
                 type: integer
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

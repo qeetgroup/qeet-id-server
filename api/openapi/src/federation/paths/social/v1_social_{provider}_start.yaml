@@ -9,6 +9,7 @@ get:
       required: true
       schema:
         type: string
+        pattern: '^[^/\\]+$'
   security: []
   description: >-
     Begins a social sign-in and redirects the browser to the provider. ?organization
@@ -21,6 +22,8 @@ get:
   responses:
     "302":
       description: OK
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "404":
       $ref: ../../../shared/responses/NotFound.yaml
     "422":

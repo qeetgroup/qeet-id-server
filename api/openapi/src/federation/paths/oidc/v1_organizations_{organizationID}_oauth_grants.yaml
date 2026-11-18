@@ -25,11 +25,9 @@ get:
     - name: limit
       in: query
       required: false
-      description: Page size, 1 to 500; 100 by default.
+      description: Page size, 1 to 500. A larger value is lowered to 500; a smaller or malformed one gets the default.
       schema:
         type: integer
-        minimum: 1
-        maximum: 500
     - name: cursor
       in: query
       required: false
@@ -67,3 +65,5 @@ get:
       $ref: ../../../shared/responses/Forbidden.yaml
     "404":
       $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -1,0 +1,18 @@
+type: object
+additionalProperties: false
+required:
+  - email
+  - role_id
+  - organization_id
+properties:
+  email:
+    type: string
+    minLength: 1
+  role_id:
+    type:
+      - string
+      - "null"
+    format: uuid
+  organization_id:
+    type: string
+    format: uuid

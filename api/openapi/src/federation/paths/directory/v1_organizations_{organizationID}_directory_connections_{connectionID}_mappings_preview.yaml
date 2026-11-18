@@ -16,12 +16,14 @@ post:
       required: true
       schema:
         type: string
+        pattern: '^[^/\\]+$'
   requestBody:
     required: true
     content:
       application/json:
         schema:
           type: object
+          additionalProperties: false
           required:
             - source
           properties:
@@ -124,3 +126,5 @@ post:
       description: Connection not found
     "413":
       description: Source exceeds the supported size
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

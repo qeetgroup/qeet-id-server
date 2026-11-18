@@ -23,12 +23,14 @@ post:
       application/json:
         schema:
           type: object
+          additionalProperties: false
           required:
             - username
             - password
           properties:
             username:
               type: string
+              minLength: 1
             password:
               type: string
               format: password
@@ -57,5 +59,9 @@ post:
         (billing.upgrade_required).
     "403":
       $ref: ../../../shared/responses/Forbidden.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
     "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

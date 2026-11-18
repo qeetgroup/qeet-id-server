@@ -1,0 +1,9 @@
+description: >-
+  RFC 7644 error: the organization's plan does not include SCIM provisioning.
+headers:
+  X-Request-Id:
+    $ref: ../../../shared/headers/RequestId.yaml
+content:
+  application/scim+json:
+    schema:
+      $ref: ../schemas/SCIMError.yaml

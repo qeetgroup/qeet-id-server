@@ -19,16 +19,20 @@ post:
       application/json:
         schema:
           type: object
+          additionalProperties: false
           required:
             - plan_code
           properties:
             plan_code:
               type: string
+              minLength: 1
               description: >-
                 The plan to try, starter or pro (or their _year plans); any
                 other plan is refused with billing.trial_not_eligible.
             currency:
-              type: string
+              type:
+                - string
+                - "null"
               description: >-
                 ISO 4217 code of a currency the plan is priced in, such as INR;
                 USD when omitted or not a valid code.
@@ -39,7 +43,13 @@ post:
         application/json:
           schema:
             $ref: ../../components/schemas/Subscription.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
     "403":
       $ref: ../../../shared/responses/Forbidden.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

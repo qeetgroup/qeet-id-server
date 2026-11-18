@@ -1,0 +1,33 @@
+get:
+  operationId: getPushChallenge
+  description: >-
+    Returns the current status of a push-MFA challenge, letting the sign-in
+    surface poll while it waits for the user to approve or deny on their device.
+    It is unauthenticated because it is called before the second factor is
+    satisfied. A request past its expiry (two minutes after it was sent) reads
+    as expired, and can no longer be answered. The enrolled device answers the
+    challenge through the challenge-respond call.
+  summary: Poll a push-MFA challenge
+  tags:
+    - MFA
+  security: []
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    "200":
+      description: Challenge status
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/PushChallenge.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

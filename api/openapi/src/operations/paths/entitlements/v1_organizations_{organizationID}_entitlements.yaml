@@ -81,6 +81,8 @@ get:
                   orgs: 1
                   mau: 10000
                   audit_retention_days: 7
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
     "403":

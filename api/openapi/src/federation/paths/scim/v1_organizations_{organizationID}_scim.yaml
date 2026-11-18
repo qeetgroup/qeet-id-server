@@ -21,6 +21,8 @@ get:
         application/json:
           schema:
             $ref: ../../components/schemas/ConfigView.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
     "403":

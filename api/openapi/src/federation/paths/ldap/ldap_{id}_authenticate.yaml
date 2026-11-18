@@ -17,12 +17,14 @@ post:
       application/json:
         schema:
           type: object
+          additionalProperties: false
           required:
             - username
             - password
           properties:
             username:
               type: string
+              minLength: 1
             password:
               type: string
               format: password
@@ -88,42 +90,7 @@ post:
           schema:
             oneOf:
               - $ref: ../../../shared/schemas/TokenPair.yaml
-              - type: object
-                description: >-
-                  The same challenge a password sign-in answers with
-                  (MFAChallenge in the authentication API).
-                properties:
-                  mfa_required:
-                    type: boolean
-                  mfa_token:
-                    type: string
-                  methods:
-                    type: array
-                    items:
-                      type: string
-                      enum:
-                        - totp
-                        - recovery_code
-                        - email
-                        - sms
-                        - passkey
-                        - push
-                  factors:
-                    type: array
-                    description: >-
-                      Exactly the second factors this person can complete the
-                      challenge with. Empty for an enrolment challenge.
-                    items:
-                      $ref: ../../../shared/schemas/LoginFactor.yaml
-                  enrollment_required:
-                    type: boolean
-                  enrollment_due_at:
-                    type: string
-                    format: date-time
-                    description: >-
-                      On an enrolment challenge in the organization's grace
-                      period, when it ends.
-                additionalProperties: true
+              - $ref: ../../../shared/schemas/MFAChallenge.yaml
     "400":
       $ref: ../../../shared/responses/BadRequest.yaml
     "401":
@@ -157,6 +124,8 @@ post:
             $ref: ../../../shared/schemas/Error.yaml
     "404":
       $ref: ../../../shared/responses/NotFound.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
     "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
     "429":

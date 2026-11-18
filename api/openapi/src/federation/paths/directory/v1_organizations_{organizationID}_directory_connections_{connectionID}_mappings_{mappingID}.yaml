@@ -16,6 +16,7 @@ put:
       required: true
       schema:
         type: string
+        pattern: '^[^/\\]+$'
     - name: mappingID
       in: path
       required: true
@@ -45,6 +46,8 @@ put:
       description: Connection not found
     "409":
       description: Stale version, missing mapping or duplicate enabled target
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
     "422":
       description: >-
         Mapping refused: validation_failed, with error.fields[0].field naming
@@ -56,6 +59,8 @@ put:
         directory.mapping_transform_unsupported,
         directory.mapping_pattern_unexpected or
         directory.mapping_pattern_invalid.
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
 delete:
   operationId: deleteProfileMapping
   description: >-
@@ -77,6 +82,7 @@ delete:
       required: true
       schema:
         type: string
+        pattern: '^[^/\\]+$'
     - name: mappingID
       in: path
       required: true
@@ -86,9 +92,13 @@ delete:
   responses:
     "204":
       description: Mapping removed and audited
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       description: Authentication required
     "403":
       description: Organization mismatch or missing connection.write
     "404":
       description: Mapping not found in this organization and connection
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

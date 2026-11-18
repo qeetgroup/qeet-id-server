@@ -19,6 +19,7 @@ get:
       required: true
       schema:
         type: string
+        pattern: '^[^/\\]+$'
   responses:
     "200":
       description: Rules and supported profile target types
@@ -37,12 +38,16 @@ get:
                 type: object
                 additionalProperties:
                   type: string
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       description: Authentication required
     "403":
       description: Organization mismatch or missing connection.read
     "404":
       description: Connection not found in this organization
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
 post:
   operationId: createProfileMapping
   summary: Create a profile mapping
@@ -64,6 +69,7 @@ post:
       required: true
       schema:
         type: string
+        pattern: '^[^/\\]+$'
   requestBody:
     required: true
     content:
@@ -87,6 +93,8 @@ post:
       description: Connection not found in this organization
     "409":
       description: Duplicate enabled target or rule limit reached
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
     "422":
       description: >-
         Mapping refused: validation_failed, with error.fields[0].field naming
@@ -98,3 +106,5 @@ post:
         directory.mapping_transform_unsupported,
         directory.mapping_pattern_unexpected or
         directory.mapping_pattern_invalid.
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -8,6 +8,11 @@ description: >-
   organization_required, admin_required or user_required) and how the first factor was
   proven (password, magic_link, social or ldap); meeting it as
   auth.mfa_verified.
+required:
+  - mfa_required
+  - mfa_token
+  - methods
+  - factors
 properties:
   mfa_required:
     type: boolean

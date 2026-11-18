@@ -16,6 +16,8 @@ delete:
   responses:
     "204":
       description: No Content
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
     "403":
@@ -63,6 +65,8 @@ post:
                 $ref: ../../components/schemas/ConfigView.yaml
               token:
                 type: string
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
     "403":

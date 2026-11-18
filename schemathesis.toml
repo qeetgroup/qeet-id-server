@@ -1,0 +1,85 @@
+# Schemathesis settings for make fuzz-api, which runs every check except those turned off here, each
+# with its reason.
+
+# A cursor is opaque and issued by the server, so a generated one is never valid: every list starts
+# at its first page. A page size or time window is lowered or raised into range, and a malformed one
+# gets the default, by design (paging.Limit), so they are given fixed values too.
+[parameters]
+"query.cursor" = ""
+"query.limit" = 20
+"query.window" = 3600
+
+[checks]
+enabled = true
+# A literal path such as /v1/users/bulk also matches its sibling /v1/users/{id}, so another method
+# there reaches the sibling (an invalid id, 400) rather than 405, and a 405's Allow lists its methods.
+allow_header_conformance.enabled = false
+unsupported_method.enabled = false
+# Valid data can still be refused for a reason outside the schema: the organization's plan (402),
+# and a body larger than the server accepts (413).
+positive_data_acceptance.expected-statuses = ["2xx", "3xx", 401, 402, 403, 404, 409, 413, 429, "5xx"]
+# The plan is checked before the body, so invalid data can be refused with 402 first.
+negative_data_rejection.expected-statuses = [400, 401, 402, 403, 404, 405, 406, 409, 413, 415, 422, 428, 429, "5xx"]
+
+# These succeed only with something the server issued or knows first: a ceremony session or MFA
+# token, an emailed or one-time code, an invitation link, the account's password, an allowed
+# return address or a registered redirect, an ID token it signed, an OAuth state, the deployment's
+# region, an address not yet taken, or an Idempotency-Key not yet used with another body. A
+# schema-valid random value is rightly refused, so the valid-data check doesn't apply to them.
+[[operations]]
+include-name = [
+  "POST /v1/passkeys/login/finish",
+  "POST /v1/signup/passkey/finish",
+  "POST /v1/invites/accept/passkey/begin",
+  "POST /v1/invites/accept/passkey/finish",
+  "POST /v1/invites/accept",
+  "POST /v1/invites/lookup",
+  "POST /v1/me/invites/accept",
+  "POST /v1/me/invites/{id}/accept",
+  "POST /v1/auth/magic-link/consume",
+  "POST /v1/auth/magic-link/session",
+  "POST /v1/auth/reset-password",
+  "POST /v1/auth/mfa",
+  "POST /v1/auth/mfa/enroll",
+  "POST /v1/auth/mfa/passkey/begin",
+  "POST /v1/auth/mfa/push",
+  "POST /v1/auth/mfa/send",
+  "POST /v1/auth/session/mfa",
+  "POST /v1/me/email/change/confirm",
+  "POST /v1/users/{id}/verify/phone/confirm",
+  "POST /v1/social/link/complete",
+  "POST /v1/account/delete",
+  "POST /v1/auth/signup",
+  "POST /v1/organizations",
+  "POST /v1/groups",
+  "POST /v1/users",
+  "POST /saml/exchange",
+  "POST /saml/session",
+  "POST /v1/social/exchange",
+  "GET /saml/login/{id}",
+  "GET /v1/vault/tokens/callback",
+  "GET /v1/oauth/authorize",
+  "GET /v1/oauth/logout",
+  "POST /v1/oauth/logout",
+  "POST /v1/me/invites/{id}/decline",
+  "POST /v1/register/passkey/finish",
+]
+checks.positive_data_acceptance.enabled = false
+
+# These report a bad request to the browser by redirecting it, as OAuth 2.0 and OpenID Connect
+# require (an error on the redirect, or a safe default page), so a refusal answers 302 or 303.
+[[operations]]
+include-name = [
+  "GET /v1/oauth/authorize",
+  "POST /v1/oauth/authorize",
+  "GET /v1/oauth/logout",
+  "POST /v1/oauth/logout",
+  "GET /v1/oauth/logout/continue",
+  "POST /v1/social/{provider}/callback",
+]
+checks.negative_data_rejection.enabled = false
+
+# A bulk import answers 200 with the rows it couldn't read listed, so one bad row doesn't stop the rest.
+[[operations]]
+include-name = "POST /v1/users/bulk/import"
+checks.negative_data_rejection.enabled = false

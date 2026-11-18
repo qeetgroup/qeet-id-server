@@ -28,10 +28,14 @@ get:
                 type: array
                 items:
                   $ref: ../../components/schemas/DirectoryAlert.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       description: Authentication required
     "403":
       description: Organization mismatch or missing connection.read
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
 post:
   operationId: createDirectoryAlert
   summary: Create a directory failure alert
@@ -53,6 +57,7 @@ post:
       application/json:
         schema:
           type: object
+          additionalProperties: false
           required:
             - name
             - threshold
@@ -84,3 +89,7 @@ post:
       description: Organization mismatch or missing connection.write
     "404":
       description: Connection not found in this organization
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

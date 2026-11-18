@@ -21,9 +21,13 @@ delete:
     "204":
       description: Deleted
     "401":
-      $ref: ../../../shared/responses/Unauthorized.yaml
+      $ref: ../../components/responses/SCIMUnauthorized.yaml
+    "403":
+      $ref: ../../components/responses/SCIMForbidden.yaml
     "404":
-      $ref: ../../../shared/responses/NotFound.yaml
+      $ref: ../../components/responses/SCIMNotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
 get:
   operationId: getScimGroup
   description: >-
@@ -51,9 +55,13 @@ get:
           schema:
             $ref: ../../components/schemas/SCIMGroup.yaml
     "401":
-      $ref: ../../../shared/responses/Unauthorized.yaml
+      $ref: ../../components/responses/SCIMUnauthorized.yaml
+    "403":
+      $ref: ../../components/responses/SCIMForbidden.yaml
     "404":
-      $ref: ../../../shared/responses/NotFound.yaml
+      $ref: ../../components/responses/SCIMNotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
 patch:
   operationId: patchScimGroup
   description: >-
@@ -90,13 +98,17 @@ patch:
           schema:
             $ref: ../../components/schemas/SCIMGroup.yaml
     "400":
-      $ref: ../../../shared/responses/BadRequest.yaml
+      $ref: ../../components/responses/SCIMBadRequest.yaml
     "401":
-      $ref: ../../../shared/responses/Unauthorized.yaml
+      $ref: ../../components/responses/SCIMUnauthorized.yaml
+    "403":
+      $ref: ../../components/responses/SCIMForbidden.yaml
     "404":
-      $ref: ../../../shared/responses/NotFound.yaml
+      $ref: ../../components/responses/SCIMNotFound.yaml
     "409":
       $ref: ../../components/responses/SCIMConflict.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
 put:
   operationId: replaceScimGroup
   description: >-
@@ -133,10 +145,14 @@ put:
           schema:
             $ref: ../../components/schemas/SCIMGroup.yaml
     "400":
-      $ref: ../../../shared/responses/BadRequest.yaml
+      $ref: ../../components/responses/SCIMBadRequest.yaml
     "401":
-      $ref: ../../../shared/responses/Unauthorized.yaml
+      $ref: ../../components/responses/SCIMUnauthorized.yaml
+    "403":
+      $ref: ../../components/responses/SCIMForbidden.yaml
     "404":
-      $ref: ../../../shared/responses/NotFound.yaml
+      $ref: ../../components/responses/SCIMNotFound.yaml
     "409":
       $ref: ../../components/responses/SCIMConflict.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

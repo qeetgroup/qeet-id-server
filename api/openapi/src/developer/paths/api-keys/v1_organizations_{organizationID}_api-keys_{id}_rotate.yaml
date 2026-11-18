@@ -28,9 +28,12 @@ post:
       application/json:
         schema:
           type: object
+          additionalProperties: false
           properties:
             overlap_hours:
-              type: integer
+              type:
+                - integer
+                - "null"
               minimum: 0
               maximum: 168
               description: >-
@@ -55,11 +58,17 @@ post:
                 type: string
               warning:
                 type: string
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
     "403":
       $ref: ../../../shared/responses/Forbidden.yaml
     "404":
       $ref: ../../../shared/responses/NotFound.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
     "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

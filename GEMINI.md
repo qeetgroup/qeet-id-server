@@ -46,7 +46,8 @@ database, chi router, port 4001.
 
 `make help · install · dev-secrets · dev · dev-observed · build · kill · db-up · db-down · db-reset ·
 seed · seed-reset · migrate-down · test · test-db · lint · fmt · fmt-check · sqlc · sqlc-check ·
-openapi · openapi-check · postman · ci · vuln · sast · secrets · scan-image · obs-up · obs-down`
+openapi · openapi-check · postman · ci · vuln · sast · secrets · scan-image · load · dast · fuzz-api ·
+sonar-up · sonar · sonar-down · obs-up · obs-down`
 
 That list is complete. **Do not invent targets.** `make lint` runs the same lint as CI.
 

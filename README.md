@@ -241,6 +241,9 @@ Every target in the [Makefile](./Makefile) — there are no others.
 | `make migrate-down`              | Roll one migration back, to try its down file; needs the `migrate` CLI. The server applies migrations at start |
 | `make seed` / `seed-reset`       | Load development demo data into an empty database, or recreate the database and load it                        |
 | `make kill`                      | Free a stuck `:4001`                                                                                           |
+| `make load`                      | k6 load test of a running local server; fails when a service level objective is missed                         |
+| `make dast` / `fuzz-api`         | OWASP ZAP and Schemathesis scans of a running local server, from the API documents (they change data)          |
+| `make sonar-up` / `sonar`        | Start a local SonarQube Community Build, then analyse the code with test coverage (needs `SONAR_TOKEN`)        |
 
 Run a single test with `go test ./internal/access/authentication/... -run TestName`.
 
@@ -258,7 +261,7 @@ other Go test suites or sqlc/gosec gates.
 ## 📚 API & Documentation
 
 - [api/openapi/](./api/openapi/) holds five self-contained, bounded-context OpenAPI 3.1 documents —
-  `auth.yaml` (access), `management.yaml` (identity), `federation.yaml`, `developer.yaml` and
+  `access.yaml`, `identity.yaml`, `federation.yaml`, `developer.yaml` and
   `operations.yaml`. There is no monolithic `openapi.yaml`. They are generated from the sources in
   `api/openapi/src/` (one file per path) by `make openapi`; edit the sources, not the documents.
 - [api/postman/](./api/postman/) holds the same API as one Postman collection, with a local

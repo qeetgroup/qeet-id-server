@@ -1,0 +1,9 @@
+description: >-
+  The body is larger than this API accepts (`request_body_too_large`).
+headers:
+  X-Request-Id:
+    $ref: ../headers/RequestId.yaml
+content:
+  application/json:
+    schema:
+      $ref: ../schemas/Error.yaml

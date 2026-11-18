@@ -20,12 +20,16 @@ delete:
   responses:
     "204":
       description: Deleted
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
     "403":
       $ref: ../../../shared/responses/Forbidden.yaml
     "404":
       $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
 patch:
   operationId: updateAgent
   summary: Update agent
@@ -51,6 +55,7 @@ patch:
       application/json:
         schema:
           type: object
+          additionalProperties: false
           required:
             - disabled
           properties:
@@ -59,9 +64,15 @@ patch:
   responses:
     "204":
       description: Updated
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
     "403":
       $ref: ../../../shared/responses/Forbidden.yaml
     "404":
       $ref: ../../../shared/responses/NotFound.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

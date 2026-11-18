@@ -154,7 +154,7 @@ func (s *Service) loginDomainStatus(ctx context.Context, organizationID uuid.UUI
 	st := &LoginDomainStatus{
 		LoginDomain: host, Status: "not_configured",
 		TLSState: "not_started", TLSDetail: "Issued automatically after DNS is verified.",
-		EndpointState: "not_available",
+		EndpointState: "not_available", Records: []DNSRecord{},
 	}
 	if host == "" {
 		st.DNSDetail = "No custom login domain configured."

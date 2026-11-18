@@ -29,6 +29,7 @@ post:
       application/json:
         schema:
           type: object
+          additionalProperties: false
           required:
             - success_url
             - cancel_url
@@ -65,6 +66,8 @@ post:
         application/json:
           schema:
             $ref: ../../../shared/schemas/Error.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
     "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
     "429":

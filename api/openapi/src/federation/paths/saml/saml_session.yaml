@@ -24,11 +24,13 @@ post:
       application/json:
         schema:
           type: object
+          additionalProperties: false
           required:
             - code
           properties:
             code:
               type: string
+              minLength: 1
               description: The saml_code from the URL fragment.
   responses:
     "200":
@@ -57,3 +59,7 @@ post:
       $ref: ../../../shared/responses/Unauthorized.yaml
     "403":
       $ref: ../../../shared/responses/Forbidden.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

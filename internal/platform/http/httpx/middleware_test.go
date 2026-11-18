@@ -26,7 +26,7 @@ func TestSecurityHeaders_AllHeadersSet(t *testing.T) {
 		"X-Frame-Options":                   "DENY",
 		"X-Content-Type-Options":            "nosniff",
 		"Referrer-Policy":                   "strict-origin-when-cross-origin",
-		"Content-Security-Policy":           "default-src 'none'; frame-ancestors 'none'",
+		"Content-Security-Policy":           "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
 		"Cross-Origin-Opener-Policy":        "same-origin",
 		"Cross-Origin-Resource-Policy":      "cross-origin",
 		"X-DNS-Prefetch-Control":            "off",

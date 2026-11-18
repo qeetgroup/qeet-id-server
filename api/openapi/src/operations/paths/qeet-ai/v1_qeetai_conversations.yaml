@@ -24,6 +24,8 @@ get:
                   $ref: ../../components/schemas/QeetAIConversation.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
 post:
   operationId: createConversation
   summary: Create conversation
@@ -38,9 +40,12 @@ post:
       application/json:
         schema:
           type: object
+          additionalProperties: false
           properties:
             title:
-              type: string
+              type:
+                - string
+                - "null"
               description: Optional title; defaults to "New conversation".
   responses:
     "201":
@@ -49,5 +54,13 @@ post:
         application/json:
           schema:
             $ref: ../../components/schemas/QeetAIConversation.yaml
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
+    "402":
+      $ref: ../../../shared/responses/PaymentRequired.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

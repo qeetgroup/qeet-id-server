@@ -16,9 +16,37 @@ post:
       application/json:
         schema:
           type: object
-          additionalProperties: true
+          additionalProperties: false
+          required:
+            - razorpay_payment_id
+            - razorpay_payment_link_id
+            - razorpay_payment_link_reference_id
+            - razorpay_payment_link_status
+            - razorpay_signature
+          properties:
+            razorpay_payment_id:
+              type: string
+              minLength: 1
+            razorpay_payment_link_id:
+              type: string
+              minLength: 1
+            razorpay_payment_link_reference_id:
+              type: string
+              minLength: 1
+            razorpay_payment_link_status:
+              type: string
+              minLength: 1
+            razorpay_signature:
+              type: string
+              minLength: 1
   responses:
     "200":
       description: Signed callback accepted
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

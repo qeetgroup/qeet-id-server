@@ -10,6 +10,7 @@ post:
       required: true
       schema:
         type: string
+        pattern: '^[^/\\]+$'
   security:
     - bearerAuth: []
     - apiKeyAuth: []
@@ -19,16 +20,21 @@ post:
       application/json:
         schema:
           type: object
+          additionalProperties: false
           properties:
             vars:
-              type: object
+              type:
+                - object
+                - "null"
               maxProperties: 32
               description: Each value is limited to 4096 UTF-8 bytes.
               additionalProperties:
                 type: string
                 maxLength: 4096
             locale:
-              type: string
+              type:
+                - string
+                - "null"
             draft:
               $ref: ../../components/schemas/EmailEditorInput.yaml
     description: Omit draft to preview saved content; include it to preview unsaved edits.
@@ -52,12 +58,16 @@ post:
                 type: string
               locale:
                 type: string
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
     "403":
       $ref: ../../../shared/responses/Forbidden.yaml
     "404":
       $ref: ../../../shared/responses/NotFound.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
     "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
     "429":

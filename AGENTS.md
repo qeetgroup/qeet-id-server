@@ -199,9 +199,12 @@ own `SeedBuiltins`, which is what the server runs at start.
 
 Test files are named after the code file they test, beside it: `foo_test.go` for tests without a
 database and `foo_db_test.go` for tests that need PostgreSQL (first line `//go:build integration`).
-Nothing else: no topic-named test files, no `*_integration_test.go`, no test folders. `TestMain` and
-shared helpers live in `<package>_db_test.go`; `internal/platform/database/dbtest` is the one shared
-test helper package. internal/bootstrap's whole-server checks are the only exception.
+Nothing else: no topic-named test files, no `*_integration_test.go`, no test folders inside a
+package. `TestMain` and shared helpers live in `<package>_db_test.go` (or `<package>_test.go`), and
+the test doubles a package's constructors take in `deps_test.go`;
+`internal/platform/database/dbtest` is the one shared test helper package. Tests that span the whole
+server live in `tests/` at the root (`architecture`, `contract`, `e2e`), and internal/bootstrap's
+whole-server checks name their files for what they check. `tests/architecture` enforces these rules.
 
 ### 10. Do not commit secrets
 
@@ -235,6 +238,9 @@ make postman          # rebuild only the Postman collection and local environmen
 make vuln / sast      # govulncheck / gosec
 make secrets          # gitleaks over the history and the working tree (Docker)
 make scan-image       # build the image and scan it and the Dockerfile with Trivy (Docker)
+make load             # k6 load test of a running local server; fails when an SLO is missed
+make dast / fuzz-api  # OWASP ZAP / Schemathesis against a running local server (changes data)
+make sonar-up/sonar   # local SonarQube Community Build, then analyse with coverage (SONAR_TOKEN)
 make db-up/db-down/db-reset      # docker compose: postgres :5001, nats :4222, mailpit :8025
 make obs-up/obs-down             # local observability: Grafana :3300, Prometheus :9090, Loki, Tempo (observability/README.md)
 make migrate-down                # roll one migration back; the server applies them at start

@@ -19,12 +19,14 @@ post:
       application/json:
         schema:
           type: object
+          additionalProperties: false
           required:
             - user_code
             - approve
           properties:
             user_code:
               type: string
+              minLength: 1
             approve:
               type: boolean
   responses:
@@ -50,3 +52,7 @@ post:
       $ref: ../../../shared/responses/NotFound.yaml
     "409":
       $ref: ../../../shared/responses/Conflict.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

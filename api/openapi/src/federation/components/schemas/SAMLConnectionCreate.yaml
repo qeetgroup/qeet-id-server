@@ -1,4 +1,5 @@
 type: object
+additionalProperties: false
 description: >-
   The name, with all of the IdP's entity ID, SSO URL and certificate, or none of
   them for a draft.
@@ -7,27 +8,42 @@ required:
 properties:
   name:
     type: string
+    minLength: 1
   idp_entity_id:
-    type: string
+    type:
+      - string
+      - "null"
   idp_sso_url:
-    type: string
+    type:
+      - string
+      - "null"
     format: uri
   idp_certificate:
-    type: string
+    type:
+      - string
+      - "null"
     description: >-
       PEM or base64 DER X.509 signing certificate. On update it becomes the only
       certificate the connection trusts; add and remove certificates one at a
       time with the certificates endpoints.
   email_attribute:
-    type: string
+    type:
+      - string
+      - "null"
   name_attribute:
-    type: string
+    type:
+      - string
+      - "null"
   groups_attribute:
-    type: string
+    type:
+      - string
+      - "null"
     maxLength: 256
     description: >-
       The attribute carrying the person's groups; empty reads the common ones
       (see SAMLConnection). Over 256 characters is refused with 422
       validation_failed.
   status:
-    type: string
+    type:
+      - string
+      - "null"

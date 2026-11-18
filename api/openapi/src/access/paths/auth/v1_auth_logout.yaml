@@ -1,0 +1,28 @@
+post:
+  operationId: signOut
+  description: >-
+    Signs the caller out and revokes the session behind the presented
+    credential. The associated refresh token stops working as soon as this
+    returns, so any subsequent authenticated call must start a fresh sign-in.
+    Other active sessions for the same user are unaffected; remove those
+    individually with the session-revocation call, or all at once with the
+    revoke-other-sessions call.
+  summary: Logout
+  tags:
+    - Auth
+  security:
+    - bearerAuth: []
+  responses:
+    "200":
+      description: Signed out
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message:
+                type: string
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -10,6 +10,27 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
 
 ### Added
 
+- Metrics for sign-ins (`sign_ins_total`, by method and outcome), the token endpoint
+  (`oauth_token_requests_total`, by grant and outcome), rate-limit rejections (`rate_limit_rejections_total`)
+  and webhooks (`webhook_deliveries_total`, `webhook_pending_deliveries`, `webhook_oldest_pending_age_seconds`).
+  Database queries and outbound calls are traced spans.
+- Continuous profiling: `PPROF_ADDR` serves the runtime profiles on their own listener (loopback only outside dev).
+- A local monitoring stack, `make obs-up`: Prometheus with alert and SLO burn-rate rules, Alertmanager, Loki,
+  Tempo, Pyroscope through Grafana Alloy, and Grafana with three dashboards. Each of the 21 alerts links to its
+  runbook in `observability/README.md`.
+- `api/postman/`: every call as one Postman collection, a folder per API document, with a local environment
+  that sign-in and create calls fill in. `make openapi` rebuilds it with the documents; `make openapi-check`
+  fails when it is stale.
+- Every `make` target runs in Go (`cmd/devtool`), so it works the same on Windows, macOS and Linux. Each
+  setting it uses is read from the environment or `.env` first, with a default.
+- `make fmt` and `make fmt-check` (part of `make ci`) format every language: Go (gofmt, goimports),
+  JavaScript, JSON, YAML and Markdown (Prettier), shell (shfmt).
+- `make load` (k6, failing on a missed SLO), `make dast` (OWASP ZAP), `make fuzz-api` (Schemathesis) against a
+  running local server, and `make sonar-up` / `make sonar` for a local SonarQube Community Build.
+- `tests/`: `architecture` checks the layout rules; `contract` checks that every read answers as its document
+  says; `e2e` runs sign-up to sign-out, organization isolation, and an application signing a person in with
+  OpenID Connect (second factor, consent, PKCE, the ID token checked against the published keys).
+
 - Sign-in requests reach the native Qeet ID apps: Apple Push Notification service for iOS (token-based,
   `APNS_AUTH_KEY`, `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_BUNDLE_ID`, `APNS_SANDBOX`) and Firebase Cloud Messaging
   for Android (`FCM_SERVICE_ACCOUNT`). Each phone is sent through its platform's service. A service without
@@ -42,6 +63,11 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
   type: the retired key's tokens still verify for the grace period.
 
 ### Changed
+
+- The API documents are named for the bounded contexts they serve: `auth.yaml` is `access.yaml` and
+  `management.yaml` is `identity.yaml` (their sources too). URLs, operations and schemas are unchanged.
+- The Qeet AI tool catalogue moved from `api/qeetai/` into the server (`internal/operations/qeetai`), embedded.
+- `.env.example` is grouped by area with one short note per group.
 
 - One sqlc configuration, `sqlc.yaml` at the root, lists every package (`make sqlc-check` also fails on a
   `queries.sql` it doesn't list). A NULL-able uuid, timestamptz or date column is now a `*uuid.UUID` or
@@ -182,6 +208,15 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
   could not be returned.
 
 ### Fixed
+
+- Traces reach the collector: an `OTEL_EXPORTER_OTLP_ENDPOINT` without a path posted to `/`, not `/v1/traces`.
+- `GET /v1/organizations/{organizationID}/login-domain` answered `"records": null` with no domain set, and an MFA
+  challenge without factors `"factors": null`: both now answer `[]`, as documented.
+- The API documents describe what the server answers: create organization's 402 for a paid plan, and a free
+  plan in its example; SCIM errors as `application/scim+json`; SAML metadata as `application/samlmetadata+xml`;
+  404 for an unknown role's permissions and 400 for an unknown compliance framework; 200 for the authenticator
+  app's confirm and verify calls. The eight sign-in answers that are a token pair or an MFA challenge each match
+  exactly one of the two.
 
 - A plan bought through checkout (an organization's upgrade or a paid sign-up) is audited as
   `billing.plan_changed` (`via: checkout`) on the organization's chain, in the same transaction, as a plan

@@ -268,13 +268,7 @@ func parseEventFilter(request *http.Request) (eventFilter, error) {
 		}
 		filter.Since = time.Now().UTC().AddDate(0, 0, -days)
 	}
-	if value := query.Get("limit"); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err != nil || parsed < 1 || parsed > 100 {
-			return filter, errs.ErrBadRequest
-		}
-		filter.Limit = parsed
-	}
+	filter.Limit = paging.Limit(query, filter.Limit, 100)
 	after, err := paging.ParseCursor(query)
 	if err != nil {
 		return filter, err

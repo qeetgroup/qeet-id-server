@@ -21,4 +21,8 @@ get:
             type: object
             additionalProperties: true
     "401":
-      $ref: ../../../shared/responses/Unauthorized.yaml
+      $ref: ../../components/responses/SCIMUnauthorized.yaml
+    "403":
+      $ref: ../../components/responses/SCIMForbidden.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

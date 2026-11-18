@@ -1,0 +1,55 @@
+post:
+  operationId: replacePushDeviceToken
+  summary: Replace this phone's push token
+  description: >-
+    Called by the mobile app when its platform rotates the push token (APNs or
+    FCM), so sign-in requests keep reaching the phone. The app proves it is that
+    device with the device_token it was given when linked, which must not have
+    expired (the app holds no signed-in session). The link's expiry and the
+    platform are unchanged; another link of the same account already holding the
+    new token is removed, so each request reaches the phone once. 401
+    mfa.push_unauthorized when the device or credential does not match or has
+    expired.
+  tags:
+    - MFA
+  security: []
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          additionalProperties: false
+          required:
+            - user_id
+            - device_token
+            - push_token
+          properties:
+            user_id:
+              type: string
+              format: uuid
+            device_token:
+              type: string
+              minLength: 1
+            push_token:
+              type: string
+              minLength: 1
+              maxLength: 4096
+  responses:
+    "204":
+      description: The new push token is stored
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
+    "401":
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    "413":
+      $ref: ../../../shared/responses/PayloadTooLarge.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml

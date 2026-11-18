@@ -18,5 +18,9 @@ get:
         application/x-pem-file:
           schema:
             type: string
+    "400":
+      $ref: ../../../shared/responses/BadRequest.yaml
     "404":
       $ref: ../../../shared/responses/NotFound.yaml
+    "429":
+      $ref: ../../../shared/responses/TooManyRequests.yaml
