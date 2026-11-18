@@ -37,7 +37,7 @@ func init() {
 		"fmt-check":     {"fail if a file isn't formatted, showing what make fmt would change", func([]string) error { return formatCheck() }},
 		"load":          {"load-test a running local server with k6 (Docker); fails when a service level objective is missed", func([]string) error { return loadTest() }},
 		"sonar-up":      {"start a local SonarQube Community Build (Docker)", func([]string) error { return sonarUp() }},
-		"sonar":         {"analyse the code with SonarQube, with the unit tests' coverage (needs SONAR_TOKEN)", func([]string) error { return sonar() }},
+		"sonar":         {"analyse the code with SonarQube, with every test's coverage (needs SONAR_TOKEN and Docker)", func([]string) error { return sonar() }},
 		"sonar-down":    {"stop the local SonarQube", func([]string) error { return sonarDown() }},
 		"dast":          {"scan a running local server with OWASP ZAP from the API documents (Docker; changes data)", func([]string) error { return dast() }},
 		"fuzz-api":      {"fuzz a running local server with Schemathesis from the API documents (Docker; changes data)", func([]string) error { return fuzzAPI() }},

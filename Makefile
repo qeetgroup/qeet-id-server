@@ -163,7 +163,8 @@ fuzz-api:
 sonar-up:
 	@$(DEVTOOL) sonar-up
 
-# Analyse the code with SonarQube, with the unit tests' coverage. Needs SONAR_TOKEN (a SonarQube token).
+# Analyse the code with SonarQube, with the coverage of every test (the database ones too, so it needs
+# Docker). Needs SONAR_TOKEN (a SonarQube token).
 sonar:
 	@$(DEVTOOL) sonar
 

@@ -11,10 +11,13 @@ import (
 	"time"
 )
 
-// testDB runs every test, the database ones too, with the race detector, against one throwaway
-// PostgreSQL: the first package migrates a template database and each gets a copy
-// (internal/platform/database/dbtest). The container goes whatever happens.
-func testDB() error {
+// testDB runs every test, the database ones too, with the race detector.
+func testDB() error { return testDBWith() }
+
+// testDBWith runs every test with the go test flags in extra, against one throwaway PostgreSQL: the
+// first package migrates a template database and each gets a copy (internal/platform/database/dbtest).
+// The container goes whatever happens.
+func testDBWith(extra ...string) error {
 	name := fmt.Sprintf("qeet-id-dbtest-%d", os.Getpid())
 	password := envOr("DBTEST_POSTGRES_PASSWORD", "postgres")
 	if err := run("docker", "run", "-d", "--rm", "--name", name, "-e", "POSTGRES_PASSWORD="+password, "-p", "127.0.0.1::5432",
@@ -28,7 +31,8 @@ func testDB() error {
 		return err
 	}
 	env := []string{"DBTEST_SERVER=postgres://postgres:" + password + "@127.0.0.1:" + port + "/postgres?sslmode=disable"}
-	return runIn("", env, os.Stdout, "go", "test", "-race", "-tags", "integration", "-count=1", "-timeout", envOr("TEST_TIMEOUT", "15m"), "./...")
+	args := append([]string{"test", "-race", "-tags", "integration", "-count=1", "-timeout", envOr("TEST_TIMEOUT", "15m")}, extra...)
+	return runIn("", env, os.Stdout, "go", append(args, "./...")...)
 }
 
 // waitForPostgres waits until container name's PostgreSQL accepts connections (its second "ready",
@@ -117,8 +121,9 @@ func sonarUp() error {
 
 func sonarDown() error { return run("docker", "compose", "--profile", "sonar", "stop", "sonarqube") }
 
-// sonar runs the unit tests for coverage, then the SonarQube scanner (Docker) over the repository
-// with sonar-project.properties. SONAR_TOKEN is passed to the scanner by name, never on its command line.
+// sonar runs every test, the database ones too, for coverage across packages, then the SonarQube
+// scanner (Docker) over the repository with sonar-project.properties. SONAR_TOKEN is passed to the
+// scanner by name, never on its command line.
 func sonar() error {
 	if os.Getenv("SONAR_TOKEN") == "" {
 		return errors.New("SONAR_TOKEN is unset: create a token in SonarQube (My Account › Security) and set it in .env")
@@ -130,7 +135,9 @@ func sonar() error {
 	if err := os.MkdirAll(filepath.Join(dir, "bin", "reports"), 0o750); err != nil {
 		return err
 	}
-	if err := run("go", "test", "-count=1", "-coverprofile="+filepath.Join("bin", "reports", "coverage.out"), "./..."); err != nil {
+	// Most tests here need the database, and many reach code in other packages (the journeys in tests/),
+	// so coverage counts them all, against every package.
+	if err := testDBWith("-coverprofile="+filepath.Join("bin", "reports", "coverage.out"), "-coverpkg=./..."); err != nil {
 		return err
 	}
 	host := envOr("SONAR_HOST_URL", "http://host.docker.internal:"+envOr("SONAR_PORT", "9000"))

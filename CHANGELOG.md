@@ -64,6 +64,9 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
 
 ### Changed
 
+- `make sonar` measures coverage with every test, the database ones too, across packages (so it needs Docker
+  and takes about eight minutes), and leaves the development tools, the demo seed, the test harness and the
+  build scripts out of the figure. It counted unit tests only, which read 18% where the tests cover 72%.
 - The API documents are named for the bounded contexts they serve: `auth.yaml` is `access.yaml` and
   `management.yaml` is `identity.yaml` (their sources too). URLs, operations and schemas are unchanged.
 - The Qeet AI tool catalogue moved from `api/qeetai/` into the server (`internal/operations/qeetai`), embedded.
@@ -212,6 +215,9 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
 
 ### Fixed
 
+- SonarQube's five findings, all in two scripts. The load test makes its accounts' password for each run
+  instead of carrying one, and takes the accounts in turn, not at random. The Postman generator states its
+  32-bit wrap, its sort order and its path pattern plainly; the collection it writes is unchanged.
 - The development sandbox's checkout page works again: the API's stricter content policy refused its form, so the
   page now carries a policy of its own that allows its form and the return to the application.
 - `make dast` sends `SCAN_TOKEN` on its requests: ZAP split the option at the space and scanned signed out. The
