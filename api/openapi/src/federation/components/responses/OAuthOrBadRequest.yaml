@@ -1,0 +1,12 @@
+description: >-
+  The request was refused. A refusal the protocol names is an RFC 6749 §5.2
+  error; a request that couldn't be read is the API's own error.
+headers:
+  X-Request-Id:
+    $ref: ../../../shared/headers/RequestId.yaml
+content:
+  application/json:
+    schema:
+      oneOf:
+        - $ref: ../schemas/OAuthError.yaml
+        - $ref: ../../../shared/schemas/Error.yaml

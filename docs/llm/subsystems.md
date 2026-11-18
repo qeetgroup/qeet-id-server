@@ -112,7 +112,7 @@ authpolicy/securitypolicy.go   organization security policy: sessions, second fa
 ```
 
 **Tests** `rbac/enforce_test.go`, `abac/{abac,operators,evaluate}_test.go`, `rebac/{check,graph}_test.go` · integration:
-`authz_test.go`
+`rbac/enforce_db_test.go`, `abac/abac_db_test.go`, `decide/decide_db_test.go`
 
 `authzen/` now has a direct package test as well as wider authorization coverage.
 
@@ -143,8 +143,8 @@ recovery/http.go     handlers
 recovery/recovery.go forgot-password, magic link
 ```
 
-**Tests** `mfa/{totp,stepup,push}_test.go`, `passkeys/http_test.go` · integration:
-`passkey_ceremony_test.go` (uses `virtualwebauthn`), `recovery_test.go`
+**Tests** `mfa/{totp,stepup,push}_test.go`, `passkey/http_test.go` · integration:
+`passkey/{register,signup}_db_test.go` (use `virtualwebauthn`), `recovery/recovery_db_test.go`
 
 `recovery/` has direct package tests and database-backed recovery flow coverage.
 
@@ -203,8 +203,8 @@ invitations/{invite,http,accept,inbox,seats,sender,passkey}.go
 verification/{verification,http,codes,email,emailchange,phone}.go · domainverify/{domainverify,http,capture}.go
 ```
 
-**Tests** `users/{repository,bulk,import_adapters}_test.go`, `domainverify/domainverify_test.go` ·
-integration: `identity_modules_test.go`, `flows_test.go`
+**Tests** `user/{repository,bulk,import_adapters}_test.go`, `domainverify/domainverify_test.go` ·
+integration: `user/accounts_db_test.go`, `invite/invite_db_test.go`, `group/group_db_test.go`
 
 Organization, groups, invitations and verification now all have direct package tests in addition to
 wider flow coverage.
@@ -291,8 +291,8 @@ credentials/tokenvault/{providers,connect,tokens}.go       no token read without
 credentials/vc/vc.go         W3C JWT-VC
 ```
 
-**Tests** `agents/agent_test.go`, `api-keys/apikey_test.go`, `webhooks/dispatcher_test.go`,
-`credentials/secret/{secret,kms}_test.go` · integration: `agent_test.go`, `ops_dev_modules_test.go`
+**Tests** `agent/agent_test.go`, `apikey/apikey_test.go`, `webhook/dispatcher_test.go`,
+`credentials/secret/{secret,kms}_test.go` · integration: `agent/agent_db_test.go`, `webhook/dispatcher_db_test.go`
 
 **No bounded context imports `developer`.** It is a leaf. `principal/` has direct package tests.
 
@@ -341,9 +341,8 @@ as `mau` by `GET /v1/organizations/{organizationID}/entitlements/usage`; nothing
 Kept 13 months by `retention/sweeps.go`. The analytics dashboard's MAU is a different figure: a
 rolling 30 days of sign-ins from the audit log.
 
-**Tests** `audit/audit_test.go`, `billing/{billing,payments,tax}_test.go`, `compliance/{evidence,controls}_test.go`,
-`qeetai/http_test.go` · integration: `audit_anomaly_test.go`, `ratelimits_test.go`,
-`ops_dev_modules_test.go`
+**Tests** `audit/verifier_test.go`, `billing/{billing,payments,tax}_test.go`, `compliance/{evidence,controls}_test.go`,
+`qeetai/http_test.go` · integration: `audit/verify_all_db_test.go`, `ratelimits/ratelimits_db_test.go`
 
 > **`operations/audit` is a de-facto shared kernel** — all four other bounded contexts import it.
 > `operations` uses `pgxpool` directly rather than the `platform/database` helpers.

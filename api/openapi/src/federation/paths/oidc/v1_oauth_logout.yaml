@@ -58,7 +58,7 @@ get:
     "302":
       description: Redirect to post_logout_redirect_uri
     "400":
-      $ref: ../../components/responses/OAuthBadRequest.yaml
+      $ref: ../../components/responses/OAuthOrBadRequest.yaml
     "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml
 post:
@@ -117,7 +117,7 @@ post:
     "302":
       description: Redirect to post_logout_redirect_uri
     "400":
-      $ref: ../../components/responses/OAuthBadRequest.yaml
+      $ref: ../../components/responses/OAuthOrBadRequest.yaml
     "413":
       $ref: ../../../shared/responses/PayloadTooLarge.yaml
     "429":

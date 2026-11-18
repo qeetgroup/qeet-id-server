@@ -8,10 +8,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/cache/ratelimit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -22,9 +20,6 @@ type limiter struct{ applied, cleared int }
 
 func (l *limiter) ApplyOverride(uuid.UUID, float64, int) { l.applied++ }
 func (l *limiter) ClearOverride(uuid.UUID)               { l.cleared++ }
-func (l *limiter) GetAll(context.Context, *pgxpool.Pool) ([]ratelimit.OrganizationLimit, error) {
-	return nil, nil
-}
 
 // refuseAudit makes the organization's audit writes of action fail until t
 // ends, as an audit store that is down would.

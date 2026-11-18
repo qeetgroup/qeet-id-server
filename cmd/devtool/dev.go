@@ -14,6 +14,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 )
 
@@ -92,6 +93,15 @@ func writePEM(path, kind string, der []byte) error {
 	return os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: kind, Bytes: der}), 0o600)
 }
 
+// pprofAddr is where make dev-observed serves profiles for the local stack's Alloy container:
+// loopback, which Docker Desktop reaches, and every address only on Linux, whose Docker bridge can't.
+func pprofAddr() string {
+	if runtime.GOOS == "linux" {
+		return "0.0.0.0:6060"
+	}
+	return "127.0.0.1:6060"
+}
+
 // dev runs the API with the persistent keys from .secrets/, which a .env line can't carry (they span
 // lines). observed adds JSON logs, also appended to bin/logs/api.log, and traces to the local collector.
 func dev(observed bool) error {
@@ -120,8 +130,7 @@ func dev(observed bool) error {
 		defer f.Close()
 		out = io.MultiWriter(os.Stdout, f)
 		otlp := envOr("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
-		// The local stack's Alloy container scrapes the profiles, so they listen beyond loopback (dev only).
-		pprof := envOr("PPROF_ADDR", "0.0.0.0:6060")
+		pprof := envOr("PPROF_ADDR", pprofAddr())
 		env = append(env, "LOG_FORMAT="+envOr("LOG_FORMAT", "json"), "OTEL_EXPORTER_OTLP_ENDPOINT="+otlp, "PPROF_ADDR="+pprof)
 		fmt.Printf("starting qeet-id on :%s, observed (logs %s, traces %s, profiles %s)\n", port, logFile, otlp, pprof)
 	} else {

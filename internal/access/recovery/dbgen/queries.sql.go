@@ -258,15 +258,6 @@ func (q *Queries) MarkPasswordResetUsed(ctx context.Context, id uuid.UUID) error
 	return err
 }
 
-const revokeUserSessions = `-- name: RevokeUserSessions :exec
-UPDATE auth.sessions SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL
-`
-
-func (q *Queries) RevokeUserSessions(ctx context.Context, userID uuid.UUID) error {
-	_, err := q.db.Exec(ctx, revokeUserSessions, userID)
-	return err
-}
-
 const upsertPasswordCredential = `-- name: UpsertPasswordCredential :exec
 INSERT INTO auth.password_credentials (user_id, password_hash, updated_at)
 VALUES ($1, $2, NOW())

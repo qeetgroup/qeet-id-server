@@ -58,7 +58,7 @@ post:
               interval:
                 type: integer
     "400":
-      $ref: ../../../shared/responses/BadRequest.yaml
+      $ref: ../../components/responses/OAuthOrBadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
     "413":

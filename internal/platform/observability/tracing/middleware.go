@@ -8,7 +8,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// Middleware starts or continues a server span per request. Spans are named by
+// Middleware starts a server span per request. Spans are named by
 // method and chi route pattern (e.g. "GET /v1/users/{id}"), not the raw path,
 // to bound cardinality; the name is set once routing has matched. With tracing
 // disabled it costs next to nothing.
@@ -29,6 +29,9 @@ func Middleware(next http.Handler) http.Handler {
 		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
 			return r.Method
 		}),
+		// The API faces the internet, so a caller's trace header is linked, never obeyed: it can't
+		// turn sampling on for its requests or put them in a trace it names.
+		otelhttp.WithPublicEndpointFn(func(*http.Request) bool { return true }),
 	)
 	return instrumented
 }

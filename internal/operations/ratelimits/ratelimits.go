@@ -5,14 +5,11 @@
 package ratelimits
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/platform/cache/ratelimit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
@@ -20,7 +17,6 @@ import (
 type Limiter interface {
 	ApplyOverride(organizationID uuid.UUID, rate float64, capacity int)
 	ClearOverride(organizationID uuid.UUID)
-	GetAll(ctx context.Context, pool *pgxpool.Pool) ([]ratelimit.OrganizationLimit, error)
 }
 
 // Defaults are the platform-level fallback values shown in the UI when no

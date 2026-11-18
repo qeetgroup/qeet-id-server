@@ -99,7 +99,6 @@ internal/access/recovery/queries.sql#GetMagicLinkAccount  pre-organization: magi
 internal/access/recovery/queries.sql#GetMagicLinkByToken  secret-lookup: link found by its token hash
 internal/access/recovery/queries.sql#GetResetAccount  secret-lookup: account named by the reset token
 internal/access/recovery/queries.sql#MarkMagicLinkUsed  secret-lookup: link found by its token hash
-internal/access/recovery/queries.sql#RevokeUserSessions  pending-review: unused query; delete it or add an organization condition
 internal/access/recovery/queries.sql#VerifyEmailByLink  secret-lookup: account named by the reset or sign-in link
 internal/access/recovery/queries.sql#FindResetAccount  pre-organization: password reset finds the account by email
 internal/access/threat/risk/queries.sql#PurgeSignInHistory  background-sweep: retention job
@@ -180,7 +179,7 @@ internal/identity/organization/queries.sql#IsEmailVerified  session-scoped: the 
 internal/identity/user/queries.sql#GetUserByEmailGlobal  pre-organization: password sign-in finds the account by email
 internal/identity/user/queries.sql#GetUserByID  parent-scoped: callers pass their own, a signing-in or an organization-checked account
 internal/identity/user/queries.sql#LockAccount  parent-scoped: callers pass their own or an organization-checked account
-internal/identity/user/queries.sql#MarkEmailVerified  pending-review: unused query; delete it or add an organization condition
+internal/identity/user/queries.sql#MarkEmailVerified  parent-scoped: only the demo seed calls it, on an account it has just created
 internal/identity/user/queries.sql#PurgeUser  parent-scoped: the handler checks the user's home organization first
 internal/identity/user/queries.sql#RestoreUser  parent-scoped: the handler checks the user's home organization first
 internal/identity/user/queries.sql#SetUserMfaRequired  parent-scoped: the handler checks the user's home organization first
@@ -282,7 +281,6 @@ internal/operations/siem/queries.sql#ListEnabledLogSinks  background-sweep: log 
 internal/operations/siem/queries.sql#ReleaseLogSink  background-sweep: log forwarding job, by sink id
 internal/operations/siem/queries.sql#SetLogSinkError  background-sweep: log forwarding job
 
-internal/platform/cache/ratelimit/organization.go#OrganizationLimiter.GetAll  pending-review: unused method; lists every organization's overrides
 internal/platform/cache/ratelimit/organization.go#OrganizationLimiter.LoadOverrides  background-sweep: startup load of every organization's override into the limiter
 internal/platform/events/sessionsignal/sessionsignal.go#EndUserSessions  parent-scoped: callers check the user's home organization first, or erase the account
 internal/platform/messaging/delivery/queries.sql#ActiveSuppression  platform-wide: an address's suppression stops every organization's mail; only the causing organization sees its detail

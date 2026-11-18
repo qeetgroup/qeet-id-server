@@ -40,7 +40,7 @@ post:
           schema:
             $ref: ../../components/schemas/DeviceAuthorizationResponse.yaml
     "400":
-      $ref: ../../../shared/responses/BadRequest.yaml
+      $ref: ../../components/responses/OAuthOrBadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
     "413":

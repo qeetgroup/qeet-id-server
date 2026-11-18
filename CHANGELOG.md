@@ -185,6 +185,9 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
 
 ### Removed
 
+- Two unused pieces of code that touched every organization's rows: a query that ended all of an account's
+  sessions, and the rate limiter's list of every organization's overrides. They were the last entries the
+  organization guard held for review.
 - `offset` on `GET /v1/users`: the members list pages by cursor.
 - `cmd/worker` and `EMBEDDED_WORKERS`: no image built the standalone worker, so the API always runs the
   background workers. A leftover `EMBEDDED_WORKERS` is ignored.
@@ -208,6 +211,23 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
   could not be returned.
 
 ### Fixed
+
+- The development sandbox's checkout page works again: the API's stricter content policy refused its form, so the
+  page now carries a policy of its own that allows its form and the return to the application.
+- `make dast` sends `SCAN_TOKEN` on its requests: ZAP split the option at the space and scanned signed out. The
+  scan and load reports can be written on Linux, where the scanners' containers run as their own users.
+- The OAuth documents show both answers the revocation, device-authorization, backchannel and logout endpoints
+  give to a bad request (an RFC 6749 error, or the API's own for a request that can't be read), and list the
+  `unsupported_token_type` and `unknown_user_id` errors.
+- The activity list and summary refuse a malformed `from`, `to`, `actor` or `subject` (400) instead of dropping
+  the filter and answering unfiltered events.
+- `POST /v1/auth/magic-link/resend` refuses an empty token, and `POST /v1/account/delete` a malformed body, instead
+  of answering as if they were valid.
+- The suspended-users and directory-event lists lower an out-of-range `limit` into range, as every other list does,
+  instead of answering 400.
+- The API documents describe what the server accepts and answers, as found by fuzzing them against it: 429, 400
+  and 413 where they can happen; request bodies that refuse unknown fields and empty required values, and accept
+  `null` for optional ones; the three request bodies that were undocumented; the page-size and filter rules.
 
 - Traces reach the collector: an `OTEL_EXPORTER_OTLP_ENDPOINT` without a path posted to `/`, not `/v1/traces`.
 - `GET /v1/organizations/{organizationID}/login-domain` answered `"records": null` with no domain set, and an MFA
@@ -267,6 +287,16 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
 
 ### Security
 
+- Request metrics count a made-up HTTP method as `other`. Each one used to add series of its own, so anyone
+  could grow the server's memory and its `/metrics` answer without limit, with no sign-in.
+- A caller's `traceparent` header is linked to the request's trace, never obeyed. Before, any caller could turn
+  tracing on for all its requests, whatever `OTEL_TRACES_SAMPLER_RATIO` said, and choose the trace they joined.
+- `make dev-observed` serves profiles on loopback on macOS and Windows, where Docker reaches it, instead of on
+  every network the workstation is on. The local database, NATS and the mail catcher are published on loopback
+  too, like the rest of the local stack: the database has a default password, and the mail catcher shows every
+  sign-in link.
+- `make sonar` leaves `.env` and `.secrets/` out by name, so local keys are never sent for analysis even when
+  the scanner can't read `.gitignore`.
 - A vault secret is created, changed or deleted only together with its audit record, and revealed or read
   through `/v1/vault/{name}` only once the read is recorded; so is a Token Vault access token. When the record
   can't be written the request fails and nothing changes or leaves, where before the change stood or the value

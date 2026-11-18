@@ -205,7 +205,7 @@ A navigation index. "Where is X?" answered in one hop. For _how_ things work, re
 
 |                                                      |                                                                                                          |
 | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| **OpenAPI 3.1 — 5 documents** (generated, committed) | `api/openapi/{auth,management,federation,developer,operations}.yaml`                                     |
+| **OpenAPI 3.1 — 5 documents** (generated, committed) | `api/openapi/{access,identity,federation,developer,operations}.yaml`                                     |
 | OpenAPI sources — edit these, then `make openapi`    | `api/openapi/src/<document>/` (`openapi.yaml`, `paths/<tag>/`, `components/`), `api/openapi/src/shared/` |
 | Spec conventions                                     | `api/openapi/README.md`                                                                                  |
 | AI tool catalogue                                    | `internal/operations/qeetai/tools.manifest.json`                                                         |

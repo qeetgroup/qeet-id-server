@@ -48,9 +48,6 @@ UPDATE account.users SET email_verified_at = NOW(), updated_at = NOW()
 WHERE id = @user_id AND email_verified_at IS NULL AND deleted_at IS NULL
 RETURNING email;
 
--- name: RevokeUserSessions :exec
-UPDATE auth.sessions SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL;
-
 -- ExpireMagicLinks ends the unused sign-in links to an address, so only the
 -- newest works; a minute back, as ExpirePasswordResets.
 -- name: ExpireMagicLinks :exec

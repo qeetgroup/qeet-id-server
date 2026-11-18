@@ -2,7 +2,6 @@ package ratelimit
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -10,7 +9,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -139,33 +137,6 @@ func (l *OrganizationLimiter) ClearOverride(organizationID uuid.UUID) {
 	l.mu.Lock()
 	delete(l.overrides, organizationID)
 	l.mu.Unlock()
-}
-
-// GetAll returns every organization override for this limiter's key, read from pool.
-func (l *OrganizationLimiter) GetAll(ctx context.Context, pool *pgxpool.Pool) ([]OrganizationLimit, error) {
-	rows, err := pool.Query(ctx, `
-		SELECT organization_id, rate, capacity FROM platform.rate_limit_overrides WHERE limit_key = $1
-	`, l.key)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []OrganizationLimit{}
-	for rows.Next() {
-		var tl OrganizationLimit
-		if err := rows.Scan(&tl.OrganizationID, &tl.Rate, &tl.Capacity); err != nil {
-			return nil, err
-		}
-		out = append(out, tl)
-	}
-	return out, rows.Err()
-}
-
-// OrganizationLimit is one organization's override, as listed by GetAll.
-type OrganizationLimit struct {
-	OrganizationID uuid.UUID `json:"organization_id"`
-	Rate           float64   `json:"rate"`
-	Capacity       int       `json:"capacity"`
 }
 
 func (l *OrganizationLimiter) rateFor(organizationID uuid.UUID) (rate, cap float64) {

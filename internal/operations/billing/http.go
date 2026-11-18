@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -85,6 +86,20 @@ type sandboxPageData struct {
 	Ref, Plan, Amount, Currency, SuccessURL, CancelURL string
 }
 
+// originPattern is a plain scheme://host[:port], safe to write into a policy header.
+var originPattern = regexp.MustCompile(`^https?://[A-Za-z0-9.\-]+(:[0-9]+)?$`)
+
+// sandboxPageCSP is the mock page's own policy: it styles itself and posts its form here, then
+// follows the redirect to successURL's origin, which Chrome also holds to form-action. The API's
+// policy (httpx.SecurityHeaders) allows neither, since nothing else it serves is a page with a form.
+func sandboxPageCSP(successURL string) string {
+	targets := "'self'"
+	if u, err := url.Parse(successURL); err == nil && originPattern.MatchString(u.Scheme+"://"+u.Host) {
+		targets += " " + u.Scheme + "://" + u.Host
+	}
+	return "default-src 'none'; style-src 'unsafe-inline'; form-action " + targets + "; frame-ancestors 'none'; base-uri 'none'"
+}
+
 // sandboxCheckoutPage renders the mock hosted-checkout page, validating the
 // return URLs. It is a 404 when the sandbox is disabled.
 func (h *Handler) sandboxCheckoutPage(w http.ResponseWriter, r *http.Request) {
@@ -100,6 +115,7 @@ func (h *Handler) sandboxCheckoutPage(w http.ResponseWriter, r *http.Request) {
 	}
 	amt, _ := strconv.ParseInt(q.Get("amount"), 10, 64)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy", sandboxPageCSP(successURL))
 	_ = sandboxTmpl.Execute(w, sandboxPageData{
 		Ref:        q.Get("ref"),
 		Plan:       q.Get("plan"),

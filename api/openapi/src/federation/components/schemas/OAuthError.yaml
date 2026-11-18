@@ -1,5 +1,5 @@
 type: object
-description: An RFC 6749 §5.2 token error.
+description: An RFC 6749 §5.2 error, as the token, revocation, device and backchannel endpoints answer.
 required:
   - error
 additionalProperties: false
@@ -18,5 +18,7 @@ properties:
       - slow_down
       - access_denied
       - expired_token
+      - unsupported_token_type
+      - unknown_user_id
   error_description:
     type: string

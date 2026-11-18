@@ -91,7 +91,7 @@ func loadTest() error {
 		return err
 	}
 	reports := filepath.Join(dir, "bin", "reports")
-	if err := os.MkdirAll(reports, 0o750); err != nil {
+	if err := reportsDir(reports); err != nil {
 		return err
 	}
 	base := envOr("LOAD_BASE_URL", "http://host.docker.internal:"+envOr("HTTP_PORT", "4001"))

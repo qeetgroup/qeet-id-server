@@ -46,9 +46,32 @@ func newScanTarget(tool string) (scanTarget, error) {
 		}
 		t.docs = append(t.docs, openapiDocs[i])
 	}
+	if t.token != "" && !bearerToken.MatchString(t.token) {
+		return scanTarget{}, errors.New("SCAN_TOKEN: not a bearer token (letters, digits and -._~+/ only)")
+	}
 	fmt.Printf("%s: scanning %s with %s. It sends attacks and changes data: point it at a throwaway server.\n",
 		tool, t.base, strings.Join(t.docs, " "))
-	return t, os.MkdirAll(t.reports, 0o750)
+	return t, reportsDir(t.reports)
+}
+
+// bearerToken is RFC 6750's token alphabet: one word, with nothing a scanner's option line would split or unquote.
+var bearerToken = regexp.MustCompile(`^[A-Za-z0-9._~+/-]+=*$`)
+
+// reportsDir makes dir (git-ignored, under bin/) for a scanner's reports. A scanner's container runs
+// as its own user, which on Linux isn't this one, so the folder is open to it.
+func reportsDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return err
+	}
+	return os.Chmod(dir, 0o777) // #nosec G302 -- a scratch folder the scanners' container users write their reports to
+}
+
+// zapAuth is the ZAP options that send token as the bearer token on every request. ZAP splits the
+// line like a shell, so the value, which holds a space, is quoted.
+func zapAuth(token string) string {
+	return "-config replacer.full_list(0).description=auth -config replacer.full_list(0).enabled=true " +
+		"-config replacer.full_list(0).matchtype=REQ_HEADER -config replacer.full_list(0).matchstr=Authorization " +
+		"-config replacer.full_list(0).regex=false -config 'replacer.full_list(0).replacement=Bearer " + token + "'"
 }
 
 // servers matches a document's servers block, which the scan copy points at the target instead.
@@ -67,16 +90,15 @@ func dast() error {
 			return err
 		}
 		local := servers.ReplaceAll(raw, []byte("servers:\n  - url: "+t.base+"\n"))
-		// #nosec G703 -- doc is taken from the fixed document list (newScanTarget), never from SCAN_DOCS' text
-		if err := os.WriteFile(filepath.Join(t.reports, doc+".yaml"), local, 0o600); err != nil {
+		// The scanner's own user reads this copy of a public document.
+		// #nosec G703 G306 -- doc is taken from the fixed document list (newScanTarget), never from SCAN_DOCS' text
+		if err := os.WriteFile(filepath.Join(t.reports, doc+".yaml"), local, 0o644); err != nil {
 			return err
 		}
 		args := []string{"run", "--rm", "--add-host=host.docker.internal:host-gateway", "-v", t.reports + ":/zap/wrk:rw",
 			zapImage(), "zap-api-scan.py", "-t", doc + ".yaml", "-f", "openapi", "-r", doc + ".html", "-J", doc + ".json"}
 		if t.token != "" {
-			args = append(args, "-z", "-config replacer.full_list(0).description=auth -config replacer.full_list(0).enabled=true "+
-				"-config replacer.full_list(0).matchtype=REQ_HEADER -config replacer.full_list(0).matchstr=Authorization "+
-				"-config replacer.full_list(0).regex=false -config replacer.full_list(0).replacement=Bearer "+t.token)
+			args = append(args, "-z", zapAuth(t.token))
 		}
 		// zap-api-scan exits 1 with a FAIL alert, 2 with warnings only, 3 when it couldn't run.
 		if code := exitCode(run("docker", args...)); code == 1 || code > 2 {

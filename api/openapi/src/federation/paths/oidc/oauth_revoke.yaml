@@ -49,7 +49,7 @@ post:
     "200":
       description: "Revoked (RFC 7009: always 200 even for unknown tokens)"
     "400":
-      $ref: ../../../shared/responses/BadRequest.yaml
+      $ref: ../../components/responses/OAuthOrBadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
     "413":
