@@ -1,0 +1,121 @@
+get:
+  operationId: listDirectoryErrors
+  summary: List directory errors and remediation summary
+  description: >-
+    Requires connection.read. Only errors from the authenticated organization are
+    returned. Unknown affected-user counts are null, not inferred from request
+    volume. A person's own credentials refused at an LDAP sign-in is not an
+    error here (it shows in the sync activity as a warning and doesn't count
+    towards alerts); the service account or the directory refusing is. A later
+    successful operation on a connection (a passing check, sign-in or push)
+    resolves its open connection and permission failures, as resolved by the
+    system (resolved_by null) and audited as directory.errors_resolved; a
+    failure being retried is left for its retry.
+  tags:
+    - Directory
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: days
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 90
+        default: 7
+    - name: connection_id
+      in: query
+      schema:
+        type: string
+        maxLength: 128
+    - name: severity
+      in: query
+      schema:
+        type: string
+        enum:
+          - warning
+          - critical
+    - name: resolution
+      in: query
+      schema:
+        type: string
+        enum:
+          - open
+          - resolved
+          - retried
+    - name: q
+      in: query
+      schema:
+        type: string
+        maxLength: 200
+    - name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 25
+    - $ref: ../../../shared/parameters/Cursor.yaml
+  responses:
+    '200':
+      description: Error page, categories, affected connections, and latest remediations
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              next_cursor:
+                $ref: ../../../shared/schemas/NextCursor.yaml
+              items:
+                type: array
+                items:
+                  $ref: ../../components/schemas/DirectoryEvent.yaml
+              total:
+                type: integer
+              limit:
+                type: integer
+              summary:
+                type: object
+                properties:
+                  open:
+                    type: integer
+                  critical:
+                    type: integer
+                  warning:
+                    type: integer
+                  retried:
+                    type: integer
+                  impacted_users:
+                    type:
+                      - integer
+                      - 'null'
+              categories:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    key:
+                      type: string
+                    count:
+                      type: integer
+              connections:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    key:
+                      type: string
+                    count:
+                      type: integer
+              remediations:
+                type: array
+                items:
+                  $ref: ../../components/schemas/DirectoryEvent.yaml
+    '400':
+      description: Invalid filters
+    '401':
+      description: Authentication required
+    '403':
+      description: Organization mismatch or missing connection.read

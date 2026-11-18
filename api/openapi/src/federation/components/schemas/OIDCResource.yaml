@@ -3,7 +3,7 @@ properties:
   id:
     type: string
     format: uuid
-  tenant_id:
+  organization_id:
     type: string
     format: uuid
   identifier:

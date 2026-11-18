@@ -12,14 +12,17 @@ import (
 	"sync"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/migrations"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 )
 
 // emptyDatabase creates a database with nothing in it beside the package's
@@ -375,5 +378,226 @@ func TestTwoStartsAtOnce(t *testing.T) {
 	}
 	if st, err := migrations.CheckCompatible(dsn); err != nil || st.Database != latest {
 		t.Errorf("after two starts at once: %+v, %v; want migration %d", st, err, latest)
+	}
+}
+
+// TestMigrationsGiveUpOnABusyTable checks that a migration waiting for a table
+// another connection holds fails once its lock timeout passes, rather than
+// queueing every query to that table behind it.
+func TestMigrationsGiveUpOnABusyTable(t *testing.T) {
+	ctx := dbtest.Context(t)
+	*migrations.LockTimeout = "300ms"
+	t.Cleanup(func() { *migrations.LockTimeout = "10s" })
+	holder, err := dbtest.Owner(t).Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = holder.Rollback(context.Background()) }()
+	if _, err := holder.Exec(ctx, `LOCK TABLE schema_migrations IN ACCESS EXCLUSIVE MODE`); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	if err := migrations.Run(dbtest.DSN(t)); err == nil {
+		t.Error("a migration behind a held table succeeded")
+	}
+	if waited := time.Since(start); waited > 5*time.Second {
+		t.Errorf("a migration waited %s for a held table, want about its lock timeout", waited)
+	}
+}
+
+// TestOrganizationsKeepAnOwnerButOffboardTheirOwn checks that an organization
+// still can't suspend, delete or strip its own last active owner, but can
+// suspend and delete its own account when that account is the last owner of an
+// organization it created elsewhere.
+func TestOrganizationsKeepAnOwnerButOffboardTheirOwn(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.Pool(t)
+	lastOwner := func(err error) bool {
+		var pgErr *pgconn.PgError
+		return errors.As(err, &pgErr) && pgErr.Code == "QI409"
+	}
+	ownerRole := func(organization uuid.UUID) uuid.UUID {
+		t.Helper()
+		var id uuid.UUID
+		if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (organization_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, organization).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	employer, side := dbtest.Organization(t), dbtest.Organization(t)
+	boss := dbtest.User(t, employer)
+	dbtest.Assign(t, boss.ID, employer, ownerRole(employer))
+	employee := dbtest.User(t, employer, employer)
+	sideOwner := ownerRole(side)
+	dbtest.Assign(t, employee.ID, side, sideOwner)
+
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET status = 'suspended' WHERE id = $1`, boss.ID); !lastOwner(err) {
+		t.Errorf("suspend the employer's last owner: %v, want QI409", err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM rbac.user_roles WHERE user_id = $1 AND organization_id = $2`, employee.ID, side); !lastOwner(err) {
+		t.Errorf("take the owner role from the side organization's last owner: %v, want QI409", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET status = 'suspended' WHERE id = $1`, employee.ID); err != nil {
+		t.Errorf("the employer suspends its employee who owns an organization elsewhere: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET status = 'active' WHERE id = $1`, employee.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE account.users SET deleted_at = NOW() WHERE id = $1`, employee.ID); err != nil {
+		t.Errorf("the employer deletes that employee: %v", err)
+	}
+}
+
+// accountLevelTables are the tables with an organization_id that have no row-level
+// security policy: they hold a person's own data across organizations (read by
+// "my sessions", "my invitations", sign-in), or are platform-wide.
+var accountLevelTables = map[string]bool{
+	"audit.events":                  true, // one hash chain per organization and one platform chain
+	"platform.organization_purges":  true, // the record of a purged organization, kept after it is gone
+	"auth.login_codes":              true, // sign-in, before an organization applies
+	"auth.login_context_history":    true, // a person's sign-in history, across organizations
+	"auth.magic_links":              true, // sign-in, before an organization applies
+	"auth.mfa_login_challenges":     true, // sign-in, before an organization applies
+	"auth.mfa_push_pairings":        true, // a person's devices
+	"auth.notifications":            true, // a person's inbox, across organizations
+	"auth.oauth_states":             true, // sign-in, before an organization applies
+	"auth.oidc_authorization_codes": true, // the hosted login, across organizations
+	"auth.oidc_ciba_requests":       true, // ended with every sign-in of the person
+	"auth.oidc_device_codes":        true, // ended with every sign-in of the person
+	"auth.oidc_logout_deliveries":   true, // background delivery
+	"auth.oidc_refresh_tokens":      true, // a person's application grants, across organizations
+	"auth.sessions":                 true, // a person's sessions, across organizations
+	"auth.trusted_devices":          true, // a person's devices, across organizations
+	"platform.email_messages":       true, // platform delivery records
+	"platform.email_suppressions":   true, // platform suppression list
+	"platform.rate_limit_overrides": true, // read by every instance's limiter
+	"platform.sales_leads":          true, // the public contact form
+	"rbac.user_roles":               true, // a person's memberships, across organizations
+	"organization.signup_checkouts": true, // sign-up, before the organization exists
+	"account.export_requests":       true, // a person's own data
+	"account.external_identities":   true, // a person's linked accounts
+	"account.purge_requests":        true, // a person's own data
+	"account.users":                 true, // accounts are platform-wide
+}
+
+// TestOrganizationTablesHaveRowSecurity checks that every table with an organization_id has
+// the organization_isolation policy, unless it is account-level, so a new
+// organization-owned table can't be added without one.
+func TestOrganizationTablesHaveRowSecurity(t *testing.T) {
+	rows, err := dbtest.Pool(t).Query(dbtest.Context(t), `
+		SELECT c.oid::regclass::text, c.relrowsecurity,
+		       EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = c.oid AND p.polname = 'organization_isolation')
+		FROM pg_class c
+		JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'organization_id' AND NOT a.attisdropped
+		WHERE c.relkind = 'r' AND c.relnamespace::regnamespace::text NOT IN ('pg_catalog', 'information_schema')
+		ORDER BY 1
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	seen := map[string]bool{}
+	for rows.Next() {
+		var table string
+		var enabled, policy bool
+		if err := rows.Scan(&table, &enabled, &policy); err != nil {
+			t.Fatal(err)
+		}
+		table = unquote(table)
+		seen[table] = true
+		switch {
+		case accountLevelTables[table] && (enabled || policy):
+			t.Errorf("%s is listed as account-level but has row-level security", table)
+		case !accountLevelTables[table] && (!enabled || !policy):
+			t.Errorf("%s has an organization_id but no organization_isolation policy; add one in its migration, or list it in accountLevelTables with why", table)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	for table := range accountLevelTables {
+		if !seen[table] {
+			t.Errorf("%s is listed in accountLevelTables but has no organization_id; delete it from the list", table)
+		}
+	}
+}
+
+// unquote drops the quotes regclass puts around a reserved name ("user").
+func unquote(s string) string { return strings.ReplaceAll(s, `"`, "") }
+
+// TestRowSecurityConfinesAScopedConnection checks that a connection scoped to
+// one organization sees, writes and changes only that organization's rows,
+// whatever its query asks, and that one acting across organizations sees all.
+func TestRowSecurityConfinesAScopedConnection(t *testing.T) {
+	pool := dbtest.Pool(t)
+	mine, theirs := dbtest.Organization(t), dbtest.Organization(t)
+	for _, organization := range []any{mine, theirs} {
+		if _, err := pool.Exec(dbtest.Context(t), `INSERT INTO organization.groups (organization_id, name) VALUES ($1, 'Engineering')`, organization); err != nil {
+			t.Fatal(err)
+		}
+	}
+	count := func(ctx context.Context) int {
+		t.Helper()
+		var n int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM organization.groups WHERE organization_id = ANY($1)`, []any{mine, theirs}).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	scoped := postgres.WithOrganization(dbtest.Context(t), mine)
+	if n := count(scoped); n != 1 {
+		t.Errorf("scoped to one organization, a query for both sees %d groups, want its own 1", n)
+	}
+	if n := count(postgres.AcrossOrganizations(scoped)); n != 2 {
+		t.Errorf("across organizations, %d groups, want 2", n)
+	}
+	_, err := pool.Exec(scoped, `INSERT INTO organization.groups (organization_id, name) VALUES ($1, 'Planted')`, theirs)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "42501" {
+		t.Errorf("scoped, a row for another organization was written: %v, want a row-level security refusal", err)
+	}
+	tag, err := pool.Exec(scoped, `UPDATE organization.groups SET name = 'Renamed' WHERE organization_id = $1`, theirs)
+	if err != nil || tag.RowsAffected() != 0 {
+		t.Errorf("scoped, another organization's group was changed: %v rows, %v", tag.RowsAffected(), err)
+	}
+}
+
+func TestMain(m *testing.M) { dbtest.Main(m) }
+
+// TestReferencesStayInTheirOrganization checks that every foreign key from one
+// organization-owned table to another names the organization, so the database
+// refuses a row that points at another organization's.
+func TestReferencesStayInTheirOrganization(t *testing.T) {
+	rows, err := dbtest.Pool(t).Query(dbtest.Context(t), `
+		SELECT c.conrelid::regclass::text, c.conname
+		FROM pg_constraint c
+		JOIN pg_attribute child ON child.attrelid = c.conrelid AND child.attname = 'organization_id' AND child.attnotnull
+		JOIN pg_attribute parent ON parent.attrelid = c.confrelid AND parent.attname = 'organization_id' AND parent.attnotnull
+		WHERE c.contype = 'f' AND NOT child.attnum = ANY (c.conkey)
+		ORDER BY 1, 2
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var table, constraint string
+		if err := rows.Scan(&table, &constraint); err != nil {
+			t.Fatal(err)
+		}
+		t.Errorf("%s.%s refers to another organization-owned row by id alone; refer to it by (organization_id, id)", table, constraint)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	mine, theirs := dbtest.Organization(t), dbtest.Organization(t)
+	user := dbtest.User(t, mine)
+	_, err = dbtest.Pool(t).Exec(dbtest.Context(t), `
+		INSERT INTO rbac.user_roles (user_id, organization_id, role_id) VALUES ($1, $2, $3)
+	`, user.ID, mine, dbtest.Role(t, theirs))
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23503" {
+		t.Errorf("a role from another organization was granted: %v, want a foreign key violation", err)
 	}
 }

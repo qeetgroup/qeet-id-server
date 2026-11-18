@@ -12,14 +12,14 @@ post:
     learns about tokens it owns: an access token issued to it (its client_id
     claim), or one issued for a registered resource it serves
     (server_client_id), and a refresh token issued to it. Any other token,
-    including another application's in the same organisation or one from another
-    organisation, answers only {"active": false}, so the endpoint never confirms
+    including another application's in the same organization or one from another
+    organization, answers only {"active": false}, so the endpoint never confirms
     a token exists; asking about another application's token is audited as
     oidc.introspection_refused. An active access token reports its real aud (a
     string for one audience, a list for several), its client_id, and resource
     when it was issued for one. Introspection is the authoritative answer on
     revocation: a signature-valid access token whose account is suspended or
-    deleted, whose membership of the organisation has ended, whose sign-in has
+    deleted, whose membership of the organization has ended, whose sign-in has
     ended, or whose agent is no longer active, answers {"active": false}. The
     sign-in is the session the token names in sid: a person's own session, or
     for an application's token the hosted-login session it was issued in, ended

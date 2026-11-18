@@ -8,10 +8,10 @@ import (
 
 	"github.com/google/uuid"
 
-	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
-	apikey "github.com/qeetgroup/qeet-id-server/internal/developer/api-keys"
-	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
+	"github.com/qeetgroup/qeet-id-server/internal/developer/apikey"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -41,13 +41,13 @@ func TestStreamAccessFollowsWhatAdmittedTheReader(t *testing.T) {
 	}
 	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
 	keys := apikey.NewService(pool)
-	access := streamAccess{verifier: &httpx.AuthVerifier{SessionLive: authSvc.SessionLive}, checker: rbac.NewRepository(pool), apiKeys: keys, policy: policy}
+	access := streamAccess(&httpx.AuthVerifier{SessionLive: authSvc.SessionLive, APIKeyLive: keys.Live}, rbac.NewRepository(pool), policy)
 	asPerson := func(userID, organizationID, sessionID uuid.UUID, expires time.Time) *httpx.Principal {
 		return &httpx.Principal{ActorType: "user", UserID: &userID, OrganizationID: &organizationID, SessionID: &sessionID, ExpiresAt: &expires}
 	}
 	allowed := func(what string, p *httpx.Principal, want bool) {
 		t.Helper()
-		if got, err := access.Allowed(ctx, p); err != nil || got != want {
+		if got, err := access(ctx, p); err != nil || got != want {
 			t.Errorf("%s: allowed %v (%v), want %v", what, got, err, want)
 		}
 	}
@@ -56,7 +56,7 @@ func TestStreamAccessFollowsWhatAdmittedTheReader(t *testing.T) {
 	soon := time.Now().Add(time.Hour)
 	allowed("a reader with a live session and audit.read", asPerson(reader.ID, organization, live, soon), true)
 	allowed("the same reader once the token has expired", asPerson(reader.ID, organization, live, time.Now().Add(-time.Second)), false)
-	allowed("someone of another organisation", asPerson(outsider.ID, organization, session(outsider.ID, other), soon), false)
+	allowed("someone of another organization", asPerson(outsider.ID, organization, session(outsider.ID, other), soon), false)
 
 	ended := session(reader.ID, organization)
 	if _, err := pool.Exec(ctx, `UPDATE auth.sessions SET revoked_at = NOW() WHERE id = $1`, ended); err != nil {

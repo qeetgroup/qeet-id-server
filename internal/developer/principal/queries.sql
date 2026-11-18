@@ -1,10 +1,8 @@
 -- Queries for the service-accounts (principal) domain.
--- Create and Disable accept a pgx.Tx from the handler so audit can share the
--- transaction; the sqlc queries are called via q.WithTx(tx).
 
 -- name: CreateServicePrincipal :one
 INSERT INTO auth.service_principals (organization_id, name, description, secret_hash, scopes, created_by)
-VALUES (@organization_id, @name, @description, @secret_hash, @scopes, NULLIF(@created_by::uuid, '00000000-0000-0000-0000-000000000000'))
+VALUES (@organization_id, @name, @description, @secret_hash, @scopes, sqlc.narg('created_by'))
 RETURNING id, organization_id, name, scopes, disabled_at, created_at, description;
 
 -- name: ListServicePrincipals :many
@@ -13,18 +11,13 @@ SELECT id, organization_id, name, scopes, disabled_at, created_at, description, 
 FROM auth.service_principals WHERE organization_id = $1 ORDER BY created_at DESC
 LIMIT 1001;
 
--- DisableServicePrincipal marks the principal disabled. RETURNING organization_id
--- and name so the caller can write the audit row without a second query.
+-- DisableServicePrincipal marks the principal disabled, returning its name for
+-- the audit row.
 -- name: DisableServicePrincipal :one
 UPDATE auth.service_principals SET disabled_at = NOW()
 WHERE id = $1 AND organization_id = $2 AND disabled_at IS NULL
-RETURNING organization_id, name;
+RETURNING name;
 
--- GetServicePrincipalForAuth fetches the full credential row for the
--- client_credentials grant (IssueClientCredentials). Includes secret_hash
--- for argon2/bcrypt verification — never returned to the API caller.
--- PrincipalLive reports whether a service principal exists and isn't
--- disabled. No row: it doesn't exist.
 -- PrincipalLive is whether a principal is enabled, in an active
 -- organization: no row for one of a suspended or deleted organization.
 -- name: PrincipalLive :one
@@ -32,8 +25,9 @@ SELECT (p.disabled_at IS NULL)::bool AS live FROM auth.service_principals p
 JOIN organization.organizations t ON t.id = p.organization_id AND t.status = 'active' AND t.deleted_at IS NULL
 WHERE p.id = $1;
 
--- GetServicePrincipalForAuth finds no principal of a suspended or deleted
--- organization.
+-- GetServicePrincipalForAuth is the credential row the client_credentials
+-- grant (ClientCredentials) verifies a secret against, never returned to the
+-- caller. It finds no principal of a suspended or deleted organization.
 -- name: GetServicePrincipalForAuth :one
 SELECT p.id, p.organization_id, p.secret_hash, p.scopes, p.disabled_at, p.previous_secret_hash, p.previous_secret_expires_at
 FROM auth.service_principals p
@@ -58,12 +52,6 @@ RETURNING name;
 UPDATE auth.service_principals SET disabled_at = NULL
 WHERE id = @id AND organization_id = @organization_id
 RETURNING name;
-
--- UpgradeServicePrincipalSecretHash replaces an Argon2id secret hash from before
--- with its SHA-256 form, once the secret has verified.
--- name: UpgradeServicePrincipalSecretHash :exec
-UPDATE auth.service_principals SET secret_hash = @new_hash
-WHERE id = @id AND organization_id = @organization_id AND secret_hash = @old_hash;
 
 -- ServicePrincipalScopes returns the scopes of one of the organization's service principals.
 -- name: ServicePrincipalScopes :one

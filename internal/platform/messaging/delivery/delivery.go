@@ -6,8 +6,6 @@ package delivery
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -16,11 +14,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
@@ -58,8 +56,7 @@ func count(template, status string) {
 // HashAddress is the lookup key for an address: SHA-256 of it trimmed and
 // lower-cased, hex.
 func HashAddress(address string) string {
-	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(address))))
-	return hex.EncodeToString(sum[:])
+	return codes.HashHex(strings.ToLower(strings.TrimSpace(address)))
 }
 
 // Hint is an address masked for display: its first character and domain
@@ -102,9 +99,7 @@ func (s *Store) Suppressed(ctx context.Context, address string) (*Suppression, e
 		return nil, err
 	}
 	sup := &Suppression{ID: row.ID, Reason: row.Reason, Detail: row.Detail, CreatedAt: row.CreatedAt}
-	if row.OrganizationID.Valid {
-		sup.OrganizationID = &row.OrganizationID.UUID
-	}
+	sup.OrganizationID = row.OrganizationID
 	return sup, nil
 }
 
@@ -119,9 +114,9 @@ type Record struct {
 
 // RecordSend stores one send.
 func (s *Store) RecordSend(ctx context.Context, r Record) (uuid.UUID, error) {
-	var organization uuid.NullUUID
+	var organization *uuid.UUID
 	if id, err := uuid.Parse(r.OrganizationID); err == nil {
-		organization = uuid.NullUUID{UUID: id, Valid: true}
+		organization = &id
 	}
 	var providerID *string
 	if r.ProviderMessageID != "" {
@@ -154,14 +149,14 @@ func (s *Store) Apply(ctx context.Context, ev Event) error {
 	template := ""
 	defer func() { count(template, ev.Status) }()
 
-	var organization, message uuid.NullUUID
+	var organization, message *uuid.UUID
 	msg, err := q.MessageByProviderID(ctx, dbgen.MessageByProviderIDParams{Provider: ev.Provider, ProviderMessageID: &ev.ProviderMessageID})
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 	case err != nil:
 		return err
 	default:
-		organization, message, template = msg.OrganizationID, uuid.NullUUID{UUID: msg.ID, Valid: true}, msg.Template
+		organization, message, template = msg.OrganizationID, &msg.ID, msg.Template
 		if rank[ev.Status] > rank[msg.Status] {
 			if err := q.SetMessageStatus(ctx, dbgen.SetMessageStatusParams{ID: msg.ID, Status: ev.Status, StatusReason: ev.Reason}); err != nil {
 				return err
@@ -197,8 +192,8 @@ type MessageView struct {
 // first, after the cursor when one is set, with the next page's cursor: empty
 // on the last page.
 func (s *Store) MessagesTo(ctx context.Context, organizationID uuid.UUID, address string, limit int32, after paging.Cursor) ([]MessageView, string, error) {
-	params := dbgen.ListMessagesToParams{OrganizationID: uuid.NullUUID{UUID: organizationID, Valid: true}, ToHash: HashAddress(address), Lim: limit + 1}
-	params.BeforeTs, params.BeforeID = before(after)
+	params := dbgen.ListMessagesToParams{OrganizationID: &organizationID, ToHash: HashAddress(address), Lim: limit + 1}
+	params.BeforeTs, params.BeforeID = after.Before()
 	rows, err := s.q.ListMessagesTo(ctx, params)
 	if err != nil {
 		return nil, "", err
@@ -211,20 +206,12 @@ func (s *Store) MessagesTo(ctx context.Context, organizationID uuid.UUID, addres
 	return out, next, nil
 }
 
-// before is a cursor as the list queries' optional before_ts and before_id.
-func before(after paging.Cursor) (pgtype.Timestamptz, uuid.NullUUID) {
-	if !after.Set {
-		return pgtype.Timestamptz{}, uuid.NullUUID{}
-	}
-	return pgtype.Timestamptz{Time: after.Time, Valid: true}, uuid.NullUUID{UUID: after.ID, Valid: true}
-}
-
 // Suppressions lists a page of the active suppressions the organization's mail
 // caused, newest first, after the cursor when one is set, with the next page's
 // cursor: empty on the last page.
 func (s *Store) Suppressions(ctx context.Context, organizationID uuid.UUID, limit int32, after paging.Cursor) ([]Suppression, string, error) {
-	params := dbgen.ListSuppressionsParams{OrganizationID: uuid.NullUUID{UUID: organizationID, Valid: true}, Lim: limit + 1}
-	params.BeforeTs, params.BeforeID = before(after)
+	params := dbgen.ListSuppressionsParams{OrganizationID: &organizationID, Lim: limit + 1}
+	params.BeforeTs, params.BeforeID = after.Before()
 	rows, err := s.q.ListSuppressions(ctx, params)
 	if err != nil {
 		return nil, "", err
@@ -240,12 +227,8 @@ func (s *Store) Suppressions(ctx context.Context, organizationID uuid.UUID, limi
 // ClearSuppression lifts suppression id in tx, if the organization's mail
 // caused it; errs.ErrNotFound otherwise. The caller audits it in the same tx.
 func (s *Store) ClearSuppression(ctx context.Context, tx pgx.Tx, organizationID, id uuid.UUID, by *uuid.UUID) (*Suppression, error) {
-	var clearedBy uuid.NullUUID
-	if by != nil {
-		clearedBy = uuid.NullUUID{UUID: *by, Valid: true}
-	}
 	row, err := s.q.WithTx(tx).ClearSuppression(ctx, dbgen.ClearSuppressionParams{
-		ID: id, OrganizationID: uuid.NullUUID{UUID: organizationID, Valid: true}, ClearedBy: clearedBy,
+		ID: id, OrganizationID: &organizationID, ClearedBy: by,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound

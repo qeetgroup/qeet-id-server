@@ -1,0 +1,10 @@
+allOf:
+  - $ref: ./Page.yaml
+type: object
+properties:
+  items:
+    type: array
+    items:
+      $ref: ./Organization.yaml
+  next_cursor:
+    $ref: ../../../shared/schemas/NextCursor.yaml

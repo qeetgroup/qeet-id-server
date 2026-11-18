@@ -2,7 +2,7 @@ get:
   operationId: listUserTrustedDevices
   summary: List a member's remembered devices
   description: >-
-    Lists a member's devices remembered in the caller's organisation. Requires
+    Lists a member's devices remembered in the caller's organization. Requires
     the user.read permission; 404 for someone who is not a member.
   tags:
     - Users
@@ -34,12 +34,12 @@ get:
                     id:
                       type: string
                       format: uuid
-                    tenant_id:
+                    organization_id:
                       type:
                         - string
                         - 'null'
                       format: uuid
-                      description: The organisation the device was remembered in.
+                      description: The organization the device was remembered in.
                     device:
                       type: string
                       description: >-
@@ -81,7 +81,7 @@ delete:
   operationId: forgetAllUserTrustedDevices
   summary: Forget a member's remembered devices
   description: >-
-    Forgets every device a member has remembered in the caller's organisation,
+    Forgets every device a member has remembered in the caller's organization,
     so each is asked for the second factor at its next sign-in there. Requires
     the user.credentials permission; each is audited as
     auth.trusted_device_revoked. Refused with 403 rbac.target_is_owner when the

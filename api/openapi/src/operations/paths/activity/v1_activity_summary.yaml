@@ -7,7 +7,7 @@ get:
     severity and min_severity), so category and severity together total the
     events of both; by_severity and by_category then show the spread within what
     the filters match. Without an explicit `from` the window defaults to the
-    last 24h; it is capped at 366 days, with buckets of up to a week. Tenant is
+    last 24h; it is capped at 366 days, with buckets of up to a week. Organization is
     derived from the JWT principal only.
   tags:
     - Activity

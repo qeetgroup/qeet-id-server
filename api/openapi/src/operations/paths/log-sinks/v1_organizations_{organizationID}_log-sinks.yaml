@@ -1,0 +1,89 @@
+get:
+  operationId: listLogSinks
+  description: >-
+    Returns the organization's configured log sinks, each describing an external
+    destination that receives forwarded audit events, along with its enabled
+    state, last-forwarded timestamp, and last delivery error. Destination
+    credentials such as tokens are never returned. Use this to review which SIEM
+    integrations are active for the organization.
+  summary: List log sinks
+  tags:
+    - Log Sinks
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: Configured sinks (tokens are write-only, not returned)
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              truncated:
+                $ref: ../../../shared/schemas/Truncated.yaml
+              items:
+                type: array
+                items:
+                  $ref: ../../components/schemas/Sink.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+post:
+  operationId: createLogSink
+  description: >-
+    Registers a destination that forwards the organization's audit events to an
+    external SIEM (Splunk HEC, Datadog, or a generic HTTP endpoint). The
+    endpoint must be valid and the sink type recognized, otherwise the request
+    is rejected as unprocessable. Any supplied token is encrypted at rest;
+    forwarding starts from creation time with no backfill of historical events,
+    and delivery is at-least-once. Each event carries its actor, resource,
+    address, user agent, request id and metadata. One instance at a time
+    forwards a sink, in batches until it catches up; a sink that refuses or
+    can't be reached waits longer after each failure (10 seconds, doubling, up
+    to an hour) and shows last_error until a batch is delivered.
+  summary: Create log sink
+  tags:
+    - Log Sinks
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - type
+            - endpoint
+          properties:
+            type:
+              type: string
+              enum:
+                - splunk_hec
+                - datadog
+                - http
+            endpoint:
+              type: string
+              format: uri
+            token:
+              type: string
+  responses:
+    '201':
+      description: Sink created (streams new audit events from now)
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/Sink.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml

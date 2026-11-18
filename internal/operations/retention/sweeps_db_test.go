@@ -3,12 +3,15 @@
 package retention
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/retention/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 )
@@ -276,7 +279,7 @@ func TestSweepsDrainABacklog(t *testing.T) {
 			source = s
 		}
 	}
-	broken := Sweep{"broken", `DELETE FROM auth.no_such_table WHERE ctid = ANY(ARRAY(SELECT NULL::tid LIMIT $1))`}
+	broken := Sweep{"broken", func(*dbgen.Queries, context.Context, int32) (int64, error) { return 0, errors.New("no such table") }}
 	deleted, err := RunSweeps(ctx, pool, []Sweep{broken, source})
 	if err == nil || !strings.Contains(err.Error(), "broken") {
 		t.Errorf("a failing sweep: %v, want its error", err)

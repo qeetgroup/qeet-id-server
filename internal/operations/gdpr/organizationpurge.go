@@ -2,18 +2,19 @@ package gdpr
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/gdpr/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 )
 
@@ -26,13 +27,13 @@ const organizationPurgesPerRun = 10
 
 // organizationPurgeFailures counts organizations a purge run couldn't finish.
 var organizationPurgeFailures = promauto.NewCounter(prometheus.CounterOpts{
-	Name: "gdpr_tenant_purge_failures_total",
-	Help: "Deleted organisations a purge run failed to remove; each is tried again at the next run.",
+	Name: "gdpr_organization_purge_failures_total",
+	Help: "Deleted organizations a purge run failed to remove; each is tried again at the next run.",
 })
 
 // OrganizationPurge is what purging one organization removed.
 type OrganizationPurge struct {
-	OrganizationID   uuid.UUID        `json:"tenant_id"`
+	OrganizationID   uuid.UUID        `json:"organization_id"`
 	Rows             map[string]int64 `json:"rows_purged"`
 	AccountsRemoved  int              `json:"accounts_removed"`
 	AccountsDetached int              `json:"accounts_detached"`
@@ -45,14 +46,9 @@ type OrganizationPurge struct {
 // run; the others are still purged.
 func (s *Service) PurgeDeletedOrganizations(ctx context.Context, after time.Duration) (int, error) {
 	ctx = postgres.AcrossOrganizations(ctx)
-	rows, err := s.pool.Query(ctx, `
-		SELECT id FROM organization.organizations
-		WHERE status = 'deleted' AND deleted_at IS NOT NULL AND deleted_at < $1
-		ORDER BY deleted_at LIMIT $2`, time.Now().UTC().Add(-after), organizationPurgesPerRun)
-	if err != nil {
-		return 0, err
-	}
-	ids, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	ids, err := s.q.ListPurgeableOrganizations(ctx, dbgen.ListPurgeableOrganizationsParams{
+		DeletedBefore: time.Now().UTC().Add(-after), MaxRows: organizationPurgesPerRun,
+	})
 	if err != nil {
 		return 0, err
 	}
@@ -60,7 +56,7 @@ func (s *Service) PurgeDeletedOrganizations(ctx context.Context, after time.Dura
 	for _, id := range ids {
 		if _, err := s.PurgeOrganization(ctx, id, after); err != nil {
 			organizationPurgeFailures.Inc()
-			slog.Warn("gdpr: purge a deleted organisation", "tenant_id", id, "err", err)
+			slog.Warn("gdpr: purge a deleted organization", "organization_id", id, "err", err)
 			continue
 		}
 		purged++
@@ -76,12 +72,9 @@ func (s *Service) PurgeDeletedOrganizations(ctx context.Context, after time.Dura
 // chain, which outlive the data. Interrupted, it carries on at the next run.
 func (s *Service) PurgeOrganization(ctx context.Context, organizationID uuid.UUID, after time.Duration) (*OrganizationPurge, error) {
 	ctx = postgres.AcrossOrganizations(ctx)
-	var slug string
-	var deletedAt time.Time
-	err := s.pool.QueryRow(ctx, `
-		SELECT slug, deleted_at FROM organization.organizations
-		WHERE id = $1 AND status = 'deleted' AND deleted_at IS NOT NULL AND deleted_at < $2`,
-		organizationID, time.Now().UTC().Add(-after)).Scan(&slug, &deletedAt)
+	org, err := s.q.GetPurgeableOrganization(ctx, dbgen.GetPurgeableOrganizationParams{
+		ID: organizationID, DeletedBefore: time.Now().UTC().Add(-after),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -97,24 +90,27 @@ func (s *Service) PurgeOrganization(ctx context.Context, organizationID uuid.UUI
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	// What is left of it holds a foreign key that cascades.
-	if _, err := tx.Exec(ctx, `DELETE FROM organization.organizations WHERE id = $1 AND status = 'deleted'`, organizationID); err != nil {
+	q := s.q.WithTx(tx)
+	if err := q.DeletePurgedOrganization(ctx, organizationID); err != nil {
 		return nil, err
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO platform.organization_purges (organization_id, slug, deleted_at, rows_purged, accounts_removed, accounts_detached)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		ON CONFLICT (organization_id) DO UPDATE SET purged_at = NOW(), rows_purged = EXCLUDED.rows_purged,
-		    accounts_removed = EXCLUDED.accounts_removed, accounts_detached = EXCLUDED.accounts_detached`,
-		organizationID, slug, deletedAt, out.Rows, out.AccountsRemoved, out.AccountsDetached); err != nil {
+	purged, err := json.Marshal(out.Rows)
+	if err != nil {
 		return nil, err
 	}
-	rid := organizationID
-	if err := audit.Record(ctx, tx, audit.Event{
-		ActorType: "system", Action: "tenant.purged", ResourceType: "tenant", ResourceID: &rid,
-		Metadata: map[string]any{"deleted_at": deletedAt, "rows_purged": out.Rows,
-			"accounts_removed": out.AccountsRemoved, "accounts_detached": out.AccountsDetached},
+	if err := q.RecordOrganizationPurge(ctx, dbgen.RecordOrganizationPurgeParams{
+		OrganizationID:   organizationID,
+		Slug:             org.Slug,
+		DeletedAt:        org.DeletedAt,
+		RowsPurged:       purged,
+		AccountsRemoved:  int64(out.AccountsRemoved),
+		AccountsDetached: int64(out.AccountsDetached),
 	}); err != nil {
+		return nil, err
+	}
+	if err := audit.Record(ctx, tx, audit.Actor{Type: "system"}.PlatformEvent("organization.purged", "organization", organizationID,
+		map[string]any{"deleted_at": org.DeletedAt, "rows_purged": out.Rows,
+			"accounts_removed": out.AccountsRemoved, "accounts_detached": out.AccountsDetached})); err != nil {
 		return nil, err
 	}
 	return out, tx.Commit(ctx)
@@ -125,20 +121,7 @@ func (s *Service) PurgeOrganization(ctx context.Context, organizationID uuid.UUI
 // organization, as their account is that organization's member too. It
 // returns how many it removed and kept.
 func (s *Service) purgeHomeAccounts(ctx context.Context, organizationID uuid.UUID) (removed, detached int, err error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT u.id, EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.organization_id <> $1)
-		FROM account.users u WHERE u.organization_id = $1`, organizationID)
-	if err != nil {
-		return 0, 0, err
-	}
-	type account struct {
-		id        uuid.UUID
-		elsewhere bool
-	}
-	accounts, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (account, error) {
-		var a account
-		return a, r.Scan(&a.id, &a.elsewhere)
-	})
+	accounts, err := s.q.ListHomeAccounts(ctx, organizationID)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -147,19 +130,20 @@ func (s *Service) purgeHomeAccounts(ctx context.Context, organizationID uuid.UUI
 		if err != nil {
 			return removed, detached, err
 		}
-		if a.elsewhere {
-			_, err = tx.Exec(ctx, `UPDATE account.users SET organization_id = NULL WHERE id = $1 AND organization_id = $2`, a.id, organizationID)
-		} else if err = s.eraseAccount(ctx, tx, a.id); err == nil {
-			_, err = tx.Exec(ctx, `DELETE FROM account.users WHERE id = $1 AND organization_id = $2`, a.id, organizationID)
+		q := s.q.WithTx(tx)
+		if a.Elsewhere {
+			err = q.DetachHomeAccount(ctx, dbgen.DetachHomeAccountParams{ID: a.ID, OrganizationID: organizationID})
+		} else if err = s.eraseAccount(ctx, tx, a.ID); err == nil {
+			err = q.DeleteHomeAccount(ctx, dbgen.DeleteHomeAccountParams{ID: a.ID, OrganizationID: organizationID})
 		}
 		if err == nil {
 			err = tx.Commit(ctx)
 		}
 		_ = tx.Rollback(ctx)
 		if err != nil {
-			return removed, detached, fmt.Errorf("account %s: %w", a.id, err)
+			return removed, detached, fmt.Errorf("account %s: %w", a.ID, err)
 		}
-		if a.elsewhere {
+		if a.Elsewhere {
 			detached++
 		} else {
 			removed++
@@ -173,26 +157,11 @@ func (s *Service) purgeHomeAccounts(ctx context.Context, organizationID uuid.UUI
 // has none (the audit log among them), counting each table's in rows. A
 // table another one's rows still point at is tried again after the rest.
 func (s *Service) purgeOrganizationRows(ctx context.Context, organizationID uuid.UUID, rows map[string]int64) error {
-	list, err := s.pool.Query(ctx, `
-		SELECT c.oid::regclass::text
-		FROM pg_class c
-		JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'organization_id' AND NOT a.attisdropped
-		WHERE c.relkind = 'r' AND c.relnamespace::regnamespace::text NOT IN ('pg_catalog', 'information_schema')
-		  AND c.oid NOT IN ('organization.organizations'::regclass, 'platform.organization_purges'::regclass)
-		  AND NOT EXISTS (
-		      SELECT 1 FROM pg_constraint k
-		      WHERE k.conrelid = c.oid AND k.contype = 'f' AND k.confrelid = 'organization.organizations'::regclass
-		        AND k.confdeltype = 'c' AND k.conkey = ARRAY[a.attnum])
-		ORDER BY 1`)
+	tables, err := s.q.ListOrganizationTables(ctx)
 	if err != nil {
 		return err
 	}
-	tables, err := pgx.CollectRows(list, pgx.RowTo[string])
-	if err != nil {
-		return err
-	}
-	// A sign-up waiting on the organization names it in another column.
-	if _, err := s.pool.Exec(ctx, `DELETE FROM auth.webauthn_sessions WHERE pending_organization_id = $1`, organizationID); err != nil {
+	if err := s.q.DeletePendingSignUps(ctx, &organizationID); err != nil {
 		return err
 	}
 	for pass := 0; len(tables) > 0; pass++ {

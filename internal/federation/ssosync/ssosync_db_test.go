@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	scimdb "github.com/qeetgroup/qeet-id-server/internal/federation/scim/dbgen"
-	group "github.com/qeetgroup/qeet-id-server/internal/identity/groups"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/group"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
@@ -263,7 +263,7 @@ func TestSignInSyncStaysInItsOrganization(t *testing.T) {
 		t.Errorf("memberships %v, want none", got)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM organization.group_members WHERE group_id = $1`, theirGroup); n != 0 {
-		t.Errorf("another organisation's group gained %d members", n)
+		t.Errorf("another organization's group gained %d members", n)
 	}
 }
 
@@ -301,7 +301,7 @@ func TestSignInRefreshesProfile(t *testing.T) {
 	// An address off the organization's domains is not taken.
 	f.signIn(conn, SignIn{Email: dbtest.Unique("asha") + "@example.test", EmailManaged: false})
 	if email, _, _ := profile(); email != f.person.Email {
-		t.Errorf("address moved to %q off the organisation's domains", email)
+		t.Errorf("address moved to %q off the organization's domains", email)
 	}
 
 	// Another account's address is not taken, and the sign-in still applies.

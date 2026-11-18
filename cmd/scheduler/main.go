@@ -19,7 +19,7 @@ import (
 	"syscall"
 
 	"github.com/qeetgroup/qeet-id-server/internal/bootstrap"
-	webhook "github.com/qeetgroup/qeet-id-server/internal/developer/webhooks"
+	"github.com/qeetgroup/qeet-id-server/internal/developer/webhook"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/servicehealth"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/migrations"

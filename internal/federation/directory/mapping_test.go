@@ -36,7 +36,7 @@ func TestMappingTransformsShareValidationAndPreview(test *testing.T) {
 
 func TestMappingsCannotGrantPrivilegesOrReadSecrets(test *testing.T) {
 	mapping := Mapping{ID: uuid.New(), Source: "department", Target: "department", ValueType: "string", Transform: "none", Enabled: true}
-	for _, target := range []string{"roles", "permissions", "tenant_id", "status", "password", "metadata", "is_admin"} {
+	for _, target := range []string{"roles", "permissions", "organization_id", "status", "password", "metadata", "is_admin"} {
 		candidate := mapping
 		candidate.Target = target
 		if ValidateMapping(candidate) == nil {
@@ -195,8 +195,8 @@ func TestSaveRefusesAnInvalidMappingWithItsCode(test *testing.T) {
 		change(&mapping)
 		return mapping
 	}
-	scimPath := "/tenants/" + organizationID.String() + "/directory/connections/scim:" + organizationID.String() + "/mappings"
-	ldapPath := "/tenants/" + organizationID.String() + "/directory/connections/" + ldapID.String() + "/mappings"
+	scimPath := "/organizations/" + organizationID.String() + "/directory/connections/scim:" + organizationID.String() + "/mappings"
+	ldapPath := "/organizations/" + organizationID.String() + "/directory/connections/" + ldapID.String() + "/mappings"
 	cases := []struct {
 		name, method, path string
 		mapping            Mapping

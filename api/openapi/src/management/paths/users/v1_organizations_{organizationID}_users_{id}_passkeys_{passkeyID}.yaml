@@ -1,0 +1,49 @@
+delete:
+  operationId: deleteUserPasskey
+  tags:
+    - Users
+  summary: Remove a user's passkey
+  description: >-
+    Removes a passkey from a user's account, for example a lost device's, so it
+    no longer signs them in. Requires user.credentials and a recent sign-in
+    (step-up). Like a second-factor reset it is for the account's home
+    organization only (403 user.managed_elsewhere for a member from elsewhere),
+    and is refused with 403 user.credentials_shared, nothing changing, while the
+    account also belongs to another organization. The person must not outrank
+    the caller: only an owner changes an owner (403 rbac.target_is_owner), and
+    the caller must hold every permission the person holds here (403
+    rbac.target_outranks_caller naming one). The account's last way to sign in
+    isn't removed (409 auth.last_sign_in_method). A passkey that isn't theirs
+    answers 404. Audited as passkey.admin_deleted with the passkey's ID and
+    name, and the person is emailed that an administrator of this organization
+    removed it.
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: passkeyID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '204':
+      description: Removed
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '409':
+      $ref: ../../../shared/responses/Conflict.yaml

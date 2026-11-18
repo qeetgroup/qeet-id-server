@@ -5,7 +5,7 @@ post:
     organization they belong to and returns it synchronously as a downloadable
     JSON attachment, supporting the data-portability right. The caller is
     identified from the session or key, so no user identifier is supplied and no
-    tenant scope is required.
+    organization scope is required.
   summary: Export the authenticated user's portable account data
   tags:
     - GDPR

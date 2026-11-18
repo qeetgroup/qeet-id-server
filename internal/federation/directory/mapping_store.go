@@ -12,22 +12,23 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/qeetgroup/qeet-id-server/internal/federation/directory/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
-const mappingColumns = `id,source_attribute,target_field,value_type,transform,pattern,enabled,required,version`
-
 var ldapAttributePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9;-]*$`)
 
-func scanMapping(row pgx.Row) (Mapping, error) {
-	var mapping Mapping
-	err := row.Scan(&mapping.ID, &mapping.Source, &mapping.Target, &mapping.ValueType, &mapping.Transform, &mapping.Pattern, &mapping.Enabled, &mapping.Required, &mapping.Version)
-	return mapping, err
+// toMapping is a mapping as its queries return it.
+func toMapping(r dbgen.ListDirectoryMappingsRow) Mapping {
+	return Mapping{
+		ID: r.ID, Source: r.SourceAttribute, Target: r.TargetField, ValueType: r.ValueType, Transform: r.Transform,
+		Pattern: r.Pattern, Enabled: r.Enabled, Required: r.Required, Version: int(r.Version),
+	}
 }
 
 // Mappings returns a connection's mappings.
@@ -35,20 +36,15 @@ func (service *Service) Mappings(ctx context.Context, organizationID uuid.UUID, 
 	if organizationID == uuid.Nil || !validConnectionID(organizationID, connectionID) {
 		return nil, errs.ErrBadRequest
 	}
-	rows, err := service.pool.Query(ctx, `SELECT `+mappingColumns+` FROM organization.directory_mappings WHERE organization_id=$1 AND connection_id=$2 ORDER BY created_at,id`, organizationID, connectionID)
+	rows, err := service.q.ListDirectoryMappings(ctx, dbgen.ListDirectoryMappingsParams{OrganizationID: organizationID, ConnectionID: connectionID})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	result := []Mapping{}
-	for rows.Next() {
-		mapping, err := scanMapping(rows)
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, mapping)
+	result := make([]Mapping, len(rows))
+	for i, r := range rows {
+		result[i] = toMapping(r)
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 // MapProfile applies a connection's mappings to source.
@@ -107,17 +103,17 @@ func (service *Service) StoreProfile(ctx context.Context, tx pgx.Tx, organizatio
 	if err != nil || len(raw) > 65536 {
 		return errs.ErrBadRequest
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO organization.directory_profiles(organization_id,user_id,connection_id,profile) VALUES($1,$2,$3,jsonb_strip_nulls($4::jsonb)) ON CONFLICT(organization_id,user_id,connection_id) DO UPDATE SET profile=jsonb_strip_nulls(directory_profiles.profile || $4::jsonb),updated_at=NOW()`, organizationID, userID, connectionID, raw)
-	if err != nil {
+	q := service.q.WithTx(tx)
+	if err := q.UpsertDirectoryProfile(ctx, dbgen.UpsertDirectoryProfileParams{
+		OrganizationID: organizationID, UserID: userID, ConnectionID: connectionID, Profile: raw,
+	}); err != nil {
 		return err
 	}
 	if name, exists := profile["display_name"]; exists {
-		if name == nil {
-			name = ""
-		}
-		_, err = tx.Exec(ctx, `UPDATE account.users SET display_name=$3,updated_at=NOW() WHERE organization_id=$1 AND id=$2 AND deleted_at IS NULL`, organizationID, userID, name)
+		display, _ := name.(string) // a null clears it
+		return q.SetMappedDisplayName(ctx, dbgen.SetMappedDisplayNameParams{OrganizationID: &organizationID, ID: userID, DisplayName: &display})
 	}
-	return err
+	return nil
 }
 
 func (handler *Handler) mappingScope(request *http.Request) (uuid.UUID, string, error) {
@@ -152,7 +148,13 @@ func (handler *Handler) mappings(response http.ResponseWriter, request *http.Req
 		httpx.WriteError(response, request, err)
 		return
 	}
-	httpx.WriteJSON(response, http.StatusOK, paging.ListWith(items, map[string]any{"targets": profileTargets}))
+	httpx.WriteJSON(response, http.StatusOK, mappingList{Result: paging.List(items), Targets: profileTargets})
+}
+
+// mappingList is a connection's mappings, with the profile fields they can set.
+type mappingList struct {
+	paging.Result[Mapping]
+	Targets map[string]string `json:"targets"`
 }
 
 func (handler *Handler) previewMappings(response http.ResponseWriter, request *http.Request) {
@@ -233,56 +235,81 @@ func (handler *Handler) saveMapping(response http.ResponseWriter, request *http.
 		httpx.WriteError(response, request, invalid("source_attribute", CodeMappingSourceInvalid, "source attribute must be an LDAP attribute name").validationError())
 		return
 	}
-	ctx := request.Context()
-	tx, err := handler.Service.pool.Begin(ctx)
-	if err != nil {
-		httpx.WriteError(response, request, err)
-		return
-	}
-	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, organizationID.String()+":"+connectionID); err != nil {
-		httpx.WriteError(response, request, err)
-		return
-	}
-	status, action := http.StatusCreated, "directory.mapping_created"
-	if request.Method == http.MethodPost {
-		var count int
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM organization.directory_mappings WHERE organization_id=$1 AND connection_id=$2`, organizationID, connectionID).Scan(&count); err != nil {
-			httpx.WriteError(response, request, err)
-			return
-		}
-		if count >= 50 {
-			httpx.WriteError(response, request, errs.ErrConflict)
-			return
-		}
-		mapping.ID = uuid.New()
-		mapping, err = scanMapping(tx.QueryRow(ctx, `INSERT INTO organization.directory_mappings(id,organization_id,connection_id,source_attribute,target_field,value_type,transform,pattern,enabled,required) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING `+mappingColumns, mapping.ID, organizationID, connectionID, mapping.Source, mapping.Target, mapping.ValueType, mapping.Transform, mapping.Pattern, mapping.Enabled, mapping.Required))
-	} else {
-		mappingID, parseErr := uuid.Parse(chi.URLParam(request, "mappingID"))
-		if parseErr != nil || mapping.Version < 1 {
+	var mappingID uuid.UUID
+	status := http.StatusCreated
+	if request.Method != http.MethodPost {
+		if mappingID, err = httpx.PathUUID(request, "mappingID", errs.ErrBadRequest); err != nil || mapping.Version < 1 {
 			httpx.WriteError(response, request, errs.ErrBadRequest)
 			return
 		}
-		mapping, err = scanMapping(tx.QueryRow(ctx, `UPDATE organization.directory_mappings SET source_attribute=$4,target_field=$5,value_type=$6,transform=$7,pattern=$8,enabled=$9,required=$10,version=version+1,updated_at=NOW() WHERE organization_id=$1 AND connection_id=$2 AND id=$3 AND version=$11 RETURNING `+mappingColumns, organizationID, connectionID, mappingID, mapping.Source, mapping.Target, mapping.ValueType, mapping.Transform, mapping.Pattern, mapping.Enabled, mapping.Required, mapping.Version))
-		status, action = http.StatusOK, "directory.mapping_updated"
+		status = http.StatusOK
+	}
+	saved, err := handler.Service.SaveMapping(request.Context(), organizationID, connectionID, mappingID, mapping, audit.ActorOf(request))
+	if err != nil {
+		httpx.WriteError(response, request, err)
+		return
+	}
+	httpx.WriteJSON(response, status, saved)
+}
+
+// maxMappings is how many mappings one connection holds.
+const maxMappings = 50
+
+// SaveMapping adds mapping to the organization's connection or, given a
+// mappingID, replaces that one while it is still at mapping.Version, recorded
+// as actor's. A connection's changes take turns, so its cap holds.
+func (service *Service) SaveMapping(ctx context.Context, organizationID uuid.UUID, connectionID string, mappingID uuid.UUID, mapping Mapping, actor audit.Actor) (Mapping, error) {
+	tx, err := service.pool.Begin(ctx)
+	if err != nil {
+		return Mapping{}, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, organizationID.String()+":"+connectionID); err != nil {
+		return Mapping{}, err
+	}
+	q := service.q.WithTx(tx)
+	action := "directory.mapping_created"
+	var row dbgen.ListDirectoryMappingsRow
+	if mappingID == uuid.Nil {
+		var count int64
+		if count, err = q.CountDirectoryMappings(ctx, dbgen.CountDirectoryMappingsParams{OrganizationID: organizationID, ConnectionID: connectionID}); err != nil {
+			return Mapping{}, err
+		}
+		if count >= maxMappings {
+			return Mapping{}, errs.ErrConflict
+		}
+		var inserted dbgen.InsertDirectoryMappingRow
+		inserted, err = q.InsertDirectoryMapping(ctx, dbgen.InsertDirectoryMappingParams{
+			ID: uuid.New(), OrganizationID: organizationID, ConnectionID: connectionID,
+			SourceAttribute: mapping.Source, TargetField: mapping.Target, ValueType: mapping.ValueType,
+			Transform: mapping.Transform, Pattern: mapping.Pattern, Enabled: mapping.Enabled, Required: mapping.Required,
+		})
+		row = dbgen.ListDirectoryMappingsRow(inserted)
+	} else {
+		var updated dbgen.UpdateDirectoryMappingRow
+		updated, err = q.UpdateDirectoryMapping(ctx, dbgen.UpdateDirectoryMappingParams{
+			OrganizationID: organizationID, ConnectionID: connectionID, ID: mappingID,
+			SourceAttribute: mapping.Source, TargetField: mapping.Target, ValueType: mapping.ValueType,
+			Transform: mapping.Transform, Pattern: mapping.Pattern, Enabled: mapping.Enabled, Required: mapping.Required,
+			Version: int32(mapping.Version), // #nosec G115 -- a version the API returned
+		})
+		row = dbgen.ListDirectoryMappingsRow(updated)
+		action = "directory.mapping_updated"
 	}
 	if err != nil {
-		var databaseError *pgconn.PgError
-		if errors.Is(err, pgx.ErrNoRows) || (errors.As(err, &databaseError) && databaseError.Code == "23505") {
+		if errors.Is(err, pgx.ErrNoRows) || postgres.IsUnique(err) {
 			err = errs.ErrConflict
 		}
-		httpx.WriteError(response, request, err)
-		return
+		return Mapping{}, err
 	}
-	if err := mappingAudit(ctx, tx, request, organizationID, mapping.ID, action); err != nil {
-		httpx.WriteError(response, request, err)
-		return
+	saved := toMapping(row)
+	if err := mappingAudit(ctx, tx, actor, organizationID, saved.ID, action); err != nil {
+		return Mapping{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		httpx.WriteError(response, request, err)
-		return
+		return Mapping{}, err
 	}
-	httpx.WriteJSON(response, status, mapping)
+	return saved, nil
 }
 
 func (handler *Handler) deleteMapping(response http.ResponseWriter, request *http.Request) {
@@ -291,47 +318,44 @@ func (handler *Handler) deleteMapping(response http.ResponseWriter, request *htt
 		httpx.WriteError(response, request, err)
 		return
 	}
-	mappingID, err := uuid.Parse(chi.URLParam(request, "mappingID"))
-	if err != nil {
-		httpx.WriteError(response, request, errs.ErrBadRequest)
-		return
-	}
-	ctx := request.Context()
-	tx, err := handler.Service.pool.Begin(ctx)
+	mappingID, err := httpx.PathUUID(request, "mappingID", errs.ErrBadRequest)
 	if err != nil {
 		httpx.WriteError(response, request, err)
 		return
 	}
-	defer tx.Rollback(ctx)
-	result, err := tx.Exec(ctx, `DELETE FROM organization.directory_mappings WHERE organization_id=$1 AND connection_id=$2 AND id=$3`, organizationID, connectionID, mappingID)
-	if err != nil {
-		httpx.WriteError(response, request, err)
-		return
-	}
-	if result.RowsAffected() == 0 {
-		httpx.WriteError(response, request, errs.ErrNotFound)
-		return
-	}
-	if err := mappingAudit(ctx, tx, request, organizationID, mappingID, "directory.mapping_deleted"); err != nil {
-		httpx.WriteError(response, request, err)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := handler.Service.DeleteMapping(request.Context(), organizationID, connectionID, mappingID, audit.ActorOf(request)); err != nil {
 		httpx.WriteError(response, request, err)
 		return
 	}
 	response.WriteHeader(http.StatusNoContent)
 }
 
-func mappingAudit(ctx context.Context, tx pgx.Tx, request *http.Request, organizationID, mappingID uuid.UUID, action string) error {
-	principal := httpx.PrincipalFromCtx(ctx)
-	var actor *uuid.UUID
-	actorType := "system"
-	if principal != nil {
-		actor = principal.UserID
-		actorType = principal.ActorType
+// DeleteMapping removes a mapping of the organization's connection, recorded
+// as actor's.
+func (service *Service) DeleteMapping(ctx context.Context, organizationID uuid.UUID, connectionID string, mappingID uuid.UUID, actor audit.Actor) error {
+	tx, err := service.pool.Begin(ctx)
+	if err != nil {
+		return err
 	}
-	return audit.Record(ctx, tx, audit.Event{OrganizationID: &organizationID, ActorUserID: actor, ActorType: actorType, Action: action, ResourceType: "directory_mapping", ResourceID: &mappingID, IP: httpx.ClientIP(request), RequestID: httpx.RequestID(request)})
+	defer tx.Rollback(ctx)
+	n, err := service.q.WithTx(tx).DeleteDirectoryMapping(ctx, dbgen.DeleteDirectoryMappingParams{
+		OrganizationID: organizationID, ConnectionID: connectionID, ID: mappingID,
+	})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return errs.ErrNotFound
+	}
+	if err := mappingAudit(ctx, tx, actor, organizationID, mappingID, "directory.mapping_deleted"); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// mappingAudit records actor's change to a mapping, on tx.
+func mappingAudit(ctx context.Context, tx pgx.Tx, actor audit.Actor, organizationID, mappingID uuid.UUID, action string) error {
+	return audit.Record(ctx, tx, actor.Event(organizationID, action, "directory_mapping", mappingID, nil))
 }
 
 // Profile is what one connection's mappings set on a person: email,
@@ -344,7 +368,7 @@ type Profile struct {
 	UpdatedAt      time.Time      `json:"updated_at"`
 }
 
-// profiles serves GET /tenants/{tenantID}/directory/profiles/{userID}: the
+// profiles serves GET /organizations/{organizationID}/directory/profiles/{userID}: the
 // person's profile from each connection that set one, newest first. Another
 // organization's person has none here.
 func (handler *Handler) profiles(response http.ResponseWriter, request *http.Request) {
@@ -353,35 +377,21 @@ func (handler *Handler) profiles(response http.ResponseWriter, request *http.Req
 		httpx.WriteError(response, request, err)
 		return
 	}
-	userID, err := uuid.Parse(chi.URLParam(request, "userID"))
+	userID, err := httpx.PathUUID(request, "userID", errs.ErrBadRequest)
 	if err != nil {
-		httpx.WriteError(response, request, errs.ErrBadRequest)
+		httpx.WriteError(response, request, err)
 		return
 	}
 	ctx := request.Context()
-	rows, err := handler.Service.pool.Query(ctx, `SELECT connection_id, profile, updated_at FROM organization.directory_profiles
-		WHERE organization_id=$1 AND user_id=$2 ORDER BY updated_at DESC, connection_id`, organizationID, userID)
+	rows, err := handler.Service.q.ListDirectoryProfiles(ctx, dbgen.ListDirectoryProfilesParams{OrganizationID: organizationID, UserID: userID})
 	if err != nil {
 		httpx.WriteError(response, request, err)
 		return
 	}
-	items := []Profile{}
-	for rows.Next() {
-		var p Profile
-		var raw []byte
-		if err := rows.Scan(&p.ConnectionID, &raw, &p.UpdatedAt); err != nil {
-			rows.Close()
-			httpx.WriteError(response, request, err)
-			return
-		}
-		p.Fields = map[string]any{}
-		_ = json.Unmarshal(raw, &p.Fields)
-		items = append(items, p)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		httpx.WriteError(response, request, err)
-		return
+	items := make([]Profile, len(rows))
+	for i, r := range rows {
+		items[i] = Profile{ConnectionID: r.ConnectionID, Fields: map[string]any{}, UpdatedAt: r.UpdatedAt}
+		_ = json.Unmarshal(r.Profile, &items[i].Fields)
 	}
 	if len(items) > 0 {
 		connections, err := handler.Service.List(ctx, organizationID)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -18,9 +17,8 @@ func Member(r *http.Request, param string, isMember func(ctx context.Context, us
 	if err != nil {
 		return uuid.Nil, uuid.Nil, err
 	}
-	userID, err = uuid.Parse(chi.URLParam(r, param))
-	if err != nil {
-		return uuid.Nil, uuid.Nil, errs.ErrBadRequest.WithDetail("invalid " + param)
+	if userID, err = PathUUID(r, param, errs.ErrBadRequest.WithDetail("invalid "+param)); err != nil {
+		return uuid.Nil, uuid.Nil, err
 	}
 	member, err := isMember(r.Context(), userID, organizationID)
 	if err != nil {

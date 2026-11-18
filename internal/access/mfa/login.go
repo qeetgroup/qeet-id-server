@@ -10,10 +10,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
 // Sign-in second factors (auth.MFAEnroller). Any confirmed factor can be
@@ -52,11 +52,11 @@ func (s *Service) loginFactors(ctx context.Context, q *dbgen.Queries, userID uui
 		return nil, err
 	}
 	for _, f := range factors {
-		if !f.VerifiedAt.Valid {
+		if f.VerifiedAt == nil {
 			continue
 		}
 		id := f.ID
-		out = append(out, auth.LoginFactor{Type: f.Channel, ID: &id, Destination: maskDestination(f.Channel, f.Destination)})
+		out = append(out, auth.LoginFactor{Type: f.Channel, ID: &id, Destination: notifier.MaskDestination(f.Channel, f.Destination)})
 	}
 	if counts.Passkeys > 0 && s.webauthn != nil {
 		out = append(out, auth.LoginFactor{Type: "passkey"})
@@ -76,7 +76,8 @@ func (s *Service) SendLoginCode(ctx context.Context, userID uuid.UUID, organizat
 // verifyLoginOTP consumes a sign-in code sent to one of the user's email or
 // SMS factors, inside tx; false when no live one matches.
 func (s *Service) verifyLoginOTP(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code string) (bool, error) {
-	codeID, err := s.q.WithTx(tx).GetOTPCodeForVerify(ctx, dbgen.GetOTPCodeForVerifyParams{
+	qtx := s.q.WithTx(tx)
+	codeID, err := qtx.GetOTPCodeForVerify(ctx, dbgen.GetOTPCodeForVerifyParams{
 		UserID:   userID,
 		CodeHash: codes.Hash(strings.TrimSpace(code)),
 		Purpose:  "sign_in",
@@ -87,17 +88,14 @@ func (s *Service) verifyLoginOTP(ctx context.Context, tx pgx.Tx, userID uuid.UUI
 	if err != nil {
 		return false, err
 	}
-	tag, err := tx.Exec(ctx, `UPDATE auth.mfa_otp_codes SET used_at = NOW() WHERE id = $1 AND used_at IS NULL`, codeID)
-	if err != nil {
-		return false, err
-	}
-	return tag.RowsAffected() == 1, nil
+	n, err := qtx.MarkOTPCodeUsed(ctx, codeID)
+	return n == 1, err
 }
 
 // BeginLoginPasskey starts a passkey assertion for userID's own passkeys.
 func (s *Service) BeginLoginPasskey(ctx context.Context, userID uuid.UUID) (uuid.UUID, any, error) {
 	if s.webauthn == nil {
-		return uuid.Nil, nil, errs.ErrMFAWebAuthnUnavailable
+		return uuid.Nil, nil, ErrWebAuthnUnavailable
 	}
 	id, options, err := s.webauthn.BeginMFA(ctx, userID)
 	if err != nil {
@@ -110,7 +108,7 @@ func (s *Service) BeginLoginPasskey(ctx context.Context, userID uuid.UUID) (uuid
 // BeginLoginPasskey, inside the challenge transaction tx.
 func (s *Service) FinishLoginPasskeyTx(ctx context.Context, tx pgx.Tx, userID, sessionID uuid.UUID, credential json.RawMessage) error {
 	if s.webauthn == nil {
-		return errs.ErrMFAWebAuthnUnavailable
+		return ErrWebAuthnUnavailable
 	}
 	return s.webauthn.FinishMFATx(ctx, tx, userID, sessionID, credential)
 }
@@ -152,7 +150,7 @@ func (s *Service) LoginPushStatusTx(ctx context.Context, tx pgx.Tx, userID, chal
 // challenge (the account must have a second factor and holds none), inside
 // the challenge transaction. Returns the secret and provisioning URL.
 func (s *Service) StartLoginEnrollment(ctx context.Context, tx pgx.Tx, userID uuid.UUID, account string) (string, string, error) {
-	e, err := s.StartEnroll(ctx, tx, userID, account)
+	e, err := s.startEnroll(ctx, tx, userID, account)
 	if err != nil {
 		return "", "", err
 	}

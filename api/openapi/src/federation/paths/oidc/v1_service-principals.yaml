@@ -2,7 +2,7 @@ post:
   operationId: createServicePrincipal
   description: >-
     Creates a service principal, a non-human machine identity, in the caller's
-    tenant and returns its client id and one-time client secret, which cannot be
+    organization and returns its client id and one-time client secret, which cannot be
     retrieved afterward. The principal authenticates for machine-to-machine
     access at the client-credentials token endpoint (POST /v1/oauth/token).
     Creation is audited; disable the principal when it is no longer needed. Send

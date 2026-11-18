@@ -9,7 +9,7 @@ post:
     saml.login_code_used or saml.login_code_expired), and trades only while the
     connection that issued it is still active (403 saml.connection_disabled or
     saml.connection_draft; 401 saml.login_code_invalid once it is deleted). The
-    organisation's network
+    organization's network
     rules apply (403 auth.address_not_allowed), and an account that is not
     active is refused (403 auth.account_inactive). As the console's SAML
     sign-in, no second factor is asked: the identity provider decides how its

@@ -1,7 +1,7 @@
 delete:
   operationId: deleteScimGroup
   description: >-
-    Deletes a provisioned group by id for the tenant identified by the SCIM
+    Deletes a provisioned group by id for the organization identified by the SCIM
     bearer token, with Qeet acting as the SCIM server. Mounted at the root under
     /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope rather
     than the standard Qeet error shape.
@@ -27,7 +27,7 @@ delete:
 get:
   operationId: getScimGroup
   description: >-
-    Returns a single provisioned group by id for the tenant identified by the
+    Returns a single provisioned group by id for the organization identified by the
     SCIM bearer token, with Qeet acting as the SCIM server. Mounted at the root
     under /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope
     rather than the standard Qeet error shape.
@@ -58,7 +58,7 @@ patch:
   operationId: patchScimGroup
   description: >-
     Applies a SCIM PatchOp to a group, typically a membership add or remove or
-    an attribute change, for the tenant identified by the SCIM bearer token,
+    an attribute change, for the organization identified by the SCIM bearer token,
     with Qeet acting as the SCIM server. Mounted at the root under /scim/v2, not
     under /v1. Errors use the RFC 7644 SCIM error envelope, not the standard
     Qeet error shape. Adding someone holding no role to a group that carries one
@@ -101,7 +101,7 @@ put:
   operationId: replaceScimGroup
   description: >-
     Replaces a group's attributes wholesale with the supplied SCIM
-    representation for the tenant identified by the SCIM bearer token, with Qeet
+    representation for the organization identified by the SCIM bearer token, with Qeet
     acting as the SCIM server. Use PATCH for incremental membership or attribute
     changes. Mounted at the root under /scim/v2; errors use the RFC 7644 SCIM
     error envelope, not the standard Qeet error shape. A member set that gives

@@ -9,7 +9,7 @@ post:
     for it, or skipped while its grace period runs, as for POST /v1/auth/mfa; a
     skipped setup never remembers the device. A body not sent as JSON is refused
     (415 unsupported_media_type). A wrong proof is recorded in the
-    organisation's audit trail as auth.sign_in_failed (method mfa, reason
+    organization's audit trail as auth.sign_in_failed (method mfa, reason
     code_invalid, with the proof kind and the attempts left). Fifty wrong proofs
     in a row, however far apart, lock the person's second-factor sign-in: that
     answer and every later one is 403 mfa.locked, even with the right proof, the
@@ -66,7 +66,7 @@ post:
               type: boolean
               description: >-
                 Trust this device so future logins can skip the second factor
-                (adaptive MFA). Honoured only when the tenant has enabled
+                (adaptive MFA). Honoured only when the organization has enabled
                 remember-device; sets the qe_td cookie.
   responses:
     '200':

@@ -83,15 +83,10 @@ func (h *Handler) confirmEmailChange(w http.ResponseWriter, r *http.Request) {
 }
 
 // requesterOf is the signed-in caller, for the audit rows the service writes.
+// Every verification route needs a principal, so the actor is never the system.
 func requesterOf(r *http.Request) Requester {
-	who := Requester{Actor: audit.Actor{
-		Type: "user", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
-	}}
+	who := Requester{Actor: audit.ActorOf(r)}
 	if p := httpx.PrincipalFromCtx(r.Context()); p != nil {
-		who.Actor.UserID = p.UserID
-		if p.ActorType != "" {
-			who.Actor.Type = p.ActorType
-		}
 		who.OrganizationID = p.OrganizationID
 	}
 	return who
@@ -100,15 +95,15 @@ func requesterOf(r *http.Request) Requester {
 // selfID resolves the target user from the path and enforces that it's the
 // caller: verification is self-service only. Without this, any authenticated
 // user could start/confirm verification against another user's id (an IDOR) —
-// {id} is NOT a {tenantID}, so the central EnforceOrganizationScope guard never fires.
+// {id} is NOT a {organizationID}, so the central EnforceOrganizationScope guard never fires.
 func selfID(r *http.Request) (uuid.UUID, error) {
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {
 		return uuid.Nil, errs.ErrUnauthorized
 	}
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	id, err := httpx.PathUUID(r, "id", errs.ErrBadRequest.WithDetail("invalid id"))
 	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid id")
+		return uuid.Nil, err
 	}
 	if id != *p.UserID {
 		return uuid.Nil, errs.ErrForbidden

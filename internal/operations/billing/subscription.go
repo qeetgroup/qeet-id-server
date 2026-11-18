@@ -9,9 +9,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
-	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/billing/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/billing/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
@@ -43,8 +43,8 @@ func subscriptionFromRow(row dbgen.GetSubscriptionRow) *Subscription {
 		CurrentPeriodStart: &row.CurrentPeriodStart,
 		CurrentPeriodEnd:   &row.CurrentPeriodEnd,
 	}
-	sub.TrialEnd = timePtr(row.TrialEnd)
-	sub.EndedAt = timePtr(row.EndedAt)
+	sub.TrialEnd = row.TrialEnd
+	sub.EndedAt = row.EndedAt
 	return &sub
 }
 
@@ -71,6 +71,41 @@ func (s *Subscription) Grants(now time.Time) bool {
 	}
 }
 
+// PlanLabel reads the plan an organization's own record names: the one it is
+// on with no subscription.
+type PlanLabel func(ctx context.Context, organizationID uuid.UUID) (string, error)
+
+// PlanResolver decides an organization's effective plan, as
+// entitlements.PlanResolver asks: its subscription's plan while the
+// subscription grants it, free once it lapses, and with no subscription the
+// plan its record names (Label), else free. A nil Billing or Label is skipped.
+type PlanResolver struct {
+	Billing *Service
+	Label   PlanLabel
+}
+
+// EffectivePlan returns organizationID's effective plan code. A read that
+// fails falls through to the next source, and in the end to free.
+func (r PlanResolver) EffectivePlan(ctx context.Context, organizationID uuid.UUID) (string, error) {
+	if r.Billing != nil {
+		if sub, err := r.Billing.GetSubscription(ctx, organizationID); err == nil && sub != nil && sub.PlanCode != "" {
+			// A subscription past its paid period or trial, or canceled, grants
+			// nothing: the organization is on free, not on the stale label. Evaluated
+			// lazily here, with no scheduler.
+			if sub.Grants(time.Now()) {
+				return sub.PlanCode, nil
+			}
+			return "free", nil
+		}
+	}
+	if r.Label != nil {
+		if plan, err := r.Label(ctx, organizationID); err == nil {
+			return plan, nil
+		}
+	}
+	return "free", nil
+}
+
 // trialDuration is the length of a no-card trial.
 const trialDuration = 14 * 24 * time.Hour
 
@@ -80,7 +115,7 @@ const trialDuration = 14 * 24 * time.Hour
 func (s *Service) StartTrial(ctx context.Context, organizationID uuid.UUID, planCode, currency string) (*Subscription, error) {
 	tier := strings.TrimSuffix(planCode, "_year")
 	if tier != "starter" && tier != "pro" {
-		return nil, errs.ErrBillingTrialNotEligible.WithMessage("Trials are available for the Starter and Pro plans.")
+		return nil, ErrTrialNotEligible.WithMessage("Trials are available for the Starter and Pro plans.")
 	}
 	cur, ok := normalizeCurrency(currency)
 	if !ok {
@@ -91,7 +126,7 @@ func (s *Service) StartTrial(ctx context.Context, organizationID uuid.UUID, plan
 		return nil, err
 	}
 	if existing.Status != "none" {
-		return nil, errs.ErrBillingTrialNotEligible.WithMessage("This organization isn't eligible for a trial.")
+		return nil, ErrTrialNotEligible.WithMessage("This organization isn't eligible for a trial.")
 	}
 	planID, interval, planName, err := planByCode(ctx, s.q, tier)
 	if err != nil {
@@ -164,11 +199,33 @@ func (s *Service) activatePaid(ctx context.Context, tx pgx.Tx, organizationID uu
 }
 
 // SwitchPlan is ChangePlan for an organization changing its own plan without a
-// checkout. A free plan starts a new period. A paid plan that costsNoMore than
-// the current subscription takes over its paid period, with no new invoice;
-// any other returns errs.ErrBillingCheckoutRequired, unless invoice-only
-// billing activates the plan in that currency.
-func (s *Service) SwitchPlan(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, planCode, currency string) (*Subscription, error) {
+// checkout, recorded as actor's in the same transaction. A free plan starts a
+// new period. A paid plan that costsNoMore than the current subscription takes
+// over its paid period, with no new invoice; any other returns
+// errs.ErrBillingCheckoutRequired, unless invoice-only billing activates the
+// plan in that currency.
+func (s *Service) SwitchPlan(ctx context.Context, organizationID uuid.UUID, planCode, currency string, actor audit.Actor) (*Subscription, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	sub, err := s.switchPlan(ctx, tx, organizationID, planCode, currency)
+	if err != nil {
+		return nil, err
+	}
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "billing.plan_changed", "subscription", uuid.Nil,
+		map[string]any{"plan": sub.PlanCode, "currency": sub.Currency, "amount_minor": sub.AmountMinor})); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return sub, nil
+}
+
+// switchPlan is SwitchPlan in tx, unrecorded.
+func (s *Service) switchPlan(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, planCode, currency string) (*Subscription, error) {
 	q := s.q.WithTx(tx)
 	p, err := lookupPlanPrice(ctx, q, planCode, currency)
 	if err != nil {
@@ -272,12 +329,12 @@ const (
 // issued to, with the supplier's GSTIN and SAC.
 func (s *Service) issueInvoice(ctx context.Context, q *dbgen.Queries, organizationID uuid.UUID, plan, currency, kind string, start, end time.Time, tr TaxResult, paid bool) (uuid.UUID, error) {
 	status := "open"
-	due := pgtype.Timestamptz{Time: time.Now().UTC().Add(s.paymentGrace), Valid: true}
+	due := new(time.Now().UTC().Add(s.paymentGrace))
 	if paid || tr.TotalMinor == 0 {
-		status, due = "paid", pgtype.Timestamptz{}
+		status, due = "paid", nil
 	}
 	if kind == invoiceKindRenewal && status == "open" {
-		due.Time = start.Add(s.paymentGrace)
+		due = new(start.Add(s.paymentGrace))
 	}
 	// Zero-amount plans still get an invoice record, without a number.
 	var number *string
@@ -320,15 +377,31 @@ func (s *Service) issueInvoice(ctx context.Context, q *dbgen.Queries, organizati
 	})
 }
 
+// CancelAtPeriodEnd is Cancel recorded as actor's, in a transaction of its own.
+func (s *Service) CancelAtPeriodEnd(ctx context.Context, organizationID uuid.UUID, actor audit.Actor) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := s.Cancel(ctx, tx, organizationID); err != nil {
+		return err
+	}
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "billing.subscription_canceled", "subscription", uuid.Nil, nil)); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 // Cancel sets the organization's subscription to end with its current period, within
-// tx. It returns errs.ErrBillingNoActiveSubscription if there is no subscription.
+// tx. It returns ErrNoActiveSubscription if there is no subscription.
 func (s *Service) Cancel(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID) error {
 	ct, err := s.q.WithTx(tx).CancelSubscription(ctx, organizationID)
 	if err != nil {
 		return err
 	}
 	if ct == 0 {
-		return errs.ErrBillingNoActiveSubscription
+		return ErrNoActiveSubscription
 	}
 	return nil
 }
@@ -364,22 +437,13 @@ func (s *Service) ListInvoices(ctx context.Context, organizationID uuid.UUID) ([
 			PeriodEnd:     r.PeriodEnd,
 			IssuedAt:      r.IssuedAt,
 			Kind:          r.Kind,
-			DueAt:         timePtr(r.DueAt),
-			PaidAt:        timePtr(r.PaidAt),
+			DueAt:         r.DueAt,
+			PaidAt:        r.PaidAt,
 			BilledTo:      billedTo,
 			SupplierGSTIN: r.SupplierGstin,
 			SAC:           r.Sac,
-			EmailedAt:     timePtr(r.EmailedAt),
+			EmailedAt:     r.EmailedAt,
 		})
 	}
 	return out, nil
-}
-
-// timePtr is t, or nil when it is NULL.
-func timePtr(t pgtype.Timestamptz) *time.Time {
-	if !t.Valid {
-		return nil
-	}
-	v := t.Time
-	return &v
 }

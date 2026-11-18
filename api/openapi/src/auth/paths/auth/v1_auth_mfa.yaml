@@ -9,7 +9,7 @@ post:
     response then carries the account's new recovery codes, shown once — or
     skipped while its grace period runs. A wrong proof counts against the
     challenge's and the account's attempt budgets. A wrong proof is recorded in
-    the organisation's audit trail as auth.sign_in_failed (method mfa, reason
+    the organization's audit trail as auth.sign_in_failed (method mfa, reason
     code_invalid, with the proof kind and the attempts left). Fifty wrong proofs
     in a row, however far apart, lock the person's second-factor sign-in: that
     answer and every later one is 403 mfa.locked, even with the right proof, the
@@ -87,7 +87,7 @@ post:
             idle_expires_at: '2026-10-01T10:15:00Z'
             session_id: '018f2a70-5b6c-7d8e-9f01-2a3b4c5d6e7f'
             user_id: '018f2a70-1a2b-7c3d-9e4f-5a6b7c8d9e0f'
-            tenant_id: '018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00'
+            organization_id: '018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00'
           schema:
             allOf:
               - $ref: ../../../shared/schemas/TokenPair.yaml

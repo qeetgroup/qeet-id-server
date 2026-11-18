@@ -85,7 +85,7 @@ func TestMiddlewareBy_ScopePrefixIsolatesBuckets(t *testing.T) {
 	h1 := l.MiddlewareBy("ip", func(*http.Request) string { return "1.2.3.4" })(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }),
 	)
-	h2 := l.MiddlewareBy("tenant", func(*http.Request) string { return "1.2.3.4" })(
+	h2 := l.MiddlewareBy("organization", func(*http.Request) string { return "1.2.3.4" })(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }),
 	)
 
@@ -98,7 +98,7 @@ func TestMiddlewareBy_ScopePrefixIsolatesBuckets(t *testing.T) {
 	rec = httptest.NewRecorder()
 	h2.ServeHTTP(rec, req) // different scope, same id — must be independent
 	if rec.Code != http.StatusOK {
-		t.Fatalf("tenant scope must have its own bucket: got %d", rec.Code)
+		t.Fatalf("organization scope must have its own bucket: got %d", rec.Code)
 	}
 }
 
@@ -224,7 +224,7 @@ func TestPerIP_TrustedProxyReadsRealClient(t *testing.T) {
 func TestPerOrganization_EmptyWhenUnauthenticated(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	if got := PerOrganization(req); got != "" {
-		t.Errorf("PerTenant with no principal = %q, want empty", got)
+		t.Errorf("PerOrganization with no principal = %q, want empty", got)
 	}
 }
 
@@ -234,7 +234,7 @@ func TestPerOrganization_ReturnsOrganizationUUID(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil).
 		WithContext(httpx.WithPrincipal(httptest.NewRequest(http.MethodGet, "/", nil).Context(), p))
 	if got := PerOrganization(req); got != tid.String() {
-		t.Errorf("PerTenant = %q, want %s", got, tid)
+		t.Errorf("PerOrganization = %q, want %s", got, tid)
 	}
 }
 

@@ -144,7 +144,7 @@ func TestSAMLEncryptedAssertion(t *testing.T) {
 		t.Fatalf("the stored key isn't the published certificate's: %v", err)
 	}
 	if _, err := box.Open(uuid.New(), spKeyPurpose, conn.ID.String(), ct, nonce); err == nil {
-		t.Error("the stored key opened under another organisation")
+		t.Error("the stored key opened under another organization")
 	}
 
 	sp.signIn(t, idp, conn.ID, answer{email: member.Email, edit: encryptAssertion(t, cert, xencAES256GCM)})

@@ -14,7 +14,7 @@ get:
     - bearerAuth: []
     - apiKeyAuth: []
   description: >-
-    Lists the social accounts linked to a user in the organisation. Requires
+    Lists the social accounts linked to a user in the organization. Requires
     user.read.
   responses:
     '200':

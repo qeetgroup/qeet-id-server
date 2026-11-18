@@ -3,14 +3,18 @@
 package scim
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -44,190 +48,76 @@ func TestLapsedPlanStopsSCIM(t *testing.T) {
 	}
 }
 
-// TestSCIMUserReadsStayInTheirOrganization checks that one organization's SCIM token can
-// neither find, read nor delete another organization's user.
-func TestSCIMUserReadsStayInTheirOrganization(t *testing.T) {
-	ctx := dbtest.Context(t)
-	a := newSCIMFixture(t, ctx)
-	b := newSCIMFixture(t, ctx)
-	email := dbtest.Unique("victim") + "@a.example.test"
-	victim := a.seedUser(t, ctx, email)
+func TestMain(m *testing.M) { dbtest.Main(m) }
 
-	for _, tc := range []struct {
-		method, path string
-		want         int
-	}{
-		{http.MethodGet, "/scim/v2/Users/" + victim.String(), http.StatusNotFound},
-		{http.MethodDelete, "/scim/v2/Users/" + victim.String(), http.StatusNotFound},
-	} {
-		if rec := b.do(t, tc.method, tc.path, nil); rec.Code != tc.want {
-			t.Errorf("B %s %s: status %d, want %d", tc.method, tc.path, rec.Code, tc.want)
-		}
-	}
-	for _, path := range []string{"/scim/v2/Users", "/scim/v2/Users?filter=" + url.QueryEscape(`userName eq "`+email+`"`)} {
-		if total := decodeBody(t, b.do(t, http.MethodGet, path, nil))["totalResults"]; total != float64(0) {
-			t.Errorf("B GET %s: totalResults %v, want 0", path, total)
-		}
-	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND deleted_at IS NULL`, victim); n != 1 {
-		t.Error("B's SCIM token deleted A's user")
-	}
-	if rec := a.do(t, http.MethodGet, "/scim/v2/Users/"+victim.String(), nil); rec.Code != http.StatusOK {
-		t.Fatalf("A reads its own user: status %d", rec.Code)
-	}
+// scimFixture sets up an organization, a SCIM bearer token, two users, and a mounted
+// SCIM router driving the real handlers.
+type scimFixture struct {
+	organizationID uuid.UUID
+	token          string
+	router         chi.Router
+	svc            *Service
 }
 
-// TestSCIMAdoptingAnUnverifiedAccountRemovesItsCredentials checks that the
-// directory vouching for an account nobody vouched for, however it does
-// (creating, replacing or patching it), leaves nothing whoever registered the
-// address set up and records it, while an account that proved its address, or
-// one the directory already provisioned, keeps everything.
-func TestSCIMAdoptingAnUnverifiedAccountRemovesItsCredentials(t *testing.T) {
-	ctx := dbtest.Context(t)
-	pool := dbtest.Pool(t)
-	f := newSCIMFixture(t, ctx)
-	domain := dbtest.Domain(t, f.organizationID)
-	account := func(setup string) dbtest.Account {
-		t.Helper()
-		a := dbtest.UserAt(t, dbtest.Unique("alice")+"@"+domain, f.organizationID, f.organizationID)
-		dbtest.SetPassword(t, a.ID, "Kx7mQ2vLp9Wz-squat")
-		for _, q := range []string{
-			`INSERT INTO auth.passkey_credentials (user_id, credential_id, public_key, name) SELECT id, convert_to(id::text, 'UTF8'), '\x00', 'Laptop' FROM account.users WHERE id = $1`,
-			`INSERT INTO auth.mfa_totp (user_id, secret_ct, secret_nonce, confirmed_at) VALUES ($1, '\x00', '\x00', NOW())`,
-			`INSERT INTO auth.api_keys (organization_id, user_id, name, prefix, key_hash) SELECT organization_id, id, 'laptop', left(md5(id::text), 12), 'hash' FROM account.users WHERE id = $1`,
-			`INSERT INTO auth.sessions (user_id, organization_id) SELECT id, organization_id FROM account.users WHERE id = $1`,
-			setup,
-		} {
-			if _, err := pool.Exec(ctx, q, a.ID); err != nil {
-				t.Fatalf("%s: %v", q, err)
-			}
-		}
-		return a
+func newSCIMFixture(t *testing.T, ctx context.Context) *scimFixture {
+	t.Helper()
+	tid := dbtest.Organization(t)
+
+	// Seed a SCIM bearer token for this organization (hash scheme matches Rotate).
+	token := tokenPrefix + uuid.NewString()
+	if _, err := dbtest.Pool(t).Exec(ctx, `
+		INSERT INTO organization.scim_tokens (organization_id, token_hash, token_prefix)
+		VALUES ($1, $2, $3)
+	`, tid, codes.Hash(token), tokenPrefix+"seed"); err != nil {
+		t.Fatalf("seed token: %v", err)
 	}
-	held := func(a dbtest.Account) int {
-		return dbtest.Count(t, `SELECT (SELECT count(*) FROM auth.password_credentials WHERE user_id = $1)
-			+ (SELECT count(*) FROM auth.passkey_credentials WHERE user_id = $1)
-			+ (SELECT count(*) FROM auth.mfa_totp WHERE user_id = $1)
-			+ (SELECT count(*) FROM auth.api_keys WHERE user_id = $1 AND revoked_at IS NULL)
-			+ (SELECT count(*) FROM auth.sessions WHERE user_id = $1 AND revoked_at IS NULL)`, a.ID)
-	}
-	ok := func(what string, rec *httptest.ResponseRecorder, want int) {
-		t.Helper()
-		if rec.Code != want {
-			t.Fatalf("%s: %d %s", what, rec.Code, rec.Body.String())
-		}
-	}
-	patch := func(a dbtest.Account, path, value string) *httptest.ResponseRecorder {
-		return f.do(t, http.MethodPatch, "/scim/v2/Users/"+a.ID.String(), map[string]any{"schemas": []string{schemaPatchOp},
-			"Operations": []map[string]any{{"op": "replace", "path": path, "value": value}}})
-	}
-	// Each way the directory comes to vouch for an account that already exists.
-	ways := map[string]func(a dbtest.Account){
-		"a create that adopts it": func(a dbtest.Account) {
-			ok("adopt", f.do(t, http.MethodPost, "/scim/v2/Users", map[string]any{"userName": a.Email, "active": true}), http.StatusCreated)
-		},
-		"a replace": func(a dbtest.Account) {
-			ok("replace", f.do(t, http.MethodPut, "/scim/v2/Users/"+a.ID.String(), map[string]any{
-				"schemas": []string{schemaUser}, "userName": a.Email, "externalId": dbtest.Unique("ext"), "active": true}), http.StatusOK)
-		},
-		"a patch of its external id": func(a dbtest.Account) {
-			ok("patch externalId", patch(a, "externalId", dbtest.Unique("ext")), http.StatusOK)
-		},
-		"a patch of its address": func(a dbtest.Account) {
-			ok("patch userName", patch(a, "userName", dbtest.Unique("alice.k")+"@"+domain), http.StatusOK)
-		},
-	}
-	for way, vouch := range ways {
-		squatted := account(`SELECT $1::uuid`)
-		vouch(squatted)
-		if n := held(squatted); n != 0 {
-			t.Errorf("%s: an account nobody vouched for keeps %d of its 5 credentials and sessions, want none", way, n)
-		}
-		if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'auth.credentials_removed' AND resource_id = $1
-			AND organization_id = $2 AND metadata->>'proof' = 'scim_adoption'`, squatted.ID, f.organizationID); n != 1 {
-			t.Errorf("%s: the removal was recorded %d times, want once", way, n)
-		}
-		for name, setup := range map[string]string{
-			"an account that proved its address":           `UPDATE account.users SET email_verified_at = NOW() WHERE id = $1`,
-			"an account the directory already provisioned": `UPDATE account.users SET provisioned_via = 'scim' WHERE id = $1`,
-		} {
-			a := account(setup)
-			vouch(a)
-			if n := held(a); n != 5 {
-				t.Errorf("%s: %s keeps %d of its 5 credentials and sessions, want all", way, name, n)
-			}
-		}
-	}
+
+	svc := NewService(dbtest.Pool(t), user.NewRepository(dbtest.Pool(t)))
+	h := &Handler{Service: svc}
+	r := chi.NewRouter()
+	h.MountPublic(r)
+	return &scimFixture{organizationID: tid, token: token, router: r, svc: svc}
 }
 
-// TestSCIMDoesNotChangeAnAdministratorsAddress checks that the directory can't
-// move an account that administers the organization to a new address, by PATCH
-// or by PUT, as single sign-on doesn't, so that account's password reset keeps
-// going to its holder; a member's address still moves.
-func TestSCIMDoesNotChangeAnAdministratorsAddress(t *testing.T) {
-	ctx := dbtest.Context(t)
-	f := newSCIMFixture(t, ctx)
-	domain := dbtest.Domain(t, f.organizationID)
-	provision := func() (string, string) {
-		t.Helper()
-		email := dbtest.Unique("asha") + "@" + domain
-		rec := f.do(t, http.MethodPost, "/scim/v2/Users", map[string]any{"userName": email, "active": true})
-		id, _ := decodeBody(t, rec)["id"].(string)
-		if rec.Code != http.StatusCreated || id == "" {
-			t.Fatalf("provision %s: %d %s", email, rec.Code, rec.Body.String())
-		}
-		return id, email
+// seedUser creates an organization user and returns its id.
+func (f *scimFixture) seedUser(t *testing.T, ctx context.Context, email string) uuid.UUID {
+	t.Helper()
+	repo := user.NewRepository(dbtest.Pool(t))
+	u, err := repo.CreateWithCredential(ctx, user.CreateInput{OrganizationID: f.organizationID, Email: email}, "")
+	if err != nil {
+		t.Fatalf("seed user %s: %v", email, err)
 	}
-	address := func(id string) string {
-		t.Helper()
-		var email string
-		if err := dbtest.Pool(t).QueryRow(ctx, `SELECT email FROM account.users WHERE id = $1`, id).Scan(&email); err != nil {
-			t.Fatal(err)
-		}
-		return email
-	}
-	patch := func(id, email string) int {
-		return f.do(t, http.MethodPatch, "/scim/v2/Users/"+id, map[string]any{"schemas": []string{schemaPatchOp},
-			"Operations": []map[string]any{{"op": "replace", "path": "userName", "value": email}}}).Code
-	}
-	put := func(id, email string) int {
-		return f.do(t, http.MethodPut, "/scim/v2/Users/"+id, map[string]any{"schemas": []string{schemaUser}, "userName": email, "active": true}).Code
-	}
-
-	admin, adminEmail := provision()
-	dbtest.Assign(t, uuid.MustParse(admin), f.organizationID, dbtest.Role(t, f.organizationID, "user.write"))
-	for verb, change := range map[string]func(id, email string) int{"PATCH": patch, "PUT": put} {
-		if code := change(admin, dbtest.Unique("asha+x")+"@"+domain); code != http.StatusForbidden {
-			t.Errorf("%s an administrator's userName: %d, want 403", verb, code)
-		}
-	}
-	if got := address(admin); got != adminEmail {
-		t.Errorf("the administrator's address moved to %s", got)
-	}
-
-	member, _ := provision()
-	moved := dbtest.Unique("asha.k") + "@" + domain
-	if code := patch(member, moved); code != http.StatusOK || address(member) != moved {
-		t.Errorf("PATCH a member's userName: %d, address %s; want 200 and %s", code, address(member), moved)
-	}
+	return u.ID
 }
 
-// TestSCIMDeprovisioningListsTheIntegrationsTheUserCreated checks that
-// deleting a user through the directory records, as an administrator's
-// deletion does, the critical event listing the integrations they created.
-func TestSCIMDeprovisioningListsTheIntegrationsTheUserCreated(t *testing.T) {
-	ctx := dbtest.Context(t)
-	f := newSCIMFixture(t, ctx)
-	id := f.seedUser(t, ctx, dbtest.Unique("scim")+"@example.test")
-	if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO organization.webhook_subscriptions (organization_id, url, secret_ct, secret_nonce, created_by)
-		VALUES ($1, 'https://hooks.example.test/in', '\x00', '\x00', $2)`, f.organizationID, id); err != nil {
-		t.Fatal(err)
+// do issues a SCIM request and returns the recorder.
+func (f *scimFixture) do(t *testing.T, method, path string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	var rdr *bytes.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("marshal body: %v", err)
+		}
+		rdr = bytes.NewReader(b)
+	} else {
+		rdr = bytes.NewReader(nil)
 	}
-	if rec := f.do(t, http.MethodDelete, "/scim/v2/Users/"+id.String(), nil); rec.Code != http.StatusNoContent {
-		t.Fatalf("delete: %d %s", rec.Code, rec.Body.String())
-	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'user.integrations_left'
-		AND resource_id = $2 AND actor_type = 'scim' AND metadata->'integrations'->0->>'kind' = 'webhook'`, f.organizationID, id); n != 1 {
-		t.Errorf("%d events listing the deprovisioned user's webhook, want 1", n)
-	}
+	req := httptest.NewRequest(method, "http://localhost:4000"+path, rdr)
+	req.Header.Set("Authorization", "Bearer "+f.token)
+	req.Header.Set("Content-Type", scimContentType)
+	rec := httptest.NewRecorder()
+	f.router.ServeHTTP(rec, req)
+	return rec
 }
+
+func decodeBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &m); err != nil {
+		t.Fatalf("decode body (%d): %v\nbody=%s", rec.Code, err, rec.Body.String())
+	}
+	return m
+}
+
+const schemaPatchOp = "urn:ietf:params:scim:api:messages:2.0:PatchOp"

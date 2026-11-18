@@ -1,0 +1,52 @@
+post:
+  operationId: testAuthHook
+  summary: Test an auth hook
+  description: >-
+    Calls the hook as a sign-in would, signed with its secret, with "test": true
+    and a placeholder person, and reports its answer: status_code, duration_ms,
+    decision (allow, deny, or none when it gave no answer), message, claims and
+    error. It isn't counted in the hook's figures. Audited as auth_hook.tested.
+  tags:
+    - Auth Hooks
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: How the hook answered
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              status_code:
+                type: integer
+              duration_ms:
+                type: integer
+              decision:
+                type: string
+                enum:
+                  - allow
+                  - deny
+                  - none
+              message:
+                type: string
+              claims:
+                type: object
+                additionalProperties: true
+              error:
+                type: string
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml

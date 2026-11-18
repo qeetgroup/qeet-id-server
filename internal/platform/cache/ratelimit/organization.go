@@ -163,7 +163,7 @@ func (l *OrganizationLimiter) GetAll(ctx context.Context, pool *pgxpool.Pool) ([
 
 // OrganizationLimit is one organization's override, as listed by GetAll.
 type OrganizationLimit struct {
-	OrganizationID uuid.UUID `json:"tenant_id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
 	Rate           float64   `json:"rate"`
 	Capacity       int       `json:"capacity"`
 }

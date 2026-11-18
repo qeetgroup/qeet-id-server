@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	tokens "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
@@ -46,7 +46,7 @@ func TestIssue_RequiresSubjectAndType(t *testing.T) {
 			t.Errorf("subject=%q type=%q: expected nil result", c.subject, c.credType)
 		}
 		e := errs.As(err)
-		if e == nil || e.Code != errs.CodeVCSubjectTypeRequired {
+		if e == nil || e.Code != CodeSubjectTypeRequired {
 			t.Errorf("subject=%q type=%q: want vc.subject_type_required, got %v", c.subject, c.credType, err)
 		}
 	}

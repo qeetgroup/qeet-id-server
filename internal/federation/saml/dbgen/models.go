@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type OrganizationSamlConnectionCertificate struct {
@@ -32,7 +31,7 @@ type OrganizationSamlServiceProvider struct {
 	Status                string
 	CreatedAt             time.Time
 	UpdatedAt             time.Time
-	LastLoginAt           pgtype.Timestamptz
+	LastLoginAt           *time.Time
 	Attributes            []byte
 	AssignmentRequired    bool
 	RequireSignedRequests bool

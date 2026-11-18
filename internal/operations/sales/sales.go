@@ -8,15 +8,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/sales/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/sales/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
@@ -45,13 +42,6 @@ func NewService(pool *pgxpool.Pool, sender notifier.Sender, salesInbox string) *
 	return &Service{q: dbgen.New(pool), sender: sender, salesInbox: salesInbox}
 }
 
-func pgUUID(id *uuid.UUID) pgtype.UUID {
-	if id == nil {
-		return pgtype.UUID{}
-	}
-	return pgtype.UUID{Bytes: *id, Valid: true}
-}
-
 // Submit saves the lead and, best-effort, emails the sales inbox. The email
 // address is required.
 func (s *Service) Submit(ctx context.Context, organizationID, userID *uuid.UUID, in Lead) error {
@@ -60,8 +50,8 @@ func (s *Service) Submit(ctx context.Context, organizationID, userID *uuid.UUID,
 		return errs.ErrBadRequest.WithMessage("A work email is required.")
 	}
 	if _, err := s.q.InsertSalesLead(ctx, dbgen.InsertSalesLeadParams{
-		OrganizationID: pgUUID(organizationID),
-		UserID:         pgUUID(userID),
+		OrganizationID: organizationID,
+		UserID:         userID,
 		Name:           strings.TrimSpace(in.Name),
 		Email:          email,
 		Company:        strings.TrimSpace(in.Company),
@@ -97,31 +87,4 @@ func (s *Service) notify(ctx context.Context, in Lead, email string) {
 	}); err != nil {
 		slog.Warn("sales lead notification failed", "err", err, "email", httpx.SanitizeForLog(email))
 	}
-}
-
-// Handler exposes the contact-sales endpoint.
-type Handler struct {
-	Service *Service
-}
-
-// Mount registers POST /sales/leads.
-func (h *Handler) Mount(r chi.Router) {
-	r.Post("/sales/leads", h.submit)
-}
-
-func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
-	var in Lead
-	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	var organizationID, userID *uuid.UUID
-	if p := httpx.PrincipalFromCtx(r.Context()); p != nil {
-		organizationID, userID = p.OrganizationID, p.UserID
-	}
-	if err := h.Service.Submit(r.Context(), organizationID, userID, in); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"status": "received"})
 }

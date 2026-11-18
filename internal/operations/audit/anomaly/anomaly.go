@@ -9,22 +9,19 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"net/http"
 	"net/netip"
 	"strconv"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/strutil"
 
-	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/audit/anomaly/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit/anomaly/dbgen"
 )
 
 const (
@@ -46,7 +43,7 @@ const (
 // details for display.
 type Anomaly struct {
 	ID             uuid.UUID  `json:"id"`
-	OrganizationID uuid.UUID  `json:"tenant_id"`
+	OrganizationID uuid.UUID  `json:"organization_id"`
 	EventID        uuid.UUID  `json:"event_id"`
 	ActorUserID    *uuid.UUID `json:"actor_user_id"`
 	ActorEmail     *string    `json:"actor_email"`
@@ -66,7 +63,7 @@ type Anomaly struct {
 // the actor has MinBaselineEvents of history, and are flagged at or above
 // ScoreThreshold.
 type Settings struct {
-	OrganizationID    uuid.UUID `json:"tenant_id"`
+	OrganizationID    uuid.UUID `json:"organization_id"`
 	Enabled           bool      `json:"enabled"`
 	ScoreThreshold    float64   `json:"score_threshold"`
 	MinBaselineEvents int       `json:"min_baseline_events"`
@@ -243,8 +240,8 @@ func (s *Service) scoreBatch(ctx context.Context) (int, int, error) {
 	for _, r := range rows {
 		e := unscoredEvent{
 			ID:             r.ID,
-			OrganizationID: toUUIDPtr(r.OrganizationID),
-			ActorUserID:    toUUIDPtr(r.ActorUserID),
+			OrganizationID: r.OrganizationID,
+			ActorUserID:    r.ActorUserID,
 			Action:         r.Action,
 			CreatedAt:      r.CreatedAt,
 		}
@@ -277,13 +274,8 @@ func (s *Service) scoreOne(ctx context.Context, e unscoredEvent) (bool, error) {
 	defer tx.Rollback(ctx)
 
 	qTx := s.q.WithTx(tx)
-	var alreadyScored bool
-	if err := tx.QueryRow(ctx, `
-		SELECT scored_at IS NOT NULL
-		FROM audit.events
-		WHERE id = $1
-		FOR UPDATE SKIP LOCKED
-	`, e.ID).Scan(&alreadyScored); errors.Is(err, pgx.ErrNoRows) {
+	alreadyScored, err := qTx.LockAuditEventForScoring(ctx, e.ID)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	} else if err != nil {
 		return false, err
@@ -325,7 +317,7 @@ func (s *Service) scoreOne(ctx context.Context, e unscoredEvent) (bool, error) {
 				if err := qTx.InsertAnomaly(ctx, dbgen.InsertAnomalyParams{
 					OrganizationID: *e.OrganizationID,
 					EventID:        e.ID,
-					ActorUserID:    pgtype.UUID{Bytes: *e.ActorUserID, Valid: true},
+					ActorUserID:    e.ActorUserID,
 					Score:          sc,
 					Reasons:        reasons,
 				}); err != nil {
@@ -362,61 +354,29 @@ func (s *Service) Run(ctx context.Context) {
 	}
 }
 
-// toUUIDPtr converts a nullable pgtype.UUID to a *uuid.UUID; NULL becomes nil.
-func toUUIDPtr(u pgtype.UUID) *uuid.UUID {
-	if !u.Valid {
-		return nil
-	}
-	id := uuid.UUID(u.Bytes)
-	return &id
-}
-
-// toTimePtr converts a nullable pgtype.Timestamptz to a *time.Time; NULL
-// becomes nil.
-func toTimePtr(t pgtype.Timestamptz) *time.Time {
-	if !t.Valid {
-		return nil
-	}
-	return &t.Time
-}
-
-// rowToAnomaly builds an Anomaly from the fields of a ListAnomalies or
-// ListAnomaliesFiltered row, whose generated types differ.
-func rowToAnomaly(
-	id, organizationID, eventID uuid.UUID,
-	actorUserID pgtype.UUID,
-	actorEmail *string,
-	scoreVal float64,
-	reasons []string,
-	status string,
-	resolvedAt pgtype.Timestamptz,
-	resolvedBy pgtype.UUID,
-	createdAt time.Time,
-	action, resourceType string,
-	ipRaw interface{},
-	eventAt time.Time,
-) Anomaly {
+// rowToAnomaly builds an Anomaly from a ListAnomalies row.
+func rowToAnomaly(r dbgen.ListAnomaliesRow) Anomaly {
 	// ip is COALESCE(host(e.ip), ''), typed interface{}; empty becomes nil.
 	var ipPtr *string
-	if ip, ok := ipRaw.(string); ok && ip != "" {
+	if ip, ok := r.Ip.(string); ok && ip != "" {
 		ipPtr = &ip
 	}
 	return Anomaly{
-		ID:             id,
-		OrganizationID: organizationID,
-		EventID:        eventID,
-		ActorUserID:    toUUIDPtr(actorUserID),
-		ActorEmail:     actorEmail,
-		Score:          scoreVal,
-		Reasons:        reasons,
-		Status:         status,
-		ResolvedAt:     toTimePtr(resolvedAt),
-		ResolvedBy:     toUUIDPtr(resolvedBy),
-		CreatedAt:      createdAt,
-		Action:         action,
-		ResourceType:   resourceType,
+		ID:             r.ID,
+		OrganizationID: r.OrganizationID,
+		EventID:        r.EventID,
+		ActorUserID:    r.ActorUserID,
+		ActorEmail:     r.Email,
+		Score:          r.Score,
+		Reasons:        r.Reasons,
+		Status:         r.Status,
+		ResolvedAt:     r.ResolvedAt,
+		ResolvedBy:     r.ResolvedBy,
+		CreatedAt:      r.CreatedAt,
+		Action:         r.Action,
+		ResourceType:   r.ResourceType,
 		IP:             ipPtr,
-		EventAt:        eventAt,
+		EventAt:        r.EventAt,
 	}
 }
 
@@ -430,53 +390,22 @@ func (s *Service) List(ctx context.Context, organizationID uuid.UUID, status str
 // ListPage is List from after the cursor, when one is set, with the next
 // page's cursor: empty on the last page.
 func (s *Service) ListPage(ctx context.Context, organizationID uuid.UUID, status string, limit int, after paging.Cursor) ([]Anomaly, string, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 50
-	}
-	var beforeTs pgtype.Timestamptz
-	var beforeID pgtype.UUID
-	if after.Set {
-		beforeTs = pgtype.Timestamptz{Time: after.Time, Valid: true}
-		beforeID = pgtype.UUID{Bytes: after.ID, Valid: true}
-	}
-	key := func(a Anomaly) (time.Time, uuid.UUID) { return a.CreatedAt, a.ID }
-	out := []Anomaly{}
-	if status != "" {
-		rows, err := s.q.ListAnomaliesFiltered(ctx, dbgen.ListAnomaliesFilteredParams{
-			OrganizationID: organizationID,
-			Status:         status,
-			BeforeTs:       beforeTs,
-			BeforeID:       beforeID,
-			RowLimit:       int32(limit + 1),
-		})
-		if err != nil {
-			return nil, "", err
-		}
-		for _, r := range rows {
-			out = append(out, rowToAnomaly(r.ID, r.OrganizationID, r.EventID,
-				r.ActorUserID, r.Email, r.Score, r.Reasons, r.Status,
-				r.ResolvedAt, r.ResolvedBy, r.CreatedAt,
-				r.Action, r.ResourceType, r.Ip, r.EventAt))
-		}
-		out, next := paging.Next(out, limit, key)
-		return out, next, nil
-	}
-	rows, err := s.q.ListAnomalies(ctx, dbgen.ListAnomaliesParams{
+	limit = paging.Clamp(limit, 50, 200)
+	params := dbgen.ListAnomaliesParams{
 		OrganizationID: organizationID,
-		BeforeTs:       beforeTs,
-		BeforeID:       beforeID,
-		RowLimit:       int32(limit + 1),
-	})
+		Status:         strutil.NilIfEmpty(status),
+		RowLimit:       int32(limit + 1), // #nosec G115 -- at most 201
+	}
+	params.BeforeTs, params.BeforeID = after.Before()
+	rows, err := s.q.ListAnomalies(ctx, params)
 	if err != nil {
 		return nil, "", err
 	}
+	out := make([]Anomaly, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, rowToAnomaly(r.ID, r.OrganizationID, r.EventID,
-			r.ActorUserID, r.Email, r.Score, r.Reasons, r.Status,
-			r.ResolvedAt, r.ResolvedBy, r.CreatedAt,
-			r.Action, r.ResourceType, r.Ip, r.EventAt))
+		out = append(out, rowToAnomaly(r))
 	}
-	out, next := paging.Next(out, limit, key)
+	out, next := paging.Next(out, limit, func(a Anomaly) (time.Time, uuid.UUID) { return a.CreatedAt, a.ID })
 	return out, next, nil
 }
 
@@ -497,7 +426,7 @@ func (s *Service) Summary(ctx context.Context, organizationID uuid.UUID) (*Summa
 // returns errs.ErrNotFound if there is no such open anomaly.
 func (s *Service) Resolve(ctx context.Context, organizationID, id, resolvedBy uuid.UUID) error {
 	ct, err := s.q.ResolveAnomaly(ctx, dbgen.ResolveAnomalyParams{
-		ResolvedBy:     pgtype.UUID{Bytes: resolvedBy, Valid: true},
+		ResolvedBy:     &resolvedBy,
 		ID:             id,
 		OrganizationID: organizationID,
 	})
@@ -519,10 +448,10 @@ func (s *Service) GetSettings(ctx context.Context, organizationID uuid.UUID) (*S
 // UpdateSettings validates and saves the organization's settings.
 func (s *Service) UpdateSettings(ctx context.Context, organizationID uuid.UUID, in Settings) (*Settings, error) {
 	if in.ScoreThreshold < 0 || in.ScoreThreshold > 1 {
-		return nil, errs.ErrAuditScoreThresholdInvalid
+		return nil, ErrAuditScoreThresholdInvalid
 	}
 	if in.MinBaselineEvents < 0 {
-		return nil, errs.ErrAuditMinBaselineInvalid
+		return nil, ErrAuditMinBaselineInvalid
 	}
 	if err := s.q.UpsertAnomalySettings(ctx, dbgen.UpsertAnomalySettingsParams{
 		OrganizationID:    organizationID,
@@ -535,117 +464,4 @@ func (s *Service) UpdateSettings(ctx context.Context, organizationID uuid.UUID, 
 	out := in
 	out.OrganizationID = organizationID
 	return &out, nil
-}
-
-// Handler serves the anomaly endpoints.
-type Handler struct {
-	Service *Service
-}
-
-// Mount registers the anomaly routes.
-func (h *Handler) Mount(r chi.Router) {
-	r.Get("/tenants/{tenantID}/audit/anomalies", h.list)
-	r.Get("/tenants/{tenantID}/audit/anomalies/summary", h.summary)
-	r.Post("/tenants/{tenantID}/audit/anomalies/{id}/resolve", h.resolve)
-	r.Get("/tenants/{tenantID}/audit/anomaly-settings", h.getSettings)
-	r.Put("/tenants/{tenantID}/audit/anomaly-settings", h.updateSettings)
-}
-
-func requirePathOrganization(r *http.Request) (uuid.UUID, error) {
-	return httpx.PathOrganizationOr(r, errs.ErrAuditOrganizationInvalid, errs.ErrAuditOrganizationMismatch)
-}
-
-func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	status := r.URL.Query().Get("status")
-	if status != "" && status != "open" && status != "resolved" {
-		httpx.WriteError(w, r, errs.ErrAuditAnomalyStatusInvalid)
-		return
-	}
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	after, err := paging.ParseCursor(r.URL.Query())
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	out, next, err := h.Service.ListPage(r.Context(), organizationID, status, limit, after)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, paging.Page(out, next))
-}
-
-func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	out, err := h.Service.Summary(r.Context(), organizationID)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, out)
-}
-
-func (h *Handler) resolve(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		httpx.WriteError(w, r, errs.ErrAuditIDInvalid)
-		return
-	}
-	p := httpx.PrincipalFromCtx(r.Context())
-	if p == nil || p.UserID == nil {
-		httpx.WriteError(w, r, errs.ErrAuditResolveActorRequired)
-		return
-	}
-	if err := h.Service.Resolve(r.Context(), organizationID, id, *p.UserID); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	out, err := h.Service.GetSettings(r.Context(), organizationID)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, out)
-}
-
-func (h *Handler) updateSettings(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	var in Settings
-	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	out, err := h.Service.UpdateSettings(r.Context(), organizationID, in)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, out)
 }

@@ -1,9 +1,10 @@
-// Package ssosync keeps an account in step with what each SAML or LDAP sign-in
-// asserts about it: the profile its connection maps, and its place in the
-// organization's groups. Sync changes only memberships the same connection's
-// sign-ins made, never one an administrator, an import or SCIM made, and never
-// reaches a group holding the owner role or an administrative permission.
-// Every change is audited in the sign-in's transaction.
+// Package ssosync keeps an account in step with what each sign-in through a
+// connection (SAML, LDAP, OpenID Connect) asserts about it: the profile its
+// connection maps, and its place in the organization's groups. Sync changes
+// only memberships the same connection's sign-ins made, never one an
+// administrator, an import or SCIM made, and never reaches a group holding the
+// owner role or an administrative permission. Every change is audited in the
+// sign-in's transaction.
 package ssosync
 
 import (
@@ -14,11 +15,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ssosync/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 )
 
@@ -34,7 +35,7 @@ type SignIn struct {
 	OrganizationID uuid.UUID
 	UserID         uuid.UUID
 	ConnectionID   uuid.UUID
-	Provider       string // "saml" or "ldap": who the audit records name
+	Provider       string // "saml", "ldap" or "oidc": who the audit records name
 	DisplayName    string // "" when none was asserted
 	Email          string // the asserted address
 	EmailManaged   bool   // Email is on a domain the organization manages
@@ -61,8 +62,8 @@ func refreshProfile(ctx context.Context, tx pgx.Tx, in SignIn) error {
 		return err
 	}
 	changed := map[string]any{}
-	name := strings.TrimSpace(in.DisplayName)
-	if name != "" && utf8.RuneCountInString(name) <= maxDisplayName && (current.DisplayName == nil || *current.DisplayName != name) {
+	name := DisplayName(in.DisplayName)
+	if name != "" && (current.DisplayName == nil || *current.DisplayName != name) {
 		if err := q.SetDisplayName(ctx, dbgen.SetDisplayNameParams{DisplayName: &name, ID: in.UserID, OrganizationID: in.OrganizationID}); err != nil {
 			return err
 		}
@@ -81,6 +82,16 @@ func refreshProfile(ctx context.Context, tx pgx.Tx, in SignIn) error {
 	changed["connection_id"] = in.ConnectionID
 	changed["source"] = in.Provider
 	return audit.Record(ctx, tx, in.Actor.Event(in.OrganizationID, "user.updated", "user", in.UserID, changed))
+}
+
+// DisplayName is name as a sign-in sets it on an account: trimmed, or "" when
+// it is longer than an account's display name may be.
+func DisplayName(name string) string {
+	name = strings.TrimSpace(name)
+	if utf8.RuneCountInString(name) > maxDisplayName {
+		return ""
+	}
+	return name
 }
 
 // refreshEmail moves the account to the asserted address under the rules an
@@ -108,7 +119,7 @@ func refreshEmail(ctx context.Context, tx pgx.Tx, in SignIn, current string) (bo
 		return false, err
 	}
 	if err := dbgen.New(savepoint).SetEmail(ctx, dbgen.SetEmailParams{Email: email, ID: in.UserID, OrganizationID: in.OrganizationID}); err != nil {
-		if pgxerr.IsUnique(err) {
+		if postgres.IsUnique(err) {
 			return false, nil
 		}
 		return false, err
@@ -184,7 +195,7 @@ func recordMembership(ctx context.Context, tx pgx.Tx, actor audit.Actor, organiz
 		return err
 	}
 	return outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: groupID, Topic: "group.events", EventType: action,
-		Payload: map[string]any{"group_id": groupID, "user_id": userID, "tenant_id": organizationID, "source": source}})
+		Payload: map[string]any{"group_id": groupID, "user_id": userID, "organization_id": organizationID, "source": source}})
 }
 
 // groupValues returns the asserted groups as they are matched: trimmed, each

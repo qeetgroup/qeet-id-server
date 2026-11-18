@@ -7,10 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
@@ -96,10 +94,7 @@ func (s *Service) ListBreakGlass(ctx context.Context, organizationID uuid.UUID) 
 	out := make([]BreakGlassMember, 0, len(rows))
 	for _, r := range rows {
 		m := BreakGlassMember{UserID: r.UserID, Email: r.Email, DisplayName: r.DisplayName, CreatedAt: r.CreatedAt}
-		if r.CreatedBy.Valid {
-			by := uuid.UUID(r.CreatedBy.Bytes)
-			m.CreatedBy = &by
-		}
+		m.CreatedBy = r.CreatedBy
 		out = append(out, m)
 	}
 	return out, nil
@@ -143,13 +138,9 @@ func (s *Service) SetBreakGlass(ctx context.Context, organizationID, userID uuid
 			return err
 		}
 		if !member {
-			return errs.ErrDomainVerifyNotMember
+			return ErrNotMember
 		}
-		var by pgtype.UUID
-		if actor.UserID != nil {
-			by = pgtype.UUID{Bytes: *actor.UserID, Valid: true}
-		}
-		if changed, err = q.InsertBreakGlassMember(ctx, dbgen.InsertBreakGlassMemberParams{OrganizationID: organizationID, UserID: userID, CreatedBy: by}); err != nil {
+		if changed, err = q.InsertBreakGlassMember(ctx, dbgen.InsertBreakGlassMemberParams{OrganizationID: organizationID, UserID: userID, CreatedBy: actor.UserID}); err != nil {
 			return err
 		}
 		action = "domain.break_glass_added"
@@ -191,9 +182,9 @@ func (h *Handler) setBreakGlass(w http.ResponseWriter, r *http.Request, on bool)
 		httpx.WriteError(w, r, err)
 		return
 	}
-	userID, err := uuid.Parse(chi.URLParam(r, "userID"))
+	userID, err := httpx.PathUUID(r, "userID", errs.ErrBadRequest.WithDetail("invalid user id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid user id"))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	if err := h.Service.SetBreakGlass(r.Context(), organizationID, userID, on, audit.ActorOf(r)); err != nil {
@@ -265,11 +256,6 @@ func (s *Service) Discover(ctx context.Context, email string) (*Discovery, error
 		out.Organization = name
 	}
 	return out, nil
-}
-
-// MountPublic registers POST /sso/discovery, which needs no credential.
-func (h *Handler) MountPublic(r chi.Router) {
-	r.Post("/sso/discovery", h.discover)
 }
 
 func (h *Handler) discover(w http.ResponseWriter, r *http.Request) {

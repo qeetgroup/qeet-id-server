@@ -28,16 +28,8 @@ func TestRotatingAPrincipalNeedsItsScopes(t *testing.T) {
 	svc := NewService(pool, dbtest.Issuer(t))
 	create := func(scopes ...string) uuid.UUID {
 		t.Helper()
-		tx, err := pool.Begin(ctx)
+		p, _, err := svc.Create(ctx, CreateInput{OrganizationID: organization, Name: dbtest.Unique("ci"), Scopes: scopes}, system)
 		if err != nil {
-			t.Fatal(err)
-		}
-		defer tx.Rollback(ctx)
-		p, _, err := svc.Create(ctx, tx, CreateInput{OrganizationID: organization, Name: dbtest.Unique("ci"), Scopes: scopes})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := tx.Commit(ctx); err != nil {
 			t.Fatal(err)
 		}
 		return p.ID
@@ -53,7 +45,7 @@ func TestRotatingAPrincipalNeedsItsScopes(t *testing.T) {
 	h := dbtest.Serve(dbtest.Principal(developer.ID, organization),
 		(&Handler{Service: svc, GrantCheck: rbac.NewRepository(pool).CheckGrantScopes}).Mount)
 	rotate := func(id uuid.UUID) (int, string) {
-		rec := dbtest.Do(t, h, http.MethodPost, "/tenants/"+organization.String()+"/service-principals/"+id.String()+"/rotate-secret", nil)
+		rec := dbtest.Do(t, h, http.MethodPost, "/organizations/"+organization.String()+"/service-principals/"+id.String()+"/rotate-secret", nil)
 		return rec.Code, rec.Body.String()
 	}
 

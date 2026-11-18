@@ -1,7 +1,7 @@
 post:
   operationId: restoreUser
   description: >-
-    Brings a soft-deleted user back from the tenant recycle bin, reversing an
+    Brings a soft-deleted user back from the organization recycle bin, reversing an
     earlier delete call and returning the reactivated account. Requires
     user.delete. Only accounts that are still soft-deleted (not yet purged) can
     be restored. It is the counterpart to the purge call. An address another

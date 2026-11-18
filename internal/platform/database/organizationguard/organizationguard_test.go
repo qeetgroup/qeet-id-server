@@ -36,7 +36,6 @@ var categories = map[string]bool{
 	"global-table-join": true,
 	"platform-wide":     true,
 	"pending-review":    true,
-	"dev-seed":          true,
 }
 
 // sqlCalls are the pgx methods whose SQL argument is checked.

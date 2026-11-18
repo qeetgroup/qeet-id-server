@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const countActivityHistory = `-- name: CountActivityHistory :one
@@ -41,16 +40,16 @@ SELECT count(*)::bigint FROM (
 `
 
 type CountActivityHistoryParams struct {
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 	Actions        []string
-	ActorID        pgtype.UUID
-	Subject        pgtype.UUID
-	FromTs         pgtype.Timestamptz
-	ToTs           pgtype.Timestamptz
+	ActorID        *uuid.UUID
+	Subject        *uuid.UUID
+	FromTs         *time.Time
+	ToTs           *time.Time
 	Q              *string
 	QLike          *string
 	ResourceTypes  []string
-	ResourceID     pgtype.UUID
+	ResourceID     *uuid.UUID
 	Ip             *netip.Addr
 	Categories     []string
 	Severities     []string
@@ -93,23 +92,23 @@ WHERE e.organization_id = $1 AND e.id = $2
 `
 
 type GetActivityEventByIDParams struct {
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 	ID             uuid.UUID
 }
 
 type GetActivityEventByIDRow struct {
 	ID               uuid.UUID
-	ActorUserID      pgtype.UUID
+	ActorUserID      *uuid.UUID
 	ActorType        string
 	Action           string
 	ResourceType     string
-	ResourceID       pgtype.UUID
+	ResourceID       *uuid.UUID
 	Ip               string
 	UserAgent        *string
 	RequestID        *string
 	CreatedAt        time.Time
 	Metadata         json.RawMessage
-	OrganizationID   pgtype.UUID
+	OrganizationID   *uuid.UUID
 	ActorDisplayName *string
 	ActorEmail       *string
 }
@@ -170,38 +169,38 @@ LIMIT $17
 `
 
 type ListActivityHistoryParams struct {
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 	Actions        []string
-	ActorID        pgtype.UUID
-	Subject        pgtype.UUID
-	FromTs         pgtype.Timestamptz
-	ToTs           pgtype.Timestamptz
+	ActorID        *uuid.UUID
+	Subject        *uuid.UUID
+	FromTs         *time.Time
+	ToTs           *time.Time
 	Q              *string
 	QLike          *string
 	ResourceTypes  []string
-	ResourceID     pgtype.UUID
+	ResourceID     *uuid.UUID
 	Ip             *netip.Addr
 	Categories     []string
 	Severities     []string
 	MinSeverity    *string
-	CursorTs       pgtype.Timestamptz
-	CursorID       pgtype.UUID
+	CursorTs       *time.Time
+	CursorID       *uuid.UUID
 	RowLimit       int32
 }
 
 type ListActivityHistoryRow struct {
 	ID               uuid.UUID
-	ActorUserID      pgtype.UUID
+	ActorUserID      *uuid.UUID
 	ActorType        string
 	Action           string
 	ResourceType     string
-	ResourceID       pgtype.UUID
+	ResourceID       *uuid.UUID
 	Ip               string
 	UserAgent        *string
 	RequestID        *string
 	CreatedAt        time.Time
 	Metadata         json.RawMessage
-	OrganizationID   pgtype.UUID
+	OrganizationID   *uuid.UUID
 	ActorDisplayName *string
 	ActorEmail       *string
 }
@@ -295,8 +294,8 @@ LIMIT $6
 `
 
 type ListRelatedByActorParams struct {
-	OrganizationID pgtype.UUID
-	ActorID        pgtype.UUID
+	OrganizationID *uuid.UUID
+	ActorID        *uuid.UUID
 	FromTs         time.Time
 	ToTs           time.Time
 	ExcludeID      uuid.UUID
@@ -305,17 +304,17 @@ type ListRelatedByActorParams struct {
 
 type ListRelatedByActorRow struct {
 	ID               uuid.UUID
-	ActorUserID      pgtype.UUID
+	ActorUserID      *uuid.UUID
 	ActorType        string
 	Action           string
 	ResourceType     string
-	ResourceID       pgtype.UUID
+	ResourceID       *uuid.UUID
 	Ip               string
 	UserAgent        *string
 	RequestID        *string
 	CreatedAt        time.Time
 	Metadata         json.RawMessage
-	OrganizationID   pgtype.UUID
+	OrganizationID   *uuid.UUID
 	ActorDisplayName *string
 	ActorEmail       *string
 }
@@ -378,7 +377,7 @@ LIMIT $4
 `
 
 type ListRelatedByRequestIDParams struct {
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 	RequestID      *string
 	ExcludeID      uuid.UUID
 	RowLimit       int32
@@ -386,17 +385,17 @@ type ListRelatedByRequestIDParams struct {
 
 type ListRelatedByRequestIDRow struct {
 	ID               uuid.UUID
-	ActorUserID      pgtype.UUID
+	ActorUserID      *uuid.UUID
 	ActorType        string
 	Action           string
 	ResourceType     string
-	ResourceID       pgtype.UUID
+	ResourceID       *uuid.UUID
 	Ip               string
 	UserAgent        *string
 	RequestID        *string
 	CreatedAt        time.Time
 	Metadata         json.RawMessage
-	OrganizationID   pgtype.UUID
+	OrganizationID   *uuid.UUID
 	ActorDisplayName *string
 	ActorEmail       *string
 }
@@ -456,24 +455,24 @@ LIMIT 100
 `
 
 type ReplayActivityHistoryParams struct {
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 	AfterTs        time.Time
 	AfterID        uuid.UUID
 }
 
 type ReplayActivityHistoryRow struct {
 	ID               uuid.UUID
-	ActorUserID      pgtype.UUID
+	ActorUserID      *uuid.UUID
 	ActorType        string
 	Action           string
 	ResourceType     string
-	ResourceID       pgtype.UUID
+	ResourceID       *uuid.UUID
 	Ip               string
 	UserAgent        *string
 	RequestID        *string
 	CreatedAt        time.Time
 	Metadata         json.RawMessage
-	OrganizationID   pgtype.UUID
+	OrganizationID   *uuid.UUID
 	ActorDisplayName *string
 	ActorEmail       *string
 }
@@ -542,16 +541,16 @@ GROUP BY action
 `
 
 type SummarizeActivityByActionParams struct {
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 	Actions        []string
-	ActorID        pgtype.UUID
-	Subject        pgtype.UUID
-	FromTs         pgtype.Timestamptz
-	ToTs           pgtype.Timestamptz
+	ActorID        *uuid.UUID
+	Subject        *uuid.UUID
+	FromTs         *time.Time
+	ToTs           *time.Time
 	Q              *string
 	QLike          *string
 	ResourceTypes  []string
-	ResourceID     pgtype.UUID
+	ResourceID     *uuid.UUID
 	Ip             *netip.Addr
 	Categories     []string
 	Severities     []string
@@ -631,16 +630,16 @@ ORDER BY bucket ASC
 
 type SummarizeActivityTimeSeriesParams struct {
 	BucketSeconds  int64
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 	Actions        []string
-	ActorID        pgtype.UUID
-	Subject        pgtype.UUID
-	FromTs         pgtype.Timestamptz
-	ToTs           pgtype.Timestamptz
+	ActorID        *uuid.UUID
+	Subject        *uuid.UUID
+	FromTs         *time.Time
+	ToTs           *time.Time
 	Q              *string
 	QLike          *string
 	ResourceTypes  []string
-	ResourceID     pgtype.UUID
+	ResourceID     *uuid.UUID
 	Ip             *netip.Addr
 	Categories     []string
 	Severities     []string
@@ -721,16 +720,16 @@ WHERE audit.events.organization_id = $1
 `
 
 type SummarizeActivityTotalsParams struct {
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 	Actions        []string
-	ActorID        pgtype.UUID
-	Subject        pgtype.UUID
-	FromTs         pgtype.Timestamptz
-	ToTs           pgtype.Timestamptz
+	ActorID        *uuid.UUID
+	Subject        *uuid.UUID
+	FromTs         *time.Time
+	ToTs           *time.Time
 	Q              *string
 	QLike          *string
 	ResourceTypes  []string
-	ResourceID     pgtype.UUID
+	ResourceID     *uuid.UUID
 	Ip             *netip.Addr
 	Categories     []string
 	Severities     []string

@@ -3,22 +3,3 @@
 //   sqlc v1.31.1
 
 package dbgen
-
-import (
-	"time"
-
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
-)
-
-type OrganizationComplianceEvidenceRun struct {
-	ID             uuid.UUID
-	OrganizationID uuid.UUID
-	Framework      string
-	GeneratedAt    time.Time
-	GeneratedBy    pgtype.UUID
-	PassCount      int32
-	FailCount      int32
-	NaCount        int32
-	Controls       []byte
-}

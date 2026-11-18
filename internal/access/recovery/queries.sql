@@ -21,6 +21,12 @@ FROM auth.password_resets
 WHERE token_hash = $1
 FOR UPDATE;
 
+-- FindResetAccount finds the account a password reset asked for by its
+-- address: its organization (NULL = none) and email as stored, which the link
+-- goes to.
+-- name: FindResetAccount :one
+SELECT id, organization_id, email FROM account.users WHERE LOWER(email) = LOWER(@email) AND deleted_at IS NULL;
+
 -- GetResetAccount returns the organization (NULL = none) and email of the
 -- account a reset is for, so the new password is checked against its rules.
 -- name: GetResetAccount :one

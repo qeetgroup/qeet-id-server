@@ -37,7 +37,7 @@ func Organization(t testing.TB) uuid.UUID {
 	if err := Pool(t).QueryRow(context.Background(), `
 		INSERT INTO organization.organizations (slug, name) VALUES ($1, $1) RETURNING id
 	`, slug).Scan(&id); err != nil {
-		t.Fatalf("dbtest: create tenant: %v", err)
+		t.Fatalf("dbtest: create organization: %v", err)
 	}
 	return id
 }

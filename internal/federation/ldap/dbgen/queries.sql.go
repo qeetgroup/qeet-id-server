@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const deleteLdapConnection = `-- name: DeleteLdapConnection :execrows
@@ -28,31 +27,6 @@ func (q *Queries) DeleteLdapConnection(ctx context.Context, arg DeleteLdapConnec
 		return 0, err
 	}
 	return result.RowsAffected(), nil
-}
-
-const getExternalIdentityUser = `-- name: GetExternalIdentityUser :one
-SELECT user_id FROM account.external_identities
-WHERE organization_id = $1 AND provider = $2 AND connection_id = $3::uuid
-  AND subject = $4
-`
-
-type GetExternalIdentityUserParams struct {
-	OrganizationID uuid.UUID
-	Provider       string
-	ConnectionID   uuid.UUID
-	Subject        string
-}
-
-func (q *Queries) GetExternalIdentityUser(ctx context.Context, arg GetExternalIdentityUserParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, getExternalIdentityUser,
-		arg.OrganizationID,
-		arg.Provider,
-		arg.ConnectionID,
-		arg.Subject,
-	)
-	var user_id uuid.UUID
-	err := row.Scan(&user_id)
-	return user_id, err
 }
 
 const getLdapConnection = `-- name: GetLdapConnection :one
@@ -82,7 +56,7 @@ type GetLdapConnectionRow struct {
 	Status         string
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
-	LastLoginAt    pgtype.Timestamptz
+	LastLoginAt    *time.Time
 }
 
 func (q *Queries) GetLdapConnection(ctx context.Context, arg GetLdapConnectionParams) (GetLdapConnectionRow, error) {
@@ -108,61 +82,151 @@ func (q *Queries) GetLdapConnection(ctx context.Context, arg GetLdapConnectionPa
 	return i, err
 }
 
-const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id FROM account.users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL
+const getLdapConnectionWithSecret = `-- name: GetLdapConnectionWithSecret :one
+SELECT id, organization_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
+       base_dn, user_filter, email_attribute, name_attribute, status,
+       created_at, updated_at, last_login_at,
+       bind_password_ct, bind_password_nonce
+FROM organization.ldap_connections
+WHERE id = $1 AND ($2::uuid IS NULL OR organization_id = $2)
 `
 
-func (q *Queries) GetUserByEmail(ctx context.Context, email string) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, getUserByEmail, email)
-	var id uuid.UUID
-	err := row.Scan(&id)
-	return id, err
+type GetLdapConnectionWithSecretParams struct {
+	ID             uuid.UUID
+	OrganizationID *uuid.UUID
 }
 
-const insertUserWithEmail = `-- name: InsertUserWithEmail :one
-INSERT INTO account.users (organization_id, email, email_verified_at, display_name, status)
-VALUES ($1, $2, NOW(), $3, 'active')
-RETURNING id
-`
-
-type InsertUserWithEmailParams struct {
-	OrganizationID pgtype.UUID
-	Email          string
-	DisplayName    *string
+type GetLdapConnectionWithSecretRow struct {
+	ID                uuid.UUID
+	OrganizationID    uuid.UUID
+	Name              string
+	ServerUrl         string
+	StartTls          bool
+	SkipTlsVerify     bool
+	BindDn            string
+	BaseDn            string
+	UserFilter        string
+	EmailAttribute    string
+	NameAttribute     string
+	Status            string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	LastLoginAt       *time.Time
+	BindPasswordCt    []byte
+	BindPasswordNonce []byte
 }
 
-func (q *Queries) InsertUserWithEmail(ctx context.Context, arg InsertUserWithEmailParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, insertUserWithEmail, arg.OrganizationID, arg.Email, arg.DisplayName)
-	var id uuid.UUID
-	err := row.Scan(&id)
-	return id, err
-}
-
-const linkExternalIdentity = `-- name: LinkExternalIdentity :exec
-INSERT INTO account.external_identities (user_id, organization_id, provider, connection_id, subject, email)
-VALUES ($1, $2, $3, $4::uuid, $5, $6)
-ON CONFLICT (organization_id, provider, connection_id, subject) DO NOTHING
-`
-
-type LinkExternalIdentityParams struct {
-	UserID         uuid.UUID
-	OrganizationID uuid.UUID
-	Provider       string
-	ConnectionID   uuid.UUID
-	Subject        string
-	Email          *string
-}
-
-func (q *Queries) LinkExternalIdentity(ctx context.Context, arg LinkExternalIdentityParams) error {
-	_, err := q.db.Exec(ctx, linkExternalIdentity,
-		arg.UserID,
-		arg.OrganizationID,
-		arg.Provider,
-		arg.ConnectionID,
-		arg.Subject,
-		arg.Email,
+// A connection with its sealed bind password. A NULL organization_id reads it
+// by ID alone, for the public sign-in routes, whose path names the connection.
+func (q *Queries) GetLdapConnectionWithSecret(ctx context.Context, arg GetLdapConnectionWithSecretParams) (GetLdapConnectionWithSecretRow, error) {
+	row := q.db.QueryRow(ctx, getLdapConnectionWithSecret, arg.ID, arg.OrganizationID)
+	var i GetLdapConnectionWithSecretRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.Name,
+		&i.ServerUrl,
+		&i.StartTls,
+		&i.SkipTlsVerify,
+		&i.BindDn,
+		&i.BaseDn,
+		&i.UserFilter,
+		&i.EmailAttribute,
+		&i.NameAttribute,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.LastLoginAt,
+		&i.BindPasswordCt,
+		&i.BindPasswordNonce,
 	)
-	return err
+	return i, err
+}
+
+const insertLdapConnection = `-- name: InsertLdapConnection :one
+INSERT INTO organization.ldap_connections
+    (id, organization_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
+     bind_password_ct, bind_password_nonce,
+     base_dn, user_filter, email_attribute, name_attribute, status)
+VALUES ($1, $2, $3, $4, $5, $6, $7,
+        $8, $9,
+        $10, $11, $12, $13, $14)
+RETURNING id, organization_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
+          base_dn, user_filter, email_attribute, name_attribute, status,
+          created_at, updated_at, last_login_at
+`
+
+type InsertLdapConnectionParams struct {
+	ID                uuid.UUID
+	OrganizationID    uuid.UUID
+	Name              string
+	ServerUrl         string
+	StartTls          bool
+	SkipTlsVerify     bool
+	BindDn            string
+	BindPasswordCt    []byte
+	BindPasswordNonce []byte
+	BaseDn            string
+	UserFilter        string
+	EmailAttribute    string
+	NameAttribute     string
+	Status            string
+}
+
+type InsertLdapConnectionRow struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	Name           string
+	ServerUrl      string
+	StartTls       bool
+	SkipTlsVerify  bool
+	BindDn         string
+	BaseDn         string
+	UserFilter     string
+	EmailAttribute string
+	NameAttribute  string
+	Status         string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	LastLoginAt    *time.Time
+}
+
+func (q *Queries) InsertLdapConnection(ctx context.Context, arg InsertLdapConnectionParams) (InsertLdapConnectionRow, error) {
+	row := q.db.QueryRow(ctx, insertLdapConnection,
+		arg.ID,
+		arg.OrganizationID,
+		arg.Name,
+		arg.ServerUrl,
+		arg.StartTls,
+		arg.SkipTlsVerify,
+		arg.BindDn,
+		arg.BindPasswordCt,
+		arg.BindPasswordNonce,
+		arg.BaseDn,
+		arg.UserFilter,
+		arg.EmailAttribute,
+		arg.NameAttribute,
+		arg.Status,
+	)
+	var i InsertLdapConnectionRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.Name,
+		&i.ServerUrl,
+		&i.StartTls,
+		&i.SkipTlsVerify,
+		&i.BindDn,
+		&i.BaseDn,
+		&i.UserFilter,
+		&i.EmailAttribute,
+		&i.NameAttribute,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.LastLoginAt,
+	)
+	return i, err
 }
 
 const listLdapConnections = `-- name: ListLdapConnections :many
@@ -189,12 +253,10 @@ type ListLdapConnectionsRow struct {
 	Status         string
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
-	LastLoginAt    pgtype.Timestamptz
+	LastLoginAt    *time.Time
 }
 
-// Queries for the ldap domain.
-// All queries below are STATIC and compiled by sqlc into ./dbgen.
-// getFull (conditional WHERE organization_id) stays hand-written in ldap.go.
+// Queries for the ldap domain, compiled by sqlc into ./dbgen.
 // At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListLdapConnections(ctx context.Context, organizationID uuid.UUID) ([]ListLdapConnectionsRow, error) {
 	rows, err := q.db.Query(ctx, listLdapConnections, organizationID)
@@ -230,6 +292,29 @@ func (q *Queries) ListLdapConnections(ctx context.Context, organizationID uuid.U
 		return nil, err
 	}
 	return items, nil
+}
+
+const setLdapBindPassword = `-- name: SetLdapBindPassword :exec
+UPDATE organization.ldap_connections
+SET bind_password_ct = $1, bind_password_nonce = $2, updated_at = NOW()
+WHERE id = $3 AND organization_id = $4
+`
+
+type SetLdapBindPasswordParams struct {
+	BindPasswordCt    []byte
+	BindPasswordNonce []byte
+	ID                uuid.UUID
+	OrganizationID    uuid.UUID
+}
+
+func (q *Queries) SetLdapBindPassword(ctx context.Context, arg SetLdapBindPasswordParams) error {
+	_, err := q.db.Exec(ctx, setLdapBindPassword,
+		arg.BindPasswordCt,
+		arg.BindPasswordNonce,
+		arg.ID,
+		arg.OrganizationID,
+	)
+	return err
 }
 
 const touchLdapLastLogin = `-- name: TouchLdapLastLogin :exec
@@ -290,7 +375,7 @@ type UpdateLdapConnectionRow struct {
 	Status         string
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
-	LastLoginAt    pgtype.Timestamptz
+	LastLoginAt    *time.Time
 }
 
 func (q *Queries) UpdateLdapConnection(ctx context.Context, arg UpdateLdapConnectionParams) (UpdateLdapConnectionRow, error) {

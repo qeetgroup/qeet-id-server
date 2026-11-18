@@ -13,11 +13,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
@@ -31,12 +30,12 @@ type Permission struct {
 type permissionDefinition struct{ Key, Description string }
 
 var builtinPermissionDefinitions = []permissionDefinition{
-	{"tenant.read", "Read tenant configuration"},
-	{"tenant.write", "Modify tenant configuration"},
-	{"tenant.delete", "Delete the organisation, or call its deletion off"},
+	{"organization.read", "Read organization configuration"},
+	{"organization.write", "Modify organization configuration"},
+	{"organization.delete", "Delete the organization, or call its deletion off"},
 	{"user.read", "List and read users"},
 	{"user.write", "Create and update people"},
-	{"user.delete", "Delete, restore and purge people, and remove them from the organisation"},
+	{"user.delete", "Delete, restore and purge people, and remove them from the organization"},
 	{"user.suspend", "Suspend and reactivate people"},
 	{"user.credentials", "Set people's passwords, reset their second factors and require them, remove their trusted and push devices"},
 	{"session.revoke", "End people's sessions"},
@@ -51,8 +50,8 @@ var builtinPermissionDefinitions = []permissionDefinition{
 	{"connection.write", "Manage SSO/identity connections"},
 	{"apikey.read", "Read API keys and service principals"},
 	{"apikey.write", "Manage API keys and service principals"},
-	{"secret.read", "Read tenant secrets metadata"},
-	{"secret.write", "Manage tenant secrets"},
+	{"secret.read", "Read organization secrets metadata"},
+	{"secret.write", "Manage organization secrets"},
 	{"webhook.read", "Read webhook endpoints"},
 	{"webhook.write", "Manage webhook endpoints"},
 	{"billing.read", "Read billing plans and subscription"},
@@ -61,7 +60,7 @@ var builtinPermissionDefinitions = []permissionDefinition{
 	{"policy.read", "Read security/auth policy"},
 	{"policy.write", "Manage security/auth policy (password, IP rules, retention, MFA enforcement)"},
 	{"gdpr.write", "Run GDPR erasure / data operations"},
-	{"analytics.read", "Read tenant analytics"},
+	{"analytics.read", "Read organization analytics"},
 }
 
 // ValidateMachineScopes rejects unknown capabilities at credential issuance.
@@ -87,7 +86,7 @@ func ValidateMachineScopes(scopes []string) error {
 // Role is a named set of permissions in an organization.
 type Role struct {
 	ID             uuid.UUID `json:"id"`
-	OrganizationID uuid.UUID `json:"tenant_id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
 	Name           string    `json:"name"`
 	Description    string    `json:"description"`
 	IsSystem       bool      `json:"is_system"`
@@ -171,14 +170,6 @@ func toRole(row dbgen.RbacRole) Role {
 	}
 }
 
-// uuidPtrToPgtype converts a *uuid.UUID to pgtype.UUID for nullable UUID params.
-func uuidPtrToPgtype(u *uuid.UUID) pgtype.UUID {
-	if u == nil {
-		return pgtype.UUID{}
-	}
-	return pgtype.UUID{Bytes: *u, Valid: true}
-}
-
 // UpsertPermission creates the permission key, or updates its description.
 func (r *Repository) UpsertPermission(ctx context.Context, tx pgx.Tx, key, desc string) (*Permission, error) {
 	row, err := r.q.WithTx(tx).UpsertPermission(ctx, dbgen.UpsertPermissionParams{Key: key, Description: desc})
@@ -211,8 +202,8 @@ func (r *Repository) CreateRole(ctx context.Context, tx pgx.Tx, organizationID u
 		IsSystem:       isSystem,
 	})
 	if err != nil {
-		if pgxerr.IsUnique(err) {
-			return nil, errs.ErrRBACRoleNameExists
+		if postgres.IsUnique(err) {
+			return nil, ErrRoleNameExists
 		}
 		return nil, err
 	}
@@ -338,7 +329,7 @@ func (r *Repository) AssignRole(ctx context.Context, tx pgx.Tx, userID, organiza
 		UserID:         userID,
 		OrganizationID: organizationID,
 		RoleID:         roleID,
-		GrantedBy:      uuidPtrToPgtype(grantedBy),
+		GrantedBy:      grantedBy,
 	})
 	if err != nil {
 		return err
@@ -372,7 +363,7 @@ func (r *Repository) AssignRoleToGroup(ctx context.Context, tx pgx.Tx, groupID, 
 		GroupID:        groupID,
 		OrganizationID: organizationID,
 		RoleID:         roleID,
-		GrantedBy:      uuidPtrToPgtype(grantedBy),
+		GrantedBy:      grantedBy,
 	})
 	if err != nil {
 		return false, err
@@ -452,14 +443,11 @@ type GrantStep struct {
 
 // grantStep is one grant of permission: through role, held directly or (via
 // "group") through the group.
-func grantStep(permission, via string, groupID pgtype.UUID, groupName *string, roleID uuid.UUID, roleName string) GrantStep {
+func grantStep(permission, via string, groupID *uuid.UUID, groupName *string, roleID uuid.UUID, roleName string) GrantStep {
 	step := GrantStep{Permission: permission, GrantedBy: "role:" + roleName, Via: "direct", RoleID: roleID, RoleName: roleName}
 	if via == "group" && groupName != nil {
 		step.Via, step.GroupName = "group:"+*groupName, *groupName
-		if groupID.Valid {
-			gid := uuid.UUID(groupID.Bytes)
-			step.GroupID = &gid
-		}
+		step.GroupID = groupID
 	}
 	return step
 }
@@ -513,7 +501,7 @@ func (r *Repository) Explain(ctx context.Context, userID, organizationID uuid.UU
 
 	exp.Allowed = len(exp.Paths) > 0
 	if !exp.Allowed {
-		exp.Reason = "no role grants this permission for this user in this tenant"
+		exp.Reason = "no role grants this permission for this user in this organization"
 		exp.ReasonCode = ReasonNoRoleGrant
 	}
 	return exp, nil

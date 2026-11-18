@@ -1,0 +1,57 @@
+get:
+  operationId: getBillingProfile
+  description: >-
+    Returns the organization's billing profile, such as the legal entity, address, and
+    tax identifiers used on invoices. Scoped to the organization named in the path.
+    Populate or amend it with the corresponding update operation before
+    generating tax-compliant invoices.
+  summary: Get organization billing profile
+  tags:
+    - Billing
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  responses:
+    '200':
+      description: Billing profile
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/BillingProfile.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+put:
+  operationId: setBillingProfile
+  description: >-
+    Creates or replaces the organization's billing profile and returns the stored
+    result. Scoped to the organization named in the path. These details feed invoice
+    generation, so keep them accurate for the organization's jurisdiction.
+  summary: Update organization billing profile
+  tags:
+    - Billing
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/BillingProfile.yaml
+  responses:
+    '200':
+      description: Updated billing profile
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/BillingProfile.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml

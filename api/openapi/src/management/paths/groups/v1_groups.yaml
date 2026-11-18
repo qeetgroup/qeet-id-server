@@ -13,9 +13,9 @@ post:
         schema:
           $ref: ../../components/schemas/GroupCreateInput.yaml
   description: >-
-    Creates a group in the caller's tenant. A parent_id must name one of the
-    tenant's own groups; otherwise the call answers 404 group.parent_not_found,
-    the same for a missing id as for another tenant's group. The name is stored
+    Creates a group in the caller's organization. A parent_id must name one of the
+    organization's own groups; otherwise the call answers 404 group.parent_not_found,
+    the same for a missing id as for another organization's group. The name is stored
     trimmed, and a blank one answers 422 validation_failed. A name another of
     the organization's groups already uses, ignoring case and surrounding
     spaces, answers 409 group.name_exists; groups an identity provider

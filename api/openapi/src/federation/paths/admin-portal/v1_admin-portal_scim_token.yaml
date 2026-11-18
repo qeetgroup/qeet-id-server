@@ -30,11 +30,11 @@ post:
 delete:
   operationId: revokeAllPortalScimTokens
   description: >-
-    Revokes the tenant's SCIM provisioning token from the cookie-authenticated
+    Revokes the organization's SCIM provisioning token from the cookie-authenticated
     admin portal, immediately stopping inbound SCIM provisioning until a new
     token is issued; the link's capabilities must include scim. To keep
     provisioning running, rotate to a fresh token instead with POST
-    /v1/admin-portal/scim/token. Scoped to the tenant bound to the portal
+    /v1/admin-portal/scim/token. Scoped to the organization bound to the portal
     session.
   summary: Revoke SCIM token (portal)
   tags:

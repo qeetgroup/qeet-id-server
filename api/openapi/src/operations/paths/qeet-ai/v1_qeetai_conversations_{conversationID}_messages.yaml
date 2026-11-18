@@ -22,12 +22,11 @@ post:
     A conversation answers one turn at a time: a message while its previous turn
     is still running, on any instance, is refused with `409
     qeetai.turn_in_progress` (retryable) and not stored. A turn sends the model
-    only the conversation's latest messages (`QEETAI_HISTORY_MESSAGES`, within
-    `QEETAI_HISTORY_BYTES`), from a message of the user's, so earlier ones are
-    left out; a turn whose own messages are larger ends with an `error` frame of
-    code `history_too_long` (start a new conversation). A reply longer than
-    `QEETAI_MAX_OUTPUT_BYTES` is cut there and kept, as at the model's own token
-    limit. A turn runs for at most 10 minutes.
+    only the conversation's latest 40 messages, within 256 KiB, from a message
+    of the user's, so earlier ones are left out; a turn whose own messages are
+    larger ends with an `error` frame of code `history_too_long` (start a new
+    conversation). A reply longer than 64 KiB is cut there and kept, as at the
+    model's own token limit. A turn runs for at most 10 minutes.
   tags:
     - Qeet AI
   parameters:

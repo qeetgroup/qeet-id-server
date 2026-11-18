@@ -1,0 +1,39 @@
+get:
+  operationId: listPurgeRequests
+  summary: List purge requests
+  tags:
+    - GDPR
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  description: >-
+    Lists the organization's erasure requests and their state. Requires
+    gdpr.write.
+  responses:
+    '200':
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - items
+            properties:
+              truncated:
+                $ref: ../../../shared/schemas/Truncated.yaml
+              items:
+                type: array
+                items:
+                  $ref: ../../components/schemas/Request.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

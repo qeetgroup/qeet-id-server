@@ -2,7 +2,7 @@ post:
   operationId: reactivateUser
   summary: Reactivate a suspended owned user
   description: >-
-    Requires user.suspend and ownership in the active tenant. Revokes existing
+    Requires user.suspend and ownership in the active organization. Revokes existing
     sessions and records audit/outbox evidence atomically; old sessions are
     never restored. The person must not outrank the caller: only an owner
     changes an owner (403 rbac.target_is_owner), and the caller must hold every
@@ -32,6 +32,6 @@ post:
     '403':
       description: Missing user.suspend
     '404':
-      description: Account not owned by this tenant
+      description: Account not owned by this organization
     '409':
       description: Account is no longer suspended

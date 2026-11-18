@@ -80,11 +80,9 @@ SQLC = $(shell go env GOPATH)/bin/sqlc-$(SQLC_VERSION)
 $(SQLC):
 	@dir="$$(mktemp -d)" && GOBIN="$$dir" go install github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION) && mv "$$dir/sqlc" "$@"
 
-# Regenerate every package's dbgen/ from its queries.sql.
+# Regenerate every package's dbgen/ from its queries.sql, as listed in sqlc.yaml.
 sqlc: $(SQLC)
-	@for cfg in $$(find internal -name sqlc.yaml); do \
-		(cd "$$(dirname "$$cfg")" && "$(SQLC)" generate) || exit 1; \
-	done
+	@"$(SQLC)" generate
 
 # Known vulnerabilities in what ships (cmd/ and internal/), as CI gates on.
 vuln:
@@ -107,11 +105,13 @@ ci:
 	$(MAKE) test-db lint sqlc-check openapi-check vuln sast
 	@echo "ci: every check passed"
 
-# Fail if any dbgen/ differs from what sqlc generates.
+# Fail if any dbgen/ differs from what sqlc generates, or a queries.sql is not
+# listed in sqlc.yaml (its dbgen/ would never be checked).
 sqlc-check: $(SQLC)
-	@for cfg in $$(find internal -name sqlc.yaml); do \
-		(cd "$$(dirname "$$cfg")" && "$(SQLC)" diff) || exit 1; \
+	@for q in $$(find internal -name queries.sql); do \
+		grep -qx "    queries: $$q" sqlc.yaml || { echo "sqlc-check: $$q is not listed in sqlc.yaml"; exit 1; }; \
 	done
+	@"$(SQLC)" diff
 
 # The five API documents in api/openapi are built from api/openapi/src by
 # Redocly CLI, pinned in api/openapi/src/bun.lock. Needs Bun.
@@ -160,11 +160,14 @@ db-reset:
 migrate-down:
 	migrate -path $(MIGRATIONS_DIR) -database "$(DB_URL)" down 1
 
+# Demo data, development only. The seed fills an empty database; seed-reset
+# recreates the local database first (as db-reset does), waits for it, then seeds.
 seed:
 	go run ./cmd/seed
 
-seed-reset:
-	go run ./cmd/seed -reset
+seed-reset: db-reset
+	docker compose up -d --wait
+	go run ./cmd/seed
 
 kill:
 	@pids=$$(lsof -nP -iTCP:4001 -sTCP:LISTEN -t 2>/dev/null); \

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type AuthAbacPolicy struct {
@@ -25,5 +24,5 @@ type AuthAbacPolicy struct {
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 	Version        int32
-	UpdatedBy      pgtype.UUID
+	UpdatedBy      *uuid.UUID
 }

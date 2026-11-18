@@ -7,16 +7,16 @@ get:
     - bearerAuth: []
   description: >-
     Reports whether the calling session is stepped up: it met a second factor of
-    a type its organisation counts within the organisation's step-up window. A
+    a type its organization counts within the organization's step-up window. A
     step-up belongs to the session that earned it, so a factor proved in another
     session, or by an API key or agent, never counts.
 
 
     These need a step-up, and answer 403 step_up_required without one (with
-    window_seconds and, when the organisation limits them, allowed_methods):
+    window_seconds and, when the organization limits them, allowed_methods):
     adding or removing the caller's own factors and sign-in methods, setting or
     changing their password, starting a change of their email address and
-    deleting their account, while they hold a factor their organisation counts;
+    deleting their account, while they hold a factor their organization counts;
     switching the authenticator app off or replacing recovery codes; creating,
     changing or revoking API keys, service principals, agents, OAuth clients and
     their secrets, SCIM tokens, credentials, webhooks and auth hooks; creating,
@@ -28,15 +28,15 @@ get:
     anomaly settings and log streaming; granting or revoking a role's
     permissions, assigning or removing user and group roles, creating
     invitations, and writing relationship tuples and attribute policies;
-    reactivating or restoring a user; and updating or deleting the organisation,
+    reactivating or restoring a user; and updating or deleting the organization,
     or deleting or purging a user. A caller holding no such factor has nothing
     to step up with, so the changes to their own account need a sign-in within
-    the organisation's step-up window instead, and answer 403
+    the organization's step-up window instead, and answer 403
     recent_sign_in_required (with window_seconds) otherwise: sign in again, then
-    retry. A session opened by switching to, joining or creating an organisation
+    retry. A session opened by switching to, joining or creating an organization
     continues the sign-in it came from. An API key, service principal or agent
     holds no session, so it cannot perform these. The hosted login's own sign-in
-    counts as a step-up for the organisation's window after it happens, when
+    counts as a step-up for the organization's window after it happens, when
     that sign-in proved a second factor itself (a met challenge or a passkey). A
     linked phone counts as a factor held, and steps a session up through the
     push step-up calls.
@@ -59,7 +59,7 @@ get:
                 description: The session's latest step-up, whether or not it still counts.
               window_seconds:
                 type: integer
-                description: How long a step-up lasts in the organisation.
+                description: How long a step-up lasts in the organization.
               allowed_methods:
                 type:
                   - array
@@ -67,7 +67,7 @@ get:
                 items:
                   type: string
                 description: >-
-                  The factor types the organisation counts; null when every one
+                  The factor types the organization counts; null when every one
                   does.
     '401':
       $ref: ../../../shared/responses/Unauthorized.yaml

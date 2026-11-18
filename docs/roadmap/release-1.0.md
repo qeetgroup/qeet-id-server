@@ -171,7 +171,7 @@ We also need to know how many users one instance can serve, and what happens whe
 
 **What Qeet ID has today:**
 
-- A bounded password hasher, tuned with PASSWORD_HASH_CONCURRENCY, PASSWORD_HASH_QUEUE and PASSWORD_HASH_MAX_WAIT (default 1 second), and the metric password_hasher_rejections_total.
+- A bounded password hasher (as many hashes at once as CPUs, twice that waiting, each for at most 1 second), and the metric password_hasher_rejections_total.
 - An earlier local load test on the production image found the bottlenecks behind overload shedding and instance sizing.
 - The rate limiter and auth hooks deliberately let requests through if their store fails; both are recorded decisions.
 
@@ -187,7 +187,7 @@ We also need to know how many users one instance can serve, and what happens whe
 
 - Surplus sign-ins get a 503 within about 100 ms, other flows keep p95 under 100 ms, and /readyz answers within 1 second (the overload-shedding targets).
 - Memory and pool use stay bounded, and the service recovers by itself when each dependency comes back.
-- PASSWORD_HASH_MAX_WAIT and PASSWORD_HASH_CONCURRENCY are tuned from the results, and the instance sizing uses the measured capacity.
+- The password hasher's limits (`internal/platform/crypto/password/hasher.go`) are tuned from the results, and the instance sizing uses the measured capacity.
 - The rate limiter and auth hooks still let requests through when their store fails.
 
 **Depends on:**

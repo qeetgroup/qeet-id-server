@@ -22,7 +22,7 @@ func TestRiskSettingsChangesAreAudited(t *testing.T) {
 	organization := dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
 	as := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)
-	path := "/tenants/" + organization.String() + "/security/risk-settings"
+	path := "/organizations/" + organization.String() + "/security/risk-settings"
 	changes := func() []map[string]map[string]any {
 		t.Helper()
 		rows, err := dbtest.Pool(t).Query(ctx, `

@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"reflect"
 	"slices"
-	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -16,13 +15,14 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 // tokenIssuer is the part of auth.Service this handler needs.
@@ -30,7 +30,7 @@ type tokenIssuer interface {
 	EnterCreatedOrganization(ctx context.Context, userID, organizationID, fromSessionID uuid.UUID, ip, ua string) (*auth.TokenPair, error)
 }
 
-// Handler serves the /tenants routes and /me/organizations. AuthService, if
+// Handler serves the /organizations routes and /me/organizations. AuthService, if
 // set, issues a token pair for a newly created organization so the client can switch
 // in, continuing the caller's session; a nil Signals announces no ended
 // sessions.
@@ -53,29 +53,29 @@ func (h *Handler) requireOwner(r *http.Request, id uuid.UUID) error {
 	}
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil || (p.ActorType != "" && p.ActorType != "user") {
-		return errs.ErrOrganizationOwnerOnly
+		return ErrOwnerOnly
 	}
 	owner, err := h.OwnerCheck(r.Context(), *p.UserID, id)
 	if err != nil {
 		return err
 	}
 	if !owner {
-		return errs.ErrOrganizationOwnerOnly
+		return ErrOwnerOnly
 	}
 	return nil
 }
 
 // Mount registers the organization routes on r.
 func (h *Handler) Mount(r chi.Router) {
-	r.Get("/tenants", h.list)
+	r.Get("/organizations", h.list)
 	r.Get("/me/organizations", h.eligibleOrganizations)
-	r.Post("/tenants", h.create)
-	// {tenantID}, not {id}, so EnforceOrganizationScope rejects any path organization other
+	r.Post("/organizations", h.create)
+	// {organizationID}, not {id}, so EnforceOrganizationScope rejects any path organization other
 	// than the caller's; rbac.Enforce checks only the caller's active organization.
-	r.Get("/tenants/{tenantID}", h.get)
-	r.Patch("/tenants/{tenantID}", h.update)
-	r.Delete("/tenants/{tenantID}", h.delete)
-	r.Post("/tenants/{tenantID}/deletion/cancel", h.cancelDeletion)
+	r.Get("/organizations/{organizationID}", h.get)
+	r.Patch("/organizations/{organizationID}", h.update)
+	r.Delete("/organizations/{organizationID}", h.delete)
+	r.Post("/organizations/{organizationID}/deletion/cancel", h.cancelDeletion)
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
@@ -84,16 +84,17 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
 		return
 	}
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	out, next, err := h.Repo.List(r.Context(), *p.UserID, limit, r.URL.Query().Get("cursor"))
+	after, err := paging.ParseCursor(r.URL.Query())
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"items":       out,
-		"next_cursor": next,
-	})
+	out, next, err := h.Repo.List(r.Context(), *p.UserID, paging.Limit(r.URL.Query(), listLimit, listMaxLimit), after)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, paging.Page(out, next))
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
@@ -114,7 +115,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.Region != "" && in.Region != h.Repo.HostingRegion() {
-		httpx.WriteError(w, r, errs.ErrOrganizationRegionUnavailable.WithMetadata(map[string]any{"available": []string{h.Repo.HostingRegion()}}))
+		httpx.WriteError(w, r, ErrRegionUnavailable.WithMetadata(map[string]any{"available": []string{h.Repo.HostingRegion()}}))
 		return
 	}
 	// Only the free plan may be self-provisioned here: paid plans go through
@@ -129,44 +130,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	} else if !verified {
-		httpx.WriteError(w, r, errs.ErrEmailNotVerified)
+		httpx.WriteError(w, r, ErrEmailNotVerified)
 		return
 	}
-	ctx := r.Context()
-	tx, err := h.Repo.Pool().Begin(ctx)
+	t, err := h.Repo.Create(r.Context(), in, *p.UserID, audit.ActorOf(r))
 	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	defer tx.Rollback(ctx)
-	// The organization, owner role/membership, audit row, and outbox event are one
-	// durable mutation.
-	t, err := h.Repo.CreateWithOwnerTx(ctx, tx, in, *p.UserID)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	id := t.ID
-	actorType := p.ActorType
-	if actorType == "" {
-		actorType = "user"
-	}
-	if err := audit.Record(ctx, tx, audit.Event{
-		OrganizationID: &id, ActorUserID: p.UserID, ActorType: actorType,
-		Action: "tenant.created", ResourceType: "tenant", ResourceID: &id,
-		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
-		Metadata: map[string]any{"slug": t.Slug, "name": t.Name},
-	}); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := outbox.Enqueue(ctx, tx, outbox.Event{
-		AggregateID: t.ID, Topic: "tenant.events", EventType: "tenant.created", Payload: t,
-	}); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -175,9 +143,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	// still returned if it fails. It continues the caller's session, so
 	// creating an organization never lengthens a sign-in.
 	resp := map[string]any{
-		"tenant":    t,
-		"tenant_id": t.ID,
-		"roles":     []string{"owner"},
+		"organization":    t,
+		"organization_id": t.ID,
+		"roles":           []string{"owner"},
 	}
 	if h.AuthService != nil && p.SessionID != nil {
 		if pair, err := h.AuthService.EnterCreatedOrganization(r.Context(), *p.UserID, t.ID, *p.SessionID, httpx.ClientIP(r), r.UserAgent()); err == nil {
@@ -193,9 +161,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	id, err := httpx.PathOrganization(r)
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	t, err := h.Repo.Get(r.Context(), id)
@@ -207,9 +175,9 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	id, err := httpx.PathOrganization(r)
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	var in UpdateInput
@@ -229,7 +197,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if *in.Status == "suspended" {
-			httpx.WriteError(w, r, errs.ErrOrganizationSelfSuspend)
+			httpx.WriteError(w, r, ErrSelfSuspend)
 			return
 		}
 	}
@@ -242,7 +210,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 }
 
 // recordUpdate returns the Changed that audits, as actor's, an update to the
-// organization's profile: tenant.updated naming every field that changed, the
+// organization's profile: organization.updated naming every field that changed, the
 // name and region with their old and new values (the logo and metadata by name
 // alone: they can be large). A status change is audited by its StatusChange.
 func recordUpdate(actor audit.Actor) Changed {
@@ -260,7 +228,7 @@ func recordUpdate(actor audit.Actor) Changed {
 		if len(changed) == 0 {
 			return nil
 		}
-		return audit.Record(ctx, tx, actor.Event(after.ID, "tenant.updated", "tenant", after.ID,
+		return audit.Record(ctx, tx, actor.Event(after.ID, "organization.updated", "organization", after.ID,
 			map[string]any{"changed": changed, "changes": changes}))
 	}
 }
@@ -268,9 +236,9 @@ func recordUpdate(actor audit.Actor) Changed {
 // delete schedules the organization's deletion, which an owner can call off
 // until it is due; the background job deletes it then (DeleteDue).
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	id, err := httpx.PathOrganization(r)
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	if err := h.requireOwner(r, id); err != nil {
@@ -279,20 +247,20 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 	}
 	actor := audit.ActorOf(r)
 	due, err := h.Repo.ScheduleDeletion(r.Context(), id, func(ctx context.Context, tx pgx.Tx, due time.Time) error {
-		return recordDeletion(ctx, tx, actor, id, "tenant.deletion_scheduled", map[string]any{"deletion_due_at": due})
+		return recordDeletion(ctx, tx, actor, id, "organization.deletion_scheduled", map[string]any{"deletion_due_at": due})
 	})
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"tenant_id": id, "deletion_due_at": due})
+	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"organization_id": id, "deletion_due_at": due})
 }
 
 // cancelDeletion calls off the organization's scheduled deletion.
 func (h *Handler) cancelDeletion(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	id, err := httpx.PathOrganization(r)
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	if err := h.requireOwner(r, id); err != nil {
@@ -301,7 +269,7 @@ func (h *Handler) cancelDeletion(w http.ResponseWriter, r *http.Request) {
 	}
 	actor := audit.ActorOf(r)
 	if err := h.Repo.CancelDeletion(r.Context(), id, func(ctx context.Context, tx pgx.Tx) error {
-		return recordDeletion(ctx, tx, actor, id, "tenant.deletion_cancelled", nil)
+		return recordDeletion(ctx, tx, actor, id, "organization.deletion_cancelled", nil)
 	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -317,11 +285,11 @@ func (h *Handler) cancelDeletion(w http.ResponseWriter, r *http.Request) {
 // recordDeletion audits and queues a change to an organization's scheduled
 // deletion, inside its transaction.
 func recordDeletion(ctx context.Context, tx pgx.Tx, actor audit.Actor, id uuid.UUID, action string, meta map[string]any) error {
-	if err := audit.Record(ctx, tx, actor.Event(id, action, "tenant", id, meta)); err != nil {
+	if err := audit.Record(ctx, tx, actor.Event(id, action, "organization", id, meta)); err != nil {
 		return err
 	}
-	return outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "tenant.events", EventType: action,
-		Payload: map[string]any{"tenant_id": id, "deletion_due_at": meta["deletion_due_at"]}})
+	return outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "organization.events", EventType: action,
+		Payload: map[string]any{"organization_id": id, "deletion_due_at": meta["deletion_due_at"]}})
 }
 
 // DeleteDue deletes every organization whose scheduled deletion is due, as
@@ -348,11 +316,9 @@ func DeleteDue(ctx context.Context, repo *Repository, signals *sessionsignal.Sig
 // lifecycle returns the StatusChange run when an organization's status
 // changes in r.
 func (h *Handler) lifecycle(r *http.Request) StatusChange {
-	id, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	id, err := httpx.PathOrganization(r)
 	if err != nil {
-		return func(context.Context, pgx.Tx, string, string) error {
-			return errs.ErrBadRequest.WithDetail("invalid tenantID")
-		}
+		return func(context.Context, pgx.Tx, string, string) error { return err }
 	}
 	return statusChange(h.Signals, id, audit.ActorOf(r))
 }
@@ -367,11 +333,11 @@ func statusChange(signals *sessionsignal.Signaller, id uuid.UUID, actor audit.Ac
 		var action, reason string
 		switch to {
 		case "suspended":
-			action, reason = "tenant.suspended", sessionsignal.ReasonOrganizationSuspended
+			action, reason = "organization.suspended", sessionsignal.ReasonOrganizationSuspended
 		case "deleted":
-			action, reason = "tenant.deleted", sessionsignal.ReasonOrganizationDeleted
+			action, reason = "organization.deleted", sessionsignal.ReasonOrganizationDeleted
 		case "active":
-			action = "tenant.reactivated"
+			action = "organization.reactivated"
 		default:
 			return nil
 		}
@@ -385,10 +351,10 @@ func statusChange(signals *sessionsignal.Signaller, id uuid.UUID, actor audit.Ac
 			ended = len(sessions)
 		}
 		meta := map[string]any{"from": from, "status": to, "sessions_ended": ended}
-		if err := audit.Record(ctx, tx, actor.Event(id, action, "tenant", id, meta)); err != nil {
+		if err := audit.Record(ctx, tx, actor.Event(id, action, "organization", id, meta)); err != nil {
 			return err
 		}
-		return outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "tenant.events", EventType: action,
-			Payload: map[string]any{"tenant_id": id, "status": to, "from": from}})
+		return outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "organization.events", EventType: action,
+			Payload: map[string]any{"organization_id": id, "status": to, "from": from}})
 	}
 }

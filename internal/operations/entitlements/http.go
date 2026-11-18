@@ -14,11 +14,11 @@ type Handler struct {
 	Service *Service
 }
 
-// Mount registers the entitlement routes. Their {tenantID} parameter makes
+// Mount registers the entitlement routes. Their {organizationID} parameter makes
 // EnforceOrganizationScope reject any organization but the caller's own.
 func (h *Handler) Mount(r chi.Router) {
-	r.Get("/tenants/{tenantID}/entitlements", h.get)
-	r.Get("/tenants/{tenantID}/entitlements/usage", h.usage)
+	r.Get("/organizations/{organizationID}/entitlements", h.get)
+	r.Get("/organizations/{organizationID}/entitlements/usage", h.usage)
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {

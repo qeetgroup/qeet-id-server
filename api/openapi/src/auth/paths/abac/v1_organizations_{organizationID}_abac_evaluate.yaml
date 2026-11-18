@@ -1,0 +1,60 @@
+post:
+  operationId: evaluateAbacPolicies
+  summary: Evaluate ABAC policies
+  description: |
+    Runs the deny-wins ABAC evaluation algorithm against all enabled policies
+    that match the supplied resource type and action. Returns the decision and,
+    when ?explain=true, a trace of every policy evaluated.
+    A deny policy whose condition compares an attribute the request doesn't
+    supply applies (fail closed); an allow policy doesn't match. Supply the
+    resource's attributes (such as created_by) for policies that compare them.
+    The platform's own decisions (the route guard, the permission and
+    relationship checks, AuthZEN) supply what it knows of the user, which a
+    caller can't override: subject.id, subject.type, subject.organization_id,
+    subject.groups and subject.roles (names in the organization; roles held
+    directly or through a group), resource.type and resource.id. The route
+    guard, deciding on the person's own call, also supplies context.ip (the
+    client address) and context.mfa: true when the session's sign-in met a
+    second factor as the organization's MFA requirement counts one (a
+    challenge, a passkey or a remembered device) or the session holds a step-up
+    still inside its window, false otherwise, and left out, so unknown, for an
+    application's token, whose session the platform doesn't hold.
+    With a draft, the unsaved policy is evaluated among the stored ones, new or
+    in place of the stored policy it replaces, and nothing is saved; an invalid
+    draft is refused with 422 as a save would be.
+  tags:
+    - ABAC
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: explain
+      in: query
+      required: false
+      schema:
+        type: boolean
+      description: >-
+        When true, the response includes a human-readable trace of each
+        evaluated policy.
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/ABACEvaluateRequest.yaml
+  responses:
+    '200':
+      description: Decision
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/ABACDecision.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml

@@ -5,7 +5,7 @@ properties:
       - string
       - 'null'
     format: uuid
-  tenant_id:
+  organization_id:
     type:
       - string
       - 'null'

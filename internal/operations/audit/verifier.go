@@ -12,10 +12,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/audit/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/strutil"
 )
 
 // VerifyResult is the outcome of verifying one chain. When it is broken,
@@ -169,14 +169,14 @@ func signedCheckpoint(key CheckpointKey, kind string, organizationID *uuid.UUID,
 
 // savedCheckpoint is a chain's checkpoint, nil when it has none.
 func (v *Verifier) savedCheckpoint(ctx context.Context, organizationID *uuid.UUID, shard int16) (*checkpoint, error) {
-	row, err := v.q.GetAuditChainCheckpoint(ctx, dbgen.GetAuditChainCheckpointParams{ChainShard: shard, OrganizationID: pgUUIDNullable(organizationID)})
+	row, err := v.q.GetAuditChainCheckpoint(ctx, dbgen.GetAuditChainCheckpointParams{ChainShard: shard, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	return &checkpoint{EventID: row.EventID, CreatedAt: row.EventCreatedAt, RowHash: trimmed(&row.RowHash), KeyID: deref(row.KeyID), MAC: row.Mac}, nil
+	return &checkpoint{EventID: row.EventID, CreatedAt: row.EventCreatedAt, RowHash: trimmed(&row.RowHash), KeyID: strutil.Deref(row.KeyID), MAC: row.Mac}, nil
 }
 
 // walk verifies organizationID's chain, or with a nil organizationID platform chain shard,
@@ -215,7 +215,7 @@ func (v *Verifier) purgeStart(ctx context.Context, organizationID *uuid.UUID) (*
 	if err != nil {
 		return nil, err
 	}
-	return &checkpoint{EventID: row.EventID, CreatedAt: row.EventCreatedAt, RowHash: strings.TrimSpace(row.RowHash), KeyID: deref(row.KeyID), MAC: row.Mac}, nil
+	return &checkpoint{EventID: row.EventID, CreatedAt: row.EventCreatedAt, RowHash: strings.TrimSpace(row.RowHash), KeyID: strutil.Deref(row.KeyID), MAC: row.Mac}, nil
 }
 
 // signPurgeCheckpoint signs organizationID's purge checkpoint again with the current
@@ -230,14 +230,6 @@ func (v *Verifier) signPurgeCheckpoint(ctx context.Context, organizationID uuid.
 		return nil
 	}
 	return v.q.SignAuditPurgeCheckpoint(ctx, dbgen.SignAuditPurgeCheckpointParams{OrganizationID: organizationID, EventID: start.EventID, KeyID: keyID, Mac: mac})
-}
-
-// deref is *s, "" for nil.
-func deref(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
 }
 
 // notAfter reports whether a is at or before b in chain order (created_at,
@@ -265,7 +257,7 @@ func (v *Verifier) walkFrom(ctx context.Context, organizationID *uuid.UUID, shar
 		}, last, nil
 	}
 	// The chain is read a page at a time, so memory doesn't grow with it.
-	page := dbgen.ListAuditEventsForVerifyParams{OrganizationID: pgUUIDNullable(organizationID), ChainShard: shard, PageSize: verifyPageSize}
+	page := dbgen.ListAuditEventsForVerifyParams{OrganizationID: organizationID, ChainShard: shard, PageSize: verifyPageSize}
 	if start != nil {
 		if !signedCheckpoint(v.key, purgeCheckpointKind, organizationID, 0, start) {
 			return broken(start.EventID, chainCheckpointUnsigned, "the chain's purge checkpoint isn't signed by this server")
@@ -345,12 +337,12 @@ func rowHash(row dbgen.ListAuditEventsForVerifyRow) (string, error) {
 	// ip is COALESCE(host(ip), ''), which sqlc types as interface{}.
 	ip, _ := row.Ip.(string)
 	canonical, err := canonicalize(Event{
-		OrganizationID: toUUIDPtr(row.OrganizationID),
-		ActorUserID:    toUUIDPtr(row.ActorUserID),
+		OrganizationID: row.OrganizationID,
+		ActorUserID:    row.ActorUserID,
 		ActorType:      row.ActorType,
 		Action:         row.Action,
 		ResourceType:   row.ResourceType,
-		ResourceID:     toUUIDPtr(row.ResourceID),
+		ResourceID:     row.ResourceID,
 		IP:             ip,
 		UserAgent:      row.UserAgent, // already COALESCE'd to ""
 		RequestID:      row.RequestID, // already COALESCE'd to ""
@@ -367,15 +359,6 @@ func trimmed(hash *string) string {
 		return ""
 	}
 	return strings.TrimSpace(*hash)
-}
-
-// toUUIDPtr converts a nullable pgtype.UUID to a *uuid.UUID; NULL becomes nil.
-func toUUIDPtr(u pgtype.UUID) *uuid.UUID {
-	if !u.Valid {
-		return nil
-	}
-	id := uuid.UUID(u.Bytes)
-	return &id
 }
 
 // normaliseMetadata re-encodes JSONB bytes the way Record encoded them, so the
@@ -424,9 +407,7 @@ func (v *Verifier) LastVerification(ctx context.Context, organizationID uuid.UUI
 	if err != nil {
 		return nil, err
 	}
-	out.Verified, out.Intact, out.LastEventID, out.LastVerifiedAt = true, !row.BrokenAt.Valid, &row.EventID, &row.VerifiedAt
-	if row.BrokenAt.Valid {
-		out.BrokenAt = &row.BrokenAt.Time
-	}
+	out.Verified, out.Intact, out.LastEventID, out.LastVerifiedAt = true, row.BrokenAt == nil, &row.EventID, &row.VerifiedAt
+	out.BrokenAt = row.BrokenAt
 	return out, nil
 }

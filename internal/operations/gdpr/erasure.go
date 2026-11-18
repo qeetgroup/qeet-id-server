@@ -2,10 +2,15 @@ package gdpr
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/qeetgroup/qeet-id-server/internal/operations/gdpr/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 // accountData deletes what an erased account leaves outside its user row and
@@ -13,90 +18,112 @@ import (
 // accounts, application grants, connected accounts' tokens, memberships,
 // directory profiles, inbox, behaviour baseline and AI conversations. Its data
 // exports lose their payloads, and verifiable credentials issued to it are
-// revoked. $1 is the account.
-var accountData = []string{
-	`DELETE FROM auth.passkey_credentials WHERE user_id = $1`,
-	`DELETE FROM auth.webauthn_sessions WHERE user_id = $1`,
-	`DELETE FROM auth.mfa_otp_factors WHERE user_id = $1`,
-	`DELETE FROM auth.mfa_push_pairings WHERE user_id = $1`,
-	`DELETE FROM auth.mfa_push_challenges WHERE user_id = $1`,
-	`DELETE FROM auth.mfa_push_devices WHERE user_id = $1`,
-	`DELETE FROM auth.mfa_verifications WHERE user_id = $1`,
-	`DELETE FROM auth.mfa_login_challenges WHERE user_id = $1`,
-	`DELETE FROM auth.mfa_attempt_budgets WHERE user_id = $1`,
-	`DELETE FROM auth.mfa_failure_streaks WHERE user_id = $1`,
-	`DELETE FROM auth.trusted_devices WHERE user_id = $1`,
-	`DELETE FROM auth.sessions WHERE user_id = $1`,
-	`DELETE FROM auth.login_sessions WHERE user_id = $1`,
-	`DELETE FROM auth.login_context_history WHERE user_id = $1`,
-	`DELETE FROM auth.oidc_refresh_tokens WHERE user_id = $1`,
-	`DELETE FROM auth.oidc_consents WHERE user_id = $1`,
-	`DELETE FROM auth.oidc_consent_requests WHERE user_id = $1`,
-	`DELETE FROM auth.oidc_authorization_codes WHERE user_id = $1`,
-	`DELETE FROM auth.oidc_device_codes WHERE user_id = $1`,
-	`DELETE FROM auth.oidc_ciba_requests WHERE user_id = $1`,
-	`DELETE FROM auth.login_codes WHERE user_id = $1`,
-	`DELETE FROM auth.platform_social_link_codes WHERE user_id = $1`,
-	`DELETE FROM auth.oauth_states WHERE link_user_id = $1`,
-	`DELETE FROM auth.platform_social_identities WHERE user_id = $1`,
-	`DELETE FROM account.external_identities WHERE user_id = $1`,
-	`DELETE FROM auth.password_credentials WHERE user_id = $1`,
-	`DELETE FROM auth.password_resets WHERE user_id = $1`,
-	`DELETE FROM auth.mfa_totp WHERE user_id = $1`,
-	`DELETE FROM auth.mfa_recovery_codes WHERE user_id = $1`,
-	`DELETE FROM account.email_verifications WHERE user_id = $1`,
-	`DELETE FROM account.phone_verifications WHERE user_id = $1`,
-	`DELETE FROM auth.api_keys WHERE user_id = $1`,
-	`DELETE FROM auth.notifications WHERE user_id = $1`,
-	`DELETE FROM organization.token_vault_grants WHERE user_id = $1`,
-	`DELETE FROM organization.token_vault_connect_states WHERE user_id = $1`,
-	`DELETE FROM organization.directory_profiles WHERE user_id = $1`,
-	`DELETE FROM organization.directory_alerts WHERE user_id = $1`,
-	`DELETE FROM organization.group_members WHERE user_id = $1`,
-	`DELETE FROM organization.saml_sp_user_assignments WHERE user_id = $1`,
-	`DELETE FROM organization.saml_idp_persistent_ids WHERE user_id = $1`,
-	`DELETE FROM organization.break_glass_members WHERE user_id = $1`,
-	`DELETE FROM rbac.user_roles WHERE user_id = $1`,
-	`DELETE FROM audit.actor_baselines WHERE actor_user_id = $1`,
-	`DELETE FROM qeetai.conversations WHERE user_id = $1`,
-	// A credential issued to the person is revoked and its claims cleared; the
-	// row stays so a verifier still learns it is revoked.
-	`UPDATE auth.credentials
-	 SET subject = 'erased', claims = '{}', revoked_at = COALESCE(revoked_at, NOW()), user_id = NULL
-	 WHERE user_id = $1`,
-	`UPDATE account.export_requests
-	 SET payload = NULL, lease_owner = NULL, lease_until = NULL,
-	     status = CASE status WHEN 'pending' THEN 'failed' WHEN 'ready' THEN 'expired' ELSE status END,
-	     error = CASE status WHEN 'pending' THEN 'The account was erased.' ELSE error END,
-	     completed_at = COALESCE(completed_at, NOW())
-	 WHERE user_id = $1 AND (payload IS NOT NULL OR status = 'pending')`,
+// revoked. Each statement takes the account and runs in this order.
+var accountData = []func(*dbgen.Queries, context.Context, uuid.UUID) error{
+	(*dbgen.Queries).ErasePasskeyCredentials,
+	(*dbgen.Queries).EraseWebAuthnSessions,
+	(*dbgen.Queries).EraseMFAOTPFactors,
+	(*dbgen.Queries).EraseMFAPushPairings,
+	(*dbgen.Queries).EraseMFAPushChallenges,
+	(*dbgen.Queries).EraseMFAPushDevices,
+	(*dbgen.Queries).EraseMFAVerifications,
+	(*dbgen.Queries).EraseMFALoginChallenges,
+	(*dbgen.Queries).EraseMFAAttemptBudgets,
+	(*dbgen.Queries).EraseMFAFailureStreaks,
+	(*dbgen.Queries).EraseTrustedDevices,
+	(*dbgen.Queries).EraseSessions,
+	(*dbgen.Queries).EraseLoginSessions,
+	(*dbgen.Queries).EraseLoginContextHistory,
+	(*dbgen.Queries).EraseRefreshTokens,
+	(*dbgen.Queries).EraseConsents,
+	(*dbgen.Queries).EraseConsentRequests,
+	(*dbgen.Queries).EraseAuthorizationCodes,
+	(*dbgen.Queries).EraseDeviceCodes,
+	(*dbgen.Queries).EraseBackchannelRequests,
+	(*dbgen.Queries).EraseLoginCodes,
+	(*dbgen.Queries).ErasePlatformSocialLinkCodes,
+	(*dbgen.Queries).EraseOAuthLinkStates,
+	(*dbgen.Queries).ErasePlatformSocialIdentities,
+	(*dbgen.Queries).EraseExternalIdentities,
+	(*dbgen.Queries).ErasePasswordCredentials,
+	(*dbgen.Queries).ErasePasswordResets,
+	(*dbgen.Queries).EraseMFATOTP,
+	(*dbgen.Queries).EraseMFARecoveryCodes,
+	(*dbgen.Queries).EraseEmailVerifications,
+	(*dbgen.Queries).ErasePhoneVerifications,
+	(*dbgen.Queries).EraseAPIKeys,
+	(*dbgen.Queries).EraseNotifications,
+	(*dbgen.Queries).EraseTokenVaultGrants,
+	(*dbgen.Queries).EraseTokenVaultConnectStates,
+	(*dbgen.Queries).EraseDirectoryProfiles,
+	(*dbgen.Queries).EraseDirectoryAlerts,
+	(*dbgen.Queries).EraseGroupMemberships,
+	(*dbgen.Queries).EraseSAMLAppAssignments,
+	(*dbgen.Queries).EraseSAMLPersistentIDs,
+	(*dbgen.Queries).EraseBreakGlassMemberships,
+	(*dbgen.Queries).EraseRoleAssignments,
+	(*dbgen.Queries).EraseActorBaseline,
+	(*dbgen.Queries).EraseAIConversations,
+	(*dbgen.Queries).RevokeIssuedCredentials,
+	(*dbgen.Queries).DropExportPayloads,
 }
 
 // addressData deletes what is kept by the account's address rather than its
 // ID: sign-in links, failed sign-in counters, and invitations that were
-// answered or have lapsed. $1 is the address, lowercased.
-var addressData = []string{
-	`DELETE FROM auth.magic_links WHERE lower(email) = $1`,
-	`DELETE FROM auth.login_attempts WHERE email = $1`,
-	`DELETE FROM auth.login_attempts_by_network WHERE email = $1`,
-	`DELETE FROM auth.login_source_failures WHERE email = $1`,
-	`DELETE FROM organization.invites WHERE lower(email) = $1 AND (status <> 'pending' OR expires_at <= NOW())`,
+// answered or have lapsed. Each statement takes the address, lowercased.
+var addressData = []func(*dbgen.Queries, context.Context, string) error{
+	(*dbgen.Queries).EraseMagicLinksTo,
+	(*dbgen.Queries).EraseLoginAttemptsOf,
+	(*dbgen.Queries).EraseNetworkLoginAttemptsOf,
+	(*dbgen.Queries).EraseSourceFailuresOf,
+	(*dbgen.Queries).EraseSpentInvitesTo,
 }
 
 // eraseAccountData deletes, in tx, the data of the account being erased that
 // lies outside its user row; email is the account's address before
 // redaction. The caller redacts the user row and keeps the audit trail.
 func eraseAccountData(ctx context.Context, tx pgx.Tx, userID uuid.UUID, email string) error {
-	for _, stmt := range accountData {
-		if _, err := tx.Exec(ctx, stmt, userID); err != nil {
+	q := dbgen.New(tx)
+	for _, erase := range accountData {
+		if err := erase(q, ctx, userID); err != nil {
 			return err
 		}
 	}
 	address := strings.ToLower(strings.TrimSpace(email))
-	for _, stmt := range addressData {
-		if _, err := tx.Exec(ctx, stmt, address); err != nil {
+	for _, erase := range addressData {
+		if err := erase(q, ctx, address); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// endSessions ends every session of the account being erased and announces
+// each one (reason deleted) in the erasure's transaction.
+func (s *Service) endSessions(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
+	ended, err := sessionsignal.EndUserSessions(ctx, tx, userID)
+	if err != nil {
+		return err
+	}
+	s.signals.Revoked(ctx, tx, sessionsignal.ReasonDeleted, ended...)
+	return nil
+}
+
+// eraseAccount ends the account's sessions, redacts its user row and deletes
+// the rest of its data (see accountData and addressData), in tx. The redacted
+// user row and the audit trail are kept, so past events stay verifiable. The
+// caller has checked that the account may be erased.
+func (s *Service) eraseAccount(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
+	// Sessions first, announced before anything about the account is redacted.
+	if err := s.endSessions(ctx, tx, userID); err != nil {
+		return err
+	}
+	email, err := dbgen.New(tx).PurgeUserPII(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errs.ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	return eraseAccountData(ctx, tx, userID, email)
 }

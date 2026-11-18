@@ -3,11 +3,11 @@ get:
   summary: Activity history
   description: >-
     Returns a cursor-paginated list of ActivityEvent derived from the
-    tenant-scoped audit log, with total, how many match (counted up to 10,000;
+    organization-scoped audit log, with total, how many match (counted up to 10,000;
     total_capped says when there are more). Every filter, severity and category
     included, is applied in the query, so every page but the last is full. An
     unknown severity or category, or a malformed resource_id or ip, is refused
-    with 400. Tenant is derived from the JWT principal only — never from URL or
+    with 400. Organization is derived from the JWT principal only — never from URL or
     body.
   tags:
     - Activity

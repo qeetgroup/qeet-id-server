@@ -5,7 +5,7 @@ required:
   - linked_at
   - provider
   - subject
-  - tenant_id
+  - organization_id
   - user_id
 properties:
   email:
@@ -22,7 +22,7 @@ properties:
     type: string
   subject:
     type: string
-  tenant_id:
+  organization_id:
     type: string
     format: uuid
   user_id:

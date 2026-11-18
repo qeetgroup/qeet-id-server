@@ -2,6 +2,7 @@ package rbac
 
 import (
 	"context"
+	"net/http"
 	"slices"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -28,4 +29,14 @@ func Holds(ctx context.Context, c Checker, p *httpx.Principal, permission string
 		return slices.Contains(p.Scopes, permission), nil
 	}
 	return false, nil
+}
+
+// CallerHolds returns whether a request's caller holds permission, as Holds
+// decides; an error counts as not holding it. For a handler that shows more to
+// callers who hold more.
+func CallerHolds(c Checker, permission string) func(r *http.Request) bool {
+	return func(r *http.Request) bool {
+		ok, err := Holds(r.Context(), c, httpx.PrincipalFromCtx(r.Context()), permission)
+		return err == nil && ok
+	}
 }

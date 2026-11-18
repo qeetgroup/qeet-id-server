@@ -186,11 +186,11 @@ func ruling(ctx context.Context, c Checker, p *httpx.Principal, policy RoutePoli
 			if policy.ApplicationScope != "" {
 				challenge += `, scope="` + policy.ApplicationScope + `"`
 			}
-			return errs.ErrAuthInsufficientScope.WithDetail("this request needs the " + policy.ApplicationScope + " scope"), challenge, nil
+			return ErrAuthInsufficientScope.WithDetail("this request needs the " + policy.ApplicationScope + " scope"), challenge, nil
 		}
 		if policy.UserPermission != "" {
 			if p.OrganizationID == nil {
-				return errs.ErrForbidden.WithDetail("tenant scope required"), "", nil
+				return errs.ErrForbidden.WithDetail("organization scope required"), "", nil
 			}
 			allowed, err := c.Check(ctx, *p.UserID, *p.OrganizationID, policy.UserPermission)
 			if err != nil {

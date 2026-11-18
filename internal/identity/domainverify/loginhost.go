@@ -22,7 +22,7 @@ import (
 // loginHostSuffix is the zone organizations point their CNAME at. Kept here rather
 // than in config because it is part of the published DNS instructions: changing
 // it invalidates every record an operator has already created.
-const loginHostSuffix = "tenants.id.qeet.in"
+const loginHostSuffix = "organizations.id.qeet.in"
 
 // loginVerifyHost is the TXT record proving control of the login hostname. It's
 // separate from the email-domain check (_qeet-verification) because the two
@@ -138,10 +138,8 @@ func (s *Service) CheckLoginDomain(ctx context.Context, organizationID uuid.UUID
 
 // loginHost is the organization's custom login hostname, normalised; "" for none.
 func (s *Service) loginHost(ctx context.Context, organizationID uuid.UUID) string {
-	var host string
-	if err := s.pool.QueryRow(ctx,
-		`SELECT COALESCE(custom_domain, '') FROM organization.branding WHERE organization_id = $1`,
-		organizationID).Scan(&host); err != nil {
+	host, err := s.q.LoginHost(ctx, organizationID)
+	if err != nil {
 		// No branding row yet simply means no custom domain has been set.
 		host = ""
 	}
@@ -242,7 +240,7 @@ func (h *Handler) loginDomain(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, st)
 }
 
-// checkLoginDomain serves POST /tenants/{tenantID}/login-domain/check: a new
+// checkLoginDomain serves POST /organizations/{organizationID}/login-domain/check: a new
 // check of the sign-in address, kept as its last.
 func (h *Handler) checkLoginDomain(w http.ResponseWriter, r *http.Request) {
 	organizationID, err := httpx.PathOrganization(r)

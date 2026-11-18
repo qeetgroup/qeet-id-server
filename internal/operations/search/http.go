@@ -2,13 +2,13 @@ package search
 
 import (
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 // Handler serves the search endpoint.
@@ -24,7 +24,7 @@ func (h *Handler) Mount(r chi.Router) {
 
 // search serves GET /v1/search. q is required; types is an optional
 // comma-separated list of resource types; cursor comes from a previous
-// response; limit outside 1..50 becomes 20.
+// response; limit is 20 when unset, at most 50.
 func (h *Handler) search(w http.ResponseWriter, r *http.Request) {
 	// Organization comes from the authenticated principal, never the URL or body.
 	organizationID, err := httpx.RequireOrganization(r)
@@ -49,7 +49,7 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	limit := paging.Limit(r.URL.Query(), 20, 50)
 	cursor := r.URL.Query().Get("cursor")
 
 	// The route admits only user principals, so p.UserID is set and every type

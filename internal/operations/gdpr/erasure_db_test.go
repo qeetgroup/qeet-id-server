@@ -4,7 +4,10 @@ package gdpr
 
 import (
 	"net/http"
+	"os"
+	"reflect"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -101,14 +104,42 @@ func due(t *testing.T, id uuid.UUID) {
 
 // erasedRow matches one statement of accountData: the table it changes and
 // the column naming the account.
-var erasedRow = regexp.MustCompile(`(?s)(?:FROM|UPDATE)\s+(\S+).*WHERE\s+(\w+)\s*=\s*\$1`)
+var erasedRow = regexp.MustCompile(`(?s)(?:FROM|UPDATE)\s+(\S+).*WHERE\s+(\w+)\s*=\s*@user_id`)
+
+// statement returns the SQL that erase, a method of dbgen.Queries, runs: its
+// query in queries.sql, found by the method's name, without comments.
+func statement(t *testing.T, erase any) string {
+	t.Helper()
+	name := runtime.FuncForPC(reflect.ValueOf(erase).Pointer()).Name()
+	name = name[strings.LastIndex(name, ".")+1:]
+	raw, err := os.ReadFile("queries.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, block := range strings.Split(string(raw), "-- name: ")[1:] {
+		head, body, _ := strings.Cut(block, "\n")
+		if strings.Fields(head)[0] != name {
+			continue
+		}
+		var sql []string
+		for _, line := range strings.Split(body, "\n") {
+			if !strings.HasPrefix(strings.TrimSpace(line), "--") {
+				sql = append(sql, line)
+			}
+		}
+		return strings.Join(sql, "\n")
+	}
+	t.Fatalf("no query %s in queries.sql", name)
+	return ""
+}
 
 // tracesLeft returns, for each table erasure clears, how many of the
 // account's rows are left (an export with its payload counts as one).
 func tracesLeft(t *testing.T, userID uuid.UUID, email string) map[string]int {
 	t.Helper()
 	left := map[string]int{}
-	for _, stmt := range accountData {
+	for _, erase := range accountData {
+		stmt := statement(t, erase)
 		m := erasedRow.FindStringSubmatch(stmt)
 		if m == nil {
 			t.Fatalf("can't read the table of %s", stmt)
@@ -206,8 +237,8 @@ func TestErasureCoversEveryAccountTable(t *testing.T) {
 	}
 	defer rows.Close()
 	covered := map[string]bool{}
-	for _, stmt := range accountData {
-		if m := erasedRow.FindStringSubmatch(stmt); m != nil {
+	for _, erase := range accountData {
+		if m := erasedRow.FindStringSubmatch(statement(t, erase)); m != nil {
 			covered[strings.ReplaceAll(m[1], `"`, "")+"."+m[2]] = true
 		}
 	}
@@ -255,7 +286,7 @@ func TestErasureOfAnAccountAlreadyGone(t *testing.T) {
 	var list struct {
 		Items []Request `json:"items"`
 	}
-	dbtest.Decode(t, dbtest.Do(t, asAdmin, http.MethodGet, "/tenants/"+organization.String()+"/gdpr/purge", nil), &list)
+	dbtest.Decode(t, dbtest.Do(t, asAdmin, http.MethodGet, "/organizations/"+organization.String()+"/gdpr/purge", nil), &list)
 	if len(list.Items) != 1 || list.Items[0].Status != "completed" || list.Items[0].UserID != gone.ID {
 		t.Errorf("requests %+v; want the one, completed, naming the deleted account", list.Items)
 	}

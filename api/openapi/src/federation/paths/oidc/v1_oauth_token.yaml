@@ -1,19 +1,79 @@
 post:
-  operationId: requestClientCredentialsToken
+  operationId: requestToken
   description: >-
-    Issues an access token for the OAuth 2.0 client_credentials grant only, for
-    machine-to-machine callers such as service principals that authenticate with
-    a client id and secret. Every other grant type is rejected here: use the
-    token-code endpoint for authorization_code, refresh_token, device_code,
-    token-exchange and CIBA. Mounted under /v1 and deliberately not advertised
-    as the discovery token_endpoint. Errors take the RFC 6749 §5.2 shape (error,
-    error_description): a missing grant_type is invalid_request, another grant
-    unsupported_grant_type, a disabled principal unauthorized_client, and a
-    missing or wrong secret, an unknown client or a principal of a suspended or
-    deleted organisation 401 invalid_client, with
-    WWW-Authenticate: Basic when the client used HTTP Basic. The per-address
-    rate limit answers 429 too_many_requests in the error envelope.
-  summary: OAuth token (client_credentials)
+    The OAuth token endpoint (RFC 6749 §3.2) advertised in discovery, the one
+    for every grant, chosen by grant_type: authorization_code, refresh_token,
+    device_code (RFC 8628), token-exchange (RFC 8693) and CIBA with Qeet as the
+    authorization server, and client_credentials for the machine identities.
+    Clients authenticate with their credentials in the form body or via HTTP
+    Basic. Errors take the RFC 6749 §5.2 shape (error, error_description): a
+    missing grant_type is invalid_request, an unknown grant
+    unsupported_grant_type, and a grant the client may not use
+    unauthorized_client. A missing or wrong secret, or an unknown client_id,
+    is refused with 401 invalid_client, described the same whatever kind of
+    client the id names, with WWW-Authenticate: Basic when the client used HTTP
+    Basic. The client_credentials grant serves service principals and AI
+    agents: client_id is the principal's or agent's id and client_secret its
+    secret. It answers a token for the identity itself, carrying every scope
+    it holds (scope is ignored), marked actor_type service or agent (an
+    agent's also agent_id), lasting the access-token lifetime for a principal
+    and the agent's own token_ttl_seconds for an agent, with expires_at beside
+    expires_in. A disabled principal or an agent that isn't active is refused
+    with unauthorized_client once its secret checks out, a principal or agent
+    of a suspended or deleted organization as an unknown client, and an
+    application (an OIDC client) with unauthorized_client once its own
+    credentials check out. Every grant refuses an account that is suspended or
+    deleted with invalid_grant, and a refused refresh ends the application's
+    refresh tokens for that user. Device polling from an address the
+    organization's address rules refuse answers access_denied
+    address_not_allowed and spends the device code; code redemption, refresh
+    and CIBA polling come from the application's server, so the address rules
+    are asked at authorization or approval instead. An authorization code
+    redeems once, with the code_verifier of its challenge; a code issued under
+    a PKCE exemption redeems only while the exemption lasts. A code presented a
+    second time is refused with invalid_grant and the grant its first
+    redemption issued is revoked, every renewal of it included (audited as
+    oidc.authorization_code_reused). Token exchange (RFC 8693) is bounded: the
+    caller must be entitled to the subject token (issued to it, issued for a
+    registered resource it serves, or the person consented to it; else
+    invalid_request), the person must still be active and the organization
+    live (else invalid_grant), the result expires no later than the subject
+    token, carries a new session id, and records its exchange_depth; a token
+    two exchanges deep can't be exchanged again (invalid_request). Every
+    exchange is audited as oidc.token_exchanged; the result holds at most the
+    subject token's scopes that the caller is registered for and, when it
+    holds the token by the person's consent, that they consented to; a scope
+    beyond those is invalid_scope. A refresh token comes only to an
+    application registered for refresh_token, on the authorization_code,
+    device_code and CIBA grants: with every grant, unless the application lists
+    offline_access among its scopes, in which case only with a grant of
+    offline_access (OpenID Connect Core §11). The ID token a refresh issues
+    again reports the original sign-in, as OpenID Connect Core 12.2 asks: the
+    same auth_time and sid as the first one, and no nonce. A refresh may name
+    only the resource (RFC 8707) its grant is bound to: another is refused with
+    400 invalid_target, and naming none carries the bound resource forward. The
+    client_credentials, device_code and CIBA grants take no resource: one sent
+    is refused with invalid_target. Device and CIBA polling authenticate the
+    client as the other grants do; a public client is identified by its
+    client_id, and the device_code or auth_req_id is the proof (CIBA serves
+    confidential clients only). The per-address rate limit answers 429
+    too_many_requests in the error envelope. A refresh is refused with
+    unauthorized_client when the client is no longer registered for
+    refresh_token, and with invalid_grant once the person is no longer an
+    active member of the client's organization (its own account, or one
+    holding a role there) or the organization is suspended. A refresh carries
+    forward only the granted scopes the client still registers (scope in the
+    response says which) and is refused with invalid_scope when none is left.
+    The same membership is required when a code, device approval or
+    backchannel request is redeemed (a code, device code or backchannel
+    request refused so is spent). A code, device code or backchannel approval
+    is refused with unauthorized_client once its client is no longer
+    registered for that grant, and a backchannel approval also once its client
+    is no longer a confidential one. A device code or backchannel request is
+    spent only together with storing its refresh token, so a failure leaves it
+    for the next poll. A browser may call it from an origin one of the
+    applications allows (web_origins), without credentials.
+  summary: OAuth token (every grant)
   tags:
     - OIDC
   security:
@@ -22,28 +82,22 @@ post:
     required: true
     content:
       application/x-www-form-urlencoded:
-        example:
-          grant_type: client_credentials
-          client_id: svc_018f2a80_reporting
-          client_secret: cs_3f0a1b2c3d4e5f6g7h8i9j0k1l2m3n4o
+        examples:
+          authorizationCode:
+            summary: An application redeems an authorization code
+            value:
+              grant_type: authorization_code
+              code: ac_5f4d3c2b1a09f8e7d6c5b4a392817060
+              redirect_uri: https://app.example.com/callback
+              code_verifier: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
+          clientCredentials:
+            summary: A service principal or an agent asks for its own token
+            value:
+              grant_type: client_credentials
+              client_id: 018f2a80-4d5e-7f60-a1b2-c3d4e5f60718
+              client_secret: cs_3f0a1b2c3d4e5f6g7h8i9j0k1l2m3n4o
         schema:
-          type: object
-          required:
-            - grant_type
-          properties:
-            grant_type:
-              type: string
-              enum:
-                - client_credentials
-            client_id:
-              type: string
-            client_secret:
-              type: string
-            scope:
-              type: string
-              description: >-
-                Ignored. The token always carries every scope the service
-                principal holds; asking for fewer isn't supported.
+          $ref: ../../components/schemas/OAuthTokenRequest.yaml
   responses:
     '200':
       description: Token response
@@ -54,12 +108,24 @@ post:
           $ref: ../../../shared/headers/NoStorePragma.yaml
       content:
         application/json:
-          example:
-            access_token: eyJhbGciOiJFUzI1NiIsImtpZCI6ImsxIn0.eyJhY3RvciI6InNlcnZpY2UifQ.FAKE-signature
-            token_type: Bearer
-            expires_in: 600
-            expires_at: '2026-09-24T11:15:00Z'
-            scope: audit:read users:read
+          examples:
+            authorizationCode:
+              summary: An application's tokens for a person
+              value:
+                access_token: eyJhbGciOiJFUzI1NiIsImtpZCI6ImsxIn0.eyJzdWIiOiJ1c3IifQ.FAKE-signature
+                id_token: eyJhbGciOiJFUzI1NiIsImtpZCI6ImsxIn0.eyJhdWQiOiJhcHAifQ.FAKE-signature
+                refresh_token: rt_8e7d6c5b4a39281706f5e4d3c2b1a09f
+                token_type: Bearer
+                expires_in: 600
+                scope: openid profile email
+            clientCredentials:
+              summary: A machine identity's own token
+              value:
+                access_token: eyJhbGciOiJFUzI1NiIsImtpZCI6ImsxIn0.eyJhY3Rvcl90eXBlIjoic2VydmljZSJ9.FAKE-signature
+                token_type: Bearer
+                expires_in: 600
+                expires_at: '2026-09-24T11:15:00Z'
+                scope: audit:read users:read
           schema:
             $ref: ../../components/schemas/OAuthTokenResponse.yaml
     '400':

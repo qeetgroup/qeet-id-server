@@ -30,11 +30,11 @@ Contexts: `access` · `identity` · `federation` · `developer` · `operations`.
 ```text
 internal/platform/http/httpx/auth.go       organization scope, principal, RequireAuth
 internal/platform/http/httpx/csrf.go       CSRF
-internal/platform/crypto/tokens/jwt.go     ES256, kid, rotation
+internal/platform/crypto/tokens/           ES256, kid, rotation
 internal/platform/crypto/password/         Argon2id password hashing
-internal/platform/config/config.go         boot-time production gate
+internal/platform/config/validate.go       boot-time production gate
 internal/bootstrap/router.go               middleware order, route tree
-internal/bootstrap/permissions.go          route permissions
+internal/bootstrap/permissions.go          route permissions (each context's in wire_<context>.go)
 internal/access/authorization/             RBAC, ABAC, ReBAC, AuthZEN
 internal/federation/{saml,scim,ldap}/      untrusted external input
 ```
@@ -42,7 +42,7 @@ internal/federation/{saml,scim,ldap}/      untrusted external input
 ## Organization isolation
 
 Take the organization from `httpx.RequireOrganization(r)` — **never** from a path, body or header.
-`httpx.EnforceOrganizationScope` checks `{tenantID}` against the caller. Every organization-scoped query carries
+`httpx.EnforceOrganizationScope` checks `{organizationID}` against the caller. Every organization-scoped query carries
 `WHERE organization_id = $1`.
 
 **Row-level security is a second layer, not the first.** It covers organization-owned tables in

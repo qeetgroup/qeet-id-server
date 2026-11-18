@@ -1,0 +1,119 @@
+get:
+  operationId: listDirectoryConnections
+  summary: List directory connections
+  description: >-
+    Combines the organization's configured SCIM endpoint and LDAP connections.
+    Requires connection.read. Organization scope is derived from the authenticated
+    principal and must match the path. Credentials are never returned. Health is
+    unknown until explicitly observed; last_activity_at is a request or login
+    timestamp and is not evidence of a successful synchronization.
+  tags:
+    - Directory
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  responses:
+    '200':
+      description: Directory connection inventory
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - items
+            properties:
+              truncated:
+                $ref: ../../../shared/schemas/Truncated.yaml
+              items:
+                type: array
+                items:
+                  type: object
+                  required:
+                    - id
+                    - name
+                    - reference
+                    - type
+                    - status
+                    - health
+                    - scope
+                  properties:
+                    id:
+                      type: string
+                    name:
+                      type: string
+                    reference:
+                      type: string
+                    type:
+                      type: string
+                      enum:
+                        - scim
+                        - ldap
+                    status:
+                      type: string
+                      enum:
+                        - configured
+                        - active
+                        - draft
+                        - disabled
+                    health:
+                      type: string
+                      enum:
+                        - healthy
+                        - warning
+                        - failed
+                        - unknown
+                    environment:
+                      type:
+                        - string
+                        - 'null'
+                    scope:
+                      type: string
+                      enum:
+                        - users-and-groups
+                        - users-on-signin
+                    created_at:
+                      type:
+                        - string
+                        - 'null'
+                      format: date-time
+                    last_activity_at:
+                      type:
+                        - string
+                        - 'null'
+                      format: date-time
+                    last_sync_at:
+                      type:
+                        - string
+                        - 'null'
+                      format: date-time
+                    user_count:
+                      type:
+                        - integer
+                        - 'null'
+                      minimum: 0
+                      description: >-
+                        SCIM, the people it provisioned; LDAP, the people with
+                        an identity this connection signed in (not deleted
+                        ones).
+                    group_count:
+                      type:
+                        - integer
+                        - 'null'
+                      minimum: 0
+                      description: >-
+                        SCIM, the groups it provisioned; null for LDAP, which
+                        provisions none.
+                    server_url:
+                      type:
+                        - string
+                        - 'null'
+    '400':
+      description: Invalid organization identifier
+    '401':
+      description: Authentication and organization scope required
+    '403':
+      description: Organization mismatch or missing connection.read permission
+    '500':
+      description: Directory inventory could not be loaded

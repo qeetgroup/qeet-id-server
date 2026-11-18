@@ -10,7 +10,6 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/decide"
@@ -137,10 +136,10 @@ const permissionResourceType = "permission"
 // a caller who may read policies (decide.Decider.ForViewer).
 func (s *Service) Evaluate(ctx context.Context, organizationID uuid.UUID, req EvaluationRequest) (*EvaluationResponse, error) {
 	if req.Subject.ID == "" {
-		return nil, errs.ErrAuthZENSubjectIDRequired
+		return nil, ErrSubjectIDRequired
 	}
 	if req.Action.Name == "" {
-		return nil, errs.ErrAuthZENActionNameRequired
+		return nil, ErrActionNameRequired
 	}
 	explain, _ := req.Context["explain"].(bool)
 	props := decide.Properties{Subject: req.Subject.Properties, Resource: req.Resource.Properties, Action: req.Action.Properties}
@@ -161,7 +160,7 @@ func (s *Service) Evaluate(ctx context.Context, organizationID uuid.UUID, req Ev
 	if req.Resource.Type == permissionResourceType {
 		userID, perr := uuid.Parse(req.Subject.ID)
 		if perr != nil {
-			return nil, errs.ErrAuthZENSubjectIDInvalid
+			return nil, ErrSubjectIDInvalid
 		}
 		if dec, err = s.decider.PermissionWith(ctx, organizationID, userID, req.Action.Name, props); err != nil {
 			return nil, err
@@ -175,7 +174,7 @@ func (s *Service) Evaluate(ctx context.Context, organizationID uuid.UUID, req Ev
 		}
 	} else {
 		if req.Resource.Type == "" || req.Resource.ID == "" {
-			return nil, errs.ErrAuthZENResourceRequired
+			return nil, ErrResourceRequired
 		}
 		object := req.Resource.Type + ":" + req.Resource.ID
 		if dec, err = s.decider.RelationWith(ctx, organizationID, req.Subject.ID, object, req.Action.Name, props); err != nil {
@@ -218,10 +217,10 @@ func (s *Service) EvaluateAll(ctx context.Context, organizationID uuid.UUID, req
 		semantic = executeAll
 	case executeAll, denyOnFirstDeny, permitOnFirstPermit:
 	default:
-		return nil, errs.ErrAuthZENSemanticInvalid
+		return nil, ErrSemanticInvalid
 	}
 	if len(req.Evaluations) > maxEvaluations {
-		return nil, errs.ErrAuthZENTooManyEvaluations.WithMetadata(map[string]any{"max": maxEvaluations})
+		return nil, ErrTooManyEvaluations.WithMetadata(map[string]any{"max": maxEvaluations})
 	}
 	out := &EvaluationsResponse{Evaluations: make([]EvaluationResponse, 0, len(req.Evaluations))}
 	for _, e := range req.Evaluations {
@@ -264,92 +263,3 @@ func firstOf[T any](item, top *T) *T {
 }
 
 // --- HTTP ---
-
-// Handler serves the AuthZEN evaluation HTTP API.
-type Handler struct {
-	Service *Service
-}
-
-// Mount registers the AuthZEN evaluation routes on r.
-func (h *Handler) Mount(r chi.Router) {
-	r.Post("/tenants/{tenantID}/access/v1/evaluation", h.evaluate)
-	r.Post("/tenants/{tenantID}/access/v1/evaluations", h.evaluations)
-}
-
-// organization returns the one the request decides in: the path's, which must
-// be the caller's.
-func organization(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
-	organizationID, err := uuid.Parse(chi.URLParam(r, "tenantID"))
-	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
-		return uuid.Nil, false
-	}
-	scope, err := httpx.RequireOrganization(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return uuid.Nil, false
-	}
-	if organizationID != scope {
-		httpx.WriteError(w, r, errs.ErrForbidden.WithDetail("tenant mismatch"))
-		return uuid.Nil, false
-	}
-	return organizationID, true
-}
-
-func (h *Handler) evaluations(w http.ResponseWriter, r *http.Request) {
-	organizationID, ok := organization(w, r)
-	if !ok {
-		return
-	}
-	// The request's relationship checks share one budget, however many it makes.
-	r = r.WithContext(rebac.WithRequestBudget(r.Context()))
-	var in EvaluationsRequest
-	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if len(in.Evaluations) == 0 {
-		one := EvaluationRequest{Context: in.Context}
-		if in.Subject != nil {
-			one.Subject = *in.Subject
-		}
-		if in.Resource != nil {
-			one.Resource = *in.Resource
-		}
-		if in.Action != nil {
-			one.Action = *in.Action
-		}
-		out, err := h.Service.Evaluate(r.Context(), organizationID, one)
-		if err != nil {
-			httpx.WriteError(w, r, err)
-			return
-		}
-		httpx.WriteJSON(w, http.StatusOK, out)
-		return
-	}
-	out, err := h.Service.EvaluateAll(r.Context(), organizationID, in)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, out)
-}
-
-func (h *Handler) evaluate(w http.ResponseWriter, r *http.Request) {
-	organizationID, ok := organization(w, r)
-	if !ok {
-		return
-	}
-	r = r.WithContext(rebac.WithRequestBudget(r.Context()))
-	var in EvaluationRequest
-	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	out, err := h.Service.Evaluate(r.Context(), organizationID, in)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, out)
-}

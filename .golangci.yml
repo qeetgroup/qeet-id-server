@@ -22,6 +22,7 @@ linters:
     - nolintlint
     - forbidigo
     - depguard
+    - funlen
   settings:
     errcheck:
       # Close on read paths and Rollback after Commit have nothing actionable to report.
@@ -31,6 +32,10 @@ linters:
         - (github.com/jackc/pgx/v5.Tx).Rollback
         - (*github.com/go-ldap/ldap/v3.Conn).Close
         - (*net/smtp.Client).Close
+    funlen:
+      # A longer function is split into named steps; a pure data table may carry a reasoned nolint.
+      lines: 100
+      statements: 60
     nolintlint:
       require-explanation: true
       require-specific: true
@@ -80,7 +85,8 @@ linters:
       - internal/.*/dbgen
     rules:
       - path: _test\.go
-        linters: [errcheck, forbidigo]
+        # Table-driven and scenario tests read best whole.
+        linters: [errcheck, forbidigo, funlen]
 
 formatters:
   enable:

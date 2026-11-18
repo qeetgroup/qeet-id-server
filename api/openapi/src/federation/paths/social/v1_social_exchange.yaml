@@ -12,13 +12,13 @@ post:
           $ref: ../../components/schemas/exchangeInput.yaml
   description: >-
     Trades the one-time code a social sign-in callback handed back (the
-    console's own, or an organisation's) for the sign-in's result. Social
+    console's own, or an organization's) for the sign-in's result. Social
     sign-in takes the same second-factor decision as a password sign-in: the
     response is a token pair, or, when the account holds a second factor, the
-    organisation requires one, or the sign-in is risky, the challenge instead
+    organization requires one, or the sign-in is risky, the challenge instead
     (mfa_required, mfa_token, methods, factors, and enrollment_required for an
     account that must set one up), completed at POST /v1/auth/mfa. An
-    organisation's code trades only while the provider that issued it is still
+    organization's code trades only while the provider that issued it is still
     on: 404 social.provider_not_configured once it has been switched off, and
     401 social.login_code_invalid once it is deleted.
   responses:

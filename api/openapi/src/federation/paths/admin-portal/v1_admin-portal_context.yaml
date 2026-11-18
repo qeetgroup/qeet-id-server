@@ -2,7 +2,7 @@ get:
   operationId: getPortalContext
   summary: Get portal context
   description: >-
-    Returns the tenant name, granted capabilities, session expiry, and branding
+    Returns the organization name, granted capabilities, session expiry, and branding
     for the cookie-authenticated portal, and, when the link's capabilities
     include scim, the SCIM base URL to enter at the IdP.
   tags:

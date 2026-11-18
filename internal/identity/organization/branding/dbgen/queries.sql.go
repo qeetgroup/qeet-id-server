@@ -29,10 +29,7 @@ type GetBrandingRow struct {
 	Settings         []byte
 }
 
-// Queries for the branding domain.
-// Static queries against organization.branding live here and are compiled by sqlc into ./dbgen.
-// The Upsert query uses a COALESCE/NULLIF expression that sqlc cannot parse reliably;
-// it intentionally remains hand-written in branding.go.
+// Queries for the branding domain, against organization.branding.
 func (q *Queries) GetBranding(ctx context.Context, organizationID uuid.UUID) (GetBrandingRow, error) {
 	row := q.db.QueryRow(ctx, getBranding, organizationID)
 	var i GetBrandingRow
@@ -47,4 +44,48 @@ func (q *Queries) GetBranding(ctx context.Context, organizationID uuid.UUID) (Ge
 		&i.Settings,
 	)
 	return i, err
+}
+
+const upsertBranding = `-- name: UpsertBranding :exec
+INSERT INTO organization.branding (
+    organization_id, logo_url, primary_color, secondary_color, custom_domain,
+    email_from_name, email_from_address, settings
+) VALUES (
+    $1, $2, $3, $4, $5,
+    $6, NULL, COALESCE(NULLIF($7::jsonb, 'null'::jsonb), '{}'::jsonb)
+)
+ON CONFLICT (organization_id) DO UPDATE SET
+    logo_url = EXCLUDED.logo_url,
+    primary_color = EXCLUDED.primary_color,
+    secondary_color = EXCLUDED.secondary_color,
+    custom_domain = EXCLUDED.custom_domain,
+    email_from_name = EXCLUDED.email_from_name,
+    email_from_address = EXCLUDED.email_from_address,
+    settings = EXCLUDED.settings,
+    updated_at = NOW()
+`
+
+type UpsertBrandingParams struct {
+	OrganizationID uuid.UUID
+	LogoUrl        *string
+	PrimaryColor   *string
+	SecondaryColor *string
+	CustomDomain   *string
+	EmailFromName  *string
+	Settings       []byte
+}
+
+// UpsertBranding stores an organization's branding; a JSON null settings is
+// stored as {}. email_from_address is no longer kept.
+func (q *Queries) UpsertBranding(ctx context.Context, arg UpsertBrandingParams) error {
+	_, err := q.db.Exec(ctx, upsertBranding,
+		arg.OrganizationID,
+		arg.LogoUrl,
+		arg.PrimaryColor,
+		arg.SecondaryColor,
+		arg.CustomDomain,
+		arg.EmailFromName,
+		arg.Settings,
+	)
+	return err
 }

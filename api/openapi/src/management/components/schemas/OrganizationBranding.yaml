@@ -1,0 +1,47 @@
+type: object
+properties:
+  organization_id:
+    type: string
+    format: uuid
+  logo_url:
+    type:
+      - string
+      - 'null'
+  primary_color:
+    type:
+      - string
+      - 'null'
+  secondary_color:
+    type:
+      - string
+      - 'null'
+    description: Brand-panel accent, independent of page background.
+  custom_domain:
+    type:
+      - string
+      - 'null'
+  email_from_name:
+    type:
+      - string
+      - 'null'
+  email_from_address:
+    type:
+      - string
+      - 'null'
+    deprecated: true
+    writeOnly: true
+    description: >-
+      Accepted and ignored, and never returned. Email is sent from the
+      platform's own address (an organization's domain would need verifying with
+      the email provider); replies go to settings.email_reply_to.
+  settings:
+    type: object
+    additionalProperties: true
+    properties:
+      background_color:
+        type: string
+        pattern: ^$|^#[0-9a-fA-F]{6}$
+        description: Hosted-login page background; empty keeps the default theme.
+      email_reply_to:
+        type: string
+        description: Single reply mailbox for organization-scoped messages; empty omits Reply-To.

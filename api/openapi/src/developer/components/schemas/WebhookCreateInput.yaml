@@ -9,9 +9,9 @@ properties:
     description: Event names from the event catalogue.
     items:
       type: string
-  tenant_id:
+  organization_id:
     type: string
     format: uuid
-    description: Ignored; the organisation is the caller's.
+    description: Ignored; the organization is the caller's.
   url:
     type: string

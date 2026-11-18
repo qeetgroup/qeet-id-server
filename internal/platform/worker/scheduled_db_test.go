@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
@@ -73,7 +74,7 @@ func TestSlowJobDoesNotHoldUpTheOthers(t *testing.T) {
 	}
 }
 
-// TestRunDueRunsJobsTogether checks that RunDue runs the due jobs at the same
+// TestRunDueRunsJobsTogether checks that runDue runs the due jobs at the same
 // time, records a panicking one as failed, returns once they have finished,
 // and doesn't run them again in the same interval.
 func TestRunDueRunsJobsTogether(t *testing.T) {
@@ -97,12 +98,12 @@ func TestRunDueRunsJobsTogether(t *testing.T) {
 		{Name: b, Interval: time.Hour, Run: together},
 		{Name: panics, Interval: time.Hour, Run: func(context.Context) error { panic("boom") }},
 	}
-	ran := RunDue(ctx, pool, jobs)
+	ran := runDue(ctx, pool, jobs)
 	slices.Sort(ran)
 	want := []string{a, b, panics}
 	slices.Sort(want)
 	if !slices.Equal(ran, want) {
-		t.Errorf("RunDue ran %v, want %v", ran, want)
+		t.Errorf("runDue ran %v, want %v", ran, want)
 	}
 	for _, job := range []string{a, b, panics} {
 		var lastError *string
@@ -117,8 +118,8 @@ func TestRunDueRunsJobsTogether(t *testing.T) {
 			t.Errorf("job %s: finished %v, last error %v; want it finished, failed only if it panicked", job, finished, lastError)
 		}
 	}
-	if again := RunDue(ctx, pool, jobs); len(again) != 0 {
-		t.Errorf("RunDue ran %v again within their interval, want none", again)
+	if again := runDue(ctx, pool, jobs); len(again) != 0 {
+		t.Errorf("runDue ran %v again within their interval, want none", again)
 	}
 }
 
@@ -141,7 +142,17 @@ func TestRunDueStartsAtMostMaxRunningJobs(t *testing.T) {
 	if len(started) != maxRunningJobs {
 		t.Errorf("%d jobs started at once, want %d", len(started), maxRunningJobs)
 	}
-	if ran := RunDue(ctx, pool, jobs); !slices.Equal(ran, []string{jobs[maxRunningJobs].Name}) {
-		t.Errorf("the next RunDue ran %v, want the one left, %s", ran, jobs[maxRunningJobs].Name)
+	if ran := runDue(ctx, pool, jobs); !slices.Equal(ran, []string{jobs[maxRunningJobs].Name}) {
+		t.Errorf("the next runDue ran %v, want the one left, %s", ran, jobs[maxRunningJobs].Name)
 	}
+}
+
+// runDue starts every job that is due and that this instance claims, as one
+// scheduler tick does, and returns the names of those it ran once they have
+// all finished.
+func runDue(ctx context.Context, pool *pgxpool.Pool, jobs []Scheduled) []string {
+	s := newScheduler(pool, jobs)
+	ran := s.startDue(ctx)
+	s.wg.Wait()
+	return ran
 }

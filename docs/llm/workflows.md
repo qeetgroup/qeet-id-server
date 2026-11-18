@@ -32,10 +32,10 @@ staging or production.
 1  find the subsystem              docs/llm/subsystems.md — get the REAL filenames first
 2  handler                         the package's http.go if it has one, else <domain>.go
 3  domain logic                    same file, or a feature-named file — NOT a new service.go
-4  queries.sql + regenerate        sqlc → dbgen/    (never hand-edit dbgen/)
-5  wire it                         internal/bootstrap/dependencies.go
+4  queries.sql + regenerate        make sqlc → dbgen/ (a new package: add its entry to sqlc.yaml; never hand-edit dbgen/)
+5  wire it                         internal/bootstrap/wire_<context>.go (new<Context>, wire<Context>, <context>Handlers)
 6  mount it                        internal/bootstrap/router.go
-7  permission                      internal/bootstrap/permissions.go
+7  permission                      <context>Permissions in internal/bootstrap/wire_<context>.go (step-up: <context>StepUps)
 8  OpenAPI                         api/openapi/src/<context>/paths/<tag>/ + make openapi  ← LOCAL TEST GATE FAILS WITHOUT THIS
 9  tests                           unit
 10 verify                          make test
@@ -133,7 +133,7 @@ Escalate before implementing.
 ```text
 1  identify the model              rbac · abac · rebac · authzen
 2  internal/access/authorization/<model>/
-3  route permissions               internal/bootstrap/permissions.go
+3  route permissions               <context>Permissions in internal/bootstrap/wire_<context>.go
 4  organization implications             does it change what crosses an organization boundary?
 5  console impact                  a new permission needs UI work — the console is UX-only
 6  tests                           MUST include a cross-organization denial test
@@ -178,9 +178,9 @@ organizations only where it must, and checks the caller's right to each organiza
 1  sync or async?                  async if retryable, slow, or must survive the request
 2  existing pattern                internal/platform/worker/worker.go
 3  event-driven?                   write to the outbox in the SAME transaction as the state change
-4  register it                     the workers list in bootstrap/dependencies.go (API and cmd/worker)
-5  scheduled instead?              add it to bootstrap.MaintenanceJobs — once per interval across instances
-6  retry + dead-letter             follow internal/developer/webhooks/
+4  register it                     the workers list in bootstrap/dependencies.go (the API runs it)
+5  scheduled instead?              a job function in its context's wire_<context>.go, listed in bootstrap.MaintenanceJobs — once per interval across instances
+6  retry + dead-letter             follow internal/developer/webhook/
 7  observability                   metrics and structured logs — no PII
 8  tests
 ```
@@ -207,8 +207,10 @@ organization explicitly through the job payload.
 8  cross-repo                      qeet-id-context/CHANGE-MATRIX.md — coordinate BEFORE merging
 ```
 
-There are **two token endpoints** — `/v1/oauth/token-code` (all OIDC grants) and `/v1/oauth/token`
-(`client_credentials` only). Know which you are changing.
+There is **one token endpoint**, `POST /v1/oauth/token` (`http_token.go`), for every grant, chosen by
+`grant_type`: the applications' grants and `client_credentials` for service principals and agents
+(`MachineClient`, wired in `bootstrap`). Device and CIBA polling share one step, `pollToken`
+(`poll.go`). A refusal goes through the one RFC 6749 §5.2 writer, `writeTokenError`.
 
 ---
 
@@ -271,34 +273,33 @@ The demo data (`cmd/seed`) is how people test end to end: every console and host
 should have something real to show. When a change adds a feature, a table or a screen, extend the
 seed in the same change.
 
-1. **Find its step.** `main.go` runs six, each a package under `cmd/seed/internal/`:
+1. **Find its step.** `main.go` runs five, each a package under `cmd/seed/internal/`:
 
    | Step | What it seeds |
    | :--- | :--- |
-   | `census` | Organizations, people, roles, groups (`orgs.go` is the cast: who, where, which plan and features) |
-   | `accounts` | Branding, domains, policies, invitations, suspensions, data requests, access requests, notifications |
-   | `connections` | Applications, single sign-on (SAML, OpenID Connect), group mappings, break-glass, directories, SCIM, social sign-in |
-   | `integrations` | API keys, agents, webhooks, secrets, ABAC and ReBAC policies, access decisions, log streaming |
-   | `security` | Second factors, devices, threats, compliance owners and audits, evidence, status incidents |
-   | `activity` | Sessions, sign-ins, audit and billing history |
+   | `census` | Organizations, plans, people, roles, groups (`orgs.go` is the cast: who, where, which plan and features) |
+   | `accounts` | Branding, domains, policies, templates, invitations, suspensions, data requests, access requests, notifications |
+   | `connections` | Applications and their grants, single sign-on (SAML, OpenID Connect), group mappings, break-glass, LDAP, SCIM, social sign-in, enterprise-setup links |
+   | `integrations` | API keys, service principals, agents, secrets, token vault, credentials, ABAC and ReBAC, rate limits, auth hooks, log streaming, webhooks |
+   | `security` | Second factors, address rules, risk and bot settings, sign-ins, attacks, anomaly settings, compliance, status incidents, sales leads |
 
-2. **Write through the API's own service** (`w.Deps.<Handler>.Service`), not SQL, so validation,
-   encryption, permissions, audit rows and notifications are the real ones. Insert directly only what
-   the API writes as it happens (sessions, deliveries, access decisions), in exactly its shape.
-3. **Date it.** Wrap each call in `w.At(t, fn)`: it moves every timestamp `fn` wrote to `t`. A date
-   the API sets in the future, such as an expiry, stays where it is: set it after the call, and after
-   anything that would refuse it as expired.
-4. **Choose the people the product would.** Use the helpers (`adminAt`, `actorOn`, `person`) and
-   respect the rules: an administrator acts on someone only if they hold every permission that person
-   holds, and a deny policy on an attribute the request lacks refuses.
+2. **Write only through the server.** Call a service (`w.Deps.<Handler>.Service`) or, where the
+   console's request does more than the service (an audit record, a check), the handler itself with
+   `w.API.Do` (SCIM with `w.API.SCIM`). No SQL of any kind: a state no service or handler can reach
+   is left out. Import server logic; never copy it.
+3. **Nothing is backdated.** Everything is stamped when it is written, so a state that only time
+   reaches (an expired invitation, a past-due renewal, a completed erasure) can't be seeded.
+4. **Choose the people the product would.** Use the helpers (`o.Admin`, `o.First`, `actorOn`,
+   `issuer`) and respect the rules: an administrator acts on someone only if they hold every
+   permission that person holds, a credential carries only scopes its creator holds, and a deny
+   policy on an attribute the request lacks refuses.
 5. **Keep it real but harmless.** Qeet Group's products and `qeet.in` addresses are real. Customers
    are invented, on domains that don't resolve, so no seeded email, webhook or sign-in reaches a
-   real company. Client IDs, secrets and subjects are in each vendor's own format. No real person's
+   real company. Client secrets and subjects are in each vendor's own format. No real person's
    data. Every account shares one password.
 6. **Tell the tester.** Add a `w.Note(section, ...)` line for anything worth trying, and set
    `Login` on a fixed person in `census` when an account demonstrates something.
-7. **Check it.** `make seed-reset`, then count the rows in every table: a table left empty should be
-   one a sign-in fills and expires within minutes (codes, challenges, states). Run `make lint`.
+7. **Check it.** `make seed-reset`, then count the rows in every table, and run `make lint`.
 
 In the kit's DEV the same seed runs with `bash macos/dev/seed.sh` (Windows: `.\windows\dev\seed.cmd`).
 It replaces everything in DEV. TEST and STAGING never have it.

@@ -3,37 +3,26 @@
 package oidc
 
 import (
+	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
 
-	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/ipallow"
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
-	"github.com/qeetgroup/qeet-id-server/internal/access/risk/ipallow"
-	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
-
-// pendingBackchannel starts a backchannel request of client for a and returns
-// its auth_req_id and the id a's approval names.
-func pendingBackchannel(t *testing.T, svc *Service, client *Client, secret string, a dbtest.Account) (string, uuid.UUID) {
-	t.Helper()
-	ctx := dbtest.Context(t)
-	started, err := svc.BackchannelAuthorize(ctx, client.ClientID, secret, a.Email, "openid", "")
-	if err != nil {
-		t.Fatalf("backchannel authorize: %v", err)
-	}
-	var id uuid.UUID
-	if err := dbtest.Pool(t).QueryRow(ctx, `SELECT id FROM auth.oidc_ciba_requests WHERE auth_req_id_hash = $1`,
-		codes.Hash(started.AuthReqID)).Scan(&id); err != nil {
-		t.Fatal(err)
-	}
-	return started.AuthReqID, id
-}
 
 // TestBackchannelApprovalMeetsTheOrganizationsRules checks that approving a
 // backchannel request needs what signing in to the application does: the
@@ -44,7 +33,7 @@ func TestBackchannelApprovalMeetsTheOrganizationsRules(t *testing.T) {
 	svc := NewService(pool, dbtest.Issuer(t))
 	svc.SetAddressPolicy(ipallow.NewService(pool))
 	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
-	authSvc.SetMFA(mfa.NewService(pool, "Qeet", notifier.LogSender{}, ""))
+	authSvc.SetMFA(mfa.NewService(pool, "Qeet", notifier.LogSender{}))
 	svc.SetSessionFactors(authSvc.SessionFactorShortfall)
 	organization, home := dbtest.Organization(t), dbtest.Organization(t)
 	client, secret := registerClientWith(t, svc, CreateClientInput{OrganizationID: organization, GrantTypes: []string{grantTypeCIBA}})
@@ -81,7 +70,7 @@ func TestBackchannelApprovalMeetsTheOrganizationsRules(t *testing.T) {
 	exec(`INSERT INTO organization.security_policies (organization_id, mfa_enforcement, mfa_grace_days, mfa_enforced_since) VALUES ($1, 'required', 0, NOW())`, organization)
 	_, id = pendingBackchannel(t, svc, client, secret, a)
 	if err := decide(id, office); !errors.Is(err, errs.ErrMFAEnrollmentRequired) {
-		t.Errorf("approve through a session short of the factor the organisation requires: %v, want %v", err, errs.ErrMFAEnrollmentRequired)
+		t.Errorf("approve through a session short of the factor the organization requires: %v, want %v", err, errs.ErrMFAEnrollmentRequired)
 	}
 	exec(`UPDATE auth.sessions SET second_factor = 'mfa' WHERE id = $1`, session)
 	if err := decide(id, office); err != nil {
@@ -90,8 +79,8 @@ func TestBackchannelApprovalMeetsTheOrganizationsRules(t *testing.T) {
 
 	_, id = pendingBackchannel(t, svc, client, secret, a)
 	exec(`DELETE FROM rbac.user_roles WHERE user_id = $1 AND organization_id = $2`, a.ID, organization)
-	if err := decide(id, office); !errors.Is(err, errs.ErrOIDCUserOrganizationMismatch) {
-		t.Errorf("approve once no longer a member of the organisation: %v, want %v", err, errs.ErrOIDCUserOrganizationMismatch)
+	if err := decide(id, office); !errors.Is(err, ErrUserOrganizationMismatch) {
+		t.Errorf("approve once no longer a member of the organization: %v, want %v", err, ErrUserOrganizationMismatch)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM auth.oidc_ciba_requests WHERE id = $1 AND status = 'pending'`, id); n != 1 {
 		t.Error("a refused approval changed the request")
@@ -129,8 +118,8 @@ func TestCIBAGrantRemovedAfterAuthorizeIsRefusedAtToken(t *testing.T) {
 
 	authReqID := approved(a)
 	exec(`UPDATE auth.oidc_clients SET grant_types = ARRAY['refresh_token'] WHERE client_id = $1`, client.ClientID)
-	if _, err := svc.BackchannelToken(ctx, client.ClientID, secret, authReqID); !errors.Is(err, errs.ErrOIDCGrantTypeNotAllowed) {
-		t.Errorf("collect once the client lost the CIBA grant: %v, want %v", err, errs.ErrOIDCGrantTypeNotAllowed)
+	if _, err := svc.BackchannelToken(ctx, client.ClientID, secret, authReqID); !errors.Is(err, ErrGrantTypeNotAllowed) {
+		t.Errorf("collect once the client lost the CIBA grant: %v, want %v", err, ErrGrantTypeNotAllowed)
 	}
 	exec(`UPDATE auth.oidc_clients SET grant_types = ARRAY[$2, 'refresh_token'] WHERE client_id = $1`, client.ClientID, grantTypeCIBA)
 	repoll()
@@ -164,6 +153,161 @@ func TestCIBAGrantRemovedAfterAuthorizeIsRefusedAtToken(t *testing.T) {
 	exec(`UPDATE account.users SET organization_id = $2 WHERE id = $1`, a.ID, dbtest.Organization(t))
 	repoll()
 	if _, err := svc.BackchannelToken(ctx, client.ClientID, secret, authReqID); err == nil {
-		t.Error("collect once the person left the organisation: tokens issued")
+		t.Error("collect once the person left the organization: tokens issued")
+	}
+}
+
+// prompt is one out-of-band notice a Notifier was asked to deliver.
+type prompt struct {
+	organizationID, userID   uuid.UUID
+	title, description, href string
+}
+
+// promptBox is a Notifier that keeps the prompts it is asked to deliver.
+type promptBox struct {
+	mu   sync.Mutex
+	sent []prompt
+}
+
+// Notify records the prompt.
+func (b *promptBox) Notify(_ context.Context, organizationID, userID uuid.UUID, _, title, description, href string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.sent = append(b.sent, prompt{organizationID: organizationID, userID: userID, title: title, description: description, href: href})
+	return nil
+}
+
+// TestBackchannelFlow checks that only a confidential application with the
+// CIBA grant starts a backchannel sign-in, for a person of its own
+// organization, who is prompted and alone decides it, once; and that polling
+// answers pending, slow_down and access_denied, and an approval buys tokens once.
+func TestBackchannelFlow(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	p := newProvider(t)
+	prompts := &promptBox{}
+	p.svc.SetNotifier(prompts)
+	organization, otherOrganization := dbtest.Organization(t), dbtest.Organization(t)
+	person := dbtest.User(t, organization, organization)
+	colleague := dbtest.User(t, organization, organization)
+	outsider := dbtest.User(t, otherOrganization, otherOrganization)
+	kiosk, secret := registerClientWith(t, p.svc, CreateClientInput{OrganizationID: organization, Name: "Kiosk", GrantTypes: []string{grantTypeCIBA, "refresh_token"}})
+	plain, plainSecret := registerClient(t, p.svc, organization)
+	public, _ := registerClientWith(t, p.svc, CreateClientInput{OrganizationID: organization, Type: "public"})
+	hint := func(email string) url.Values {
+		return url.Values{"login_hint": {email}, "scope": {"openid"}, "binding_message": {"Till 4"}}
+	}
+	start := func(user, pass string, form url.Values) *httptest.ResponseRecorder {
+		t.Helper()
+		return postForm(t, p.public, "/oauth/bc-authorize", form, user, pass)
+	}
+
+	for _, tc := range []struct {
+		name, user, pass string
+		form             url.Values
+		want             string
+	}{
+		{"a public client", public.ClientID, "", hint(person.Email), errs.CodeOIDCClientAuthFailed},
+		{"an application without the grant", plain.ClientID, plainSecret, hint(person.Email), "unauthorized_client"},
+		{"a wrong secret", kiosk.ClientID, "wrong-secret", hint(person.Email), errs.CodeOIDCClientAuthFailed},
+		{"a person of another organization", kiosk.ClientID, secret, hint(outsider.Email), "unknown_user_id"},
+		{"no login_hint", kiosk.ClientID, secret, url.Values{"scope": {"openid"}}, "invalid_request"},
+		{"a scope the application may not have", kiosk.ClientID, secret, url.Values{"login_hint": {person.Email}, "scope": {"admin"}}, "invalid_scope"},
+		{"a resource", kiosk.ClientID, secret, url.Values{"login_hint": {person.Email}, "resource": {resourceA}}, "invalid_target"},
+	} {
+		if rec := start(tc.user, tc.pass, tc.form); rec.Code/100 != 4 || !strings.Contains(rec.Body.String(), tc.want) {
+			t.Errorf("start with %s: %d %s, want %s", tc.name, rec.Code, rec.Body.String(), tc.want)
+		}
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM auth.oidc_ciba_requests WHERE organization_id = $1`, organization); n != 0 || len(prompts.sent) != 0 {
+		t.Errorf("refused requests stored %d and prompted %d, want none", n, len(prompts.sent))
+	}
+
+	begin := func() string {
+		t.Helper()
+		rec := start(kiosk.ClientID, secret, hint(strings.ToUpper(person.Email)))
+		var out CIBAAuthResponse
+		dbtest.Decode(t, rec, &out)
+		if rec.Code != http.StatusOK || out.AuthReqID == "" || out.Interval != cibaPollInterval {
+			t.Fatalf("start: %d %s", rec.Code, rec.Body.String())
+		}
+		return out.AuthReqID
+	}
+	collect := func(authReqID string) *httptest.ResponseRecorder {
+		t.Helper()
+		return postForm(t, p.public, "/oauth/token", url.Values{"grant_type": {grantTypeCIBA}, "auth_req_id": {authReqID}}, kiosk.ClientID, secret)
+	}
+	// poll collects as a client that waited out the interval since its last poll.
+	poll := func(authReqID string) *httptest.ResponseRecorder {
+		t.Helper()
+		if _, err := pool.Exec(ctx, `UPDATE auth.oidc_ciba_requests SET last_polled_at = last_polled_at - INTERVAL '1 minute'
+			WHERE organization_id = $1 AND auth_req_id_hash = $2`, organization, codes.Hash(authReqID)); err != nil {
+			t.Fatal(err)
+		}
+		return collect(authReqID)
+	}
+	pollError := func(authReqID string) string {
+		t.Helper()
+		code, _ := decodeTokenError(t, poll(authReqID))
+		return code
+	}
+	asPerson := dbtest.Serve(dbtest.Principal(person.ID, organization), p.mount)
+	asColleague := dbtest.Serve(dbtest.Principal(colleague.ID, organization), p.mount)
+	pending := func(h http.Handler) []CIBAPendingRequest {
+		t.Helper()
+		var page struct {
+			Items []CIBAPendingRequest `json:"items"`
+		}
+		dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, "/oauth/bc-authorize/pending", nil), &page)
+		return page.Items
+	}
+	decide := func(h http.Handler, id uuid.UUID, approve bool) *httptest.ResponseRecorder {
+		t.Helper()
+		return dbtest.Do(t, h, http.MethodPost, "/oauth/bc-authorize/decision", map[string]any{"id": id, "approve": approve})
+	}
+
+	authReqID := begin()
+	if len(prompts.sent) != 1 || prompts.sent[0].userID != person.ID || prompts.sent[0].organizationID != organization || prompts.sent[0].description != "Till 4" || prompts.sent[0].href != "" {
+		t.Errorf("prompts %+v, want one to the person in the organization with the binding message, linking to no page", prompts.sent)
+	}
+	if got := pollError(authReqID); got != "authorization_pending" {
+		t.Errorf("poll before approval: %s, want authorization_pending", got)
+	}
+	if got, _ := decodeTokenError(t, collect(authReqID)); got != "slow_down" {
+		t.Errorf("poll again at once: %s, want slow_down", got)
+	}
+	if got := pending(asColleague); len(got) != 0 {
+		t.Errorf("a colleague sees the person's requests: %+v", got)
+	}
+	mine := pending(asPerson)
+	if len(mine) != 1 || mine[0].ClientName != "Kiosk" || mine[0].BindingMessage == nil || *mine[0].BindingMessage != "Till 4" {
+		t.Fatalf("the person's pending requests %+v, want the kiosk's with its binding message", mine)
+	}
+	if rec := decide(asColleague, mine[0].ID, true); !strings.Contains(rec.Body.String(), CodeCIBARequestNotOwned) {
+		t.Errorf("a colleague approving: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := decide(asPerson, mine[0].ID, true); rec.Code != http.StatusOK {
+		t.Fatalf("approve: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := decide(asPerson, mine[0].ID, false); !strings.Contains(rec.Body.String(), CodeCIBARequestAlreadyDecided) {
+		t.Errorf("decide again: %d %s", rec.Code, rec.Body.String())
+	}
+	rec := poll(authReqID)
+	var issued TokenResponse
+	dbtest.Decode(t, rec, &issued)
+	claims, err := p.svc.issuer.VerifyAccessAnyAudience(issued.AccessToken)
+	if rec.Code != http.StatusOK || err != nil || claims.UserID != person.ID || claims.ClientID != kiosk.ClientID || issued.IDToken == "" || issued.RefreshToken == "" {
+		t.Fatalf("collect: %d %s, %v", rec.Code, rec.Body.String(), err)
+	}
+	if got := pollError(authReqID); got != "invalid_grant" {
+		t.Errorf("collect twice: %s, want invalid_grant", got)
+	}
+
+	deniedID := begin()
+	if rec := decide(asPerson, pending(asPerson)[0].ID, false); rec.Code != http.StatusOK {
+		t.Fatalf("deny: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := pollError(deniedID); got != "access_denied" {
+		t.Errorf("poll after denial: %s, want access_denied", got)
 	}
 }

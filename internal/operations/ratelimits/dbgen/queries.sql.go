@@ -11,6 +11,15 @@ import (
 	"github.com/google/uuid"
 )
 
+const deleteRateLimitOverrides = `-- name: DeleteRateLimitOverrides :exec
+DELETE FROM platform.rate_limit_overrides WHERE organization_id = $1
+`
+
+func (q *Queries) DeleteRateLimitOverrides(ctx context.Context, organizationID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteRateLimitOverrides, organizationID)
+	return err
+}
+
 const getRateLimitOverrides = `-- name: GetRateLimitOverrides :many
 
 SELECT limit_key, rate, capacity
@@ -24,11 +33,9 @@ type GetRateLimitOverridesRow struct {
 	Capacity int32
 }
 
-// Queries for the ratelimits domain.
-// Static queries against platform.rate_limit_overrides live here and are
-// compiled by sqlc into ./dbgen.
-// SetOverride / DeleteOverride are owned by platform/cache/ratelimit (the
-// OrganizationLimiter) and remain hand-written there; this package only reads.
+// Queries for the ratelimits domain: an organization's overrides in
+// platform.rate_limit_overrides. The limiters in platform/cache/ratelimit
+// read them back into memory.
 func (q *Queries) GetRateLimitOverrides(ctx context.Context, organizationID uuid.UUID) ([]GetRateLimitOverridesRow, error) {
 	rows, err := q.db.Query(ctx, getRateLimitOverrides, organizationID)
 	if err != nil {
@@ -47,4 +54,28 @@ func (q *Queries) GetRateLimitOverrides(ctx context.Context, organizationID uuid
 		return nil, err
 	}
 	return items, nil
+}
+
+const upsertRateLimitOverride = `-- name: UpsertRateLimitOverride :exec
+INSERT INTO platform.rate_limit_overrides (organization_id, limit_key, rate, capacity, updated_at)
+VALUES ($1, $2, $3, $4, NOW())
+ON CONFLICT (organization_id, limit_key) DO UPDATE SET
+    rate = EXCLUDED.rate, capacity = EXCLUDED.capacity, updated_at = NOW()
+`
+
+type UpsertRateLimitOverrideParams struct {
+	OrganizationID uuid.UUID
+	LimitKey       string
+	Rate           float64
+	Capacity       int32
+}
+
+func (q *Queries) UpsertRateLimitOverride(ctx context.Context, arg UpsertRateLimitOverrideParams) error {
+	_, err := q.db.Exec(ctx, upsertRateLimitOverride,
+		arg.OrganizationID,
+		arg.LimitKey,
+		arg.Rate,
+		arg.Capacity,
+	)
+	return err
 }

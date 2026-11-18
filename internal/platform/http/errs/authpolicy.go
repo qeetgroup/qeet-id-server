@@ -12,9 +12,9 @@ const (
 // Auth-policy errors. The Message is what an end user (or admin setting a
 // password) sees when the password fails the organization's policy.
 var (
-	ErrAuthPolicyPasswordTooShort    = New(CodeAuthPolicyPasswordTooShort, "Your password is too short. Please choose a longer one.")
-	ErrAuthPolicyPasswordNoUppercase = New(CodeAuthPolicyPasswordNoUppercase, "Your password must contain an uppercase letter.")
-	ErrAuthPolicyPasswordNoNumber    = New(CodeAuthPolicyPasswordNoNumber, "Your password must contain a number.")
-	ErrAuthPolicyPasswordNoSymbol    = New(CodeAuthPolicyPasswordNoSymbol, "Your password must contain a symbol.")
-	ErrAuthPolicyPasswordBreached    = New(CodeAuthPolicyPasswordBreached, "This password has appeared in known data breaches — choose a different one.")
+	ErrAuthPolicyPasswordTooShort    = New(CodeAuthPolicyPasswordTooShort, KindUnprocessable, "Your password is too short. Please choose a longer one.")
+	ErrAuthPolicyPasswordNoUppercase = New(CodeAuthPolicyPasswordNoUppercase, KindUnprocessable, "Your password must contain an uppercase letter.")
+	ErrAuthPolicyPasswordNoNumber    = New(CodeAuthPolicyPasswordNoNumber, KindUnprocessable, "Your password must contain a number.")
+	ErrAuthPolicyPasswordNoSymbol    = New(CodeAuthPolicyPasswordNoSymbol, KindUnprocessable, "Your password must contain a symbol.")
+	ErrAuthPolicyPasswordBreached    = New(CodeAuthPolicyPasswordBreached, KindUnprocessable, "This password has appeared in known data breaches — choose a different one.")
 )

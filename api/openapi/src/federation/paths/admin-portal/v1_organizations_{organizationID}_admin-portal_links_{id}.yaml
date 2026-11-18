@@ -1,0 +1,30 @@
+delete:
+  operationId: revokeAdminPortalLink
+  description: >-
+    Revokes a generated admin-portal link so it can no longer be exchanged for a
+    portal session at POST /v1/admin-portal/session. Any portal session already
+    established from the link is governed separately. Pairs with the link list
+    and generation endpoints.
+  summary: Revoke an admin portal link
+  tags:
+    - Admin Portal
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '204':
+      description: Revoked
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml

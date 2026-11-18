@@ -7,7 +7,7 @@ properties:
   model:
     type: string
     enum:
-      - tenant
+      - organization
       - abac
       - rbac
       - rebac
@@ -18,7 +18,7 @@ properties:
   reason_code:
     type: string
     enum:
-      - authz.no_tenant
+      - authz.no_organization
       - authz.engine_error
       - authz.role_grant
       - authz.relation_grant
@@ -28,7 +28,7 @@ properties:
       - authz.attribute_absent
       - authz.condition_error
     description: >-
-      What decided it: no organisation, an engine failure (refused), a role or a
+      What decided it: no organization, an engine failure (refused), a role or a
       relationship tuple granting it, nothing allowing it, or an ABAC policy
       (allowing, denying, denying as an attribute it compares is absent, or
       refusing as its condition failed to evaluate).

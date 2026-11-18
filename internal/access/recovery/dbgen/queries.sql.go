@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const accountBelongsTo = `-- name: AccountBelongsTo :one
@@ -59,6 +58,26 @@ func (q *Queries) ExpirePasswordResets(ctx context.Context, userID uuid.UUID) er
 	return err
 }
 
+const findResetAccount = `-- name: FindResetAccount :one
+SELECT id, organization_id, email FROM account.users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL
+`
+
+type FindResetAccountRow struct {
+	ID             uuid.UUID
+	OrganizationID *uuid.UUID
+	Email          string
+}
+
+// FindResetAccount finds the account a password reset asked for by its
+// address: its organization (NULL = none) and email as stored, which the link
+// goes to.
+func (q *Queries) FindResetAccount(ctx context.Context, email string) (FindResetAccountRow, error) {
+	row := q.db.QueryRow(ctx, findResetAccount, email)
+	var i FindResetAccountRow
+	err := row.Scan(&i.ID, &i.OrganizationID, &i.Email)
+	return i, err
+}
+
 const getMagicLinkAccount = `-- name: GetMagicLinkAccount :one
 SELECT id, organization_id, email FROM account.users
 WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL AND status <> 'suspended'
@@ -66,7 +85,7 @@ WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL AND status <> 'suspended'
 
 type GetMagicLinkAccountRow struct {
 	ID             uuid.UUID
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 	Email          string
 }
 
@@ -89,10 +108,10 @@ FOR UPDATE
 
 type GetMagicLinkByTokenRow struct {
 	ID             uuid.UUID
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 	Email          string
 	ExpiresAt      time.Time
-	UsedAt         pgtype.Timestamptz
+	UsedAt         *time.Time
 	App            string
 	ReturnTo       *string
 }
@@ -123,7 +142,7 @@ type GetPasswordResetByTokenRow struct {
 	ID        uuid.UUID
 	UserID    uuid.UUID
 	ExpiresAt time.Time
-	UsedAt    pgtype.Timestamptz
+	UsedAt    *time.Time
 }
 
 func (q *Queries) GetPasswordResetByToken(ctx context.Context, tokenHash string) (GetPasswordResetByTokenRow, error) {
@@ -143,7 +162,7 @@ SELECT organization_id, email FROM account.users WHERE id = $1
 `
 
 type GetResetAccountRow struct {
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 	Email          string
 }
 
@@ -163,7 +182,7 @@ WHERE organization_id = $1 AND LOWER(email) = LOWER($2) AND deleted_at IS NULL
 `
 
 type GetUserIDByEmailForOrganizationParams struct {
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 	Lower          string
 }
 
@@ -182,7 +201,7 @@ VALUES ($1, $2, $3, $4, $5, $6)
 `
 
 type InsertMagicLinkParams struct {
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 	Email          string
 	TokenHash      string
 	ExpiresAt      time.Time

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const claimConversationTurn = `-- name: ClaimConversationTurn :one
@@ -192,7 +191,7 @@ WHERE s.organization_id = $1
 
 type GetSettingsRow struct {
 	ConversationRetentionDays *int32
-	UpdatedBy                 pgtype.UUID
+	UpdatedBy                 *uuid.UUID
 	UpdatedByEmail            *string
 	UpdatedAt                 time.Time
 }
@@ -403,7 +402,7 @@ ORDER BY month DESC LIMIT 12
 `
 
 type ListUsageRow struct {
-	Month        pgtype.Date
+	Month        time.Time
 	Messages     int32
 	InputTokens  int64
 	OutputTokens int64
@@ -515,6 +514,24 @@ func (q *Queries) ReleaseConversationTurn(ctx context.Context, arg ReleaseConver
 	return err
 }
 
+const resealProviderKey = `-- name: ResealProviderKey :exec
+UPDATE qeetai.provider_settings
+SET key_ciphertext = $1, key_nonce = $2
+WHERE organization_id = $3
+`
+
+type ResealProviderKeyParams struct {
+	KeyCiphertext  []byte
+	KeyNonce       []byte
+	OrganizationID uuid.UUID
+}
+
+// Stores the organization's key sealed again with the current encryption key.
+func (q *Queries) ResealProviderKey(ctx context.Context, arg ResealProviderKeyParams) error {
+	_, err := q.db.Exec(ctx, resealProviderKey, arg.KeyCiphertext, arg.KeyNonce, arg.OrganizationID)
+	return err
+}
+
 const touchConversation = `-- name: TouchConversation :exec
 UPDATE qeetai.conversations
 SET updated_at = now()
@@ -564,7 +581,7 @@ type UpsertProviderSettingsParams struct {
 	KeyNonce       []byte
 	KeyLast4       string
 	Enabled        bool
-	UpdatedBy      pgtype.UUID
+	UpdatedBy      *uuid.UUID
 }
 
 func (q *Queries) UpsertProviderSettings(ctx context.Context, arg UpsertProviderSettingsParams) (QeetaiProviderSetting, error) {
@@ -609,7 +626,7 @@ ON CONFLICT (organization_id) DO UPDATE SET
 type UpsertSettingsParams struct {
 	OrganizationID            uuid.UUID
 	ConversationRetentionDays *int32
-	UpdatedBy                 pgtype.UUID
+	UpdatedBy                 *uuid.UUID
 }
 
 func (q *Queries) UpsertSettings(ctx context.Context, arg UpsertSettingsParams) error {

@@ -71,5 +71,5 @@ properties:
   email_domain_verified:
     type: boolean
     description: >-
-      Whether the address is on a domain the organisation verified, without
+      Whether the address is on a domain the organization verified, without
       which a sign-in is refused.

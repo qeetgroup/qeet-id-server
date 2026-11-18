@@ -19,10 +19,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/audit/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
@@ -85,29 +85,36 @@ func ActorOf(r *http.Request) Actor {
 // ActorUserID and ActorType.
 func (a Actor) Identity() (*uuid.UUID, string) { return a.UserID, a.Type }
 
-// Event returns an audit Event of an organization-scoped action by a.
-func (a Actor) Event(organizationID uuid.UUID, action, resourceType string, resourceID uuid.UUID, metadata map[string]any) Event {
-	e := a.PlatformEvent(action, resourceType, resourceID, metadata)
-	tid := organizationID
-	e.OrganizationID = &tid
-	return e
-}
-
-// PlatformEvent returns an audit Event on the platform chain, not scoped to an
-// organization.
-func (a Actor) PlatformEvent(action, resourceType string, resourceID uuid.UUID, metadata map[string]any) Event {
-	rid := resourceID
-	return Event{
+// EventIn returns an audit Event of an action by a: on organizationID's chain,
+// or with a nil organizationID on a platform chain. A uuid.Nil resourceID
+// records no resource.
+func (a Actor) EventIn(organizationID *uuid.UUID, action, resourceType string, resourceID uuid.UUID, metadata map[string]any) Event {
+	e := Event{
 		ActorUserID:  a.UserID,
 		ActorType:    a.Type,
 		Action:       action,
 		ResourceType: resourceType,
-		ResourceID:   &rid,
+		ResourceID:   postgres.NullIfZero(resourceID),
 		IP:           a.IP,
 		UserAgent:    a.UserAgent,
 		RequestID:    a.RequestID,
 		Metadata:     metadata,
 	}
+	if organizationID != nil {
+		e.OrganizationID = new(*organizationID)
+	}
+	return e
+}
+
+// Event returns an audit Event of an organization-scoped action by a.
+func (a Actor) Event(organizationID uuid.UUID, action, resourceType string, resourceID uuid.UUID, metadata map[string]any) Event {
+	return a.EventIn(&organizationID, action, resourceType, resourceID, metadata)
+}
+
+// PlatformEvent returns an audit Event on the platform chain, not scoped to an
+// organization.
+func (a Actor) PlatformEvent(action, resourceType string, resourceID uuid.UUID, metadata map[string]any) Event {
+	return a.EventIn(nil, action, resourceType, resourceID, metadata)
 }
 
 // Changes returns the fields of after whose value differs from before, each as
@@ -128,7 +135,7 @@ func Changes(before, after map[string]any) map[string]any {
 // organization's chain or of platform chain 0 hashes as it always has.
 type canonicalRow struct {
 	ID             string          `json:"id"`
-	OrganizationID string          `json:"tenant_id"`
+	OrganizationID string          `json:"organization_id"`
 	ActorUserID    string          `json:"actor_user_id"`
 	ActorType      string          `json:"actor_type"`
 	Action         string          `json:"action"`
@@ -174,28 +181,22 @@ func uuidStr(u *uuid.UUID) string {
 	return u.String()
 }
 
-// pgUUIDNullable converts id to a nullable pgtype.UUID; nil becomes NULL.
-func pgUUIDNullable(id *uuid.UUID) pgtype.UUID {
-	if id == nil {
-		return pgtype.UUID{Valid: false}
-	}
-	return pgtype.UUID{Bytes: *id, Valid: true}
-}
-
-// strRef returns a pointer to s, so an empty string is stored as "" rather than
-// NULL.
-func strRef(s string) *string { return &s }
-
 // clock is this instance's time, which an audit row is stamped with unless
 // its chain's tip is later. A test sets it to stand for another instance.
 var clock = time.Now
 
 // labelQueries read the name of a role, group or ABAC policy by its id in
 // the event's organization.
-var labelQueries = map[string]string{
-	"role":        `SELECT name FROM rbac.roles WHERE id = $1 AND organization_id = $2`,
-	"group":       `SELECT name FROM organization.groups WHERE id = $1 AND organization_id = $2`,
-	"abac_policy": `SELECT name FROM auth.abac_policies WHERE id = $1 AND organization_id = $2`,
+var labelQueries = map[string]func(*dbgen.Queries, context.Context, uuid.UUID, *uuid.UUID) (string, error){
+	"role": func(q *dbgen.Queries, ctx context.Context, id uuid.UUID, organizationID *uuid.UUID) (string, error) {
+		return q.GetRoleName(ctx, dbgen.GetRoleNameParams{ID: id, OrganizationID: organizationID})
+	},
+	"group": func(q *dbgen.Queries, ctx context.Context, id uuid.UUID, organizationID *uuid.UUID) (string, error) {
+		return q.GetGroupName(ctx, dbgen.GetGroupNameParams{ID: id, OrganizationID: organizationID})
+	},
+	"abac_policy": func(q *dbgen.Queries, ctx context.Context, id uuid.UUID, organizationID *uuid.UUID) (string, error) {
+		return q.GetABACPolicyName(ctx, dbgen.GetABACPolicyNameParams{ID: id, OrganizationID: organizationID})
+	},
 }
 
 // labelled is e's metadata with the names of the roles, groups and ABAC
@@ -240,12 +241,11 @@ func labelled(ctx context.Context, tx pgx.Tx, e Event) (map[string]any, error) {
 // label is the name of the kind of thing id is, or "" for a kind without one
 // or an id not found.
 func label(ctx context.Context, tx pgx.Tx, kind string, id uuid.UUID, organizationID *uuid.UUID) (string, error) {
-	q, ok := labelQueries[kind]
+	read, ok := labelQueries[kind]
 	if !ok {
 		return "", nil
 	}
-	var name string
-	err := tx.QueryRow(ctx, q, id, pgUUIDNullable(organizationID)).Scan(&name)
+	name, err := read(dbgen.New(tx), ctx, id, organizationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
@@ -309,6 +309,22 @@ func Record(ctx context.Context, tx pgx.Tx, e Event) error {
 	return appendEvent(ctx, tx, e, shard)
 }
 
+// RecordAlone writes e in a transaction of its own on db (a pool, usually): for
+// an event no change commits with, such as a refusal, a read or a test call.
+func RecordAlone(ctx context.Context, db interface {
+	Begin(context.Context) (pgx.Tx, error)
+}, e Event) error {
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := Record(ctx, tx, e); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 // lockChain takes the advisory lock of a chain, held until tx ends: an
 // organization's, or with no organization platform chain shard. Chain 0's key is the one
 // the single platform chain had.
@@ -343,7 +359,7 @@ func appendEvent(ctx context.Context, tx pgx.Tx, e Event, shard int16) error {
 
 	prevHash := chainSeed
 	createdAt := clock().UTC().Truncate(time.Microsecond)
-	tip, err := q.GetAuditChainTip(ctx, dbgen.GetAuditChainTipParams{OrganizationID: pgUUIDNullable(e.OrganizationID), ChainShard: shard})
+	tip, err := q.GetAuditChainTip(ctx, dbgen.GetAuditChainTipParams{OrganizationID: e.OrganizationID, ChainShard: shard})
 	switch {
 	case err == nil:
 		prevHash = strings.TrimSpace(*tip.RowHash)
@@ -368,19 +384,19 @@ func appendEvent(ctx context.Context, tx pgx.Tx, e Event, shard int16) error {
 
 	return q.InsertAuditEvent(ctx, dbgen.InsertAuditEventParams{
 		ID:             id,
-		OrganizationID: pgUUIDNullable(e.OrganizationID),
-		ActorUserID:    pgUUIDNullable(e.ActorUserID),
+		OrganizationID: e.OrganizationID,
+		ActorUserID:    e.ActorUserID,
 		ActorType:      e.ActorType,
 		Action:         e.Action,
 		ResourceType:   e.ResourceType,
-		ResourceID:     pgUUIDNullable(e.ResourceID),
+		ResourceID:     e.ResourceID,
 		Ip:             e.IP, // NULLIF($8,'')::inet in the SQL handles empty→NULL
-		UserAgent:      strRef(e.UserAgent),
-		RequestID:      strRef(e.RequestID),
+		UserAgent:      new(e.UserAgent),
+		RequestID:      new(e.RequestID),
 		Metadata:       meta,
 		CreatedAt:      createdAt,
-		PrevHash:       strRef(prevHash),
-		RowHash:        strRef(rowHash),
+		PrevHash:       new(prevHash),
+		RowHash:        new(rowHash),
 		ChainShard:     shard,
 	})
 }

@@ -84,7 +84,8 @@ ON CONFLICT (organization_id) DO UPDATE SET
     updated_at          = NOW();
 
 -- name: ListAnomalies :many
--- List all anomalies (open and resolved) for an organization, most recent first.
+-- List an organization's anomalies, most recent first: those with status, or
+-- all of them when it is NULL.
 SELECT
     a.id, a.organization_id, a.event_id, a.actor_user_id, u.email,
     a.score, a.reasons, a.status, a.resolved_at, a.resolved_by, a.created_at,
@@ -93,22 +94,17 @@ FROM audit.anomalies a
 JOIN audit.events e ON e.id = a.event_id
 LEFT JOIN account.users u ON u.id = a.actor_user_id
 WHERE a.organization_id = @organization_id
+  AND (sqlc.narg('status')::text IS NULL OR a.status = sqlc.narg('status'))
   AND (sqlc.narg('before_ts')::timestamptz IS NULL OR a.created_at < sqlc.narg('before_ts')
        OR (a.created_at = sqlc.narg('before_ts') AND a.id < sqlc.narg('before_id')::uuid))
 ORDER BY a.created_at DESC, a.id DESC
 LIMIT @row_limit;
 
--- name: ListAnomaliesFiltered :many
--- List anomalies for an organization filtered by status, most recent first.
-SELECT
-    a.id, a.organization_id, a.event_id, a.actor_user_id, u.email,
-    a.score, a.reasons, a.status, a.resolved_at, a.resolved_by, a.created_at,
-    e.action, e.resource_type, COALESCE(host(e.ip), '') AS ip, e.created_at AS event_at
-FROM audit.anomalies a
-JOIN audit.events e ON e.id = a.event_id
-LEFT JOIN account.users u ON u.id = a.actor_user_id
-WHERE a.organization_id = @organization_id AND a.status = @status
-  AND (sqlc.narg('before_ts')::timestamptz IS NULL OR a.created_at < sqlc.narg('before_ts')
-       OR (a.created_at = sqlc.narg('before_ts') AND a.id < sqlc.narg('before_id')::uuid))
-ORDER BY a.created_at DESC, a.id DESC
-LIMIT @row_limit;
+
+-- name: LockAuditEventForScoring :one
+-- Locks an event for scoring, reporting whether it is already scored; no row
+-- when another instance holds it.
+SELECT (scored_at IS NOT NULL)::boolean AS scored
+FROM audit.events
+WHERE id = @id
+FOR UPDATE SKIP LOCKED;

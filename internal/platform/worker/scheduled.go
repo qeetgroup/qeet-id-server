@@ -59,17 +59,6 @@ func RunScheduled(ctx context.Context, pool *pgxpool.Pool, jobs []Scheduled, tic
 	}
 }
 
-// RunDue starts every job that is due and that this instance claims, at most
-// maxRunningJobs of them, each in its own goroutine, and returns the names of
-// those it ran once they have all finished. A failing or panicking job is
-// recorded and the others still run.
-func RunDue(ctx context.Context, pool *pgxpool.Pool, jobs []Scheduled) []string {
-	s := newScheduler(pool, jobs)
-	ran := s.startDue(ctx)
-	s.wg.Wait()
-	return ran
-}
-
 // maxRunningJobs is how many jobs an instance runs at once, so the scheduler
 // leaves most of a shared connection pool to requests.
 const maxRunningJobs = 4

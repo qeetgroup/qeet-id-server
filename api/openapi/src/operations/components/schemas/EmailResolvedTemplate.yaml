@@ -17,5 +17,5 @@ allOf:
       delivery_scope:
         type: string
         enum:
-          - tenant
+          - organization
           - platform

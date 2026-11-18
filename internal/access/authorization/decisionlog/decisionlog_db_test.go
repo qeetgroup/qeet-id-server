@@ -5,6 +5,7 @@ package decisionlog
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"sync"
 	"testing"
 
@@ -12,6 +13,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
@@ -45,7 +47,7 @@ func TestDecisionsAreKeptAndListed(t *testing.T) {
 	if err != nil || len(page.Items) != 2 || page.NextCursor == "" {
 		t.Fatalf("first page: %+v, %v; want 2 with a cursor", page, err)
 	}
-	rest, err := log.List(ctx, organization, Filter{Limit: 2, Cursor: page.NextCursor})
+	rest, err := log.List(ctx, organization, Filter{Limit: 2, After: cursorOf(t, page.NextCursor)})
 	if err != nil || len(rest.Items) != 1 || rest.NextCursor != "" {
 		t.Fatalf("second page: %+v, %v; want the last one", rest, err)
 	}
@@ -61,17 +63,27 @@ func TestDecisionsAreKeptAndListed(t *testing.T) {
 		t.Errorf("relationship checks: %+v, %v; want one", bySource, err)
 	}
 	if others, err := log.List(ctx, other, Filter{}); err != nil || len(others.Items) != 1 {
-		t.Errorf("the other tenant's decisions: %+v, %v; want its one", others, err)
+		t.Errorf("the other organization's decisions: %+v, %v; want its one", others, err)
 	}
 
 	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Log: log}).Mount)
-	if rec := dbtest.Do(t, h, http.MethodGet, "/tenants/"+other.String()+"/authorization/decisions", nil); rec.Code != http.StatusForbidden {
-		t.Errorf("another tenant's decisions over HTTP: %d, want 403", rec.Code)
+	if rec := dbtest.Do(t, h, http.MethodGet, "/organizations/"+other.String()+"/authorization/decisions", nil); rec.Code != http.StatusForbidden {
+		t.Errorf("another organization's decisions over HTTP: %d, want 403", rec.Code)
 	}
-	if rec := dbtest.Do(t, h, http.MethodGet, "/tenants/"+organization.String()+"/authorization/decisions?allowed=maybe", nil); rec.Code != http.StatusBadRequest {
+	if rec := dbtest.Do(t, h, http.MethodGet, "/organizations/"+organization.String()+"/authorization/decisions?allowed=maybe", nil); rec.Code != http.StatusBadRequest {
 		t.Errorf("allowed=maybe: %d, want 400", rec.Code)
 	}
 
 	var nilLog *Log
 	nilLog.Record(ctx, Entry{OrganizationID: organization}) // a nil log keeps nothing, and doesn't panic
+}
+
+// cursorOf is the cursor a page's next_cursor names.
+func cursorOf(t *testing.T, next string) paging.Cursor {
+	t.Helper()
+	c, err := paging.ParseCursor(url.Values{"cursor": {next}})
+	if err != nil {
+		t.Fatalf("cursor %q: %v", next, err)
+	}
+	return c
 }

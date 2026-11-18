@@ -66,7 +66,7 @@ func TestPurgingADeletedOrganization(t *testing.T) {
 		exec(`INSERT INTO auth.sessions (user_id, organization_id) VALUES ($1, $2)`, u, gone)
 	}
 	exec(`INSERT INTO organization.groups (organization_id, name) VALUES ($1, 'Finance')`, gone)
-	exec(`INSERT INTO audit.events (organization_id, actor_type, action, resource_type) VALUES ($1, 'system', 'tenant.updated', 'tenant')`, gone)
+	exec(`INSERT INTO audit.events (organization_id, actor_type, action, resource_type) VALUES ($1, 'system', 'organization.updated', 'organization')`, gone)
 	exec(`UPDATE organization.organizations SET status = 'deleted', deleted_at = NOW() - interval '31 days' WHERE id = $1`, gone)
 	exec(`UPDATE organization.organizations SET status = 'deleted', deleted_at = NOW() - interval '1 day' WHERE id = $1`, recent)
 
@@ -76,33 +76,33 @@ func TestPurgingADeletedOrganization(t *testing.T) {
 		t.Fatalf("purge: %d, %v", n, err)
 	}
 	if left := organizationRowsLeft(t, gone); len(left) != 0 {
-		t.Errorf("rows of the purged organisation left: %v", left)
+		t.Errorf("rows of the purged organization left: %v", left)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM organization.organizations WHERE id = $1`, gone); n != 0 {
-		t.Error("the purged organisation is still there")
+		t.Error("the purged organization is still there")
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1`, homeOnly.ID); n != 0 {
-		t.Error("an account whose only organisation was purged is still there")
+		t.Error("an account whose only organization was purged is still there")
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE id = $1 AND organization_id IS NULL AND deleted_at IS NULL`, alsoElsewhere.ID); n != 1 {
-		t.Error("an account also of another organisation wasn't kept with no home organisation")
+		t.Error("an account also of another organization wasn't kept with no home organization")
 	}
 	for _, u := range []uuid.UUID{alsoElsewhere.ID, guest.ID} {
 		if n := dbtest.Count(t, `SELECT count(*) FROM rbac.user_roles WHERE user_id = $1 AND organization_id = $2`, u, other); n != 1 {
-			t.Errorf("%s lost their role in another organisation", u)
+			t.Errorf("%s lost their role in another organization", u)
 		}
 	}
 	var removed, detached int
 	if err := pool.QueryRow(ctx, `SELECT accounts_removed, accounts_detached FROM platform.organization_purges WHERE organization_id = $1 AND rows_purged ? 'audit.events'`, gone).Scan(&removed, &detached); err != nil || removed != 1 || detached != 1 {
 		t.Errorf("purge record: removed %d, detached %d (%v); want 1 and 1, counting the audit log", removed, detached, err)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id IS NULL AND action = 'tenant.purged' AND resource_id = $1`, gone); n != 1 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id IS NULL AND action = 'organization.purged' AND resource_id = $1`, gone); n != 1 {
 		t.Errorf("%d platform records of the purge, want 1", n)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM organization.organizations WHERE id = $1`, recent); n != 1 {
-		t.Error("an organisation deleted within its restore window was purged")
+		t.Error("an organization deleted within its restore window was purged")
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM organization.organizations WHERE id = $1`, other); n != 1 {
-		t.Error("an organisation that was never deleted is gone")
+		t.Error("an organization that was never deleted is gone")
 	}
 }

@@ -4,7 +4,7 @@ post:
   description: >-
     Client-authenticated endpoint for input-constrained (CLI/TV/IoT) clients.
     Returns a (device_code, user_code) pair plus the verification URIs; the
-    device then polls /v1/oauth/token-code with
+    device then polls /v1/oauth/token with
     grant_type=urn:ietf:params:oauth:grant-type:device_code. A client not
     registered for the urn:ietf:params:oauth:grant-type:device_code grant is
     refused with unauthorized_client, here and when polling.

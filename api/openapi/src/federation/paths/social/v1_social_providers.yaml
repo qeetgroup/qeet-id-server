@@ -35,10 +35,10 @@ post:
               type: string
               description: The ID of the key client_secret holds; required for apple.
     description: >-
-      Adds a provider to the caller's organisation, or replaces the settings of
+      Adds a provider to the caller's organization, or replaces the settings of
       one it has.
   description: >-
-    Adds a social provider, or replaces the settings of one the organisation
+    Adds a social provider, or replaces the settings of one the organization
     already has. Replacing keeps whether the provider is switched on, and an
     empty client_secret keeps the stored one. The secret is stored encrypted and
     never returned. A provider named github, facebook, x, discord or apple uses
@@ -51,8 +51,8 @@ post:
     X (confirmed_email) or Discord (verified) counts as verified; one from
     Facebook doesn't, so it can make a new account but never sign in to an
     existing one by its address. An OpenID Connect provider's endpoints are the
-    organisation's choice, so its word verifies an address only on a domain the
-    organisation has verified: elsewhere it too can make a new account, its
+    organization's choice, so its word verifies an address only on a domain the
+    organization has verified: elsewhere it too can make a new account, its
     address unverified, but never sign in to an existing one by its address.
     Audited as social_provider.created or
     social_provider.updated (the fields saved and whether the secret was

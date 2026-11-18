@@ -4,15 +4,14 @@ package bootstrap
 
 import (
 	"bytes"
-	"crypto/aes"
-	"crypto/cipher"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	secret "github.com/qeetgroup/qeet-id-server/internal/developer/credentials/secrets"
+	"github.com/qeetgroup/qeet-id-server/internal/developer/credentials/secret"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/credentials/tokenvault"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/qeetai"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope/reseal"
@@ -32,22 +31,6 @@ func reencryptCipher(t *testing.T, current []byte, previous ...[]byte) *envelope
 	return box
 }
 
-// sealedTheOldestWay seals plaintext as values were before they were bound
-// to a context: AES-GCM under the data key itself.
-func sealedTheOldestWay(t *testing.T, key []byte, plaintext string) ([]byte, []byte) {
-	t.Helper()
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		t.Fatal(err)
-	}
-	nonce := bytes.Repeat([]byte{5}, aead.NonceSize())
-	return aead.Seal(nil, nonce, []byte(plaintext), nil), nonce
-}
-
 // TestEncryptedColumnsMatchTheSchema runs the re-encryption job's queries
 // over every listed column against the migrated schema, so a renamed table or
 // column fails here rather than in the job.
@@ -63,23 +46,23 @@ func TestEncryptedColumnsMatchTheSchema(t *testing.T) {
 }
 
 // TestRotationKeepsStoredSecretsReadable stores values with the old data key,
-// some in the oldest scheme, rotates to a new key, runs the secrets-reencrypt
-// job, removes the old key, and checks the services that own the values still
-// read them: the job rebuilt each value's context as its owner seals it.
+// some through their services and some written directly, rotates to a new key,
+// runs the secrets-reencrypt job, removes the old key, and checks the services
+// that own the values still read them: the job rebuilt each value's context as
+// its owner seals it.
 func TestRotationKeepsStoredSecretsReadable(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
 	oldKey, newKey := bytes.Repeat([]byte{1}, 32), bytes.Repeat([]byte{2}, 32)
 	before := reencryptCipher(t, oldKey)
 	organization := dbtest.Organization(t)
 	person := dbtest.User(t, organization, organization)
+	system := audit.Actor{Type: "system"}
 
-	sec, err := secret.NewService(pool, before).Create(ctx, organization, "api-key", "", "secret-value", nil)
+	sec, err := secret.NewService(pool, before).Create(ctx, organization, "api-key", "", "secret-value", nil, secret.Caller{Actor: system})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ct, nonce := sealedTheOldestWay(t, oldKey, "legacy-secret")
-	if _, err := pool.Exec(ctx, `INSERT INTO organization.secrets (organization_id, name, ciphertext, nonce) VALUES ($1, 'legacy', $2, $3)`,
-		organization, ct, nonce); err != nil {
+	if _, err := secret.NewService(pool, before).Create(ctx, organization, "second", "", "second-value", nil, secret.Caller{Actor: system}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -87,8 +70,11 @@ func TestRotationKeepsStoredSecretsReadable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacyCT, legacyNonce := sealedTheOldestWay(t, oldKey, "access-legacy")
-	for provider, sealed := range map[string][2][]byte{"github": {accessCT, accessNonce}, "gitlab": {legacyCT, legacyNonce}} {
+	otherCT, otherNonce, err := before.Seal(organization, "token-vault-access", person.ID.String()+":gitlab", []byte("access-2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for provider, sealed := range map[string][2][]byte{"github": {accessCT, accessNonce}, "gitlab": {otherCT, otherNonce}} {
 		if _, err := pool.Exec(ctx, `
 			INSERT INTO organization.token_vault_grants (organization_id, user_id, provider, access_token_ct, access_token_nonce)
 			VALUES ($1, $2, $3, $4, $5)`, organization, person.ID, provider, sealed[0], sealed[1]); err != nil {
@@ -96,7 +82,10 @@ func TestRotationKeepsStoredSecretsReadable(t *testing.T) {
 		}
 	}
 
-	keyCT, keyNonce := sealedTheOldestWay(t, oldKey, "sk-ant-legacy")
+	keyCT, keyNonce, err := before.Seal(organization, "qeetai-provider", "api-key", []byte("sk-ant-key"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO qeetai.provider_settings (organization_id, provider, model, key_ciphertext, key_nonce)
 		VALUES ($1, 'anthropic', 'model', $2, $3)`, organization, keyCT, keyNonce); err != nil {
@@ -142,15 +131,15 @@ func TestRotationKeepsStoredSecretsReadable(t *testing.T) {
 
 	after := reencryptCipher(t, newKey)
 	secrets := secret.NewService(pool, after)
-	if _, value, err := secrets.Reveal(ctx, organization, sec.ID); err != nil || value != "secret-value" {
+	if _, value, err := secrets.Reveal(ctx, organization, sec.ID, secret.Caller{Actor: system}); err != nil || value != "secret-value" {
 		t.Errorf("secret = %q, %v", value, err)
 	}
-	if _, value, err := secrets.GetByName(ctx, organization, "legacy"); err != nil || value != "legacy-secret" {
-		t.Errorf("oldest-scheme secret = %q, %v", value, err)
+	if _, value, err := secrets.GetByName(ctx, organization, "second", secret.Caller{Actor: system}); err != nil || value != "second-value" {
+		t.Errorf("second secret = %q, %v", value, err)
 	}
 	vault := tokenvault.NewService(pool, after)
-	for provider, want := range map[string]string{"github": "access-1", "gitlab": "access-legacy"} {
-		if got, err := vault.GetAccessToken(ctx, organization, person.ID, provider); err != nil || got != want {
+	for provider, want := range map[string]string{"github": "access-1", "gitlab": "access-2"} {
+		if got, err := vault.GetAccessToken(ctx, organization, person.ID, provider, system); err != nil || got != want {
 			t.Errorf("%s access token = %q, %v", provider, got, err)
 		}
 	}

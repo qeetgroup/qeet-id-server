@@ -215,7 +215,7 @@ CREATE TABLE platform.rate_limit_overrides (
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (organization_id, limit_key),
     CONSTRAINT rate_limit_overrides_capacity_check CHECK (capacity > 0),
-    CONSTRAINT rate_limit_overrides_limit_key_check CHECK (limit_key IN ('tenant', 'user', 'api_key')),
+    CONSTRAINT rate_limit_overrides_limit_key_check CHECK (limit_key IN ('organization', 'user', 'api_key')),
     CONSTRAINT rate_limit_overrides_rate_check CHECK (rate > (0)::double precision)
 );
 

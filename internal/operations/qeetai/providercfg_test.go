@@ -14,7 +14,6 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/ai/openai"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
@@ -95,9 +94,9 @@ func TestEvalProbeAnswers(t *testing.T) {
 		wantCode   string
 		wantStatus int
 	}{
-		{"openai", http.StatusUnauthorized, errs.CodeQeetAIProviderKeyInvalid, http.StatusBadRequest},
-		{"anthropic", http.StatusBadRequest, errs.CodeQeetAIProviderModelInvalid, http.StatusBadRequest},
-		{"openai", http.StatusInternalServerError, errs.CodeQeetAIProviderError, http.StatusBadRequest},
+		{"openai", http.StatusUnauthorized, CodeProviderKeyInvalid, http.StatusBadRequest},
+		{"anthropic", http.StatusBadRequest, CodeProviderModelInvalid, http.StatusBadRequest},
+		{"openai", http.StatusInternalServerError, CodeProviderError, http.StatusBadRequest},
 	}
 	for _, tc := range cases {
 		t.Run(fmt.Sprintf("%s %d", tc.provider, tc.status), func(t *testing.T) {
@@ -125,8 +124,8 @@ func TestEvalProbeAnswers(t *testing.T) {
 			t.Fatal(err)
 		}
 		err = (&ProviderConfig{httpClient: client}).evalProbe(req, "openai")
-		if code, status := answer(t, err); code != errs.CodeQeetAIProviderUnreachable || status != http.StatusBadRequest {
-			t.Errorf("answer = %s %d, want %s 400", code, status, errs.CodeQeetAIProviderUnreachable)
+		if code, status := answer(t, err); code != CodeProviderUnreachable || status != http.StatusBadRequest {
+			t.Errorf("answer = %s %d, want %s 400", code, status, CodeProviderUnreachable)
 		}
 	})
 }
@@ -137,8 +136,8 @@ func TestStreamMessagesUnconfigured(t *testing.T) {
 	h := &Handler{Service: &stubStore{}, Resolver: stubResolver{source: SourceNone}}
 	rec := httptest.NewRecorder()
 	h.streamMessages(rec, newHandlerRequest(uuid.New(), uuid.New(), uuid.New(), `{"message":"hello"}`))
-	if code := bodyCode(t, rec); rec.Code != http.StatusConflict || code != errs.CodeQeetAIUnconfigured {
-		t.Errorf("answer = %s %d, want %s 409", code, rec.Code, errs.CodeQeetAIUnconfigured)
+	if code := bodyCode(t, rec); rec.Code != http.StatusConflict || code != CodeUnconfigured {
+		t.Errorf("answer = %s %d, want %s 409", code, rec.Code, CodeUnconfigured)
 	}
 }
 

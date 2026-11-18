@@ -2,8 +2,8 @@ get:
   operationId: listSuspendedUsers
   summary: List suspended users and review metrics
   description: >-
-    Requires user.read. Tenant scope comes only from the authenticated
-    principal. Includes owned accounts and tenant members; private suspension
+    Requires user.read. Organization scope comes only from the authenticated
+    principal. Includes owned accounts and organization members; private suspension
     metadata is masked for accounts owned elsewhere, with can_manage=false.
     Historical unknown timestamps and risk are not inferred.
   tags:
@@ -117,6 +117,6 @@ get:
     '400':
       description: Invalid filters
     '401':
-      description: Authentication and tenant required
+      description: Authentication and organization required
     '403':
       description: Missing user.read

@@ -1,0 +1,83 @@
+post:
+  operationId: rotateScimToken
+  summary: Rotate a SCIM token
+  tags:
+    - SCIM
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  description: >-
+    Issues a token in place of one of the organization's, under its name, shown
+    only in this answer. The old token keeps working for overlap_hours (default
+    168, a week; at most 720), or until its own earlier expiry, so the identity
+    provider can be switched without a gap; then it is refused. An overlap of 0
+    revokes it at once. Revoke it early with DELETE
+    /v1/organizations/{organizationID}/scim/tokens/{id}. Only a working token that has not
+    been rotated can be (409 scim.token_inactive). The body is optional.
+    Requires connection.write. Needs a recent step-up.
+  requestBody:
+    required: false
+    content:
+      application/json:
+        schema:
+          type: object
+          properties:
+            overlap_hours:
+              type: integer
+              minimum: 0
+              maximum: 720
+              description: How long the old token keeps working, in hours. Default 168.
+            expires_at:
+              type:
+                - string
+                - 'null'
+              format: date-time
+              description: When the new token stops working; in the future. Omit for none.
+  responses:
+    '201':
+      description: Rotated
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - replaced
+              - scim_token
+              - token
+            properties:
+              replaced:
+                $ref: ../../components/schemas/SCIMToken.yaml
+              scim_token:
+                $ref: ../../components/schemas/SCIMToken.yaml
+              token:
+                type: string
+                description: The new token to give the identity provider, shown only here.
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '402':
+      description: The organization's plan does not include SCIM.
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '409':
+      $ref: ../../../shared/responses/Conflict.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -6,7 +6,7 @@ post:
     member.invite, and, as creating it does, every permission of the role the
     invitation grants (403 rbac.grant_exceeds_caller naming one the caller
     lacks; nothing changes). The response carries the invitation. Only pending or expired
-    invites belonging to the caller's tenant qualify; already-accepted or
+    invites belonging to the caller's organization qualify; already-accepted or
     revoked invites are rejected. The recipient completes the flow through the
     accept-invite call, as with the original invitation. invite.delivery says
     whether the email went out (as on create): a suppressed address reports

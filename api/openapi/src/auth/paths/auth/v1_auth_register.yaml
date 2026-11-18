@@ -2,9 +2,9 @@ post:
   operationId: signUpInOrganization
   summary: Register (hosted, B2C)
   description: >
-    Creates a new end-user in the client's tenant and sets the SSO cookie
+    Creates a new end-user in the client's organization and sets the SSO cookie
 
-    (qe_ls) so they continue into the OAuth authorize flow. Where the tenant
+    (qe_ls) so they continue into the OAuth authorize flow. Where the organization
 
     requires MFA, no cookie is set: the response is an enrolment challenge
 
@@ -12,9 +12,9 @@ post:
 
     authenticator app is set up. Gated by the
 
-    tenant's self_registration_enabled policy (403 when disabled). The
+    organization's self_registration_enabled policy (403 when disabled). The
 
-    password must meet that tenant's password rules (422 naming the rule
+    password must meet that organization's password rules (422 naming the rule
 
     that failed). An address that already has an account is refused with
 
@@ -22,23 +22,23 @@ post:
 
     name the reason, and every attempt takes at least the same minimum time.
 
-    So is an address on a domain another organisation has verified: only
+    So is an address on a domain another organization has verified: only
 
-    that organisation creates accounts there.
+    that organization creates accounts there.
 
 
-    An address the organisation's address rules refuse answers 403
+    An address the organization's address rules refuse answers 403
 
     auth.address_not_allowed, and no account is created.
 
     A body not sent as JSON is refused (415 unsupported_media_type).
 
-    Where the organisation has password sign-in switched off, it is refused with
+    Where the organization has password sign-in switched off, it is refused with
     403 auth.method_disabled (the answer password sign-in gives) and nothing is
     created.
 
 
-    On a domain whose organisation requires single sign-on, the registration
+    On a domain whose organization requires single sign-on, the registration
 
     is refused with 403 auth.sso_required before anything else is checked,
 
@@ -55,11 +55,11 @@ post:
         schema:
           type: object
           required:
-            - tenant_id
+            - organization_id
             - email
             - password
           properties:
-            tenant_id:
+            organization_id:
               type: string
               format: uuid
             email:

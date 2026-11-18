@@ -3,22 +3,18 @@ package scim
 import (
 	"context"
 	"errors"
-	"net/http"
 	"strings"
 	"time"
 	"unicode/utf8"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 const (
@@ -60,12 +56,9 @@ func (t *Token) Works() bool { return t.Status == TokenActive || t.Status == Tok
 func toToken(r dbgen.ListScimTokensRow, now time.Time) Token {
 	t := Token{
 		ID: r.ID, Name: r.Name, TokenPrefix: r.TokenPrefix, CreatedAt: r.CreatedAt,
-		ExpiresAt: timePtr(r.ExpiresAt), LastUsedAt: timePtr(r.LastUsedAt), RevokedAt: timePtr(r.RevokedAt),
+		ExpiresAt: r.ExpiresAt, LastUsedAt: r.LastUsedAt, RevokedAt: r.RevokedAt,
 	}
-	if r.ReplacedBy.Valid {
-		id := uuid.UUID(r.ReplacedBy.Bytes)
-		t.ReplacedBy = &id
-	}
+	t.ReplacedBy = r.ReplacedBy
 	switch {
 	case t.RevokedAt != nil:
 		t.Status = TokenRevoked
@@ -77,21 +70,6 @@ func toToken(r dbgen.ListScimTokensRow, now time.Time) Token {
 		t.Status = TokenActive
 	}
 	return t
-}
-
-func timePtr(ts pgtype.Timestamptz) *time.Time {
-	if !ts.Valid {
-		return nil
-	}
-	t := ts.Time
-	return &t
-}
-
-func timestamptz(t *time.Time) pgtype.Timestamptz {
-	if t == nil {
-		return pgtype.Timestamptz{}
-	}
-	return pgtype.Timestamptz{Time: *t, Valid: true}
 }
 
 // ConfigView is the admin-facing status of an organization's SCIM endpoint, from the
@@ -144,7 +122,7 @@ func (s *Service) Config(ctx context.Context, organizationID uuid.UUID) (*Config
 			v.LastUsedAt = t.LastUsedAt
 		}
 	}
-	count, err := s.q.CountProvisionedUsers(ctx, pgtype.UUID{Bytes: organizationID, Valid: true})
+	count, err := s.q.CountProvisionedUsers(ctx, &organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -203,7 +181,7 @@ func (s *Service) issue(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID
 		Name:           name,
 		TokenHash:      codes.Hash(full),
 		TokenPrefix:    tokenPrefix + raw[:6],
-		ExpiresAt:      timestamptz(expiresAt),
+		ExpiresAt:      expiresAt,
 		CreatedBy:      httpx.PrincipalUserID(ctx),
 	})
 	if err != nil {
@@ -214,10 +192,26 @@ func (s *Service) issue(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID
 }
 
 // Rotate issues a token in place of every one the organization holds, which
-// stop at once, and returns its plaintext, shown only now.
-func (s *Service) Rotate(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID) (string, error) {
-	_, full, err := s.replaceAll(ctx, tx, organizationID)
-	return full, err
+// stop at once, recorded as actor's, and returns it with its plaintext, shown
+// only now.
+func (s *Service) Rotate(ctx context.Context, organizationID uuid.UUID, actor audit.Actor) (*Token, string, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	defer tx.Rollback(ctx)
+	t, full, err := s.replaceAll(ctx, tx, organizationID)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "scim.token_rotated", "scim_token", t.ID,
+		map[string]any{"name": t.Name, "replaced": "all"})); err != nil {
+		return nil, "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, "", err
+	}
+	return t, full, nil
 }
 
 func (s *Service) replaceAll(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID) (*Token, string, error) {
@@ -229,7 +223,7 @@ func (s *Service) replaceAll(ctx context.Context, tx pgx.Tx, organizationID uuid
 		return nil, "", err
 	}
 	if _, err := s.q.WithTx(tx).RevokeLiveScimTokens(ctx, dbgen.RevokeLiveScimTokensParams{
-		Replacement:    pgtype.UUID{Bytes: t.ID, Valid: true},
+		Replacement:    &t.ID,
 		OrganizationID: organizationID,
 	}); err != nil {
 		return nil, "", err
@@ -237,8 +231,14 @@ func (s *Service) replaceAll(ctx context.Context, tx pgx.Tx, organizationID uuid
 	return t, full, nil
 }
 
-// Revoke stops every token of the organization, which ends provisioning.
-func (s *Service) Revoke(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID) error {
+// Revoke stops every token of the organization, which ends provisioning,
+// recorded as actor's.
+func (s *Service) Revoke(ctx context.Context, organizationID uuid.UUID, actor audit.Actor) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
 	n, err := s.q.WithTx(tx).RevokeLiveScimTokens(ctx, dbgen.RevokeLiveScimTokensParams{OrganizationID: organizationID})
 	if err != nil {
 		return err
@@ -246,7 +246,10 @@ func (s *Service) Revoke(ctx context.Context, tx pgx.Tx, organizationID uuid.UUI
 	if n == 0 {
 		return errs.ErrNotFound
 	}
-	return nil
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "scim.token_revoked", "scim_token", uuid.Nil, nil)); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // TokenInput is what CreateToken takes. A token without an expiry works
@@ -265,7 +268,7 @@ type RotateInput struct {
 
 func checkExpiry(expiresAt *time.Time) error {
 	if expiresAt != nil && !expiresAt.After(time.Now()) {
-		return errs.ErrSCIMTokenExpiryInvalid
+		return ErrTokenExpiryInvalid
 	}
 	return nil
 }
@@ -275,7 +278,7 @@ func checkExpiry(expiresAt *time.Time) error {
 func (s *Service) CreateToken(ctx context.Context, organizationID uuid.UUID, in TokenInput, actor audit.Actor) (*Token, string, error) {
 	name := strings.TrimSpace(in.Name)
 	if name == "" || utf8.RuneCountInString(name) > maxTokenNameLen {
-		return nil, "", errs.ErrSCIMTokenNameInvalid
+		return nil, "", ErrTokenNameInvalid
 	}
 	if err := checkExpiry(in.ExpiresAt); err != nil {
 		return nil, "", err
@@ -293,7 +296,7 @@ func (s *Service) CreateToken(ctx context.Context, organizationID uuid.UUID, in 
 		return nil, "", err
 	}
 	if live >= maxLiveTokens {
-		return nil, "", errs.ErrSCIMTokenLimit.WithMetadata(map[string]any{"limit": maxLiveTokens})
+		return nil, "", ErrTokenLimit.WithMetadata(map[string]any{"limit": maxLiveTokens})
 	}
 	t, full, err := s.issue(ctx, tx, organizationID, name, in.ExpiresAt)
 	if err != nil {
@@ -322,7 +325,7 @@ func (s *Service) RotateToken(ctx context.Context, organizationID, id uuid.UUID,
 		overlap = *in.OverlapHours
 	}
 	if overlap < 0 || overlap > maxOverlapHours {
-		return nil, nil, "", errs.ErrSCIMTokenOverlapInvalid
+		return nil, nil, "", ErrTokenOverlapInvalid
 	}
 	if err := checkExpiry(in.ExpiresAt); err != nil {
 		return nil, nil, "", err
@@ -338,20 +341,20 @@ func (s *Service) RotateToken(ctx context.Context, organizationID, id uuid.UUID,
 	q := s.q.WithTx(tx)
 	row, err := q.LockScimToken(ctx, dbgen.LockScimTokenParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil, "", errs.ErrSCIMTokenNotFound
+		return nil, nil, "", ErrTokenNotFound
 	}
 	if err != nil {
 		return nil, nil, "", err
 	}
 	if current := toToken(dbgen.ListScimTokensRow(row), time.Now()); current.Status != TokenActive {
-		return nil, nil, "", errs.ErrSCIMTokenInactive
+		return nil, nil, "", ErrTokenInactive
 	}
 	fresh, full, err = s.issue(ctx, tx, organizationID, row.Name, in.ExpiresAt)
 	if err != nil {
 		return nil, nil, "", err
 	}
 	replaced, err := q.ReplaceScimToken(ctx, dbgen.ReplaceScimTokenParams{
-		ReplacedBy:     pgtype.UUID{Bytes: fresh.ID, Valid: true},
+		ReplacedBy:     &fresh.ID,
 		OverlapHours:   overlap,
 		ID:             id,
 		OrganizationID: organizationID,
@@ -383,7 +386,7 @@ func (s *Service) RevokeToken(ctx context.Context, organizationID, id uuid.UUID,
 	defer tx.Rollback(ctx)
 	row, err := s.q.WithTx(tx).RevokeScimToken(ctx, dbgen.RevokeScimTokenParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrSCIMTokenNotFound
+		return nil, ErrTokenNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -410,96 +413,9 @@ func (s *Service) resolveToken(ctx context.Context, raw string) (uuid.UUID, erro
 	if err != nil {
 		return uuid.Nil, err
 	}
-	if !row.LastUsedAt.Valid || time.Since(row.LastUsedAt.Time) >= lastUsedEvery {
+	if row.LastUsedAt == nil || time.Since(*row.LastUsedAt) >= lastUsedEvery {
 		// Best-effort; never block the request on it.
 		_ = s.q.TouchScimTokenUsed(ctx, dbgen.TouchScimTokenUsedParams{ID: row.ID, OrganizationID: row.OrganizationID})
 	}
 	return row.OrganizationID, nil
-}
-
-// --- admin handlers ---
-
-func tokenID(r *http.Request) (uuid.UUID, error) {
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		return uuid.Nil, errs.ErrSCIMTokenIDInvalid
-	}
-	return id, nil
-}
-
-func (h *Handler) listTokens(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	tokens, err := h.Service.Tokens(r.Context(), organizationID)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, paging.List(tokens))
-}
-
-func (h *Handler) createToken(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	var in TokenInput
-	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	t, full, err := h.Service.CreateToken(r.Context(), organizationID, in, audit.ActorOf(r))
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"token": full, "scim_token": t})
-}
-
-func (h *Handler) rotateToken(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	id, err := tokenID(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	var in RotateInput
-	if r.ContentLength != 0 {
-		if err := httpx.DecodeJSON(r, &in); err != nil {
-			httpx.WriteError(w, r, err)
-			return
-		}
-	}
-	fresh, old, full, err := h.Service.RotateToken(r.Context(), organizationID, id, in, audit.ActorOf(r))
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"token": full, "scim_token": fresh, "replaced": old})
-}
-
-func (h *Handler) revokeToken(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	id, err := tokenID(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if _, err := h.Service.RevokeToken(r.Context(), organizationID, id, audit.ActorOf(r)); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
 }

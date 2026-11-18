@@ -1,6 +1,6 @@
 type: object
 description: >-
-  An audit an external body carried out on the organisation, or a certificate it
+  An audit an external body carried out on the organization, or a certificate it
   issued.
 properties:
   id:

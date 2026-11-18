@@ -4,7 +4,7 @@ get:
   description: >-
     Returns the anchor event plus events correlated with it by request_id and by
     the same actor within a symmetric time window. The anchor lookup is
-    tenant-scoped — an unknown id or a foreign tenant's id both return 404. An
+    organization-scoped — an unknown id or a foreign organization's id both return 404. An
     event never appears in both correlation lists.
   tags:
     - Activity

@@ -5,15 +5,15 @@ post:
     alongside the created user record. The password must meet the platform
     baseline (8 characters), the offline strength baseline and, when enabled,
     the breached-password check (422 naming the rule that failed). The new user
-    is tenant-less: no tenant is created here, so the returned token carries no
-    tenant scope. Create a tenant through the Identity Management API before any
-    tenant-scoped call, after which the creator becomes the tenant owner. An
+    is organization-less: no organization is created here, so the returned token carries no
+    organization scope. Create an organization through the Identity Management API before any
+    organization-scoped call, after which the creator becomes the organization owner. An
     address that already has an account is refused with a neutral 422
     unprocessable that does not name the reason (it suggests signing in or
     resetting the password), every attempt takes at least the same minimum time,
-    and the endpoint is rate limited. An address on a domain an organisation has
-    verified gets the same answer and no account: that organisation creates its
-    people's accounts. On a domain whose organisation requires
+    and the endpoint is rate limited. An address on a domain an organization has
+    verified gets the same answer and no account: that organization creates its
+    people's accounts. On a domain whose organization requires
     single sign-on, the sign-up is refused with 403 auth.sso_required before
     anything else is checked, and nothing is created: the identity provider
     creates the account (see the SSORequired response).

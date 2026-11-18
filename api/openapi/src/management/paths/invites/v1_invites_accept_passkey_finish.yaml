@@ -3,13 +3,13 @@ post:
   summary: Accept an invitation with a passkey — finish (public)
   description: >-
     Verifies the passkey and, in one transaction, creates the account in the
-    inviting organisation with it, grants the invited role and marks the
+    inviting organization with it, grants the invited role and marks the
     invitation accepted; then signs the invitee in, returning a token pair as
     POST /v1/invites/accept does. Each ceremony finishes once: a second attempt,
     or one after the ceremony expired (auth.session_expired), creates nothing
     and leaves the invitation as it was. Refused, with nothing created, when the
     invitation was accepted, revoked or expired meanwhile, its sender may no
-    longer give it (400 invite.invalid), or the organisation switched passkeys
+    longer give it (400 invite.invalid), or the organization switched passkeys
     off.
   tags:
     - Invites

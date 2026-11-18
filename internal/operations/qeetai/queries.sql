@@ -151,3 +151,9 @@ DELETE FROM qeetai.conversations WHERE id IN (
     SELECT c.id FROM qeetai.conversations c
     WHERE c.organization_id = @organization_id AND c.updated_at < NOW() - make_interval(days => @days::int)
     LIMIT @row_limit);
+
+-- name: ResealProviderKey :exec
+-- Stores the organization's key sealed again with the current encryption key.
+UPDATE qeetai.provider_settings
+SET key_ciphertext = @key_ciphertext, key_nonce = @key_nonce
+WHERE organization_id = @organization_id;

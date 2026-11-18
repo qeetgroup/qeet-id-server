@@ -3,7 +3,7 @@ package bootstrap
 import "github.com/qeetgroup/qeet-id-server/internal/operations/ratelimits"
 
 // The platform's request limits, each built once from here and reported by
-// GET /v1/tenants/{tenantID}/rate-limits, so the two can't drift apart.
+// GET /v1/organizations/{organizationID}/rate-limits, so the two can't drift apart.
 
 // The default organization, person and API-key buckets, which are also their
 // ceilings: an organization may tighten them, never lift them.
@@ -18,7 +18,7 @@ var (
 	loginLimit = ratelimits.BuiltInLimit{Name: "public", Per: "ip", Bucket: ratelimits.Bucket{Rate: 5, Capacity: 20},
 		Applies: "Unauthenticated /v1 routes: sign-in, sign-up, recovery, invitations and the hosted pages' calls"}
 	tokenLimit = ratelimits.BuiltInLimit{Name: "token", Per: "ip", Bucket: ratelimits.Bucket{Rate: 50, Capacity: 200},
-		Applies: "The OAuth token endpoints, which serve an application's exchanges for all its users"}
+		Applies: "The OAuth token endpoint, which serves an application's exchanges for all its users and the machine identities' own tokens"}
 	credentialLimit = ratelimits.BuiltInLimit{Name: "directory_credentials", Per: "ip", Bucket: ratelimits.Bucket{Rate: 5, Capacity: 20},
 		Applies: "LDAP sign-in outside /v1"}
 	protocolLimit = ratelimits.BuiltInLimit{Name: "protocol", Per: "ip", Bucket: ratelimits.Bucket{Rate: 50, Capacity: 200},

@@ -60,15 +60,25 @@ FROM account.email_verifications
 WHERE user_id = @user_id AND purpose = @purpose AND attempts > 0
   AND (created_at > NOW() - INTERVAL '1 hour' OR expires_at > NOW());
 
--- GetLatestEmailVerification selects the most-recent verification row for the
--- given user + code and locks it for update so concurrent Confirm calls don't race.
--- name: GetLatestEmailVerification :one
-SELECT id, expires_at, used_at
+-- NewestEmailCode locks and returns the user's most recent email code for
+-- purpose. It doesn't filter on the submitted code, so only the newest code
+-- can match: a resend supersedes the code before it.
+-- name: NewestEmailCode :one
+SELECT id, code_hash, email, expires_at, used_at, attempts
 FROM account.email_verifications
-WHERE user_id = $1 AND code_hash = $2
+WHERE user_id = @user_id AND purpose = @purpose
 ORDER BY created_at DESC
 LIMIT 1
 FOR UPDATE;
+
+-- ChargeEmailCodeGuess counts one wrong guess at email code id and reports
+-- whether that spent its @max_attempts, retiring it on the guess that does.
+-- name: ChargeEmailCodeGuess :one
+UPDATE account.email_verifications
+SET attempts = attempts + 1,
+    used_at  = CASE WHEN attempts + 1 >= @max_attempts::int THEN NOW() ELSE used_at END
+WHERE id = @id
+RETURNING (attempts >= @max_attempts::int)::boolean AS exhausted;
 
 -- name: MarkEmailVerificationUsed :exec
 UPDATE account.email_verifications SET used_at = NOW() WHERE id = $1;
@@ -80,16 +90,6 @@ UPDATE account.email_verifications SET used_at = NOW() WHERE id = $1;
 SELECT EXISTS(
     SELECT 1 FROM account.users WHERE lower(email) = lower(@email) AND id <> @user_id
 )::boolean;
-
--- GetLatestEmailChange is like GetLatestEmailVerification but also returns the
--- pending new email so confirm can swap it onto the user.
--- name: GetLatestEmailChange :one
-SELECT id, email, expires_at, used_at
-FROM account.email_verifications
-WHERE user_id = @user_id AND code_hash = @code_hash
-ORDER BY created_at DESC
-LIMIT 1
-FOR UPDATE;
 
 -- UpdateUserEmail swaps the user's login email and marks it verified (they just
 -- proved control of the new address). May hit the global-unique index if the
@@ -145,25 +145,29 @@ FROM account.phone_verifications
 WHERE user_id = @user_id AND attempts > 0
   AND (created_at > NOW() - INTERVAL '1 hour' OR expires_at > NOW());
 
--- name: GetLatestPhoneVerification :one
-SELECT id, phone, expires_at, used_at
+-- NewestPhoneCode is NewestEmailCode for phone codes.
+-- name: NewestPhoneCode :one
+SELECT id, code_hash, phone, expires_at, used_at, attempts
 FROM account.phone_verifications
-WHERE user_id = $1 AND code_hash = $2
+WHERE user_id = $1
 ORDER BY created_at DESC
 LIMIT 1
 FOR UPDATE;
 
+-- ChargePhoneCodeGuess is ChargeEmailCodeGuess for phone codes.
+-- name: ChargePhoneCodeGuess :one
+UPDATE account.phone_verifications
+SET attempts = attempts + 1,
+    used_at  = CASE WHEN attempts + 1 >= @max_attempts::int THEN NOW() ELSE used_at END
+WHERE id = @id
+RETURNING (attempts >= @max_attempts::int)::boolean AS exhausted;
+
 -- name: MarkPhoneVerificationUsed :exec
 UPDATE account.phone_verifications SET used_at = NOW() WHERE id = $1;
 
--- name: MarkUserPhoneVerified :exec
-UPDATE account.users
-SET phone_verified_at = COALESCE(phone_verified_at, NOW()), updated_at = NOW()
-WHERE id = $1;
-
--- SetUserVerifiedPhone persists the just-verified number AND stamps the verified
--- time. Unlike MarkUserPhoneVerified it writes users.phone and re-stamps the time
--- (no COALESCE) — the number just changed, so its prior verification is void.
+-- SetUserVerifiedPhone persists the just-verified number and stamps the
+-- verified time afresh: the number may have changed, voiding any earlier
+-- verification.
 -- name: SetUserVerifiedPhone :exec
 UPDATE account.users
 SET phone = @phone, phone_verified_at = NOW(), updated_at = NOW()

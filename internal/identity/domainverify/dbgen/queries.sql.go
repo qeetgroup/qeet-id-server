@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const deleteBreakGlassMember = `-- name: DeleteBreakGlassMember :execrows
@@ -156,7 +155,7 @@ type GetDomainForVerifyRow struct {
 	ID                uuid.UUID
 	Domain            string
 	VerificationToken string
-	VerifiedAt        pgtype.Timestamptz
+	VerifiedAt        *time.Time
 	CreatedAt         time.Time
 }
 
@@ -199,7 +198,7 @@ ON CONFLICT (organization_id, user_id) DO NOTHING
 type InsertBreakGlassMemberParams struct {
 	OrganizationID uuid.UUID
 	UserID         uuid.UUID
-	CreatedBy      pgtype.UUID
+	CreatedBy      *uuid.UUID
 }
 
 func (q *Queries) InsertBreakGlassMember(ctx context.Context, arg InsertBreakGlassMemberParams) (int64, error) {
@@ -227,7 +226,7 @@ type InsertDomainRow struct {
 	ID                uuid.UUID
 	Domain            string
 	VerificationToken string
-	VerifiedAt        pgtype.Timestamptz
+	VerifiedAt        *time.Time
 	CreatedAt         time.Time
 }
 
@@ -322,7 +321,7 @@ type ListBreakGlassMembersRow struct {
 	UserID      uuid.UUID
 	Email       string
 	DisplayName *string
-	CreatedBy   pgtype.UUID
+	CreatedBy   *uuid.UUID
 	CreatedAt   time.Time
 }
 
@@ -354,18 +353,27 @@ func (q *Queries) ListBreakGlassMembers(ctx context.Context, organizationID uuid
 }
 
 const listDomains = `-- name: ListDomains :many
-SELECT id, domain, verification_token, verified_at, created_at
-FROM organization.domains WHERE organization_id = $1 ORDER BY created_at DESC
+SELECT id, domain, verification_token, verified_at, created_at,
+       last_checked_at, COALESCE(last_error, '')::text AS last_error, sso_enabled, jit_enabled
+FROM organization.domains
+WHERE organization_id = $1
+ORDER BY domain
 `
 
 type ListDomainsRow struct {
 	ID                uuid.UUID
 	Domain            string
 	VerificationToken string
-	VerifiedAt        pgtype.Timestamptz
+	VerifiedAt        *time.Time
 	CreatedAt         time.Time
+	LastCheckedAt     *time.Time
+	LastError         string
+	SsoEnabled        bool
+	JitEnabled        bool
 }
 
+// ListDomains lists an organization's domains with their switches and the
+// outcome of their last check.
 func (q *Queries) ListDomains(ctx context.Context, organizationID uuid.UUID) ([]ListDomainsRow, error) {
 	rows, err := q.db.Query(ctx, listDomains, organizationID)
 	if err != nil {
@@ -381,6 +389,10 @@ func (q *Queries) ListDomains(ctx context.Context, organizationID uuid.UUID) ([]
 			&i.VerificationToken,
 			&i.VerifiedAt,
 			&i.CreatedAt,
+			&i.LastCheckedAt,
+			&i.LastError,
+			&i.SsoEnabled,
+			&i.JitEnabled,
 		); err != nil {
 			return nil, err
 		}
@@ -390,6 +402,18 @@ func (q *Queries) ListDomains(ctx context.Context, organizationID uuid.UUID) ([]
 		return nil, err
 	}
 	return items, nil
+}
+
+const loginHost = `-- name: LoginHost :one
+SELECT COALESCE(custom_domain, '')::text FROM organization.branding WHERE organization_id = $1
+`
+
+// LoginHost is the organization's custom login hostname as stored; ” for none.
+func (q *Queries) LoginHost(ctx context.Context, organizationID uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, loginHost, organizationID)
+	var column_1 string
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const markDomainVerified = `-- name: MarkDomainVerified :one
@@ -407,7 +431,7 @@ type MarkDomainVerifiedRow struct {
 	ID                uuid.UUID
 	Domain            string
 	VerificationToken string
-	VerifiedAt        pgtype.Timestamptz
+	VerifiedAt        *time.Time
 	CreatedAt         time.Time
 }
 
@@ -436,6 +460,24 @@ func (q *Queries) OrganizationName(ctx context.Context, organizationID uuid.UUID
 	return name, err
 }
 
+const recordDomainCheck = `-- name: RecordDomainCheck :exec
+UPDATE organization.domains SET last_checked_at = NOW(), last_error = $1
+WHERE id = $2 AND organization_id = $3
+`
+
+type RecordDomainCheckParams struct {
+	LastError      *string
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+// RecordDomainCheck stamps a verification attempt: its failure, or NULL for
+// one that found the record.
+func (q *Queries) RecordDomainCheck(ctx context.Context, arg RecordDomainCheckParams) error {
+	_, err := q.db.Exec(ctx, recordDomainCheck, arg.LastError, arg.ID, arg.OrganizationID)
+	return err
+}
+
 const saveLoginDomainCheck = `-- name: SaveLoginDomainCheck :exec
 INSERT INTO organization.login_domain_checks (organization_id, host, checked_at, result)
 VALUES ($1, $2, $3, $4)
@@ -458,4 +500,55 @@ func (q *Queries) SaveLoginDomainCheck(ctx context.Context, arg SaveLoginDomainC
 		arg.Result,
 	)
 	return err
+}
+
+const updateDomainSettings = `-- name: UpdateDomainSettings :one
+UPDATE organization.domains SET
+    sso_enabled = COALESCE($1::boolean, sso_enabled),
+    jit_enabled = COALESCE($2::boolean, jit_enabled)
+WHERE id = $3 AND organization_id = $4
+RETURNING id, domain, verification_token, verified_at, created_at,
+          last_checked_at, COALESCE(last_error, '')::text AS last_error, sso_enabled, jit_enabled
+`
+
+type UpdateDomainSettingsParams struct {
+	SsoEnabled     *bool
+	JitEnabled     *bool
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+type UpdateDomainSettingsRow struct {
+	ID                uuid.UUID
+	Domain            string
+	VerificationToken string
+	VerifiedAt        *time.Time
+	CreatedAt         time.Time
+	LastCheckedAt     *time.Time
+	LastError         string
+	SsoEnabled        bool
+	JitEnabled        bool
+}
+
+// UpdateDomainSettings sets the switches given; a NULL one keeps its value.
+func (q *Queries) UpdateDomainSettings(ctx context.Context, arg UpdateDomainSettingsParams) (UpdateDomainSettingsRow, error) {
+	row := q.db.QueryRow(ctx, updateDomainSettings,
+		arg.SsoEnabled,
+		arg.JitEnabled,
+		arg.ID,
+		arg.OrganizationID,
+	)
+	var i UpdateDomainSettingsRow
+	err := row.Scan(
+		&i.ID,
+		&i.Domain,
+		&i.VerificationToken,
+		&i.VerifiedAt,
+		&i.CreatedAt,
+		&i.LastCheckedAt,
+		&i.LastError,
+		&i.SsoEnabled,
+		&i.JitEnabled,
+	)
+	return i, err
 }

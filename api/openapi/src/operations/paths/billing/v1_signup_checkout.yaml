@@ -3,14 +3,14 @@ post:
   description: >-
     Begins a hosted payment for a plan chosen during signup, before any
     organization exists. The organization is created only once payment
-    completes, so an abandoned checkout never leaves a dangling tenant. Scoped
+    completes, so an abandoned checkout never leaves a dangling organization. Scoped
     to the authenticated user; the organization name and slug are required and
     the return URLs must be valid absolute URLs. Returns the details needed to
     redirect the browser to the payment provider. When invoice tax is
     configured, the provider charges the total tax included, taxed by the
     billing country given, and the new organization's paid invoice shows that
     charge.
-  summary: Start paid-plan checkout before tenant creation
+  summary: Start paid-plan checkout before organization creation
   tags:
     - Billing
   security:

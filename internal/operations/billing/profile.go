@@ -9,8 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/billing/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/billing/dbgen"
 )
 
 var gstinRe = regexp.MustCompile(`^[0-9A-Z]{15}$`)
@@ -54,16 +53,16 @@ func (s *Service) UpsertBillingProfile(ctx context.Context, organizationID uuid.
 		p.TaxID = ""
 	case "gstin":
 		if !gstinRe.MatchString(strings.ToUpper(strings.TrimSpace(p.TaxID))) {
-			return errs.ErrBillingTaxIDInvalid.WithMessage("Enter a valid 15-character GSTIN.")
+			return ErrTaxIDInvalid.WithMessage("Enter a valid 15-character GSTIN.")
 		}
 		p.TaxID = strings.ToUpper(strings.TrimSpace(p.TaxID))
 	case "vat":
 		if strings.TrimSpace(p.TaxID) == "" {
-			return errs.ErrBillingTaxIDInvalid.WithMessage("Enter your VAT number.")
+			return ErrTaxIDInvalid.WithMessage("Enter your VAT number.")
 		}
 		p.TaxID = strings.ToUpper(strings.TrimSpace(p.TaxID))
 	default:
-		return errs.ErrBillingTaxIDInvalid.WithMessage("Unsupported tax ID type.")
+		return ErrTaxIDInvalid.WithMessage("Unsupported tax ID type.")
 	}
 	return s.q.UpsertBillingProfile(ctx, dbgen.UpsertBillingProfileParams{
 		OrganizationID: organizationID,

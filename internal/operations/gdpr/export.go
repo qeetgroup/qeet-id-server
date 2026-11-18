@@ -3,14 +3,18 @@ package gdpr
 import (
 	"context"
 	"encoding/json"
-	"strings"
+	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/gdpr/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/gdpr/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 // ExportRetention is how long a built export's payload is kept for download.
@@ -28,145 +32,194 @@ func ExpireExports(ctx context.Context, pool *pgxpool.Pool, retention time.Durat
 	})
 }
 
-type exportIdentity struct {
-	Provider string    `json:"provider"`
-	Subject  string    `json:"subject"`
-	Email    *string   `json:"email,omitempty"`
-	LinkedAt time.Time `json:"linked_at"`
+// ExportRequest is a data-export job. The background sweep (exportSweepTick)
+// fills in Payload and sets Status to "ready".
+type ExportRequest struct {
+	ID             uuid.UUID      `json:"id"`
+	OrganizationID uuid.UUID      `json:"organization_id"`
+	UserID         uuid.UUID      `json:"user_id"`
+	RequestedBy    *uuid.UUID     `json:"requested_by"`
+	Status         string         `json:"status"`
+	Payload        map[string]any `json:"payload,omitempty"`
+	Error          *string        `json:"error,omitempty"`
+	CompletedAt    *time.Time     `json:"completed_at"`
+	CreatedAt      time.Time      `json:"created_at"`
 }
 
-type exportOTPFactor struct {
-	Channel     string     `json:"channel"`
-	Destination string     `json:"destination"` // masked
-	VerifiedAt  *time.Time `json:"verified_at,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
+// ExportInput is a data-export request to queue.
+type ExportInput struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	UserID         uuid.UUID `json:"user_id"`
 }
 
-type exportConsent struct {
-	ClientID   string    `json:"client_id"`
-	ClientName string    `json:"client_name"`
-	Scopes     []string  `json:"scopes"`
-	GrantedAt  time.Time `json:"granted_at"`
-}
-
-type exportGrant struct {
-	ClientID   string    `json:"client_id"`
-	ClientName string    `json:"client_name"`
-	Scopes     []string  `json:"scopes"`
-	IssuedAt   time.Time `json:"issued_at"`
-	ExpiresAt  time.Time `json:"expires_at"`
-}
-
-type exportGroup struct {
-	Name         string    `json:"name"`
-	Organization string    `json:"organization"`
-	AddedAt      time.Time `json:"added_at"`
-}
-
-type exportSignIn struct {
-	At           time.Time `json:"at"`
-	Succeeded    bool      `json:"succeeded"`
-	Method       string    `json:"method,omitempty"`
-	IP           string    `json:"ip,omitempty"`
-	UserAgent    string    `json:"user_agent,omitempty"`
-	Organization string    `json:"organization,omitempty"`
-}
-
-// exportSections adds to out the sections both exports share: linked
-// accounts, email and SMS factors (their destinations masked), application
-// consents and live grants, group memberships and the latest sign-ins. With
-// organizationID set they cover that organization's part only.
-func exportSections(ctx context.Context, q *dbgen.Queries, userID uuid.UUID, organizationID *uuid.UUID, out map[string]any) error {
-	organization := pgUUIDNullable(organizationID)
-
-	idRows, err := q.ListUserIdentitiesForExport(ctx, dbgen.ListUserIdentitiesForExportParams{UserID: userID, OrganizationID: organization})
+// RequestExport queues a data export by actor, recorded as theirs, for a user
+// whose home organization is in.OrganizationID. The background sweep builds it; poll
+// GetExport for the result.
+func (s *Service) RequestExport(ctx context.Context, in ExportInput, actor audit.Actor) (*ExportRequest, error) {
+	owned, err := s.userBelongsToOrganization(ctx, in.UserID, in.OrganizationID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	identities := make([]exportIdentity, 0, len(idRows))
-	for _, r := range idRows {
-		identities = append(identities, exportIdentity{Provider: r.Provider, Subject: r.Subject, Email: r.Email, LinkedAt: r.LinkedAt})
+	if !owned {
+		return nil, errs.ErrNotFound
 	}
-
-	factorRows, err := q.ListUserOTPFactorsForExport(ctx, userID)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	factors := make([]exportOTPFactor, 0, len(factorRows))
-	for _, r := range factorRows {
-		factors = append(factors, exportOTPFactor{
-			Channel: r.Channel, Destination: maskDestination(r.Channel, r.Destination),
-			VerifiedAt: toTimePtr(r.VerifiedAt), CreatedAt: r.CreatedAt,
+	defer tx.Rollback(ctx)
+	row, err := s.q.WithTx(tx).InsertExportRequest(ctx, dbgen.InsertExportRequestParams{
+		OrganizationID: in.OrganizationID,
+		SubjectID:      in.UserID,
+		RequestedBy:    actor.UserID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := audit.Record(ctx, tx, actor.Event(row.OrganizationID, "gdpr.export_requested", "export_request", row.ID,
+		map[string]any{"user_id": row.SubjectID})); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return &ExportRequest{
+		ID:             row.ID,
+		OrganizationID: row.OrganizationID,
+		UserID:         row.SubjectID,
+		RequestedBy:    row.RequestedBy,
+		Status:         row.Status,
+		CompletedAt:    row.CompletedAt,
+		CreatedAt:      row.CreatedAt,
+	}, nil
+}
+
+// ListExports returns the organization's 200 most recent export requests, newest
+// first, without payloads.
+func (s *Service) ListExports(ctx context.Context, organizationID uuid.UUID) ([]ExportRequest, error) {
+	rows, err := s.q.ListExportRequests(ctx, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ExportRequest, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, ExportRequest{
+			ID:             r.ID,
+			OrganizationID: r.OrganizationID,
+			UserID:         r.SubjectID,
+			RequestedBy:    r.RequestedBy,
+			Status:         r.Status,
+			Error:          r.Error,
+			CompletedAt:    r.CompletedAt,
+			CreatedAt:      r.CreatedAt,
 		})
 	}
+	return out, nil
+}
 
-	consentRows, err := q.ListUserConsentsForExport(ctx, dbgen.ListUserConsentsForExportParams{UserID: userID, OrganizationID: organization})
+// GetExport returns one of the organization's export requests, with its payload once
+// ready.
+func (s *Service) GetExport(ctx context.Context, organizationID, id uuid.UUID) (*ExportRequest, error) {
+	r, err := s.q.GetExportRequest(ctx, dbgen.GetExportRequestParams{
+		ID:             id,
+		OrganizationID: organizationID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := &ExportRequest{
+		ID:             r.ID,
+		OrganizationID: r.OrganizationID,
+		UserID:         r.SubjectID,
+		RequestedBy:    r.RequestedBy,
+		Status:         r.Status,
+		Error:          r.Error,
+		CompletedAt:    r.CompletedAt,
+		CreatedAt:      r.CreatedAt,
+	}
+	if len(r.Payload) > 0 {
+		if err := json.Unmarshal(r.Payload, &out.Payload); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// exportSweepTick leases up to 20 pending export requests and builds their
+// payloads, marking a request "failed" if building it fails.
+func (s *Service) exportSweepTick(ctx context.Context) error {
+	batch, err := s.q.LeasePendingExportRequests(ctx, dbgen.LeasePendingExportRequestsParams{
+		LeaseOwner: s.workerID,
+		LeaseUntil: time.Now().UTC().Add(s.lease),
+	})
 	if err != nil {
 		return err
 	}
-	consents := make([]exportConsent, 0, len(consentRows))
-	for _, r := range consentRows {
-		consents = append(consents, exportConsent{ClientID: r.ClientID, ClientName: r.ClientName, Scopes: r.Scopes, GrantedAt: r.GrantedAt})
+	for _, e := range batch {
+		if err := s.buildExport(ctx, e.ID, e.OrganizationID, e.SubjectID); err != nil {
+			slog.Warn("gdpr export", "user", e.SubjectID, "err", err)
+			if err := s.failExport(ctx, e.ID, e.OrganizationID, e.SubjectID, err.Error()); err != nil {
+				slog.Warn("gdpr export: mark failed", "request_id", e.ID, "err", err)
+			}
+		}
 	}
-
-	grantRows, err := q.ListUserGrantsForExport(ctx, dbgen.ListUserGrantsForExportParams{UserID: userID, OrganizationID: organization})
-	if err != nil {
-		return err
-	}
-	grants := make([]exportGrant, 0, len(grantRows))
-	for _, r := range grantRows {
-		grants = append(grants, exportGrant{ClientID: r.ClientID, ClientName: r.ClientName, Scopes: r.Scopes,
-			IssuedAt: r.IssuedAt, ExpiresAt: r.ExpiresAt})
-	}
-
-	groupRows, err := q.ListUserGroupsForExport(ctx, dbgen.ListUserGroupsForExportParams{UserID: userID, OrganizationID: organization})
-	if err != nil {
-		return err
-	}
-	groups := make([]exportGroup, 0, len(groupRows))
-	for _, r := range groupRows {
-		groups = append(groups, exportGroup{Name: r.Name, Organization: r.Organization, AddedAt: r.AddedAt})
-	}
-
-	signInRows, err := q.ListUserSignInsForExport(ctx, dbgen.ListUserSignInsForExportParams{UserID: userID, OrganizationID: organization})
-	if err != nil {
-		return err
-	}
-	signIns := make([]exportSignIn, 0, len(signInRows))
-	for _, r := range signInRows {
-		signIns = append(signIns, exportSignIn{At: r.CreatedAt, Succeeded: r.Succeeded, Method: r.Method,
-			IP: r.Ip, UserAgent: r.UserAgent, Organization: r.Organization})
-	}
-
-	out["identities"] = identities
-	out["otp_factors"] = factors
-	out["app_consents"] = consents
-	out["app_grants"] = grants
-	out["groups"] = groups
-	out["sign_ins"] = signIns
 	return nil
 }
 
-// maskDestination keeps the first character of an email address's local part
-// and the last three digits of a phone number.
-func maskDestination(channel, dest string) string {
-	if channel == "email" {
-		at := strings.IndexByte(dest, '@')
-		if at < 1 {
-			return "***"
-		}
-		return dest[:1] + "***" + dest[at:]
+// buildExport stores the payload of a leased export request and marks it
+// ready, recorded in the same transaction.
+func (s *Service) buildExport(ctx context.Context, requestID, organizationID, userID uuid.UUID) error {
+	payload, err := s.collectUserData(ctx, organizationID, userID)
+	if err != nil {
+		return err
 	}
-	if len(dest) <= 3 {
-		return "***"
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return err
 	}
-	return "***" + dest[len(dest)-3:]
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	n, err := s.q.WithTx(tx).CompleteExportRequest(ctx, dbgen.CompleteExportRequestParams{
+		ID: requestID, LeaseOwner: s.workerID, Payload: raw,
+	})
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return errors.New("GDPR export lease lost before completion")
+	}
+	if err := recordSweep(ctx, tx, organizationID, "gdpr.export_completed", "export_request", requestID, userID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
-// metadataOf decodes a user's metadata column; an unreadable value exports as
-// empty.
-func metadataOf(raw []byte) map[string]any {
-	out := map[string]any{}
-	_ = json.Unmarshal(raw, &out)
-	return out
+// failExport marks a leased export request failed with msg, recorded in the
+// same transaction. A request whose lease has passed to another worker is left
+// alone.
+func (s *Service) failExport(ctx context.Context, requestID, organizationID, userID uuid.UUID, msg string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	n, err := s.q.WithTx(tx).FailExportRequest(ctx, dbgen.FailExportRequestParams{
+		ErrorMsg:       &msg,
+		ID:             requestID,
+		OrganizationID: organizationID,
+		LeaseOwner:     &s.workerID,
+	})
+	if err != nil || n != 1 {
+		return err
+	}
+	if err := recordSweep(ctx, tx, organizationID, "gdpr.export_failed", "export_request", requestID, userID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }

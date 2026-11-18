@@ -3,12 +3,15 @@ package audit
 import (
 	"encoding/hex"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 // Fixed inputs, so the tests are deterministic.
@@ -61,7 +64,7 @@ func TestCanonicalize_Snapshot(t *testing.T) {
 	// If this snapshot changes, every existing audit chain in production
 	// breaks. Bump a chain-version column before changing the canonical
 	// format.
-	want := `{"id":"11111111-1111-4111-8111-111111111111","tenant_id":"22222222-2222-4222-8222-222222222222","actor_user_id":"33333333-3333-4333-8333-333333333333","actor_type":"user","action":"user.create","resource_type":"user","resource_id":"44444444-4444-4444-8444-444444444444","ip":"192.168.1.1","user_agent":"test-agent","request_id":"req-1","metadata":{"k":"v","n":42},"created_at":"2026-05-26T10:00:00Z","prev_hash":"0000000000000000000000000000000000000000000000000000000000000000"}`
+	want := `{"id":"11111111-1111-4111-8111-111111111111","organization_id":"22222222-2222-4222-8222-222222222222","actor_user_id":"33333333-3333-4333-8333-333333333333","actor_type":"user","action":"user.create","resource_type":"user","resource_id":"44444444-4444-4444-8444-444444444444","ip":"192.168.1.1","user_agent":"test-agent","request_id":"req-1","metadata":{"k":"v","n":42},"created_at":"2026-05-26T10:00:00Z","prev_hash":"0000000000000000000000000000000000000000000000000000000000000000"}`
 	if string(got) != want {
 		t.Errorf("canonical bytes changed.\n got: %s\nwant: %s", got, want)
 	}
@@ -102,7 +105,7 @@ func TestCanonicalize_NilUUIDsRenderEmpty(t *testing.T) {
 		t.Fatalf("canonicalize: %v", err)
 	}
 	s := string(out)
-	for _, fld := range []string{`"tenant_id":""`, `"actor_user_id":""`, `"resource_id":""`} {
+	for _, fld := range []string{`"organization_id":""`, `"actor_user_id":""`, `"resource_id":""`} {
 		if !strings.Contains(s, fld) {
 			t.Errorf("expected %s in canonical: %s", fld, s)
 		}
@@ -244,5 +247,59 @@ func TestChanges(t *testing.T) {
 	}
 	if got := Changes(map[string]any{"a": 1}, map[string]any{"a": 1}); len(got) != 0 {
 		t.Errorf("Changes of an unchanged field = %v, want none", got)
+	}
+}
+
+// TestActorOf checks who a request's audit events name: the system with no
+// principal, a user for a principal naming no type, and otherwise its type.
+func TestActorOf(t *testing.T) {
+	userID := uuid.New()
+	for _, c := range []struct {
+		name      string
+		principal *httpx.Principal
+		wantType  string
+		wantUser  *uuid.UUID
+	}{
+		{"no principal", nil, "system", nil},
+		{"a principal naming no type", &httpx.Principal{UserID: &userID}, "user", &userID},
+		{"an API key", &httpx.Principal{ActorType: "api_key"}, "api_key", nil},
+	} {
+		r := httptest.NewRequest(http.MethodPost, "/", nil)
+		r.Header.Set("User-Agent", "test-agent")
+		if c.principal != nil {
+			r = r.WithContext(httpx.WithPrincipal(r.Context(), c.principal))
+		}
+		a := ActorOf(r)
+		if a.Type != c.wantType || a.UserID != c.wantUser || a.UserAgent != "test-agent" {
+			t.Errorf("%s: %+v, want type %q and user %v", c.name, a, c.wantType, c.wantUser)
+		}
+	}
+}
+
+// TestEventIn checks the event an actor's action makes: with the actor's
+// provenance, on its organization's chain or a platform chain, and with no
+// resource for uuid.Nil.
+func TestEventIn(t *testing.T) {
+	userID, organizationID, resourceID := uuid.New(), uuid.New(), uuid.New()
+	a := Actor{UserID: &userID, Type: "user", IP: "203.0.113.7", UserAgent: "ua", RequestID: "req"}
+	meta := map[string]any{"k": "v"}
+
+	e := a.EventIn(&organizationID, "thing.done", "thing", resourceID, meta)
+	if e.OrganizationID == nil || *e.OrganizationID != organizationID || e.ResourceID == nil || *e.ResourceID != resourceID ||
+		e.ActorUserID != &userID || e.ActorType != "user" || e.IP != a.IP || e.UserAgent != a.UserAgent || e.RequestID != a.RequestID ||
+		e.Action != "thing.done" || e.ResourceType != "thing" || e.Metadata["k"] != "v" {
+		t.Errorf("organization event: %+v", e)
+	}
+	if e.OrganizationID == &organizationID {
+		t.Error("the event shares the caller's organization variable")
+	}
+	if p := a.EventIn(nil, "thing.done", "thing", resourceID, nil); p.OrganizationID != nil {
+		t.Errorf("platform event on organization %v", *p.OrganizationID)
+	}
+	if n := a.EventIn(&organizationID, "thing.done", "thing", uuid.Nil, nil); n.ResourceID != nil {
+		t.Errorf("uuid.Nil recorded as resource %v", *n.ResourceID)
+	}
+	if ev, in := a.Event(organizationID, "x", "y", resourceID, meta), a.EventIn(&organizationID, "x", "y", resourceID, meta); *ev.OrganizationID != *in.OrganizationID || *ev.ResourceID != *in.ResourceID {
+		t.Errorf("Event %+v differs from EventIn %+v", ev, in)
 	}
 }

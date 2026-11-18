@@ -5,34 +5,22 @@ package analytics
 
 import (
 	"context"
-	"net/http"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/analytics/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/analytics/dbgen"
 )
 
 // Reader computes an organization's dashboard projections.
 type Reader struct {
-	pool *pgxpool.Pool  // queries sqlc cannot type: mixed-type CASE, jsonb ->>, bigint+numeric
-	q    *dbgen.Queries // the static aggregations of queries.sql
+	q *dbgen.Queries
 }
 
 // NewReader returns a Reader over pool.
 func NewReader(pool *pgxpool.Pool) *Reader {
-	return &Reader{pool: pool, q: dbgen.New(pool)}
-}
-
-// pgUUID converts id to the pgtype.UUID that the generated query parameters
-// take.
-func pgUUID(id uuid.UUID) pgtype.UUID {
-	return pgtype.UUID{Bytes: id, Valid: true}
+	return &Reader{q: dbgen.New(pool)}
 }
 
 // Overview is the admin dashboard's payload. Timestamps are RFC3339 UTC.
@@ -168,14 +156,14 @@ func (r *Reader) Overview(ctx context.Context, organizationID uuid.UUID) (*Overv
 func (r *Reader) kpis(ctx context.Context, tid uuid.UUID, out *Overview) error {
 	// MAU: distinct people who signed in in the last 30 days, against the 30
 	// days before.
-	mau, err := r.q.CountMAUWindows(ctx, pgUUID(tid))
+	mau, err := r.q.CountMAUWindows(ctx, &tid)
 	if err != nil {
 		return err
 	}
 	out.KPIs.MAU = Metric{Value: float64(mau.MauNow), DeltaPct: pctChange(mau.MauNow, mau.MauPrev)}
 
 	// Logins today, against yesterday.
-	logins, err := r.q.CountLoginsTodayWindows(ctx, pgUUID(tid))
+	logins, err := r.q.CountLoginsTodayWindows(ctx, &tid)
 	if err != nil {
 		return err
 	}
@@ -183,46 +171,19 @@ func (r *Reader) kpis(ctx context.Context, tid uuid.UUID, out *Overview) error {
 
 	// MFA adoption: % of active users with a confirmed TOTP factor. Its delta is
 	// in percentage points, against a week ago.
-	var mfaPct, mfaPctPrev float64
-	if err := r.pool.QueryRow(ctx, `
-		WITH active AS (
-			SELECT id FROM account.users
-			WHERE organization_id = $1 AND status = 'active' AND deleted_at IS NULL
-		),
-		enrolled AS (
-			SELECT user_id FROM auth.mfa_totp WHERE confirmed_at IS NOT NULL
-		)
-		SELECT
-			CASE WHEN COUNT(active.id) = 0 THEN 0
-			     ELSE 100.0 * COUNT(*) FILTER (WHERE enrolled.user_id IS NOT NULL) / COUNT(active.id)
-			END
-		FROM active LEFT JOIN enrolled ON enrolled.user_id = active.id
-	`, tid).Scan(&mfaPct); err != nil {
+	mfaPct, err := r.q.MFAAdoptionPct(ctx, &tid)
+	if err != nil {
 		return err
 	}
-	if err := r.pool.QueryRow(ctx, `
-		WITH active AS (
-			SELECT id FROM account.users
-			WHERE organization_id = $1 AND status = 'active' AND deleted_at IS NULL
-			  AND created_at <= NOW() - INTERVAL '7 days'
-		),
-		enrolled AS (
-			SELECT user_id FROM auth.mfa_totp
-			WHERE confirmed_at IS NOT NULL AND confirmed_at <= NOW() - INTERVAL '7 days'
-		)
-		SELECT
-			CASE WHEN COUNT(active.id) = 0 THEN 0
-			     ELSE 100.0 * COUNT(*) FILTER (WHERE enrolled.user_id IS NOT NULL) / COUNT(active.id)
-			END
-		FROM active LEFT JOIN enrolled ON enrolled.user_id = active.id
-	`, tid).Scan(&mfaPctPrev); err != nil {
+	mfaPctPrev, err := r.q.MFAAdoptionPctWeekAgo(ctx, &tid)
+	if err != nil {
 		return err
 	}
 	out.KPIs.MFAAdoptionPct = Metric{Value: mfaPct, DeltaPct: mfaPct - mfaPctPrev}
 
 	// Failed logins in the last 24h, against the 24h before, from
 	// auth.sign_in_failed audit events.
-	failed, err := r.q.CountFailedLogins24hWindows(ctx, pgUUID(tid))
+	failed, err := r.q.CountFailedLogins24hWindows(ctx, &tid)
 	if err != nil {
 		return err
 	}
@@ -233,87 +194,21 @@ func (r *Reader) kpis(ctx context.Context, tid uuid.UUID, out *Overview) error {
 func (r *Reader) trends14d(ctx context.Context, tid uuid.UUID, out *Overview) error {
 	// One bucket per day for the last 14 days, so the chart always has 14
 	// points.
-	rows, err := r.pool.Query(ctx, `
-		WITH days AS (
-			SELECT date_trunc('day', d)::date AS day
-			FROM generate_series(
-				date_trunc('day', NOW() - INTERVAL '13 days'),
-				date_trunc('day', NOW()),
-				'1 day'::interval
-			) AS d
-		),
-		users_per_day AS (
-			SELECT date_trunc('day', created_at)::date AS day, COUNT(*) AS new_users
-			FROM account.users
-			WHERE organization_id = $1 AND deleted_at IS NULL
-			GROUP BY 1
-		),
-		base AS (
-			SELECT COUNT(*) AS total
-			FROM account.users
-			WHERE organization_id = $1 AND deleted_at IS NULL
-			  AND created_at < NOW() - INTERVAL '14 days'
-		),
-		sign_ins_per_day AS (
-			SELECT date_trunc('day', created_at)::date AS day, COUNT(*) AS sign_ins
-			FROM audit.events
-			WHERE organization_id = $1 AND action = 'auth.login_succeeded'
-			  AND COALESCE(metadata->>'method', '') NOT IN ('tenant_switch', 'tenant_create', 'invite_accept')
-			  AND created_at >= NOW() - INTERVAL '14 days'
-			GROUP BY 1
-		),
-		failed_per_day AS (
-			SELECT date_trunc('day', created_at)::date AS day, COUNT(*) AS fails
-			FROM audit.events
-			WHERE organization_id = $1 AND action = 'auth.sign_in_failed'
-			  AND created_at >= NOW() - INTERVAL '14 days'
-			GROUP BY 1
-		),
-		mfa_per_day AS (
-			SELECT date_trunc('day', confirmed_at)::date AS day, COUNT(*) AS enrolled
-			FROM auth.mfa_totp t
-			JOIN account.users u ON u.id = t.user_id
-			WHERE u.organization_id = $1 AND u.deleted_at IS NULL AND t.confirmed_at IS NOT NULL
-			GROUP BY 1
-		)
-		SELECT
-			days.day::text,
-			COALESCE((SELECT total FROM base), 0)
-				+ COALESCE(SUM(users_per_day.new_users)
-				           FILTER (WHERE users_per_day.day <= days.day), 0) AS users_cum,
-			COALESCE(sign_ins_per_day.sign_ins, 0) AS logins,
-			COALESCE(mfa_per_day.enrolled, 0) AS mfa_new,
-			COALESCE(failed_per_day.fails, 0) AS fails
-		FROM days
-		LEFT JOIN users_per_day ON users_per_day.day = days.day
-		LEFT JOIN sign_ins_per_day ON sign_ins_per_day.day = days.day
-		LEFT JOIN mfa_per_day ON mfa_per_day.day = days.day
-		LEFT JOIN failed_per_day ON failed_per_day.day = days.day
-		GROUP BY days.day, sign_ins_per_day.sign_ins, mfa_per_day.enrolled, failed_per_day.fails
-		ORDER BY days.day ASC
-	`, tid)
+	rows, err := r.q.GetTrends14d(ctx, &tid)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var (
-			day                             string
-			usersCum, logins, mfaNew, fails int64
-		)
-		if err := rows.Scan(&day, &usersCum, &logins, &mfaNew, &fails); err != nil {
-			return err
-		}
-		out.UserTrend14d = append(out.UserTrend14d, TrendPoint{Date: day, Value: float64(usersCum)})
-		out.LoginTrend14d = append(out.LoginTrend14d, TrendPoint{Date: day, Value: float64(logins)})
-		out.MFATrend14d = append(out.MFATrend14d, TrendPoint{Date: day, Value: float64(mfaNew)})
-		out.FailedTrend14d = append(out.FailedTrend14d, TrendPoint{Date: day, Value: float64(fails)})
+	for _, row := range rows {
+		out.UserTrend14d = append(out.UserTrend14d, TrendPoint{Date: row.Day, Value: float64(row.UsersCum)})
+		out.LoginTrend14d = append(out.LoginTrend14d, TrendPoint{Date: row.Day, Value: float64(row.Logins)})
+		out.MFATrend14d = append(out.MFATrend14d, TrendPoint{Date: row.Day, Value: float64(row.MfaNew)})
+		out.FailedTrend14d = append(out.FailedTrend14d, TrendPoint{Date: row.Day, Value: float64(row.Fails)})
 	}
-	return rows.Err()
+	return nil
 }
 
 func (r *Reader) loginActivity14d(ctx context.Context, tid uuid.UUID, out *Overview) error {
-	rows, err := r.q.GetLoginActivity14d(ctx, pgUUID(tid))
+	rows, err := r.q.GetLoginActivity14d(ctx, &tid)
 	if err != nil {
 		return err
 	}
@@ -333,45 +228,21 @@ func (r *Reader) loginActivity14d(ctx context.Context, tid uuid.UUID, out *Overv
 }
 
 func (r *Reader) loginMethodsMix(ctx context.Context, tid uuid.UUID, out *Overview) error {
-	rows, err := r.pool.Query(ctx, `
-		SELECT regexp_replace(COALESCE(metadata->>'method', 'password'), '_(mfa|email_confirmed)$', '') AS method,
-		       COUNT(*) AS n
-		FROM audit.events
-		WHERE organization_id = $1
-		  AND action = 'auth.login_succeeded'
-		  AND COALESCE(metadata->>'method', '') NOT IN ('tenant_switch', 'tenant_create', 'invite_accept')
-		  AND created_at >= NOW() - INTERVAL '30 days'
-		GROUP BY 1
-		ORDER BY n DESC
-	`, tid)
+	buckets, err := r.q.CountLoginMethods30d(ctx, &tid)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
 	var total int64
-	type bucket struct {
-		method string
-		n      int64
-	}
-	var buckets []bucket
-	for rows.Next() {
-		var b bucket
-		if err := rows.Scan(&b.method, &b.n); err != nil {
-			return err
-		}
-		buckets = append(buckets, b)
-		total += b.n
-	}
-	if err := rows.Err(); err != nil {
-		return err
+	for _, b := range buckets {
+		total += b.N
 	}
 	if total == 0 {
 		return nil
 	}
 	for _, b := range buckets {
 		out.LoginMethodsMix = append(out.LoginMethodsMix, MethodSlice{
-			Method: b.method,
-			Value:  100.0 * float64(b.n) / float64(total),
+			Method: b.Method,
+			Value:  100.0 * float64(b.N) / float64(total),
 		})
 	}
 	return nil
@@ -380,11 +251,11 @@ func (r *Reader) loginMethodsMix(ctx context.Context, tid uuid.UUID, out *Overvi
 func (r *Reader) mfaMethodsAdoption(ctx context.Context, tid uuid.UUID, out *Overview) error {
 	// Only TOTP and recovery codes are counted, and a method with no users is
 	// left out.
-	totp, err := r.q.CountMFATotpUsers(ctx, pgUUID(tid))
+	totp, err := r.q.CountMFATotpUsers(ctx, &tid)
 	if err != nil {
 		return err
 	}
-	recovery, err := r.q.CountMFARecoveryUsers(ctx, pgUUID(tid))
+	recovery, err := r.q.CountMFARecoveryUsers(ctx, &tid)
 	if err != nil {
 		return err
 	}
@@ -398,7 +269,7 @@ func (r *Reader) mfaMethodsAdoption(ctx context.Context, tid uuid.UUID, out *Ove
 }
 
 func (r *Reader) failedHourly24h(ctx context.Context, tid uuid.UUID, out *Overview) error {
-	rows, err := r.q.GetFailedLoginsHourly24h(ctx, pgUUID(tid))
+	rows, err := r.q.GetFailedLoginsHourly24h(ctx, &tid)
 	if err != nil {
 		return err
 	}
@@ -416,7 +287,7 @@ func (r *Reader) failedHourly24h(ctx context.Context, tid uuid.UUID, out *Overvi
 // (DAU/MAU).
 func (r *Reader) extraKPIs(ctx context.Context, tid uuid.UUID, out *Overview) error {
 	// DAU: distinct people who signed in today, against yesterday.
-	dau, err := r.q.CountDAUWindows(ctx, pgUUID(tid))
+	dau, err := r.q.CountDAUWindows(ctx, &tid)
 	if err != nil {
 		return err
 	}
@@ -424,7 +295,7 @@ func (r *Reader) extraKPIs(ctx context.Context, tid uuid.UUID, out *Overview) er
 	out.KPIs.DAU = Metric{Value: float64(dauNow), DeltaPct: pctChange(dauNow, dauPrev)}
 
 	// Total users, against 30 days ago.
-	users, err := r.q.CountTotalUsersWindows(ctx, pgUUID(tid))
+	users, err := r.q.CountTotalUsersWindows(ctx, &tid)
 	if err != nil {
 		return err
 	}
@@ -432,26 +303,11 @@ func (r *Reader) extraKPIs(ctx context.Context, tid uuid.UUID, out *Overview) er
 
 	// Average sign-ins per person who signed in, last 30 days against the 30
 	// before.
-	var avgNow, avgPrev float64
-	if err := r.pool.QueryRow(ctx, `
-		SELECT
-			COALESCE(
-				CASE WHEN COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days') = 0 THEN 0
-				     ELSE COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days')::float
-				          / NULLIF(COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days'), 0)
-				END, 0),
-			COALESCE(
-				CASE WHEN COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at < NOW() - INTERVAL '30 days') = 0 THEN 0
-				     ELSE COUNT(*) FILTER (WHERE created_at < NOW() - INTERVAL '30 days')::float
-				          / NULLIF(COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at < NOW() - INTERVAL '30 days'), 0)
-				END, 0)
-		FROM audit.events
-		WHERE organization_id = $1 AND action = 'auth.login_succeeded'
-		  AND COALESCE(metadata->>'method', '') NOT IN ('tenant_switch', 'tenant_create', 'invite_accept')
-		  AND created_at >= NOW() - INTERVAL '60 days'
-	`, tid).Scan(&avgNow, &avgPrev); err != nil {
+	avg, err := r.q.AvgSignInsPerPersonWindows(ctx, &tid)
+	if err != nil {
 		return err
 	}
+	avgNow, avgPrev := avg.AvgNow, avg.AvgPrev
 	deltaAvg := 0.0
 	if avgPrev > 0 {
 		deltaAvg = 100.0 * (avgNow - avgPrev) / avgPrev
@@ -467,7 +323,7 @@ func (r *Reader) extraKPIs(ctx context.Context, tid uuid.UUID, out *Overview) er
 		stickNow = 100.0 * float64(dauNow) / mauVal
 	}
 	// Its delta is in percentage points, against the same ratio a week ago.
-	stick, err := r.q.CountStickinessPriorWeek(ctx, pgUUID(tid))
+	stick, err := r.q.CountStickinessPriorWeek(ctx, &tid)
 	if err != nil {
 		return err
 	}
@@ -484,7 +340,7 @@ func (r *Reader) extraKPIs(ctx context.Context, tid uuid.UUID, out *Overview) er
 // A week with no activity is zero, so the chart keeps its width for a new
 // organization.
 func (r *Reader) weeklyActivity8w(ctx context.Context, tid uuid.UUID, out *Overview) error {
-	rows, err := r.q.GetWeeklyActivity8w(ctx, pgUUID(tid))
+	rows, err := r.q.GetWeeklyActivity8w(ctx, &tid)
 	if err != nil {
 		return err
 	}
@@ -508,45 +364,4 @@ func pctChange(now, prev int64) float64 {
 		return 100
 	}
 	return 100.0 * float64(now-prev) / float64(prev)
-}
-
-// Handler serves the dashboard endpoint.
-type Handler struct {
-	Reader *Reader
-}
-
-// Mount registers GET /tenants/{tenantID}/analytics/overview.
-func (h *Handler) Mount(r chi.Router) {
-	r.Get("/tenants/{tenantID}/analytics/overview", h.overview)
-}
-
-func (h *Handler) overview(w http.ResponseWriter, r *http.Request) {
-	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
-	if err != nil {
-		httpx.WriteError(w, r, errs.ErrAnalyticsOrganizationInvalid)
-		return
-	}
-	// The caller's organization must be the path's.
-	p := httpx.PrincipalFromCtx(r.Context())
-	if p == nil || p.OrganizationID == nil || *p.OrganizationID != tid {
-		httpx.WriteError(w, r, errs.ErrAnalyticsOrganizationMismatch)
-		return
-	}
-	from, to, asked, err := parseRange(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	out, err := h.Reader.Overview(r.Context(), tid)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if asked {
-		if out.Range, err = h.Reader.Range(r.Context(), tid, from, to, r.URL.Query().Get("method")); err != nil {
-			httpx.WriteError(w, r, err)
-			return
-		}
-	}
-	httpx.WriteJSON(w, http.StatusOK, out)
 }

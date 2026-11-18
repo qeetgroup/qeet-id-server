@@ -5,7 +5,7 @@ required:
   - created_at
   - id
   - label
-  - tenant_id
+  - organization_id
 properties:
   action:
     type: string
@@ -19,6 +19,6 @@ properties:
     format: uuid
   label:
     type: string
-  tenant_id:
+  organization_id:
     type: string
     format: uuid

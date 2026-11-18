@@ -5,22 +5,14 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/qeetgroup/qeet-id-server/internal/access/ipallow"
 )
-
-// AddressPolicy applies an organization's address rules. CheckSignIn returns
-// errs.ErrAuthAddressNotAllowed, after recording the refusal, when ip may not
-// sign in to organizationID; CheckSignInTx does so through tx, recording the refusal
-// there for the caller to commit. Satisfied by *ipallow.Service.
-type AddressPolicy interface {
-	CheckSignIn(ctx context.Context, organizationID, userID uuid.UUID, ip, path string) error
-	CheckSignInTx(ctx context.Context, tx pgx.Tx, organizationID, userID uuid.UUID, ip, path string) error
-}
 
 // SetAddressPolicy sets the address rules checked when a person signs in to an
 // application: authorization codes, device approval and device token collection.
 // Code redemption and refresh aren't checked, because they come from the
 // application's server rather than the person.
-func (s *Service) SetAddressPolicy(p AddressPolicy) { s.addresses = p }
+func (s *Service) SetAddressPolicy(p ipallow.AddressPolicy) { s.addresses = p }
 
 // checkAddress asks the organization's address rules whether ip may sign in to
 // it (no rules wired: yes).

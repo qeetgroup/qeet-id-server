@@ -14,15 +14,15 @@ post:
     Creates the invited account and signs it in. Its address is not verified by
     this: the account proves it later with a code or link sent to it (its
     invitations inbox stays closed until then). The response is a token pair,
-    or, where the organisation requires a second factor, the sign-in's challenge
+    or, where the organization requires a second factor, the sign-in's challenge
     instead (mfa_required, mfa_token and, for an account with no factor yet,
-    enrollment_required), met as at sign-in. Where the inviting organisation has
+    enrollment_required), met as at sign-in. Where the inviting organization has
     password sign-in switched off, accepting with a password is refused with 403
     auth.method_disabled and nothing is created. An address on a domain another
-    organisation has verified gets no new account here (409
-    user.domain_managed_elsewhere): that organisation creates it, and the
+    organization has verified gets no new account here (409
+    user.domain_managed_elsewhere): that organization creates it, and the
     invitee then signs in and accepts as themselves. An invitation whose
-    sender may no longer give it (no longer active or in the organisation, or
+    sender may no longer give it (no longer active or in the organization, or
     no longer holding its role's permissions) is refused with 400
     invite.invalid.
   responses:

@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -28,16 +27,16 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/billing/plans", h.listPlans)
 	// A paid plan chosen at signup, before the user has an organization.
 	r.Post("/signup/checkout", h.signupCheckout)
-	r.Get("/tenants/{tenantID}/billing/subscription", h.getSubscription)
-	r.Put("/tenants/{tenantID}/billing/subscription", h.changePlan)
-	r.Get("/tenants/{tenantID}/billing/profile", h.getBillingProfile)
-	r.Put("/tenants/{tenantID}/billing/profile", h.putBillingProfile)
-	r.Post("/tenants/{tenantID}/billing/trial", h.startTrial)
-	r.Post("/tenants/{tenantID}/billing/subscription/cancel", h.cancel)
-	r.Post("/tenants/{tenantID}/billing/checkout", h.checkout)
-	r.Get("/tenants/{tenantID}/billing/invoices", h.listInvoices)
-	r.Post("/tenants/{tenantID}/billing/invoices/{invoiceID}/pay", h.payInvoice)
-	r.Get("/tenants/{tenantID}/billing/payment-method", h.paymentMethod)
+	r.Get("/organizations/{organizationID}/billing/subscription", h.getSubscription)
+	r.Put("/organizations/{organizationID}/billing/subscription", h.changePlan)
+	r.Get("/organizations/{organizationID}/billing/profile", h.getBillingProfile)
+	r.Put("/organizations/{organizationID}/billing/profile", h.putBillingProfile)
+	r.Post("/organizations/{organizationID}/billing/trial", h.startTrial)
+	r.Post("/organizations/{organizationID}/billing/subscription/cancel", h.cancel)
+	r.Post("/organizations/{organizationID}/billing/checkout", h.checkout)
+	r.Get("/organizations/{organizationID}/billing/invoices", h.listInvoices)
+	r.Post("/organizations/{organizationID}/billing/invoices/{invoiceID}/pay", h.payInvoice)
+	r.Get("/organizations/{organizationID}/billing/payment-method", h.paymentMethod)
 }
 
 // MountPublic registers the payment provider routes. They authenticate by the
@@ -96,7 +95,7 @@ func (h *Handler) sandboxCheckoutPage(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	successURL, cancelURL := q.Get("success_url"), q.Get("cancel_url")
 	if !validReturnURL(successURL) || !validReturnURL(cancelURL) {
-		httpx.WriteError(w, r, errs.ErrBillingReturnURLInvalid)
+		httpx.WriteError(w, r, ErrReturnURLInvalid)
 		return
 	}
 	amt, _ := strconv.ParseInt(q.Get("amount"), 10, 64)
@@ -124,7 +123,7 @@ func (h *Handler) sandboxPay(w http.ResponseWriter, r *http.Request) {
 	}
 	successURL := r.PostForm.Get("success_url")
 	if !validReturnURL(successURL) {
-		httpx.WriteError(w, r, errs.ErrBillingReturnURLInvalid)
+		httpx.WriteError(w, r, ErrReturnURLInvalid)
 		return
 	}
 	if err := h.Service.CompleteCheckout(r.Context(), r.PostForm.Get("ref"), SandboxCard()); err != nil {
@@ -134,21 +133,17 @@ func (h *Handler) sandboxPay(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, successURL, http.StatusSeeOther) // #nosec G710 -- dev-only sandbox, refused outside dev by config
 }
 
-func requirePathOrganization(r *http.Request) (uuid.UUID, error) {
-	return httpx.PathOrganizationOr(r, errs.ErrBillingOrganizationInvalid, errs.ErrBillingOrganizationMismatch)
-}
-
 func (h *Handler) listPlans(w http.ResponseWriter, r *http.Request) {
 	plans, err := h.Service.ListPlans(r.Context())
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": plans})
+	httpx.WriteJSON(w, http.StatusOK, paging.Page(plans, ""))
 }
 
 func (h *Handler) getSubscription(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -162,7 +157,7 @@ func (h *Handler) getSubscription(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) startTrial(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -184,7 +179,7 @@ func (h *Handler) startTrial(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) getBillingProfile(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -198,7 +193,7 @@ func (h *Handler) getBillingProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) putBillingProfile(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -221,7 +216,7 @@ func (h *Handler) putBillingProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) changePlan(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -234,30 +229,8 @@ func (h *Handler) changePlan(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	ctx := r.Context()
-	tx, err := h.Service.Pool().Begin(ctx)
+	sub, err := h.Service.SwitchPlan(r.Context(), organizationID, in.PlanCode, in.Currency, audit.ActorOf(r))
 	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	defer tx.Rollback(ctx)
-	sub, err := h.Service.SwitchPlan(ctx, tx, organizationID, in.PlanCode, in.Currency)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	actorID, actorType := audit.ActorOf(r).Identity()
-	tid := organizationID
-	if err := audit.Record(ctx, tx, audit.Event{
-		OrganizationID: &tid, ActorUserID: actorID, ActorType: actorType,
-		Action: "billing.plan_changed", ResourceType: "subscription",
-		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
-		Metadata: map[string]any{"plan": sub.PlanCode, "currency": sub.Currency, "amount_minor": sub.AmountMinor},
-	}); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -267,7 +240,7 @@ func (h *Handler) changePlan(w http.ResponseWriter, r *http.Request) {
 // checkout starts a plan change and returns either a hosted-payment URL or
 // {status: "active"} when the plan was activated directly.
 func (h *Handler) checkout(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -284,7 +257,7 @@ func (h *Handler) checkout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !validReturnURL(in.SuccessURL) || !validReturnURL(in.CancelURL) {
-		httpx.WriteError(w, r, errs.ErrBillingCheckoutURLInvalid)
+		httpx.WriteError(w, r, ErrCheckoutURLInvalid)
 		return
 	}
 	res, err := h.Service.Checkout(r.Context(), organizationID, in.PlanCode, in.Currency, in.Country, in.SuccessURL, in.CancelURL)
@@ -322,7 +295,7 @@ func (h *Handler) signupCheckout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !validReturnURL(in.SuccessURL) || !validReturnURL(in.CancelURL) {
-		httpx.WriteError(w, r, errs.ErrBillingCheckoutURLInvalid)
+		httpx.WriteError(w, r, ErrCheckoutURLInvalid)
 		return
 	}
 	res, err := h.Service.StartSignupCheckout(r.Context(), *p.UserID, SignupCheckoutInput{
@@ -359,7 +332,7 @@ func (h *Handler) webhook(w http.ResponseWriter, r *http.Request) {
 	provider := chi.URLParam(r, "provider")
 	sigHeader := h.Service.WebhookSignatureHeader(provider)
 	if sigHeader == "" {
-		httpx.WriteError(w, r, errs.ErrBillingProviderUnknown)
+		httpx.WriteError(w, r, ErrProviderUnknown)
 		return
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
@@ -403,33 +376,12 @@ func (h *Handler) razorpayVerify(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) cancel(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	ctx := r.Context()
-	tx, err := h.Service.Pool().Begin(ctx)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	defer tx.Rollback(ctx)
-	if err := h.Service.Cancel(ctx, tx, organizationID); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	actorID, actorType := audit.ActorOf(r).Identity()
-	tid := organizationID
-	if err := audit.Record(ctx, tx, audit.Event{
-		OrganizationID: &tid, ActorUserID: actorID, ActorType: actorType,
-		Action: "billing.subscription_canceled", ResourceType: "subscription",
-		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
-	}); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := h.Service.CancelAtPeriodEnd(r.Context(), organizationID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -437,7 +389,7 @@ func (h *Handler) cancel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listInvoices(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -452,14 +404,14 @@ func (h *Handler) listInvoices(w http.ResponseWriter, r *http.Request) {
 
 // payInvoice opens a hosted checkout for an open invoice, such as a renewal.
 func (h *Handler) payInvoice(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	invoiceID, err := uuid.Parse(chi.URLParam(r, "invoiceID"))
+	invoiceID, err := httpx.PathUUID(r, "invoiceID", ErrInvoiceNotFound)
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBillingInvoiceNotFound)
+		httpx.WriteError(w, r, err)
 		return
 	}
 	var in struct {
@@ -471,7 +423,7 @@ func (h *Handler) payInvoice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !validReturnURL(in.SuccessURL) || !validReturnURL(in.CancelURL) {
-		httpx.WriteError(w, r, errs.ErrBillingCheckoutURLInvalid)
+		httpx.WriteError(w, r, ErrCheckoutURLInvalid)
 		return
 	}
 	res, err := h.Service.PayInvoice(r.Context(), organizationID, invoiceID, in.SuccessURL, in.CancelURL)
@@ -484,7 +436,7 @@ func (h *Handler) payInvoice(w http.ResponseWriter, r *http.Request) {
 
 // paymentMethod returns what the organization last paid with, or null.
 func (h *Handler) paymentMethod(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

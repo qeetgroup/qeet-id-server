@@ -73,6 +73,19 @@ func (q *Queries) GetRecipientLocale(ctx context.Context, arg GetRecipientLocale
 	return locale, err
 }
 
+const getVerifiedEmail = `-- name: GetVerifiedEmail :one
+SELECT email FROM account.users
+WHERE id = $1 AND email_verified_at IS NOT NULL AND status = 'active' AND deleted_at IS NULL
+`
+
+// The verified address of an active account, where a test email may go.
+func (q *Queries) GetVerifiedEmail(ctx context.Context, id uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, getVerifiedEmail, id)
+	var email string
+	err := row.Scan(&email)
+	return email, err
+}
+
 const listEmailTemplateOverrides = `-- name: ListEmailTemplateOverrides :many
 
 SELECT template_key, subject, body, options

@@ -13,9 +13,15 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
+
+// Step-up MFA. A step-up records that one session met a second factor
+// recently, so a factor proved in one browser never unlocks another. Each
+// organization sets how long it lasts (step_up_window, default 5 minutes) and
+// which factor types count (step_up_methods, default any).
 
 // RecordVerification records that sessionID, one of userID's own live
 // sessions, met a second factor by method ("totp", "recovery_code", "otp",
@@ -55,10 +61,7 @@ func (s *Service) StepUpState(ctx context.Context, userID uuid.UUID, sessionID *
 		Window:  time.Duration(row.WindowSeconds) * time.Second,
 		Methods: row.StepUpMethods,
 	}
-	if row.VerifiedAt.Valid {
-		at := row.VerifiedAt.Time
-		st.VerifiedAt = &at
-	}
+	st.VerifiedAt = row.VerifiedAt
 	if row.Method != nil {
 		st.Method = *row.Method
 	}
@@ -247,7 +250,7 @@ func (s *Service) passRecentSignIn(w http.ResponseWriter, r *http.Request) bool 
 	}
 	if !recent {
 		s.auditStepUp(r, "auth.recent_sign_in_required", map[string]any{"route": r.URL.Path})
-		httpx.WriteError(w, r, errs.ErrRecentSignIn.WithMetadata(map[string]any{"window_seconds": window}))
+		httpx.WriteError(w, r, ErrRecentSignIn.WithMetadata(map[string]any{"window_seconds": window}))
 		return false
 	}
 	return true
@@ -257,60 +260,39 @@ func (s *Service) passRecentSignIn(w http.ResponseWriter, r *http.Request) bool 
 // transaction. Best effort: the refusal or success it describes stands either
 // way.
 func (s *Service) auditStepUp(r *http.Request, action string, meta map[string]any) {
-	ctx := r.Context()
-	p := httpx.PrincipalFromCtx(ctx)
 	if s.pool == nil {
 		return
 	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return
+	by := CallerOf(r)
+	if by.SessionID != nil {
+		meta["session_id"] = *by.SessionID
 	}
-	defer tx.Rollback(ctx)
-	actorID, actorType := audit.ActorOf(r).Identity()
-	if p.SessionID != nil {
-		meta["session_id"] = *p.SessionID
-	}
-	if err := audit.Record(ctx, tx, audit.Event{
-		OrganizationID: p.OrganizationID,
-		ActorUserID:    actorID,
-		ActorType:      actorType,
-		Action:         action,
-		ResourceType:   "user",
-		ResourceID:     p.UserID,
-		IP:             httpx.ClientIP(r),
-		UserAgent:      r.UserAgent(),
-		RequestID:      httpx.RequestID(r),
-		Metadata:       meta,
-	}); err != nil {
-		return
-	}
-	_ = tx.Commit(ctx)
+	userID := postgres.ZeroIfNull(httpx.PrincipalFromCtx(r.Context()).UserID)
+	_ = audit.RecordAlone(r.Context(), s.pool, by.event(action, userID, meta))
 }
 
-// recordStepUp records, inside tx, that the calling session met a second
-// factor by method and audits it there. A principal without a session has
+// recordStepUp records, inside tx, that by's session met a second factor of
+// userID's by method and audits it there. A caller without a session has
 // nothing to step up, so only the factor check itself counted.
-func (h *Handler) recordStepUp(ctx context.Context, tx pgx.Tx, r *http.Request, method string) error {
-	p := httpx.PrincipalFromCtx(ctx)
-	if p == nil || p.UserID == nil || p.SessionID == nil {
+func (s *Service) recordStepUp(ctx context.Context, tx pgx.Tx, userID uuid.UUID, by Caller, method string) error {
+	if by.SessionID == nil {
 		return nil
 	}
-	if err := h.Service.RecordVerification(ctx, tx, *p.UserID, *p.SessionID, method); err != nil {
+	if err := s.RecordVerification(ctx, tx, userID, *by.SessionID, method); err != nil {
 		return err
 	}
-	actorID, actorType := audit.ActorOf(r).Identity()
-	return audit.Record(ctx, tx, audit.Event{
-		OrganizationID: p.OrganizationID,
-		ActorUserID:    actorID,
-		ActorType:      actorType,
-		Action:         "mfa.step_up_verified",
-		ResourceType:   "user",
-		ResourceID:     p.UserID,
-		IP:             httpx.ClientIP(r),
-		UserAgent:      r.UserAgent(),
-		RequestID:      httpx.RequestID(r),
-		Metadata:       map[string]any{"method": method, "session_id": *p.SessionID},
+	return audit.Record(ctx, tx, by.event("mfa.step_up_verified", userID, map[string]any{"method": method, "session_id": *by.SessionID}))
+}
+
+// RecordPasskeyStepUp steps up by's session by a passkey of userID's just
+// asserted, recorded as by's. The assertion has committed on its own (its
+// sign count), so this runs in a transaction of its own.
+func (s *Service) RecordPasskeyStepUp(ctx context.Context, userID uuid.UUID, by Caller) error {
+	return s.inTx(ctx, func(tx pgx.Tx) error {
+		if err := s.recordStepUp(ctx, tx, userID, by, "webauthn"); err != nil {
+			return err
+		}
+		return audit.Record(ctx, tx, by.event("mfa.webauthn_verified", userID, nil))
 	})
 }
 
@@ -321,7 +303,7 @@ func (h *Handler) webauthnChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.WebAuthn == nil {
-		httpx.WriteError(w, r, errs.ErrMFAWebAuthnUnavailable)
+		httpx.WriteError(w, r, ErrWebAuthnUnavailable)
 		return
 	}
 	sessionID, options, err := h.WebAuthn.BeginMFA(r.Context(), *p.UserID)
@@ -347,7 +329,7 @@ func (h *Handler) webauthnVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.WebAuthn == nil {
-		httpx.WriteError(w, r, errs.ErrMFAWebAuthnUnavailable)
+		httpx.WriteError(w, r, ErrWebAuthnUnavailable)
 		return
 	}
 	var in webauthnVerifyInput
@@ -355,40 +337,11 @@ func (h *Handler) webauthnVerify(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	ctx := r.Context()
-	if err := h.WebAuthn.FinishMFA(ctx, *p.UserID, in.SessionID, in.Credential); err != nil {
+	if err := h.WebAuthn.FinishMFA(r.Context(), *p.UserID, in.SessionID, in.Credential); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	// FinishMFA has no surrounding tx (the assertion verify already committed its
-	// sign-count update), so record the step-up + audit in their own tx.
-	tx, err := h.Service.Pool().Begin(ctx)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	defer tx.Rollback(ctx)
-	if err := h.recordStepUp(ctx, tx, r, "webauthn"); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	actorID, actorType := audit.ActorOf(r).Identity()
-	target := *p.UserID
-	if err := audit.Record(ctx, tx, audit.Event{
-		OrganizationID: p.OrganizationID,
-		ActorUserID:    actorID,
-		ActorType:      actorType,
-		Action:         "mfa.webauthn_verified",
-		ResourceType:   "user",
-		ResourceID:     &target,
-		IP:             httpx.ClientIP(r),
-		UserAgent:      r.UserAgent(),
-		RequestID:      httpx.RequestID(r),
-	}); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := h.Service.RecordPasskeyStepUp(r.Context(), *p.UserID, CallerOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

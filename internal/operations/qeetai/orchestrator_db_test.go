@@ -8,12 +8,14 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/ai"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/sse"
 )
 
 // stubProvider replays events as the model's reply to every turn.
@@ -56,10 +58,10 @@ func TestToolsNotOfferedNeverReachTheClient(t *testing.T) {
 	events = append(events, call(1, "b", "search_users")...)
 	events = append(events, ai.Event{Type: ai.EventStop, StopReason: "tool_use"})
 
-	o := NewOrchestrator(providerResolver{stubProvider{events}}, svc, Limits{})
+	o := NewOrchestrator(providerResolver{stubProvider{events}}, svc)
 	rec := httptest.NewRecorder()
 	o.Run(ctx, turnContext{organizationID: organization, userID: user, conversationID: conv,
-		actor: audit.Actor{UserID: &user, Type: "user"}}, newSSEWriter(rec))
+		actor: audit.Actor{UserID: &user, Type: "user"}}, sse.Open(rec, time.Minute))
 	frames := rec.Body.String()
 
 	if strings.Contains(frames, "delete_user\",\"input") || strings.Count(frames, "event: tool_call") != 1 {
@@ -104,14 +106,14 @@ func TestATurnOfOnlyRefusedToolsEndsTheTurn(t *testing.T) {
 	o := NewOrchestrator(providerResolver{stubProvider{[]ai.Event{
 		{Type: ai.EventToolCallStart, ToolIndex: 0, ToolID: "a", ToolName: "reset_user_mfa"},
 		{Type: ai.EventStop, StopReason: "tool_use"},
-	}}}, svc, Limits{})
+	}}}, svc)
 	content, _ := json.Marshal([]map[string]any{{"type": "text", "text": "reset Ann"}})
 	if _, err := svc.AppendMessage(ctx, organization, conv, "user", content); err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
 	o.Run(ctx, turnContext{organizationID: organization, userID: user, conversationID: conv,
-		actor: audit.Actor{UserID: &user, Type: "user"}}, newSSEWriter(rec))
+		actor: audit.Actor{UserID: &user, Type: "user"}}, sse.Open(rec, time.Minute))
 	frames := rec.Body.String()
 	if strings.Contains(frames, "event: tool_call") || !strings.Contains(frames, `"reason":"end_turn"`) {
 		t.Errorf("frames %s\nwant no tool_call and done{end_turn}", frames)

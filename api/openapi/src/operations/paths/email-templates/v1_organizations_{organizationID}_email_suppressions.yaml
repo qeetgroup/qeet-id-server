@@ -1,0 +1,42 @@
+get:
+  operationId: listEmailSuppressions
+  summary: Suppressed addresses
+  description: >-
+    Lists the addresses no mail goes to because this organization's mail to them
+    hard-bounced or was reported as spam, newest first, each with a masked
+    address. A suppression holds platform-wide: no organization's mail reaches
+    the address until it is cleared.
+  tags:
+    - Email Templates
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+    - $ref: ../../../shared/parameters/Cursor.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: The suppressions
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              next_cursor:
+                $ref: ../../../shared/schemas/NextCursor.yaml
+              items:
+                type: array
+                items:
+                  $ref: ../../components/schemas/EmailSuppression.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml

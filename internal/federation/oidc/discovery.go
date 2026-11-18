@@ -27,7 +27,7 @@ func (h *Handler) serverMetadata(r *http.Request) map[string]any {
 		// relying party compares them with.
 		"issuer":                                h.Service.issuer.JWTIssuer(),
 		"authorization_endpoint":                base + "/v1/oauth/authorize",
-		"token_endpoint":                        base + "/v1/oauth/token-code",
+		"token_endpoint":                        base + "/v1/oauth/token",
 		"device_authorization_endpoint":         base + "/v1/oauth/device_authorization",
 		"userinfo_endpoint":                     base + "/v1/oauth/userinfo",
 		"jwks_uri":                              base + "/.well-known/jwks.json",
@@ -47,7 +47,7 @@ func (h *Handler) serverMetadata(r *http.Request) map[string]any {
 		"frontchannel_logout_supported":         true,
 		"frontchannel_logout_session_supported": true,
 		"request_uri_parameter_supported":       false,
-		"grant_types_supported":                 []string{"authorization_code", "refresh_token", "urn:ietf:params:oauth:grant-type:device_code", grantTypeTokenExchange, grantTypeCIBA},
+		"grant_types_supported":                 []string{"authorization_code", "refresh_token", grantTypeDeviceCode, grantTypeTokenExchange, grantTypeCIBA, grantTypeClientCredentials},
 		// OpenID CIBA — poll mode only (no ping/push notification_endpoint).
 		"backchannel_token_delivery_modes_supported": []string{"poll"},
 		"backchannel_authentication_endpoint":        base + "/v1/oauth/bc-authorize",

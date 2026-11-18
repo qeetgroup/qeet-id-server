@@ -32,7 +32,7 @@ func TestSearchFindsOnlyTheOrganizationsOwn(t *testing.T) {
 	pool := dbtest.Pool(t)
 	mine, theirs := dbtest.Organization(t), dbtest.Organization(t)
 	reader := dbtest.User(t, mine)
-	dbtest.Assign(t, reader.ID, mine, dbtest.Role(t, mine, "user.read", "tenant.read", "group.read", "role.read", "connection.read", "audit.read"))
+	dbtest.Assign(t, reader.ID, mine, dbtest.Role(t, mine, "user.read", "organization.read", "group.read", "role.read", "connection.read", "audit.read"))
 	narrow := dbtest.User(t, mine)
 	dbtest.Assign(t, narrow.ID, mine, dbtest.Role(t, mine, "group.read"))
 	for _, organization := range []uuid.UUID{mine, theirs} {
@@ -82,7 +82,7 @@ func TestSearchFindsOnlyTheOrganizationsOwn(t *testing.T) {
 		t.Errorf("types found %v; want groups, roles and audit events", got)
 	}
 	if len(all.Results) != 3 {
-		t.Errorf("found %d results, want the organisation's 3 (none of the other's)", len(all.Results))
+		t.Errorf("found %d results, want the organization's 3 (none of the other's)", len(all.Results))
 	}
 	if got := typesOf(search(narrow.ID, "q=zephyr")); !slices.Equal(got, []string{TypeGroup}) {
 		t.Errorf("with group.read alone, types %v; want groups only", got)

@@ -3,14 +3,14 @@ info:
   title: Qeet ID — Identity Management API
   version: 0.2.0
   description: >-
-    Tenants, domains, users, groups, and invitations for Qeet ID.
+    Organizations, domains, users, groups, and invitations for Qeet ID.
 
 
-    ## Start here — the tenant lifecycle
+    ## Start here — the organization lifecycle
 
 
-    1. A newly registered user has **no tenant**. Create one with `POST
-    /v1/tenants`; the caller becomes the tenant **owner**.
+    1. A newly registered user has **no organization**. Create one with `POST
+    /v1/organizations`; the caller becomes the organization **owner**.
 
     2. (Optional) Prove control of a domain under **Domains** to unlock
     domain-based features.
@@ -18,26 +18,26 @@ info:
     3. Add and manage users, organize them into groups, and invite teammates.
 
 
-    The `register → tenant-less user → create tenant → owner` sequence is the
+    The `register → organization-less user → create organization → owner` sequence is the
     most common early surprise: authentication happens in the Authentication &
-    Access API; tenant creation happens here.
+    Access API; organization creation happens here.
 
 
     ## Authentication
 
 
     Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization:
-    ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token),
+    ApiKey <key>` — legacy scheme), `scimBearer` (per-organization SCIM token),
     `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session).
     CSRF protection applies only to cookie sessions (`ssoCookie`): requests
     authorised by `bearerAuth` or `apiKeyAuth` bypass it, as do the
-    client-credentials token exchange (POST /v1/oauth/token) and the directory
+    token endpoint (POST /v1/oauth/token) and the directory
     sign-in (POST /ldap/{id}/authenticate), which carry their credentials in the
     request. Basic credentials do not bypass it. A request that fails the check
     is refused with 403 `csrf_failed`.
 
 
-    The responses of tenant creation and invitation acceptance, including
+    The responses of organization creation and invitation acceptance, including
     accepting with an existing account (sign-in tokens), are sent with
     `Cache-Control: no-store` and `Pragma: no-cache`.
 
@@ -74,11 +74,11 @@ servers:
   - url: http://localhost:4001
     description: Local (make dev)
 tags:
-  - name: Tenants
-    description: Tenant (workspace) CRUD.
+  - name: Organizations
+    description: Organization (workspace) CRUD.
   - name: Domains
     description: >-
-      Tenant domain ownership — claim a domain, verify it via DNS, and manage
+      Organization domain ownership — claim a domain, verify it via DNS, and manage
       verified domains.
   - name: Users
     description: User CRUD, password set, and soft-delete recycle bin (restore/purge).
@@ -87,32 +87,32 @@ tags:
   - name: Groups
     description: User groups and membership.
   - name: Invites
-    description: Tenant member invitations.
+    description: Organization member invitations.
   - name: Branding
-    description: Per-tenant hosted-login branding.
+    description: Per-organization hosted-login branding.
 paths:
   /v1/me/organizations:
-    $ref: paths/tenants/v1_me_organizations.yaml
-  /v1/tenants:
-    $ref: paths/tenants/v1_tenants.yaml
-  /v1/tenants/{tenantID}:
-    $ref: paths/tenants/v1_tenants_{tenantID}.yaml
-  /v1/tenants/{tenantID}/deletion/cancel:
-    $ref: paths/tenants/v1_tenants_{tenantID}_deletion_cancel.yaml
-  /v1/tenants/{tenantID}/login-domain/check:
-    $ref: paths/domains/v1_tenants_{tenantID}_login-domain_check.yaml
-  /v1/tenants/{tenantID}/login-domain:
-    $ref: paths/domains/v1_tenants_{tenantID}_login-domain.yaml
-  /v1/tenants/{tenantID}/domains:
-    $ref: paths/domains/v1_tenants_{tenantID}_domains.yaml
-  /v1/tenants/{tenantID}/domains/{id}/verify:
-    $ref: paths/domains/v1_tenants_{tenantID}_domains_{id}_verify.yaml
-  /v1/tenants/{tenantID}/domains/{id}:
-    $ref: paths/domains/v1_tenants_{tenantID}_domains_{id}.yaml
-  /v1/tenants/{tenantID}/break-glass-members:
-    $ref: paths/domains/v1_tenants_{tenantID}_break-glass-members.yaml
-  /v1/tenants/{tenantID}/break-glass-members/{userID}:
-    $ref: paths/domains/v1_tenants_{tenantID}_break-glass-members_{userID}.yaml
+    $ref: paths/organizations/v1_me_organizations.yaml
+  /v1/organizations:
+    $ref: paths/organizations/v1_organizations.yaml
+  /v1/organizations/{organizationID}:
+    $ref: paths/organizations/v1_organizations_{organizationID}.yaml
+  /v1/organizations/{organizationID}/deletion/cancel:
+    $ref: paths/organizations/v1_organizations_{organizationID}_deletion_cancel.yaml
+  /v1/organizations/{organizationID}/login-domain/check:
+    $ref: paths/domains/v1_organizations_{organizationID}_login-domain_check.yaml
+  /v1/organizations/{organizationID}/login-domain:
+    $ref: paths/domains/v1_organizations_{organizationID}_login-domain.yaml
+  /v1/organizations/{organizationID}/domains:
+    $ref: paths/domains/v1_organizations_{organizationID}_domains.yaml
+  /v1/organizations/{organizationID}/domains/{id}/verify:
+    $ref: paths/domains/v1_organizations_{organizationID}_domains_{id}_verify.yaml
+  /v1/organizations/{organizationID}/domains/{id}:
+    $ref: paths/domains/v1_organizations_{organizationID}_domains_{id}.yaml
+  /v1/organizations/{organizationID}/break-glass-members:
+    $ref: paths/domains/v1_organizations_{organizationID}_break-glass-members.yaml
+  /v1/organizations/{organizationID}/break-glass-members/{userID}:
+    $ref: paths/domains/v1_organizations_{organizationID}_break-glass-members_{userID}.yaml
   /v1/users/suspended:
     $ref: paths/users/v1_users_suspended.yaml
   /v1/users/{id}/reactivate:
@@ -191,8 +191,8 @@ paths:
     $ref: paths/groups/v1_groups_{id}_members.yaml
   /v1/groups/{id}/members/{userID}:
     $ref: paths/groups/v1_groups_{id}_members_{userID}.yaml
-  /v1/tenants/{tenantID}/groups:
-    $ref: paths/groups/v1_tenants_{tenantID}_groups.yaml
+  /v1/organizations/{organizationID}/groups:
+    $ref: paths/groups/v1_organizations_{organizationID}_groups.yaml
   /v1/invites:
     $ref: paths/invites/v1_invites.yaml
   /v1/invites/accept:
@@ -215,20 +215,20 @@ paths:
     $ref: paths/invites/v1_invites_{id}.yaml
   /v1/invites/{id}/resend:
     $ref: paths/invites/v1_invites_{id}_resend.yaml
-  /v1/tenants/{tenantID}/users/{id}/sessions/{sessionID}:
-    $ref: paths/users/v1_tenants_{tenantID}_users_{id}_sessions_{sessionID}.yaml
-  /v1/tenants/{tenantID}/users/{id}/passkeys:
-    $ref: paths/users/v1_tenants_{tenantID}_users_{id}_passkeys.yaml
-  /v1/tenants/{tenantID}/users/{id}/passkeys/{passkeyID}:
-    $ref: paths/users/v1_tenants_{tenantID}_users_{id}_passkeys_{passkeyID}.yaml
-  /v1/tenants/{tenantID}/users/{id}/sign-ins:
-    $ref: paths/users/v1_tenants_{tenantID}_users_{id}_sign-ins.yaml
-  /v1/tenants/{tenantID}/invites:
-    $ref: paths/invites/v1_tenants_{tenantID}_invites.yaml
-  /v1/branding/{tenantID}/logo:
-    $ref: paths/branding/v1_branding_{tenantID}_logo.yaml
-  /v1/tenants/{tenantID}/branding:
-    $ref: paths/branding/v1_tenants_{tenantID}_branding.yaml
+  /v1/organizations/{organizationID}/users/{id}/sessions/{sessionID}:
+    $ref: paths/users/v1_organizations_{organizationID}_users_{id}_sessions_{sessionID}.yaml
+  /v1/organizations/{organizationID}/users/{id}/passkeys:
+    $ref: paths/users/v1_organizations_{organizationID}_users_{id}_passkeys.yaml
+  /v1/organizations/{organizationID}/users/{id}/passkeys/{passkeyID}:
+    $ref: paths/users/v1_organizations_{organizationID}_users_{id}_passkeys_{passkeyID}.yaml
+  /v1/organizations/{organizationID}/users/{id}/sign-ins:
+    $ref: paths/users/v1_organizations_{organizationID}_users_{id}_sign-ins.yaml
+  /v1/organizations/{organizationID}/invites:
+    $ref: paths/invites/v1_organizations_{organizationID}_invites.yaml
+  /v1/branding/{organizationID}/logo:
+    $ref: paths/branding/v1_branding_{organizationID}_logo.yaml
+  /v1/organizations/{organizationID}/branding:
+    $ref: paths/branding/v1_organizations_{organizationID}_branding.yaml
 components:
   securitySchemes:
     bearerAuth:

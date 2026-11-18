@@ -1,0 +1,102 @@
+get:
+  operationId: listRelationTuples
+  summary: List relation tuples
+  description: >
+    List tuples anchored on one side of the relationship. Supply exactly one of:
+
+    - **object** — all tuples where this is the object ("type:id"); returns who
+    has a relation on it.
+
+    - **subject** — all tuples where this is the subject ("type:id" or
+    "type:id#relation"); reverse-lookup of what a principal can reach.
+  tags:
+    - ReBAC
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: object
+      in: query
+      required: false
+      schema:
+        type: string
+      description: >-
+        Object ref "type:id", e.g. document:readme. Mutually exclusive with
+        subject.
+    - name: subject
+      in: query
+      required: false
+      schema:
+        type: string
+      description: >-
+        Subject ref "type:id" or "type:id#relation", e.g. user:abc123. Returns
+        all objects the subject appears on. Mutually exclusive with object.
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: Tuples anchored on the given object or subject
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              truncated:
+                $ref: ../../../shared/schemas/Truncated.yaml
+              items:
+                type: array
+                items:
+                  $ref: ../../components/schemas/Tuple.yaml
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+post:
+  operationId: writeRelationTuple
+  description: >-
+    Writes a relationship tuple asserting that a subject holds a named relation
+    on an object, the building block of the ReBAC graph. The subject may be a
+    direct principal or a userset reference (type:id#relation) so relationships
+    can be composed. Test the effect of a tuple with the relation-check call and
+    remove it with the delete-tuple call.
+  summary: Write relation tuple
+  tags:
+    - ReBAC
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - object
+            - relation
+            - subject
+          properties:
+            object:
+              type: string
+              description: '"type:id"'
+            relation:
+              type: string
+            subject:
+              type: string
+              description: '"user:<id>" or "type:id#relation" (userset)'
+  responses:
+    '201':
+      description: Tuple written
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/Tuple.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml

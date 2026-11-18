@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
-	"net"
 	"net/http"
 	"time"
 
@@ -12,9 +11,11 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/sse"
 )
 
 // Handler serves the Qeet AI routes. An organization with its own provider key (BYOK)
@@ -22,17 +23,12 @@ import (
 // by Plan. With neither, conversation CRUD still works but posting a message
 // returns qeetai_unconfigured.
 type Handler struct {
-	Service      serviceStore     // conversations and messages
-	Orchestrator *Orchestrator    // runs one streamed turn
-	Resolver     ProviderResolver // the organization's effective provider, for status and gating
-	Config       *ProviderConfig  // backs the BYOK admin endpoints; may be nil in tests
-	Plan         PlanGate         // plan gate for the platform key; nil means no gate
-	Admin        *Service         // usage and settings, for the organization's admins
-}
-
-// PlanGate reports whether a boolean feature is included in an organization's plan.
-type PlanGate interface {
-	FeatureAllowed(ctx context.Context, organizationID uuid.UUID, feature string) (bool, error)
+	Service      serviceStore          // conversations and messages
+	Orchestrator *Orchestrator         // runs one streamed turn
+	Resolver     ProviderResolver      // the organization's effective provider, for status and gating
+	Config       *ProviderConfig       // backs the BYOK admin endpoints; may be nil in tests
+	Plan         entitlements.PlanGate // plan gate for the platform key; nil means no gate
+	Admin        *Service              // usage and settings, for the organization's admins
 }
 
 // planAllows reports whether the organization's plan includes the qeetai feature.
@@ -64,13 +60,13 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/qeetai/provider-config/test", h.testProviderConfig)
 
 	// The organization's use and settings (org admins — see permission map).
-	r.Get("/tenants/{tenantID}/qeetai/usage", h.usage)
-	r.Get("/tenants/{tenantID}/qeetai/settings", h.settings)
-	r.Put("/tenants/{tenantID}/qeetai/settings", h.putSettings)
+	r.Get("/organizations/{organizationID}/qeetai/usage", h.usage)
+	r.Get("/organizations/{organizationID}/qeetai/settings", h.settings)
+	r.Put("/organizations/{organizationID}/qeetai/settings", h.putSettings)
 }
 
 // status reports the organization's Qeet AI state, never key material. source is
-// "tenant" (BYOK), "platform" or "none"; only the platform key is plan-gated.
+// "organization" (BYOK), "platform" or "none"; only the platform key is plan-gated.
 //
 //	GET /v1/qeetai/status → { configured, available, provider, model, source }
 func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
@@ -249,7 +245,7 @@ func (h *Handler) streamMessages(w http.ResponseWriter, r *http.Request) {
 	// to stream; conversation CRUD still works without one.
 	source, allowed := h.qeetaiAllowed(r, organizationID)
 	if source == SourceNone {
-		httpx.WriteError(w, r, errs.ErrQeetAIUnconfigured.WithMessage(
+		httpx.WriteError(w, r, ErrUnconfigured.WithMessage(
 			"Qeet AI is not configured — add your organization's AI provider key in Settings → Qeet AI (or set QEETAI_PROVIDER/QEETAI_API_KEY)"))
 		return
 	}
@@ -292,83 +288,19 @@ func (h *Handler) streamMessages(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), turnTimeout)
 	defer cancel()
 
-	// Extend write deadline: the default HTTP_WRITE_TIMEOUT (30s) is too short
-	// for a full streaming turn. Reset it to turnTimeout on this connection.
-	if rc := http.NewResponseController(w); rc != nil {
-		if conn, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok && conn != nil {
-			_ = conn // addr obtained; deadline set below via ResponseController
-		}
-		if err := rc.SetWriteDeadline(time.Now().Add(turnTimeout)); err != nil {
-			// Not fatal — log and continue; worst case the connection times out.
-			slog.Warn("qeetai: extend write deadline", "err", err)
-		}
-	}
-
-	// SSE headers — set before the first write.
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no") // prevents Nginx/Caddy buffering
-
-	sse := newSSEWriter(w)
-	if sse == nil {
-		// ResponseWriter does not support flushing — very unlikely in production.
-		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+	// The stream may stay open for the whole turn, past HTTP_WRITE_TIMEOUT.
+	out := sse.Open(w, turnTimeout)
+	if out == nil {
+		httpx.WriteError(w, r, errs.ErrInternalServer.WithDetail("streaming not supported"))
 		return
 	}
-
 	// Keep-alive pings every 15s so proxies don't drop the connection.
-	// stopKeepAlive runs first (defers are LIFO), so the ping goroutine has
-	// exited before this handler returns and can never write to a released
-	// ResponseWriter.
-	donePing := make(chan struct{})
-	defer sse.stopKeepAlive()
-	defer close(donePing)
-	sse.startKeepAlive(donePing, 15*time.Second)
+	defer out.KeepAlive(15 * time.Second)()
 
-	p := httpx.PrincipalFromCtx(r.Context())
-	actor := audit.Actor{
-		UserID:    p.UserID,
-		Type:      p.ActorType,
-		IP:        httpx.ClientIP(r),
-		UserAgent: r.UserAgent(),
-		RequestID: httpx.RequestID(r),
-	}
+	actor := audit.ActorOf(r)
 
-	// Persist the incoming user turn.
-	if body.Message != "" {
-		userContent := []map[string]any{{"type": "text", "text": body.Message}}
-		contentJSON, err := json.Marshal(userContent)
-		if err != nil {
-			sse.send(EventTypeError, errorData{Code: "internal", Message: "failed to serialize message"})
-			sse.send(EventTypeDone, doneData{Reason: "error"})
-			return
-		}
-		if _, err := h.Service.AppendMessage(r.Context(), organizationID, convID, "user", contentJSON); err != nil {
-			slog.Error("qeetai: persist user message", "err", err)
-			sse.send(EventTypeError, errorData{Code: "db_error", Message: "failed to store message"})
-			sse.send(EventTypeDone, doneData{Reason: "error"})
-			return
-		}
-		// Audit: user sent a message to the qeetai.
-		h.recordMessageAudit(r, actor, organizationID, convID)
-	}
-
-	// Persist tool_results as a "tool"-role message (continuation turn).
-	if len(body.ToolResults) > 0 {
-		toolContent := buildToolResultContent(body.ToolResults)
-		contentJSON, err := json.Marshal(toolContent)
-		if err != nil {
-			sse.send(EventTypeError, errorData{Code: "internal", Message: "failed to serialize tool results"})
-			sse.send(EventTypeDone, doneData{Reason: "error"})
-			return
-		}
-		if _, err := h.Service.AppendMessage(r.Context(), organizationID, convID, "tool", contentJSON); err != nil {
-			slog.Error("qeetai: persist tool results", "err", err)
-			sse.send(EventTypeError, errorData{Code: "db_error", Message: "failed to store tool results"})
-			sse.send(EventTypeDone, doneData{Reason: "error"})
-			return
-		}
+	if !h.storeTurn(r, out, organizationID, convID, body.Message, body.ToolResults, actor) {
+		return
 	}
 
 	// Run the orchestration loop.
@@ -382,39 +314,47 @@ func (h *Handler) streamMessages(w http.ResponseWriter, r *http.Request) {
 		conversationID: convID,
 		pageContext:    pageCtx,
 		actor:          actor,
-	}, sse)
+	}, out)
 }
 
-// recordMessageAudit writes a qeetai.message.sent audit row.
-func (h *Handler) recordMessageAudit(r *http.Request, actor audit.Actor, organizationID, convID uuid.UUID) {
-	tx, err := h.Service.Pool().Begin(r.Context())
-	if err != nil {
-		slog.Warn("qeetai: audit message tx begin", "err", err)
-		return
+// storeTurn stores the turn's user message, recorded as actor's, and its
+// tool_results as a "tool"-role message (a continuation turn). A turn it
+// can't store ends the stream with an error and returns false.
+func (h *Handler) storeTurn(r *http.Request, out *sse.Writer, organizationID, convID uuid.UUID, message string, toolResults []ToolResultInput, actor audit.Actor) bool {
+	if message != "" {
+		userContent := []map[string]any{{"type": "text", "text": message}}
+		contentJSON, err := json.Marshal(userContent)
+		if err != nil {
+			out.Send(EventTypeError, errorData{Code: "internal", Message: "failed to serialize message"})
+			out.Send(EventTypeDone, doneData{Reason: "error"})
+			return false
+		}
+		if _, err := h.Service.AppendMessage(r.Context(), organizationID, convID, "user", contentJSON); err != nil {
+			slog.Error("qeetai: persist user message", "err", err)
+			out.Send(EventTypeError, errorData{Code: "db_error", Message: "failed to store message"})
+			out.Send(EventTypeDone, doneData{Reason: "error"})
+			return false
+		}
+		if err := h.Service.RecordMessageSent(r.Context(), organizationID, convID, actor); err != nil {
+			slog.Warn("qeetai: audit message.sent", "err", err)
+		}
 	}
-	defer func() { _ = tx.Rollback(r.Context()) }()
-
-	tid := organizationID
-	cid := convID
-	err = audit.Record(r.Context(), tx, audit.Event{
-		OrganizationID: &tid,
-		ActorUserID:    actor.UserID,
-		ActorType:      actor.Type,
-		Action:         "qeetai.message.sent",
-		ResourceType:   "qeetai_conversation",
-		ResourceID:     &cid,
-		IP:             actor.IP,
-		UserAgent:      actor.UserAgent,
-		RequestID:      actor.RequestID,
-		Metadata:       map[string]any{"conversation_id": convID.String()},
-	})
-	if err != nil {
-		slog.Warn("qeetai: audit message.sent", "err", err)
-		return
+	if len(toolResults) > 0 {
+		toolContent := buildToolResultContent(toolResults)
+		contentJSON, err := json.Marshal(toolContent)
+		if err != nil {
+			out.Send(EventTypeError, errorData{Code: "internal", Message: "failed to serialize tool results"})
+			out.Send(EventTypeDone, doneData{Reason: "error"})
+			return false
+		}
+		if _, err := h.Service.AppendMessage(r.Context(), organizationID, convID, "tool", contentJSON); err != nil {
+			slog.Error("qeetai: persist tool results", "err", err)
+			out.Send(EventTypeError, errorData{Code: "db_error", Message: "failed to store tool results"})
+			out.Send(EventTypeDone, doneData{Reason: "error"})
+			return false
+		}
 	}
-	if err := tx.Commit(r.Context()); err != nil {
-		slog.Warn("qeetai: audit message.sent commit", "err", err)
-	}
+	return true
 }
 
 // --- BYOK provider configuration (org owner/admin) ---
@@ -481,7 +421,7 @@ func (h *Handler) putProviderConfig(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	h.recordProviderConfigAudit(r, organizationID, userID, "qeetai.provider_config.updated",
+	h.recordProviderConfigAudit(r, organizationID, "qeetai.provider_config.updated",
 		map[string]any{"provider": eff.Provider, "model": eff.Model, "last4": eff.Last4})
 	httpx.WriteJSON(w, http.StatusOK, providerConfigResponse(eff, h.Config.PlatformConfigured()))
 }
@@ -491,7 +431,7 @@ func (h *Handler) putProviderConfig(w http.ResponseWriter, r *http.Request) {
 //
 //	DELETE /v1/qeetai/provider-config
 func (h *Handler) deleteProviderConfig(w http.ResponseWriter, r *http.Request) {
-	organizationID, userID, ok := h.requireOrganizationUser(w, r)
+	organizationID, _, ok := h.requireOrganizationUser(w, r)
 	if !ok {
 		return
 	}
@@ -499,7 +439,7 @@ func (h *Handler) deleteProviderConfig(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	h.recordProviderConfigAudit(r, organizationID, userID, "qeetai.provider_config.removed", nil)
+	h.recordProviderConfigAudit(r, organizationID, "qeetai.provider_config.removed", nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -536,43 +476,15 @@ func (h *Handler) testProviderConfig(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// recordProviderConfigAudit writes an audit row for a BYOK config change. The
-// resource is the organization itself; no key material is ever recorded.
-func (h *Handler) recordProviderConfigAudit(r *http.Request, organizationID, userID uuid.UUID, action string, meta map[string]any) {
+// recordProviderConfigAudit records a BYOK config change as an event of its
+// own, after the change. The resource is the organization itself; no key
+// material is ever recorded.
+func (h *Handler) recordProviderConfigAudit(r *http.Request, organizationID uuid.UUID, action string, meta map[string]any) {
 	if h.Config == nil {
 		return
 	}
-	ctx := r.Context()
-	tx, err := h.Config.pool.Begin(ctx)
-	if err != nil {
-		slog.Warn("qeetai: audit provider-config tx begin", "err", err)
-		return
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	tid := organizationID
-	uid := userID
-	actorType := "user"
-	if p := httpx.PrincipalFromCtx(ctx); p != nil && p.ActorType != "" {
-		actorType = p.ActorType
-	}
-	if err := audit.Record(ctx, tx, audit.Event{
-		OrganizationID: &tid,
-		ActorUserID:    &uid,
-		ActorType:      actorType,
-		Action:         action,
-		ResourceType:   "qeetai_provider_config",
-		ResourceID:     &tid,
-		IP:             httpx.ClientIP(r),
-		UserAgent:      r.UserAgent(),
-		RequestID:      httpx.RequestID(r),
-		Metadata:       meta,
-	}); err != nil {
+	if err := h.Config.RecordChange(r.Context(), organizationID, action, meta, audit.ActorOf(r)); err != nil {
 		slog.Warn("qeetai: audit provider-config", "err", err, "action", action)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
-		slog.Warn("qeetai: audit provider-config commit", "err", err)
 	}
 }
 
@@ -594,10 +506,57 @@ func (h *Handler) requireOrganizationUser(w http.ResponseWriter, r *http.Request
 
 // parseConversationID parses the {conversationID} path parameter.
 func parseConversationID(r *http.Request) (uuid.UUID, error) {
-	raw := chi.URLParam(r, "conversationID")
-	id, err := uuid.Parse(raw)
+	return httpx.PathUUID(r, "conversationID", errs.ErrBadRequest.WithDetail("invalid conversationID"))
+}
+
+// usage handles GET /v1/organizations/{organizationID}/qeetai/usage.
+func (h *Handler) usage(w http.ResponseWriter, r *http.Request) {
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid conversationID")
+		httpx.WriteError(w, r, err)
+		return
 	}
-	return id, nil
+	out, err := h.Admin.UsageOf(r.Context(), organizationID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// settings handles GET /v1/organizations/{organizationID}/qeetai/settings.
+func (h *Handler) settings(w http.ResponseWriter, r *http.Request) {
+	organizationID, err := httpx.PathOrganization(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, err := h.Admin.SettingsOf(r.Context(), organizationID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// putSettings handles PUT /v1/organizations/{organizationID}/qeetai/settings.
+func (h *Handler) putSettings(w http.ResponseWriter, r *http.Request) {
+	organizationID, err := httpx.PathOrganization(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	var in struct {
+		ConversationRetentionDays *int `json:"conversation_retention_days"`
+	}
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, err := h.Admin.SetSettings(r.Context(), organizationID, in.ConversationRetentionDays, audit.ActorOf(r))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 }

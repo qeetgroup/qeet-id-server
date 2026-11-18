@@ -8,21 +8,16 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"net/http"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/retention/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/retention/dbgen"
 )
 
 const sweepInterval = time.Hour
@@ -62,9 +57,6 @@ func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool)}
 }
 
-// Pool returns the connection pool, for handlers that run their own transaction.
-func (s *Service) Pool() *pgxpool.Pool { return s.pool }
-
 // Get returns the organization's retention policy.
 func (s *Service) Get(ctx context.Context, organizationID uuid.UUID) (*Policy, error) {
 	row, err := s.q.GetRetentionPolicy(ctx, organizationID)
@@ -81,43 +73,48 @@ func (s *Service) Get(ctx context.Context, organizationID uuid.UUID) (*Policy, e
 		UpdatedAt:           &row.UpdatedAt,
 		UpdatedByEmail:      row.UpdatedByEmail,
 	}
-	if row.UpdatedBy.Valid {
-		by := uuid.UUID(row.UpdatedBy.Bytes)
-		p.UpdatedBy = &by
-	}
+	p.UpdatedBy = row.UpdatedBy
 	return p, nil
 }
 
-// Update stores the organization's retention policy, as changed by by (nil: no one
-// in particular).
-func (s *Service) Update(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, p Policy, by *uuid.UUID) (*Policy, error) {
+// Update stores the organization's retention policy, as changed by actor and
+// recorded as theirs in the same transaction.
+func (s *Service) Update(ctx context.Context, organizationID uuid.UUID, p Policy, actor audit.Actor) (*Policy, error) {
 	p.DeletedUsersDays = clampDays(p.DeletedUsersDays)
-	var updatedBy pgtype.UUID
-	if by != nil {
-		updatedBy = pgtype.UUID{Bytes: *by, Valid: true}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
 	}
+	defer tx.Rollback(ctx)
 	row, err := s.q.WithTx(tx).UpsertRetentionPolicy(ctx, dbgen.UpsertRetentionPolicyParams{
 		OrganizationID:      organizationID,
 		DeletedUsersEnabled: p.DeletedUsersEnabled,
 		DeletedUsersDays:    int32(p.DeletedUsersDays), // #nosec G115 -- clamped to 1–3650 by clampDays
-		UpdatedBy:           updatedBy,
+		UpdatedBy:           actor.UserID,
 	})
 	if err != nil {
 		return nil, err
 	}
 	p.DeletedUsersEnabled = row.DeletedUsersEnabled
 	p.DeletedUsersDays = int(row.DeletedUsersDays)
-	p.UpdatedAt, p.UpdatedBy, p.UpdatedByEmail = &row.UpdatedAt, by, nil
+	p.UpdatedAt, p.UpdatedBy, p.UpdatedByEmail = &row.UpdatedAt, actor.UserID, nil
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "retention.policy_updated", "retention_policy", uuid.Nil,
+		map[string]any{"deleted_users_enabled": p.DeletedUsersEnabled, "deleted_users_days": p.DeletedUsersDays})); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
 	return &p, nil
 }
 
 // RipeDeletedUsers counts soft-deleted users older than `days` for an organization —
 // i.e. how many a purge would remove right now.
 func (s *Service) RipeDeletedUsers(ctx context.Context, organizationID uuid.UUID, days int) (int, error) {
-	// account.users.organization_id is NOT NULL UUID; sqlc infers pgtype.UUID here due
-	// to the quoted "user" schema — pass Valid: true to match a non-null value.
+	// sqlc can't tell account.users.organization_id is NOT NULL here (the quoted
+	// "user" schema), so the parameter is a pointer.
 	n, err := s.q.CountRipeDeletedUsers(ctx, dbgen.CountRipeDeletedUsersParams{
-		OrganizationID: pgtype.UUID{Bytes: organizationID, Valid: true},
+		OrganizationID: &organizationID,
 		Days:           int32(clampDays(days)), // #nosec G115 -- clamped to 1–3650 by clampDays
 	})
 	return int(n), err
@@ -137,8 +134,7 @@ var userPurgeFailures = promauto.NewCounter(prometheus.CounterOpts{
 // counted in retention_user_purge_failures_total and left for the next run;
 // the others are still purged.
 func (s *Service) PurgeOrganization(ctx context.Context, organizationID uuid.UUID, days int) (int, error) {
-	// See RipeDeletedUsers for the pgtype.UUID note.
-	organization := pgtype.UUID{Bytes: organizationID, Valid: true}
+	organization := &organizationID  // see RipeDeletedUsers
 	window := int32(clampDays(days)) // #nosec G115 -- clamped to 1–3650 by clampDays
 	purged, after := 0, uuid.Nil
 	for {
@@ -155,7 +151,7 @@ func (s *Service) PurgeOrganization(ctx context.Context, organizationID uuid.UUI
 			}
 			if err != nil {
 				userPurgeFailures.Inc()
-				slog.Warn("retention: purge a deleted user", "tenant", organizationID, "user", id, "err", err)
+				slog.Warn("retention: purge a deleted user", "organization", organizationID, "user", id, "err", err)
 				continue
 			}
 			purged += int(n)
@@ -177,34 +173,43 @@ func (s *Service) sweep(ctx context.Context) error {
 		days := clampDays(int(p.DeletedUsersDays))
 		n, err := s.PurgeOrganization(ctx, p.OrganizationID, days)
 		if n > 0 {
-			slog.Info("retention sweep purged users", "tenant", p.OrganizationID, "count", n)
-			if err := s.recordSweep(ctx, p.OrganizationID, n, days); err != nil {
-				slog.Warn("retention sweep: record the purge", "tenant", p.OrganizationID, "err", err)
+			slog.Info("retention sweep purged users", "organization", p.OrganizationID, "count", n)
+			if err := s.recordPurgeRun(ctx, p.OrganizationID, audit.Actor{Type: "system"}, n, days); err != nil {
+				slog.Warn("retention sweep: record the purge", "organization", p.OrganizationID, "err", err)
 			}
 		}
 		if err != nil {
-			slog.Warn("retention sweep", "tenant", p.OrganizationID, "err", err)
+			slog.Warn("retention sweep", "organization", p.OrganizationID, "err", err)
 		}
 	}
 	return nil
 }
 
-// recordSweep records in the organization's audit trail, as the system, that the
-// sweep purged n deleted users older than days, as a manual run is recorded.
-func (s *Service) recordSweep(ctx context.Context, organizationID uuid.UUID, n, days int) error {
-	tx, err := s.pool.Begin(ctx)
+// RunNow purges the organization's deleted users past its policy's window at
+// once, as actor, and returns how many it purged. A run that purged anyone is
+// recorded as actor's; failing to record it is logged, as the purge is done.
+func (s *Service) RunNow(ctx context.Context, organizationID uuid.UUID, actor audit.Actor) (int, error) {
+	p, err := s.Get(ctx, organizationID)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	defer tx.Rollback(ctx)
-	if err := audit.Record(ctx, tx, audit.Event{
-		OrganizationID: &organizationID, ActorType: "system",
-		Action: "retention.purge_run", ResourceType: "retention_policy",
-		Metadata: map[string]any{"purged": n, "deleted_users_days": days},
-	}); err != nil {
-		return err
+	n, err := s.PurgeOrganization(ctx, organizationID, p.DeletedUsersDays)
+	if err != nil {
+		return n, err
 	}
-	return tx.Commit(ctx)
+	if n > 0 {
+		if err := s.recordPurgeRun(ctx, organizationID, actor, n, p.DeletedUsersDays); err != nil {
+			slog.Warn("retention run: record the purge", "organization", organizationID, "err", err)
+		}
+	}
+	return n, nil
+}
+
+// recordPurgeRun records in the organization's audit trail that a run by actor
+// purged n deleted users older than days.
+func (s *Service) recordPurgeRun(ctx context.Context, organizationID uuid.UUID, actor audit.Actor, n, days int) error {
+	return audit.RecordAlone(ctx, s.pool, actor.Event(organizationID, "retention.purge_run", "retention_policy", uuid.Nil,
+		map[string]any{"purged": n, "deleted_users_days": days}))
 }
 
 // Run is the background sweeper, registered as a worker. Only acts on organizations
@@ -222,131 +227,4 @@ func (s *Service) Run(ctx context.Context) {
 			}
 		}
 	}
-}
-
-// Handler serves the retention policy HTTP API.
-type Handler struct {
-	Service *Service
-}
-
-// Mount registers the retention policy routes on r.
-func (h *Handler) Mount(r chi.Router) {
-	r.Get("/tenants/{tenantID}/retention", h.get)
-	r.Put("/tenants/{tenantID}/retention", h.update)
-	r.Post("/tenants/{tenantID}/retention/preview", h.preview)
-	r.Post("/tenants/{tenantID}/retention/run", h.run)
-}
-
-func requirePathOrganization(r *http.Request) (uuid.UUID, error) {
-	return httpx.PathOrganizationOr(r, errs.ErrRetentionOrganizationInvalid, errs.ErrRetentionOrganizationMismatch)
-}
-
-func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	p, err := h.Service.Get(r.Context(), organizationID)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, p)
-}
-
-func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	var in Policy
-	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	ctx := r.Context()
-	tx, err := h.Service.Pool().Begin(ctx)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	defer tx.Rollback(ctx)
-	actorID, actorType := audit.ActorOf(r).Identity()
-	p, err := h.Service.Update(ctx, tx, organizationID, in, actorID)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	tid := organizationID
-	if err := audit.Record(ctx, tx, audit.Event{
-		OrganizationID: &tid, ActorUserID: actorID, ActorType: actorType,
-		Action: "retention.policy_updated", ResourceType: "retention_policy",
-		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
-		Metadata: map[string]any{"deleted_users_enabled": p.DeletedUsersEnabled, "deleted_users_days": p.DeletedUsersDays},
-	}); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, p)
-}
-
-func (h *Handler) preview(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	p, err := h.Service.Get(r.Context(), organizationID)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	n, err := h.Service.RipeDeletedUsers(r.Context(), organizationID, p.DeletedUsersDays)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ripe_deleted_users": n, "deleted_users_days": p.DeletedUsersDays})
-}
-
-func (h *Handler) run(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	p, err := h.Service.Get(r.Context(), organizationID)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	ctx := r.Context()
-	n, err := h.Service.PurgeOrganization(ctx, organizationID, p.DeletedUsersDays)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if n > 0 {
-		tx, err := h.Service.Pool().Begin(ctx)
-		if err == nil {
-			defer tx.Rollback(ctx)
-			actorID, actorType := audit.ActorOf(r).Identity()
-			tid := organizationID
-			if aerr := audit.Record(ctx, tx, audit.Event{
-				OrganizationID: &tid, ActorUserID: actorID, ActorType: actorType,
-				Action: "retention.purge_run", ResourceType: "retention_policy",
-				IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
-				Metadata: map[string]any{"purged": n, "deleted_users_days": p.DeletedUsersDays},
-			}); aerr == nil {
-				_ = tx.Commit(ctx)
-			}
-		}
-	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"purged": n})
 }

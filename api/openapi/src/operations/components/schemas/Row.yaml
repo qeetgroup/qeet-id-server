@@ -9,7 +9,7 @@ required:
   - request_id
   - resource_id
   - resource_type
-  - tenant_id
+  - organization_id
   - user_agent
 properties:
   action:
@@ -42,7 +42,7 @@ properties:
     format: uuid
   resource_type:
     type: string
-  tenant_id:
+  organization_id:
     type:
       - string
       - 'null'

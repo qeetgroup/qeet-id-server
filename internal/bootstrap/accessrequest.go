@@ -8,8 +8,8 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/accessrequest"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
-	webhook "github.com/qeetgroup/qeet-id-server/internal/developer/webhooks"
-	notification "github.com/qeetgroup/qeet-id-server/internal/operations/notifications"
+	"github.com/qeetgroup/qeet-id-server/internal/developer/webhook"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/notification"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/worker"
 )

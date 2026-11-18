@@ -4,18 +4,20 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -114,13 +116,18 @@ func replaceCertificates(ctx context.Context, q *dbgen.Queries, connectionID, or
 	return err
 }
 
-// AddCertificate makes connectionID also trust the certificate raw, within tx,
-// such as the IdP's next one ahead of a rollover.
-func (s *Service) AddCertificate(ctx context.Context, tx pgx.Tx, connectionID, organizationID uuid.UUID, raw string) (*Certificate, error) {
+// AddCertificate makes connectionID also trust the certificate raw, such as the
+// IdP's next one ahead of a rollover, recorded as actor's.
+func (s *Service) AddCertificate(ctx context.Context, connectionID, organizationID uuid.UUID, raw string, actor audit.Actor) (*Certificate, error) {
 	cert, err := parseCertificate(raw)
 	if err != nil {
-		return nil, errs.ErrSAMLCertificateInvalid
+		return nil, ErrCertificateInvalid
 	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
 	q := s.q.WithTx(tx)
 	if _, err := q.LockSamlConnection(ctx, dbgen.LockSamlConnectionParams{ID: connectionID, OrganizationID: organizationID}); errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
@@ -133,11 +140,11 @@ func (s *Service) AddCertificate(ctx context.Context, tx pgx.Tx, connectionID, o
 	}
 	for _, r := range rows {
 		if sameCertificate(r.Certificate, cert) {
-			return nil, errs.ErrSAMLCertificateExists
+			return nil, ErrCertificateExists
 		}
 	}
 	if len(rows) >= maxCertificates {
-		return nil, errs.ErrSAMLCertificateLimit
+		return nil, ErrCertificateLimit
 	}
 	row, err := q.InsertSamlCertificate(ctx, dbgen.InsertSamlCertificateParams{
 		OrganizationID: organizationID, ConnectionID: connectionID, Certificate: certificatePEM(cert), Source: certificateManual,
@@ -146,21 +153,34 @@ func (s *Service) AddCertificate(ctx context.Context, tx pgx.Tx, connectionID, o
 		return nil, err
 	}
 	out := toCertificate(row)
+	if err := recordChange(ctx, tx, actor, organizationID, connectionID, "saml.certificate_added", map[string]any{
+		"fingerprint_sha256": out.FingerprintSHA256, "not_after": out.NotAfter,
+	}); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
 	return &out, nil
 }
 
-// RemoveCertificate stops connectionID trusting certificateID, within tx, and
-// returns what it removed. The connection's last certificate can't be removed.
-func (s *Service) RemoveCertificate(ctx context.Context, tx pgx.Tx, connectionID, organizationID, certificateID uuid.UUID) (*Certificate, error) {
+// RemoveCertificate stops connectionID trusting certificateID, recorded as
+// actor's. The connection's last certificate can't be removed.
+func (s *Service) RemoveCertificate(ctx context.Context, connectionID, organizationID, certificateID uuid.UUID, actor audit.Actor) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
 	q := s.q.WithTx(tx)
 	if _, err := q.LockSamlConnection(ctx, dbgen.LockSamlConnectionParams{ID: connectionID, OrganizationID: organizationID}); errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrNotFound
+		return errs.ErrNotFound
 	} else if err != nil {
-		return nil, err
+		return err
 	}
 	certs, err := listCertificates(ctx, q, connectionID, organizationID)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	var removed *Certificate
 	for i := range certs {
@@ -169,28 +189,34 @@ func (s *Service) RemoveCertificate(ctx context.Context, tx pgx.Tx, connectionID
 		}
 	}
 	if removed == nil {
-		return nil, errs.ErrNotFound
+		return errs.ErrNotFound
 	}
 	if len(certs) == 1 {
-		return nil, errs.ErrSAMLCertificateLast
+		return ErrCertificateLast
 	}
 	if err := q.DeleteSamlCertificate(ctx, dbgen.DeleteSamlCertificateParams{ID: certificateID, ConnectionID: connectionID, OrganizationID: organizationID}); err != nil {
-		return nil, err
+		return err
 	}
-	return removed, q.SyncSamlPrimaryCertificate(ctx, dbgen.SyncSamlPrimaryCertificateParams{ID: connectionID, OrganizationID: organizationID})
+	if err := q.SyncSamlPrimaryCertificate(ctx, dbgen.SyncSamlPrimaryCertificateParams{ID: connectionID, OrganizationID: organizationID}); err != nil {
+		return err
+	}
+	if err := recordChange(ctx, tx, actor, organizationID, connectionID, "saml.certificate_removed", map[string]any{
+		"fingerprint_sha256": removed.FingerprintSHA256,
+	}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
-// --- admin handlers ---
-
 func (h *Handler) addCertificate(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	id, err := httpx.PathUUID(r, "id", ErrIDInvalid)
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrSAMLIDInvalid)
+		httpx.WriteError(w, r, err)
 		return
 	}
 	var body struct {
@@ -207,24 +233,8 @@ func (h *Handler) addCertificate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	tx, err := h.Service.Pool().Begin(ctx)
+	cert, err := h.Service.AddCertificate(ctx, id, organizationID, body.Certificate, audit.ActorOf(r))
 	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	defer tx.Rollback(ctx)
-	cert, err := h.Service.AddCertificate(ctx, tx, id, organizationID, body.Certificate)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := h.recordAudit(ctx, tx, r, organizationID, id, "saml.certificate_added", map[string]any{
-		"fingerprint_sha256": cert.FingerprintSHA256, "not_after": cert.NotAfter,
-	}); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -232,42 +242,44 @@ func (h *Handler) addCertificate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) removeCertificate(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		httpx.WriteError(w, r, errs.ErrSAMLIDInvalid)
-		return
-	}
-	certificateID, err := uuid.Parse(chi.URLParam(r, "certificateID"))
-	if err != nil {
-		httpx.WriteError(w, r, errs.ErrSAMLIDInvalid)
-		return
-	}
-	ctx := r.Context()
-	tx, err := h.Service.Pool().Begin(ctx)
+	id, err := httpx.PathUUID(r, "id", ErrIDInvalid)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	defer tx.Rollback(ctx)
-	removed, err := h.Service.RemoveCertificate(ctx, tx, id, organizationID, certificateID)
+	certificateID, err := httpx.PathUUID(r, "certificateID", ErrIDInvalid)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.recordAudit(ctx, tx, r, organizationID, id, "saml.certificate_removed", map[string]any{
-		"fingerprint_sha256": removed.FingerprintSHA256,
-	}); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := h.Service.RemoveCertificate(r.Context(), id, organizationID, certificateID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// parseCertificate accepts a PEM block or bare base64 DER and returns the cert.
+func parseCertificate(raw string) (*x509.Certificate, error) {
+	raw = strings.TrimSpace(raw)
+	if strings.Contains(raw, "-----BEGIN") {
+		block, _ := pem.Decode([]byte(raw))
+		if block == nil {
+			return nil, errors.New("invalid PEM certificate")
+		}
+		return x509.ParseCertificate(block.Bytes)
+	}
+	// Bare base64 DER (as found in IdP metadata <X509Certificate>): strip
+	// any whitespace the copy-paste introduced.
+	clean := strings.NewReplacer("\n", "", "\r", "", " ", "", "\t", "").Replace(raw)
+	der, err := base64.StdEncoding.DecodeString(clean)
+	if err != nil {
+		return nil, fmt.Errorf("certificate is neither PEM nor base64 DER: %w", err)
+	}
+	return x509.ParseCertificate(der)
 }

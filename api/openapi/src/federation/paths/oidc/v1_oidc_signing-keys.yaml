@@ -4,7 +4,7 @@ get:
     Returns non-secret metadata for the issuer's OIDC signing keys, including
     the candidate, active and not-yet-expired retired keys, with key id,
     algorithm and status. No private key material is exposed. The signing key is
-    issuer-global rather than tenant-scoped; the corresponding public keys are
+    issuer-global rather than organization-scoped; the corresponding public keys are
     published at the JWKS endpoint.
   summary: Signing keys metadata
   tags:

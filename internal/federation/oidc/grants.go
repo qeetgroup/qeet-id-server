@@ -4,10 +4,8 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"strconv"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
@@ -39,27 +37,21 @@ type Grant struct {
 	ExpiresAt    time.Time  `json:"expires_at"`
 }
 
-// GrantPage is a page of grants: NextCursor fetches the next, "" on the last,
-// and Total counts every grant the filter matches.
+// GrantPage is a page of grants, with Total counting every grant the filter
+// matches.
 type GrantPage struct {
-	Items      []Grant `json:"items"`
-	NextCursor string  `json:"next_cursor,omitempty"`
-	Total      int     `json:"total"`
+	paging.Result[Grant]
+	Total int `json:"total"`
 }
 
 // ListGrants returns a page of up to limit (1..500, default 100) of the
 // applications the organization's people have authorized, latest used first, after
-// cursor, of clientID when given.
-func (s *Service) ListGrants(ctx context.Context, organizationID uuid.UUID, clientID *string, limit int, cursor string) (*GrantPage, error) {
-	if limit <= 0 || limit > 500 {
-		limit = 100
-	}
+// the cursor, of clientID when given.
+func (s *Service) ListGrants(ctx context.Context, organizationID uuid.UUID, clientID *string, limit int, after paging.Cursor) (*GrantPage, error) {
+	limit = paging.Clamp(limit, 100, 500)
 	beforeTs, beforeID := time.Now().Add(time.Hour), uuid.Max
-	if cursor != "" {
-		var err error
-		if beforeTs, beforeID, err = paging.DecodeTimeUUID(cursor); err != nil {
-			return nil, errs.ErrBadRequest.WithDetail("invalid cursor")
-		}
+	if after.Set {
+		beforeTs, beforeID = after.Time, after.ID
 	}
 	total, err := s.q.CountGrants(ctx, dbgen.CountGrantsParams{OrganizationID: organizationID, ClientID: clientID})
 	if err != nil {
@@ -71,25 +63,18 @@ func (s *Service) ListGrants(ctx context.Context, organizationID uuid.UUID, clie
 	if err != nil {
 		return nil, err
 	}
-	page := &GrantPage{Items: make([]Grant, 0, len(rows)), Total: int(total)}
-	for _, r := range rows {
-		g := Grant{
+	items := make([]Grant, len(rows))
+	for i, r := range rows {
+		items[i] = Grant{
 			ID: r.ID, ClientID: r.ClientID, ClientName: r.ClientName, UserID: r.UserID, UserEmail: r.UserEmail,
-			UserName: r.UserName, Scopes: r.Scopes, AuthorizedAt: r.AuthorizedAt, LastUsedAt: r.IssuedAt,
-			IssuedAt: r.IssuedAt, ExpiresAt: r.ExpiresAt,
+			UserName: r.UserName, Scopes: r.Scopes, AuthorizedAt: r.AuthorizedAt, ConsentedAt: r.ConsentedAt,
+			LastUsedAt: r.IssuedAt, IssuedAt: r.IssuedAt, ExpiresAt: r.ExpiresAt,
 		}
-		if r.ConsentedAt.Valid {
-			at := r.ConsentedAt.Time
-			g.ConsentedAt = &at
-		}
-		page.Items = append(page.Items, g)
 	}
-	if len(page.Items) > limit {
-		page.Items = page.Items[:limit]
-		last := page.Items[limit-1]
-		page.NextCursor = paging.EncodeTimeUUID(last.IssuedAt, last.ID)
-	}
-	return page, nil
+	return &GrantPage{
+		Result: paging.Page(paging.Next(items, limit, func(g Grant) (time.Time, uuid.UUID) { return g.IssuedAt, g.ID })),
+		Total:  int(total),
+	}, nil
 }
 
 // maxRevokeIDs bounds the grants one bulk revocation names.
@@ -117,15 +102,15 @@ func (s *Service) RevokeGrants(ctx context.Context, organizationID uuid.UUID, id
 		}
 		revoked = len(users)
 		if revoked > 0 {
-			if err := audit.Record(ctx, tx, actor.Event(organizationID, "oauth.client_grants_revoked", "tenant", organizationID,
+			if err := audit.Record(ctx, tx, actor.Event(organizationID, "oauth.client_grants_revoked", "organization", organizationID,
 				map[string]any{"client_id": clientID, "people": revoked})); err != nil {
 				return 0, err
 			}
 		}
 	} else {
 		for _, id := range ids {
-			clientID, user, err := s.RevokeGrant(ctx, tx, organizationID, id)
-			if errors.Is(err, errs.ErrOIDCGrantNotFound) {
+			clientID, user, err := s.revokeGrant(ctx, tx, organizationID, id)
+			if errors.Is(err, ErrGrantNotFound) {
 				continue
 			}
 			if err != nil {
@@ -141,14 +126,33 @@ func (s *Service) RevokeGrants(ctx context.Context, organizationID uuid.UUID, id
 	return revoked, tx.Commit(ctx)
 }
 
-// RevokeGrant revokes the entire (client, user) refresh-token chain the given
-// token belongs to, so a rotated sibling can't keep the grant alive. Returns
-// the client_id for the audit row.
-func (s *Service) RevokeGrant(ctx context.Context, tx pgx.Tx, organizationID, id uuid.UUID) (string, uuid.UUID, error) {
+// RevokeGrant revokes, recorded as actor's, the entire (client, user)
+// refresh-token chain the given token belongs to, so a rotated sibling can't
+// keep the grant alive.
+func (s *Service) RevokeGrant(ctx context.Context, organizationID, id uuid.UUID, actor audit.Actor) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	clientID, user, err := s.revokeGrant(ctx, tx, organizationID, id)
+	if err != nil {
+		return err
+	}
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "oauth.grant_revoked", "oidc_grant", user,
+		map[string]any{"client_id": clientID})); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// revokeGrant revokes, in tx, the chain the token id belongs to, and returns
+// its client_id and person for the audit row.
+func (s *Service) revokeGrant(ctx context.Context, tx pgx.Tx, organizationID, id uuid.UUID) (string, uuid.UUID, error) {
 	q := s.q.WithTx(tx)
 	row, err := q.GetGrantForRevoke(ctx, dbgen.GetGrantForRevokeParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", uuid.Nil, errs.ErrOIDCGrantNotFound
+		return "", uuid.Nil, ErrGrantNotFound
 	}
 	if err != nil {
 		return "", uuid.Nil, err
@@ -162,7 +166,7 @@ func (s *Service) RevokeGrant(ctx context.Context, tx pgx.Tx, organizationID, id
 }
 
 func (h *Handler) listGrants(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -172,8 +176,12 @@ func (h *Handler) listGrants(w http.ResponseWriter, r *http.Request) {
 	if c := q.Get("client_id"); c != "" {
 		clientID = &c
 	}
-	limit, _ := strconv.Atoi(q.Get("limit"))
-	out, err := h.Service.ListGrants(r.Context(), organizationID, clientID, limit, q.Get("cursor"))
+	after, err := paging.ParseCursor(q)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, err := h.Service.ListGrants(r.Context(), organizationID, clientID, paging.Limit(q, 100, 500), after)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -181,9 +189,9 @@ func (h *Handler) listGrants(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
-// revokeGrants handles POST /v1/tenants/{tenantID}/oauth/grants/revoke.
+// revokeGrants handles POST /v1/organizations/{organizationID}/oauth/grants/revoke.
 func (h *Handler) revokeGrants(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -205,47 +213,17 @@ func (h *Handler) revokeGrants(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) revokeGrant(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		httpx.WriteError(w, r, errs.ErrOIDCIDInvalid)
-		return
-	}
-	ctx := r.Context()
-	tx, err := h.Service.Pool().Begin(ctx)
+	id, err := httpx.PathUUID(r, "id", ErrIDInvalid)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	defer tx.Rollback(ctx)
-	clientID, targetUser, err := h.Service.RevokeGrant(ctx, tx, organizationID, id)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	var actorID *uuid.UUID
-	actorType := "system"
-	if p := httpx.PrincipalFromCtx(ctx); p != nil {
-		actorID = p.UserID
-		if p.ActorType != "" {
-			actorType = p.ActorType
-		}
-	}
-	tid := organizationID
-	if err := audit.Record(ctx, tx, audit.Event{
-		OrganizationID: &tid, ActorUserID: actorID, ActorType: actorType,
-		Action: "oauth.grant_revoked", ResourceType: "oidc_grant", ResourceID: &targetUser,
-		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
-		Metadata: map[string]any{"client_id": clientID},
-	}); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := h.Service.RevokeGrant(r.Context(), organizationID, id, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

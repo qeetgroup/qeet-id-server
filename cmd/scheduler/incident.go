@@ -24,7 +24,7 @@ func openIncident(ctx context.Context, svc *servicehealth.Service, args []string
 	fs := flag.NewFlagSet(openIncidentCommand, flag.ContinueOnError)
 	component := fs.String("component", "", "api, sign_in, email, webhooks or directory")
 	impact := fs.String("impact", "", "maintenance, degraded or outage")
-	title := fs.String("title", "", "what organisations see")
+	title := fs.String("title", "", "what organizations see")
 	detail := fs.String("detail", "", "more about it, optional")
 	if err := fs.Parse(args); err != nil {
 		return 2

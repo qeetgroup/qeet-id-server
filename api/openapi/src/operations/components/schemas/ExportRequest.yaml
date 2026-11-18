@@ -5,7 +5,7 @@ required:
   - id
   - requested_by
   - status
-  - tenant_id
+  - organization_id
   - user_id
 properties:
   completed_at:
@@ -25,7 +25,7 @@ properties:
     type: object
     additionalProperties: true
     description: >-
-      The person's data in the organisation, while status is ready: profile
+      The person's data in the organization, while status is ready: profile
       (with metadata), sessions, passkeys, roles, mfa_totp_enabled, identities
       (linked social and single sign-on accounts), otp_factors (destinations
       masked), app_consents, app_grants, groups, sign_ins (the latest 1000) and
@@ -41,7 +41,7 @@ properties:
       pending, ready, failed, or expired once the payload has been deleted
       (seven days after it was built, or when the person was erased or their
       account deleted).
-  tenant_id:
+  organization_id:
     type: string
     format: uuid
   user_id:

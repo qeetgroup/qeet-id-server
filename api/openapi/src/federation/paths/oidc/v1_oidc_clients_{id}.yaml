@@ -1,12 +1,12 @@
 delete:
   operationId: unregisterOidcClient
   description: >-
-    Deletes an OIDC client addressed by id alone, with the owning tenant derived
-    from the caller's JWT so the deletion can never cross tenants. This serves
-    the admin UI's client list, which is not tenant-path scoped, and the
-    deletion is audited. The tenant-path variant DELETE
-    /v1/tenants/{tenantID}/oidc/clients/{id} performs the same operation for
-    tenant-scoped callers.
+    Deletes an OIDC client addressed by id alone, with the owning organization derived
+    from the caller's JWT so the deletion can never cross organizations. This serves
+    the admin UI's client list, which is not organization-path scoped, and the
+    deletion is audited. The organization-path variant DELETE
+    /v1/organizations/{organizationID}/oidc/clients/{id} performs the same operation for
+    organization-scoped callers.
   summary: Delete OIDC client (by scope)
   tags:
     - OIDC

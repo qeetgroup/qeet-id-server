@@ -10,13 +10,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
-	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
 	"github.com/qeetgroup/qeet-id-server/internal/access/recovery/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/emailtmpl"
@@ -40,8 +40,9 @@ type MagicLinkRequest struct {
 	OrganizationID uuid.UUID // organization whose sign-in page asked; uuid.Nil for the console
 	App            string    // MagicLinkHostedLogin, or anything else for the console
 	ReturnTo       string    // hosted login only: where the journey continues, checked by the caller
-	Caller         string    // requester's IP, for the per-caller bound
-	UserAgent      string    // requester's User-Agent, for the audit record
+	// Actor is the requester's address (for the per-caller bound), user agent
+	// and request ID, for the audit record.
+	audit.Actor
 }
 
 // Limiter bounds how often something may happen per key. Satisfied by
@@ -62,8 +63,8 @@ func (s *Service) magicLinkAllowed(ctx context.Context, req MagicLinkRequest) bo
 			return false
 		}
 	}
-	if s.magicPerCaller != nil && req.Caller != "" {
-		caller := req.Caller
+	if s.magicPerCaller != nil && req.IP != "" {
+		caller := req.IP
 		if network := httpx.SourceNetwork(caller); network != "" {
 			caller = network
 		}
@@ -118,7 +119,7 @@ func (s *Service) RequestMagicLink(ctx context.Context, req MagicLinkRequest) er
 // asking organization brands the message and sees the request only when the
 // account belongs to it; to anyone else's account it is the console's link.
 func (s *Service) sendMagicLink(ctx context.Context, req MagicLinkRequest, account dbgen.GetMagicLinkAccountRow) error {
-	home := uuid.UUID(account.OrganizationID.Bytes)
+	home := postgres.ZeroIfNull(account.OrganizationID)
 	ttl, err := s.magicLinkTTL(ctx, home)
 	if errors.Is(err, errs.ErrAuthMethodDisabled) {
 		return nil
@@ -155,7 +156,7 @@ func (s *Service) sendMagicLink(ctx context.Context, req MagicLinkRequest, accou
 		return err
 	}
 	if err := s.q.InsertMagicLink(ctx, dbgen.InsertMagicLinkParams{
-		OrganizationID: pgtype.UUID{Bytes: req.OrganizationID, Valid: req.OrganizationID != uuid.Nil},
+		OrganizationID: postgres.NullIfZero(req.OrganizationID),
 		Email:          account.Email,
 		TokenHash:      hash,
 		ExpiresAt:      time.Now().UTC().Add(ttl),
@@ -186,7 +187,7 @@ func (s *Service) sendMagicLink(ctx context.Context, req MagicLinkRequest, accou
 	}); err != nil {
 		return err
 	}
-	s.recordRequest(ctx, "auth.magic_link_requested", account.ID, []uuid.UUID{home, req.OrganizationID}, AuditCtx{IP: req.Caller, UserAgent: req.UserAgent}, map[string]any{"app": app})
+	s.recordRequest(ctx, "auth.magic_link_requested", account.ID, []uuid.UUID{home, req.OrganizationID}, req.Actor, map[string]any{"app": app})
 	return nil
 }
 
@@ -211,7 +212,7 @@ func (s *Service) magicLink(raw, app, returnTo string) string {
 // used, expired or not — to the same address, for the same place and
 // journey, without the user typing the address again. It answers the same
 // whatever the token names, and is bounded like any request.
-func (s *Service) ResendMagicLink(ctx context.Context, rawToken, caller string) error {
+func (s *Service) ResendMagicLink(ctx context.Context, rawToken string, from audit.Actor) error {
 	row, err := s.q.GetMagicLinkByToken(ctx, codes.Hash(rawToken))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
@@ -219,9 +220,9 @@ func (s *Service) ResendMagicLink(ctx context.Context, rawToken, caller string) 
 	if err != nil {
 		return err
 	}
-	req := MagicLinkRequest{Email: row.Email, App: row.App, Caller: caller}
-	if row.OrganizationID.Valid {
-		req.OrganizationID = uuid.UUID(row.OrganizationID.Bytes)
+	req := MagicLinkRequest{Email: row.Email, App: row.App, Actor: from}
+	if row.OrganizationID != nil {
+		req.OrganizationID = *row.OrganizationID
 	}
 	if row.ReturnTo != nil {
 		req.ReturnTo = *row.ReturnTo
@@ -240,17 +241,17 @@ type MagicLinkResult struct {
 // ConsumeMagicLink exchanges a console link: it marks the link used and
 // returns the account to sign in, with its own organization (uuid.Nil for
 // none).
-func (s *Service) ConsumeMagicLink(ctx context.Context, rawToken string, ac AuditCtx) (*MagicLinkResult, error) {
-	return s.consumeMagicLink(ctx, rawToken, MagicLinkConsole, ac)
+func (s *Service) ConsumeMagicLink(ctx context.Context, rawToken string, from audit.Actor) (*MagicLinkResult, error) {
+	return s.consumeMagicLink(ctx, rawToken, MagicLinkConsole, from)
 }
 
 // ConsumeHostedMagicLink exchanges a hosted-login link, returning the account
 // and where its journey continues.
-func (s *Service) ConsumeHostedMagicLink(ctx context.Context, rawToken string, ac AuditCtx) (*MagicLinkResult, error) {
-	return s.consumeMagicLink(ctx, rawToken, MagicLinkHostedLogin, ac)
+func (s *Service) ConsumeHostedMagicLink(ctx context.Context, rawToken string, from audit.Actor) (*MagicLinkResult, error) {
+	return s.consumeMagicLink(ctx, rawToken, MagicLinkHostedLogin, from)
 }
 
-func (s *Service) consumeMagicLink(ctx context.Context, rawToken, app string, ac AuditCtx) (*MagicLinkResult, error) {
+func (s *Service) consumeMagicLink(ctx context.Context, rawToken, app string, from audit.Actor) (*MagicLinkResult, error) {
 	hash := codes.Hash(rawToken)
 	ml, account, err := magicLink(ctx, s.q, hash, app)
 	if err != nil {
@@ -259,7 +260,7 @@ func (s *Service) consumeMagicLink(ctx context.Context, rawToken, app string, ac
 	// A link issued before the account's organization switched magic links off
 	// stops working too; it stays unused. The policy is read before the
 	// transaction, and the link checked again under lock inside it.
-	if _, err := s.magicLinkTTL(ctx, uuid.UUID(account.OrganizationID.Bytes)); err != nil {
+	if _, err := s.magicLinkTTL(ctx, postgres.ZeroIfNull(account.OrganizationID)); err != nil {
 		return nil, err
 	}
 	// So does a link to an address whose organization now requires single
@@ -281,13 +282,13 @@ func (s *Service) consumeMagicLink(ctx context.Context, rawToken, app string, ac
 	}
 	res := &MagicLinkResult{UserID: account.ID}
 	var home *uuid.UUID
-	if account.OrganizationID.Valid {
-		res.OrganizationID = uuid.UUID(account.OrganizationID.Bytes)
+	if account.OrganizationID != nil {
+		res.OrganizationID = *account.OrganizationID
 		home = &res.OrganizationID
 	}
 	// The link proves the address as a reset does. Its first proof leaves
 	// nothing set up before it, password included, and no session open.
-	proved, err := proveAddress(ctx, tx, account.ID, home, "magic_link", false, ac)
+	proved, err := proveAddress(ctx, tx, account.ID, home, "magic_link", false, from)
 	if err != nil {
 		return nil, err
 	}
@@ -301,20 +302,9 @@ func (s *Service) consumeMagicLink(ctx context.Context, rawToken, app string, ac
 	}
 	// Recorded for the account's organization, and for the one that asked,
 	// which the link names only when the account belongs to it.
-	target := account.ID
-	for _, org := range auditOrgs([]uuid.UUID{res.OrganizationID, uuid.UUID(ml.OrganizationID.Bytes)}) {
-		if err := audit.Record(ctx, tx, audit.Event{
-			OrganizationID: org,
-			ActorUserID:    &target,
-			ActorType:      "system",
-			Action:         "auth.magic_link_consumed",
-			ResourceType:   "user",
-			ResourceID:     &target,
-			IP:             ac.IP,
-			UserAgent:      ac.UserAgent,
-			RequestID:      ac.RequestID,
-			Metadata:       map[string]any{"app": ml.App},
-		}); err != nil {
+	by := as(from, "system", &account.ID)
+	for _, org := range auditOrgs([]uuid.UUID{res.OrganizationID, postgres.ZeroIfNull(ml.OrganizationID)}) {
+		if err := audit.Record(ctx, tx, by.EventIn(org, "auth.magic_link_consumed", "user", account.ID, map[string]any{"app": ml.App})); err != nil {
 			return nil, err
 		}
 	}
@@ -330,20 +320,20 @@ func magicLink(ctx context.Context, q *dbgen.Queries, hash, app string) (dbgen.G
 	var account dbgen.GetMagicLinkAccountRow
 	ml, err := q.GetMagicLinkByToken(ctx, hash)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && ml.App != app) {
-		return ml, account, errs.ErrMagicLinkInvalid
+		return ml, account, ErrMagicLinkInvalid
 	}
 	if err != nil {
 		return ml, account, err
 	}
-	if ml.UsedAt.Valid {
-		return ml, account, errs.ErrRecoveryLinkUsed
+	if ml.UsedAt != nil {
+		return ml, account, ErrLinkUsed
 	}
 	if time.Now().After(ml.ExpiresAt) {
-		return ml, account, errs.ErrRecoveryLinkExpired
+		return ml, account, ErrLinkExpired
 	}
 	account, err = q.GetMagicLinkAccount(ctx, ml.Email)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return ml, account, errs.ErrMagicLinkInvalid
+		return ml, account, ErrMagicLinkInvalid
 	}
 	return ml, account, err
 }

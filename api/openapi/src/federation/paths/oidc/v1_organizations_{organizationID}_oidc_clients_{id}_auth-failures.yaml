@@ -1,0 +1,61 @@
+get:
+  operationId: listOidcClientSecretFailures
+  summary: Application secret failures
+  description: >-
+    An application's wrong-secret lockout and its last 20 failed
+    authentications, newest first, each with its time and address (no secret
+    material is ever recorded). Wrong secrets count against a confidential
+    application on every endpoint that takes one (code exchange, refresh, token
+    exchange, device and backchannel requests, revocation, introspection), per
+    source network (an IPv4 address or an IPv6 /64); past the threshold from
+    one network (10 in 15 minutes) every authentication from that network is
+    refused for 15 minutes, the right secret included, with the same 401 oidc.client_auth_failed as a wrong secret or an unknown
+    application, while other networks are unaffected. Each failure is audited as
+    oidc.client_auth_failed; a lockout as oidc.client_locked_out, with its
+    source_network, and announced as the oidc.client_locked_out event. A
+    successful authentication resets its network's count. locked_until is when
+    the last lockout in force ends, null when none is.
+  tags:
+    - OIDC
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: The lockout in force (if any) and recent failures
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              locked_until:
+                type:
+                  - string
+                  - 'null'
+                format: date-time
+              items:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    at:
+                      type: string
+                      format: date-time
+                    ip:
+                      type: string
+                    reason:
+                      type: string
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml

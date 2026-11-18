@@ -1,10 +1,34 @@
--- Queries for the token-vault domain.
--- storeGrant (upsert with nullable []byte params) is converted below using
--- pointer types; the encrypt/decrypt/HTTP-exchange logic stays in the Service.
+-- Queries for the token-vault domain. Tokens and client secrets are stored
+-- sealed; the service opens them.
 
 -- name: ListProviders :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT id, provider, client_id, authorize_url, token_url, scopes, created_at, updated_at
-FROM organization.token_vault_providers WHERE organization_id = $1 ORDER BY provider;
+FROM organization.token_vault_providers WHERE organization_id = $1 ORDER BY provider
+LIMIT 1001;
+
+-- UpsertProvider stores the organization's settings for a provider, replacing
+-- those it had.
+-- name: UpsertProvider :one
+INSERT INTO organization.token_vault_providers
+    (organization_id, provider, client_id, client_secret_ct, client_secret_nonce, authorize_url, token_url, scopes)
+VALUES (@organization_id, @provider, @client_id, @client_secret_ct, @client_secret_nonce, @authorize_url, @token_url, @scopes)
+ON CONFLICT (organization_id, provider) DO UPDATE SET
+    client_id = EXCLUDED.client_id,
+    client_secret_ct = EXCLUDED.client_secret_ct,
+    client_secret_nonce = EXCLUDED.client_secret_nonce,
+    authorize_url = EXCLUDED.authorize_url,
+    token_url = EXCLUDED.token_url,
+    scopes = EXCLUDED.scopes,
+    updated_at = NOW()
+RETURNING id, provider, client_id, authorize_url, token_url, scopes, created_at, updated_at;
+
+-- GetProviderConfig reads what calling a provider takes: its client, sealed
+-- client secret, endpoints and scopes.
+-- name: GetProviderConfig :one
+SELECT client_id, client_secret_ct, client_secret_nonce, authorize_url, token_url, scopes
+FROM organization.token_vault_providers
+WHERE organization_id = @organization_id AND provider = @provider;
 
 -- name: DeleteProvider :execrows
 DELETE FROM organization.token_vault_providers WHERE organization_id = @organization_id AND provider = @provider;
@@ -75,9 +99,11 @@ WHERE organization_id = @organization_id AND user_id = @user_id AND provider = @
 FOR UPDATE;
 
 -- name: ListGrants :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT provider, external_account_id, scope, expires_at, created_at, updated_at
 FROM organization.token_vault_grants
-WHERE organization_id = @organization_id AND user_id = @user_id ORDER BY provider;
+WHERE organization_id = @organization_id AND user_id = @user_id ORDER BY provider
+LIMIT 1001;
 
 -- name: DeleteGrant :execrows
 DELETE FROM organization.token_vault_grants

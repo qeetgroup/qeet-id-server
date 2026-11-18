@@ -35,10 +35,10 @@ post:
     sp_metadata_url) are in the answer, so the IT admin can give them to the IdP
     before its details exist; the IdP's entity ID, SSO URL and certificate then
     come together through the update endpoint. Any of them given brings the rest
-    (422 admin_portal.saml_fields_required otherwise). As on the tenant-admin
+    (422 admin_portal.saml_fields_required otherwise). As on the organization-admin
     endpoint, an IdP SSO URL that is not an absolute https URL answers 422
     saml.sso_url_invalid, a certificate that does not parse 422
-    saml.certificate_invalid, and an organisation whose plan does not include
+    saml.certificate_invalid, and an organization whose plan does not include
     enterprise SSO 402 billing.upgrade_required.
   tags:
     - Admin Portal
@@ -63,7 +63,7 @@ post:
       $ref: ../../../shared/responses/Unauthorized.yaml
     '402':
       description: >-
-        The organisation's plan does not include enterprise SSO
+        The organization's plan does not include enterprise SSO
         (billing.upgrade_required).
     '403':
       $ref: ../../../shared/responses/Forbidden.yaml

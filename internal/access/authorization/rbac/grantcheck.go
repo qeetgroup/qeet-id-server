@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -24,8 +25,8 @@ import (
 // CheckGrantPermission refuses, with ErrRBACGrantExceedsCaller naming it, the
 // caller granting permID to a role of organizationID without holding it there.
 func (r *Repository) CheckGrantPermission(ctx context.Context, caller *httpx.Principal, organizationID, permID uuid.UUID) error {
-	var key string
-	if err := r.pool.QueryRow(ctx, `SELECT key FROM rbac.permissions WHERE id = $1`, permID).Scan(&key); err != nil {
+	key, err := r.q.GetPermissionKey(ctx, permID)
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errs.ErrNotFound
 		}
@@ -39,16 +40,7 @@ func (r *Repository) CheckGrantPermission(ctx context.Context, caller *httpx.Pri
 // ErrRBACGrantExceedsCaller naming a permission of the role the caller lacks.
 // A role that isn't organizationID's passes, so the write itself must refuse it.
 func (r *Repository) CheckGrantRole(ctx context.Context, caller *httpx.Principal, organizationID, roleID uuid.UUID) error {
-	var ownerRole bool
-	var keys []string
-	err := r.pool.QueryRow(ctx, `
-		SELECT (ro.is_system AND ro.name = 'owner'),
-		       COALESCE(array_agg(p.key ORDER BY p.key) FILTER (WHERE p.key IS NOT NULL), '{}')
-		FROM rbac.roles ro
-		LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
-		LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
-		WHERE ro.id = $1 AND ro.organization_id = $2
-		GROUP BY ro.id, ro.is_system, ro.name`, roleID, organizationID).Scan(&ownerRole, &keys)
+	role, err := r.q.RoleGrantScope(ctx, dbgen.RoleGrantScopeParams{RoleID: roleID, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		// The write answers for a role that isn't the organization's, so a missing
 		// and a foreign role get the same refusal.
@@ -57,7 +49,7 @@ func (r *Repository) CheckGrantRole(ctx context.Context, caller *httpx.Principal
 	if err != nil {
 		return err
 	}
-	return r.checkGrant(ctx, caller, organizationID, keys, ownerRole)
+	return r.checkGrant(ctx, caller, organizationID, role.Keys, role.OwnerRole)
 }
 
 // CheckGrantGroup refuses the caller adding someone to groupID of organizationID when
@@ -66,19 +58,11 @@ func (r *Repository) CheckGrantRole(ctx context.Context, caller *httpx.Principal
 // permission otherwise. A group that isn't organizationID's passes, so the write
 // itself must refuse it.
 func (r *Repository) CheckGrantGroup(ctx context.Context, caller *httpx.Principal, organizationID, groupID uuid.UUID) error {
-	var ownerRole bool
-	var keys []string
-	if err := r.pool.QueryRow(ctx, `
-		SELECT COALESCE(bool_or(ro.is_system AND ro.name = 'owner'), false),
-		       COALESCE(array_agg(DISTINCT p.key) FILTER (WHERE p.key IS NOT NULL), '{}')
-		FROM rbac.group_roles gr
-		JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.organization_id = gr.organization_id
-		LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
-		LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
-		WHERE gr.group_id = $1 AND gr.organization_id = $2`, groupID, organizationID).Scan(&ownerRole, &keys); err != nil {
+	group, err := r.q.GroupGrantScope(ctx, dbgen.GroupGrantScopeParams{GroupID: groupID, OrganizationID: organizationID})
+	if err != nil {
 		return err
 	}
-	return r.checkGrant(ctx, caller, organizationID, keys, ownerRole)
+	return r.checkGrant(ctx, caller, organizationID, group.Keys, group.OwnerRole)
 }
 
 // CheckActOn refuses the caller changing targetID's account or roles in
@@ -119,8 +103,7 @@ func (r *Repository) CheckActOn(ctx context.Context, caller *httpx.Principal, or
 // built-in roles (owner, admin, member, viewer), with ErrRBACSystemRoleFixed.
 // A role that isn't organizationID's passes, so the write itself must refuse it.
 func (r *Repository) CheckRoleEditable(ctx context.Context, organizationID, roleID uuid.UUID) error {
-	var fixed bool
-	err := r.pool.QueryRow(ctx, `SELECT is_system FROM rbac.roles WHERE id = $1 AND organization_id = $2`, roleID, organizationID).Scan(&fixed)
+	fixed, err := r.q.RoleIsSystem(ctx, dbgen.RoleIsSystemParams{RoleID: roleID, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -128,7 +111,7 @@ func (r *Repository) CheckRoleEditable(ctx context.Context, organizationID, role
 		return err
 	}
 	if fixed {
-		return errs.ErrRBACSystemRoleFixed
+		return ErrSystemRoleFixed
 	}
 	return nil
 }
@@ -248,17 +231,5 @@ func machineActor(actorType string) bool {
 // IsOwner reports whether userID holds organizationID's owner role, directly or
 // through a group.
 func (r *Repository) IsOwner(ctx context.Context, userID, organizationID uuid.UUID) (bool, error) {
-	var owner bool
-	err := r.pool.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM rbac.user_roles ur
-			JOIN rbac.roles ro ON ro.id = ur.role_id AND ro.is_system AND ro.name = 'owner'
-			WHERE ur.user_id = $1 AND ur.organization_id = $2 AND ro.organization_id = $2
-			UNION ALL
-			SELECT 1 FROM organization.group_members gm
-			JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.organization_id = gm.organization_id
-			JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.is_system AND ro.name = 'owner'
-			WHERE gm.user_id = $1 AND gm.organization_id = $2 AND ro.organization_id = $2
-		)`, userID, organizationID).Scan(&owner)
-	return owner, err
+	return r.q.IsOwner(ctx, dbgen.IsOwnerParams{UserID: userID, OrganizationID: organizationID})
 }

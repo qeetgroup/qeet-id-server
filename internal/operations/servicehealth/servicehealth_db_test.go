@@ -35,7 +35,7 @@ func TestReportJudgesEachComponentByTheOrganization(t *testing.T) {
 	want := map[string]string{ComponentAPI: StateOperational, ComponentSignIn: StateOperational, ComponentEmail: StateOperational,
 		ComponentWebhooks: StateNotConfigured, ComponentDirectory: StateNotConfigured}
 	if got := states(rep); !maps.Equal(got, want) || rep.Status != StateOperational {
-		t.Errorf("a new organisation: %v, status %s; want %v, operational", got, rep.Status, want)
+		t.Errorf("a new organization: %v, status %s; want %v, operational", got, rep.Status, want)
 	}
 
 	if _, err := pool.Exec(ctx, `
@@ -57,7 +57,7 @@ func TestReportJudgesEachComponentByTheOrganization(t *testing.T) {
 		t.Errorf("failing webhooks and emails: %v, status %s; want both degraded", got, rep.Status)
 	}
 	if rep, err := svc.Report(ctx, other); err != nil || rep.Status != StateOperational {
-		t.Errorf("another organisation: %+v, %v; want operational", rep, err)
+		t.Errorf("another organization: %+v, %v; want operational", rep, err)
 	}
 
 	resolved, err := svc.OpenIncident(ctx, ComponentDirectory, StateMaintenance, "Directory upgrade", "")
@@ -87,10 +87,10 @@ func TestReportJudgesEachComponentByTheOrganization(t *testing.T) {
 
 	admin := dbtest.User(t, organization, organization)
 	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: svc}).Mount)
-	if rec := dbtest.Do(t, h, http.MethodGet, "/tenants/"+other.String()+"/service-health", nil); rec.Code != http.StatusForbidden {
-		t.Errorf("another organisation's health: %d, want 403", rec.Code)
+	if rec := dbtest.Do(t, h, http.MethodGet, "/organizations/"+other.String()+"/service-health", nil); rec.Code != http.StatusForbidden {
+		t.Errorf("another organization's health: %d, want 403", rec.Code)
 	}
-	if rec := dbtest.Do(t, h, http.MethodGet, "/tenants/"+organization.String()+"/service-health", nil); rec.Code != http.StatusOK {
+	if rec := dbtest.Do(t, h, http.MethodGet, "/organizations/"+organization.String()+"/service-health", nil); rec.Code != http.StatusOK {
 		t.Errorf("its own health: %d %s", rec.Code, rec.Body.String())
 	}
 

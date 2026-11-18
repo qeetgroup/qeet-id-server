@@ -14,11 +14,10 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
-	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
@@ -177,8 +176,8 @@ func TestRPInitiatedLogout(t *testing.T) {
 	if live(cookie) {
 		t.Error("the session outlived the sign-out")
 	}
-	if _, err := p.svc.RefreshToken(ctx, client.ClientID, secret, issued.RefreshToken, ""); !errors.Is(err, errs.ErrOIDCRefreshTokenRevoked) {
-		t.Errorf("refresh a grant of the ended session: %v, want %v", err, errs.ErrOIDCRefreshTokenRevoked)
+	if _, err := p.svc.RefreshToken(ctx, client.ClientID, secret, issued.RefreshToken, ""); !errors.Is(err, ErrRefreshTokenRevoked) {
+		t.Errorf("refresh a grant of the ended session: %v, want %v", err, ErrRefreshTokenRevoked)
 	}
 	to, q = redirected(t, browse(t, p.public, http.MethodGet, "/oauth/logout/continue?ticket="+url.QueryEscape(q.Get("continue")), nil, nil))
 	if to != signedOut || q.Get("state") != "s-1" {
@@ -315,10 +314,10 @@ func TestSignOutNoticesStayInTheirOrganization(t *testing.T) {
 		const naming = `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'oidc.sign_out_notified'
 			AND metadata::text LIKE '%' || $2 || '%'`
 		if n := dbtest.Count(t, naming, tc.organization, tc.foreign); n != 0 {
-			t.Errorf("organisation %s's audit names another organisation's application %d times", tc.organization, n)
+			t.Errorf("organization %s's audit names another organization's application %d times", tc.organization, n)
 		}
 		if n := dbtest.Count(t, naming, tc.organization, tc.own); n != 1 {
-			t.Errorf("organisation %s's audit records the notice to its application %d times, want once", tc.organization, n)
+			t.Errorf("organization %s's audit records the notice to its application %d times, want once", tc.organization, n)
 		}
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/billing/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -50,22 +51,11 @@ func subscribe(t *testing.T, svc *Service, organization uuid.UUID, plan, currenc
 	}
 }
 
-// switchPlan runs SwitchPlan in a transaction and commits it on success.
+// switchPlan runs SwitchPlan as the system.
 func switchPlan(t *testing.T, svc *Service, organization uuid.UUID, plan, currency string) error {
 	t.Helper()
-	ctx := dbtest.Context(t)
-	tx, err := svc.Pool().Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(ctx)
-	if _, err := svc.SwitchPlan(ctx, tx, organization, plan, currency); err != nil {
-		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
-	return nil
+	_, err := svc.SwitchPlan(dbtest.Context(t), organization, plan, currency, audit.Actor{Type: "system"})
+	return err
 }
 
 // lapse ends the organization's paid period an hour ago, as if a month had passed
@@ -249,7 +239,7 @@ func TestPutSubscriptionAnswersCheckoutRequired(t *testing.T) {
 	admin := dbtest.User(t, organization, organization)
 	subscribe(t, svc, organization, "pro", "USD")
 	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: svc}).Mount)
-	path := "/tenants/" + organization.String() + "/billing/subscription"
+	path := "/organizations/" + organization.String() + "/billing/subscription"
 
 	rec := dbtest.Do(t, h, http.MethodPut, path, map[string]string{"plan_code": "enterprise", "currency": "USD"})
 	var body struct {
@@ -305,7 +295,7 @@ func latestInvoice(t *testing.T, svc *Service, organization uuid.UUID) Invoice {
 		t.Fatal(err)
 	}
 	if len(invoices) == 0 {
-		t.Fatalf("tenant %s has no invoice", organization)
+		t.Fatalf("organization %s has no invoice", organization)
 	}
 	return invoices[0]
 }
@@ -453,7 +443,7 @@ func TestCompleteCheckoutUsesOneConnection(t *testing.T) {
 		OrganizationID: organization, Provider: "sandbox", PlanCode: "starter", Currency: "USD", AmountMinor: 2900, TaxType: TaxTypeNone,
 	})
 	if err != nil {
-		t.Fatalf("stage tenant checkout: %v", err)
+		t.Fatalf("stage organization checkout: %v", err)
 	}
 	var signupCheckout uuid.UUID
 	if err := pool.QueryRow(ctx, `
@@ -474,7 +464,7 @@ func TestCompleteCheckoutUsesOneConnection(t *testing.T) {
 	}
 
 	if got := planOf(t, svc, organization); got != "starter" {
-		t.Errorf("tenant checkout: plan = %q, want starter", got)
+		t.Errorf("organization checkout: plan = %q, want starter", got)
 	}
 	var org uuid.UUID
 	if err := pool.QueryRow(ctx, `SELECT organization_id FROM organization.signup_checkouts WHERE id = $1 AND status = 'completed'`,
@@ -486,7 +476,7 @@ func TestCompleteCheckoutUsesOneConnection(t *testing.T) {
 	}
 	for _, id := range []uuid.UUID{organization, org} {
 		if n := dbtest.Count(t, `SELECT count(*) FROM organization.invoices WHERE organization_id = $1`, id); n != 1 {
-			t.Errorf("tenant %s has %d invoices, want 1", id, n)
+			t.Errorf("organization %s has %d invoices, want 1", id, n)
 		}
 	}
 }
@@ -536,4 +526,18 @@ func TestSignupCheckoutResumesAfterAFailure(t *testing.T) {
 	if n := dbtest.Count(t, `SELECT count(*) FROM organization.signup_checkouts WHERE id = $1 AND status = 'completed' AND organization_id = $2`, checkout, *org); n != 1 {
 		t.Error("the retried checkout is not completed with its organization")
 	}
+}
+
+// refuseAudit makes the organization's audit writes of action fail until t
+// ends, as an audit store that is down would.
+func refuseAudit(t *testing.T, organization uuid.UUID, action string) {
+	t.Helper()
+	owner, name := dbtest.Owner(t), "refuse_"+strings.ReplaceAll(uuid.NewString(), "-", "")
+	if _, err := owner.Exec(dbtest.Context(t), `
+		CREATE FUNCTION pg_temp.`+name+`() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit store down'; END $$;
+		CREATE TRIGGER `+name+` BEFORE INSERT ON audit.events FOR EACH ROW
+		WHEN (NEW.organization_id = '`+organization.String()+`' AND NEW.action = '`+action+`') EXECUTE FUNCTION pg_temp.`+name+`()`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = owner.Exec(context.Background(), `DROP FUNCTION pg_temp.`+name+`() CASCADE`) })
 }

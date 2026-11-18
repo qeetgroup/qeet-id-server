@@ -2,9 +2,9 @@ get:
   operationId: search
   summary: Universal search
   description: >-
-    Tenant-scoped, RBAC-enforced fuzzy search that fans out across user,
+    Organization-scoped, RBAC-enforced fuzzy search that fans out across user,
     organization, group, role, oidc_client, and audit_event resource types. Each
-    type is gated behind its read permission (user.read, tenant.read,
+    type is gated behind its read permission (user.read, organization.read,
     group.read, role.read, connection.read, audit.read); types the caller cannot
     read are silently excluded. Matching uses ILIKE '%q%' (parameterised).
     Results are scored and returned in descending relevance order. Pagination is

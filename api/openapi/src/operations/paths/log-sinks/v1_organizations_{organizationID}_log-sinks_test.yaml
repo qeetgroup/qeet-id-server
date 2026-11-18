@@ -1,0 +1,66 @@
+post:
+  operationId: testUnsavedLogSink
+  summary: Send a test event to an unsaved log stream
+  description: >-
+    Sends one test audit event (action siem.test, metadata.test true; no
+    organization data) to the destination in the body, which takes the fields
+    and checks of creating one and isn't saved, and reports how it answered.
+    Audited as siem.sink_tested. Needs audit.write and a recent step-up, as
+    creating one does.
+  tags:
+    - Log Sinks
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - type
+            - endpoint
+          properties:
+            type:
+              type: string
+              enum:
+                - splunk_hec
+                - datadog
+                - http
+            endpoint:
+              type: string
+              format: uri
+            token:
+              type: string
+              writeOnly: true
+  responses:
+    '200':
+      description: How the destination answered
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - delivered
+              - duration_ms
+            properties:
+              delivered:
+                type: boolean
+                description: Whether the destination accepted the event (a 2xx answer).
+              status:
+                type: integer
+                description: The destination's HTTP status; absent when it gave no answer.
+              error:
+                type: string
+                description: Why it wasn't delivered.
+              duration_ms:
+                type: integer
+    '400':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml

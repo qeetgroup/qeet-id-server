@@ -47,7 +47,9 @@ func TestCustomRolesAreEditedWhole(t *testing.T) {
 	h := &Handler{Repo: repo, Service: NewService(repo), Validate: validator.New(validator.WithRequiredStructEnabled())}
 	asOwner := dbtest.Serve(dbtest.Principal(owner.ID, organization), h.Mount)
 	asEditor := dbtest.Serve(dbtest.Principal(editor.ID, organization), h.Mount)
-	rolePath := func(role uuid.UUID) string { return "/tenants/" + organization.String() + "/roles/" + role.String() }
+	rolePath := func(role uuid.UUID) string {
+		return "/organizations/" + organization.String() + "/roles/" + role.String()
+	}
 	check := func(name string, status int, code string, method string, as http.Handler, path string, body any) []byte {
 		t.Helper()
 		rec := dbtest.Do(t, as, method, path, body)
@@ -87,13 +89,13 @@ func TestCustomRolesAreEditedWhole(t *testing.T) {
 	}
 	check("an unknown permission", http.StatusNotFound, errs.CodeNotFound, http.MethodPut, asOwner, rolePath(support)+"/permissions", map[string]any{"permission_ids": []string{uuid.NewString()}})
 	check("no permission_ids", http.StatusBadRequest, "", http.MethodPut, asOwner, rolePath(support)+"/permissions", map[string]any{})
-	check("another organisation's role", http.StatusNotFound, errs.CodeNotFound, http.MethodPut, asOwner, rolePath(foreign)+"/permissions", set)
-	check("the owner role", http.StatusForbidden, errs.CodeRBACSystemRoleFixed, http.MethodPut, asOwner, rolePath(ownerRole)+"/permissions", set)
+	check("another organization's role", http.StatusNotFound, errs.CodeNotFound, http.MethodPut, asOwner, rolePath(foreign)+"/permissions", set)
+	check("the owner role", http.StatusForbidden, CodeSystemRoleFixed, http.MethodPut, asOwner, rolePath(ownerRole)+"/permissions", set)
 
 	check("renaming it", http.StatusOK, `"name":"Helpdesk"`, http.MethodPatch, asEditor, rolePath(support), map[string]any{"name": "Helpdesk"})
-	check("renaming it after another role", http.StatusConflict, errs.CodeRBACRoleNameExists, http.MethodPatch, asEditor, rolePath(support), map[string]any{"name": "OWNER"})
-	check("renaming the owner role", http.StatusForbidden, errs.CodeRBACSystemRoleFixed, http.MethodPatch, asOwner, rolePath(ownerRole), map[string]any{"name": "boss"})
-	check("renaming another organisation's role", http.StatusNotFound, errs.CodeNotFound, http.MethodPatch, asOwner, rolePath(foreign), map[string]any{"name": "x"})
+	check("renaming it after another role", http.StatusConflict, CodeRoleNameExists, http.MethodPatch, asEditor, rolePath(support), map[string]any{"name": "OWNER"})
+	check("renaming the owner role", http.StatusForbidden, CodeSystemRoleFixed, http.MethodPatch, asOwner, rolePath(ownerRole), map[string]any{"name": "boss"})
+	check("renaming another organization's role", http.StatusNotFound, errs.CodeNotFound, http.MethodPatch, asOwner, rolePath(foreign), map[string]any{"name": "x"})
 	if n := audited("role.updated"); n != 1 {
 		t.Errorf("%d role.updated records, want 1", n)
 	}
@@ -114,7 +116,7 @@ func TestCustomRolesAreEditedWhole(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE organization.invites SET status = 'revoked' WHERE organization_id = $1 AND role_id = $2`, organization, support); err != nil {
 		t.Fatal(err)
 	}
-	check("deleting the owner role", http.StatusForbidden, errs.CodeRBACSystemRoleFixed, http.MethodDelete, asOwner, rolePath(ownerRole), nil)
+	check("deleting the owner role", http.StatusForbidden, CodeSystemRoleFixed, http.MethodDelete, asOwner, rolePath(ownerRole), nil)
 	check("deleting it once nobody holds it", http.StatusNoContent, "", http.MethodDelete, asEditor, rolePath(support), nil)
 	if n := dbtest.Count(t, `SELECT count(*) FROM rbac.roles WHERE id = $1`, support); n != 0 || audited("role.deleted") != 1 {
 		t.Errorf("after deleting: %d roles, %d role.deleted records; want 0 and 1", n, audited("role.deleted"))
@@ -146,7 +148,7 @@ func TestEffectivePermissionsSayWhereEachComesFrom(t *testing.T) {
 	}
 
 	h := &Handler{Repo: repo, Service: NewService(repo), Validate: validator.New(validator.WithRequiredStructEnabled())}
-	rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount), http.MethodGet, "/users/"+person.ID.String()+"/tenants/"+organization.String()+"/permissions", nil)
+	rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount), http.MethodGet, "/users/"+person.ID.String()+"/organizations/"+organization.String()+"/permissions", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("%d %s", rec.Code, rec.Body.String())
 	}

@@ -12,7 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	secret "github.com/qeetgroup/qeet-id-server/internal/developer/credentials/secrets"
+	"github.com/qeetgroup/qeet-id-server/internal/developer/credentials/secret"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope/reseal"

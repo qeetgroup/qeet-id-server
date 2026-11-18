@@ -4,9 +4,9 @@ post:
   description: >-
     The SSO-cookie-identified user approves or denies a pending device request
     identified by user_code. On approval the user (who must belong to the
-    client's tenant, and approve from an address its address rules allow, else
+    client's organization, and approve from an address its address rules allow, else
     403 auth.address_not_allowed) is bound and the device can complete its token
-    poll. Approving for an organisation that requires a second factor of the
+    poll. Approving for an organization that requires a second factor of the
     user needs a hosted sign-in that met one (403 step_up_required or
     mfa.enrollment_required otherwise).
   tags:

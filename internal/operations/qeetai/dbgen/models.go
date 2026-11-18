@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type QeetaiConversation struct {
@@ -41,7 +40,7 @@ type QeetaiProviderSetting struct {
 	KeyNonce       []byte
 	KeyLast4       string
 	Enabled        bool
-	UpdatedBy      pgtype.UUID
+	UpdatedBy      *uuid.UUID
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }

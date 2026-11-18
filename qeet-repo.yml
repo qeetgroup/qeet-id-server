@@ -57,9 +57,7 @@ architecture:
 
 entrypoints:
   - {name: api,       path: cmd/api,       purpose: HTTP API server}
-  - {name: worker,    path: cmd/worker,    purpose: background workers, standalone}
   - {name: scheduler, path: cmd/scheduler, purpose: scheduled maintenance, advisory-lock coordinated}
-  - {name: migrate,   path: cmd/migrate,   purpose: golang-migrate wrapper}
   - {name: seed,      path: cmd/seed,      purpose: development-only demo data}
 
 contracts:
@@ -71,13 +69,12 @@ contracts:
     coverage_gate: internal/bootstrap/openapi_coverage_test.go
     source: api/openapi/src/   # the documents are generated from here: make openapi
     bundler: redocly-cli       # pinned in api/openapi/src/bun.lock
-  postman: api/postman/
   ai_tools: api/qeetai/tools.manifest.json
 
 data:
   database: postgresql
   driver: pgx/v5
-  query_codegen: sqlc      # 53 queries.sql + sqlc.yaml pairs -> dbgen packages
+  query_codegen: sqlc      # 56 queries.sql, listed in the root sqlc.yaml -> dbgen packages
   migrations:
     path: internal/platform/database/migrations/
     tool: golang-migrate

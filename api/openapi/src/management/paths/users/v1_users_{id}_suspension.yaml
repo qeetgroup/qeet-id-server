@@ -60,6 +60,6 @@ put:
     '403':
       description: Missing user.suspend
     '404':
-      description: Account not owned by this tenant
+      description: Account not owned by this organization
     '409':
       description: Account is no longer suspended

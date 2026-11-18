@@ -4,11 +4,11 @@ post:
   description: >-
     Starts accepting an invitation by founding the new account on a passkey
     instead of a password, returning the WebAuthn credential-creation options.
-    The account's email and organisation come from the invitation, never from
+    The account's email and organization come from the invitation, never from
     the request. Refused like POST /v1/invites/accept (invite.link_invalid,
     invite.invalid, invite.expired, invite.account_exists — the invitee signs in
     and accepts as themselves, user.domain_managed_elsewhere), and with
-    passkey.disabled when the organisation has passkeys switched off. Starting
+    passkey.disabled when the organization has passkeys switched off. Starting
     again replaces an unfinished ceremony for the same invitation; the
     invitation stays pending until one finishes.
   tags:

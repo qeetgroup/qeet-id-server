@@ -4,18 +4,15 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"net/http"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/qeetai/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/qeetai/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 // RecordUsage adds one turn, with the tokens its provider said it used, to
@@ -52,7 +49,7 @@ func (s *Service) UsageOf(ctx context.Context, organizationID uuid.UUID) (*Usage
 	thisMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).Format("2006-01")
 	out := &Usage{ThisMonth: MonthUsage{Month: thisMonth}, Months: make([]MonthUsage, len(rows))}
 	for i, r := range rows {
-		m := MonthUsage{Month: r.Month.Time.Format("2006-01"), Messages: int(r.Messages), InputTokens: r.InputTokens,
+		m := MonthUsage{Month: r.Month.Format("2006-01"), Messages: int(r.Messages), InputTokens: r.InputTokens,
 			OutputTokens: r.OutputTokens, LastUsedAt: r.LastUsedAt}
 		out.Months[i] = m
 		if m.Month == thisMonth {
@@ -89,10 +86,7 @@ func (s *Service) SettingsOf(ctx context.Context, organizationID uuid.UUID) (*Se
 		d := int(*row.ConversationRetentionDays)
 		out.ConversationRetentionDays = &d
 	}
-	if row.UpdatedBy.Valid {
-		by := uuid.UUID(row.UpdatedBy.Bytes)
-		out.UpdatedBy = &by
-	}
+	out.UpdatedBy = row.UpdatedBy
 	return out, nil
 }
 
@@ -114,10 +108,7 @@ func (s *Service) SetSettings(ctx context.Context, organizationID uuid.UUID, day
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	var by pgtype.UUID
-	if actor.UserID != nil {
-		by = pgtype.UUID{Bytes: *actor.UserID, Valid: true}
-	}
+	by := actor.UserID
 	if err := s.q.WithTx(tx).UpsertSettings(ctx, dbgen.UpsertSettingsParams{OrganizationID: organizationID, ConversationRetentionDays: stored, UpdatedBy: by}); err != nil {
 		return nil, err
 	}
@@ -160,76 +151,10 @@ func PurgeExpiredConversations(ctx context.Context, pool *pgxpool.Pool) (int64, 
 			continue
 		}
 		total += deleted
-		if err := recordPurge(ctx, pool, t.OrganizationID, deleted, t.Days); err != nil {
-			slog.Warn("qeetai: audit the conversation purge", "tenant_id", t.OrganizationID, "err", err)
+		if err := audit.RecordAlone(ctx, pool, audit.Actor{Type: "system"}.Event(t.OrganizationID, "qeetai.conversations_purged", "qeetai_settings",
+			t.OrganizationID, map[string]any{"deleted": deleted, "days": t.Days})); err != nil {
+			slog.Warn("qeetai: audit the conversation purge", "organization_id", t.OrganizationID, "err", err)
 		}
 	}
 	return total, nil
-}
-
-// recordPurge audits on organizationID's chain that deleted conversations older
-// than days were removed.
-func recordPurge(ctx context.Context, pool *pgxpool.Pool, organizationID uuid.UUID, deleted int64, days int32) error {
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-	if err := audit.Record(ctx, tx, audit.Actor{Type: "system"}.Event(organizationID, "qeetai.conversations_purged", "qeetai_settings", organizationID,
-		map[string]any{"deleted": deleted, "days": days})); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
-}
-
-// usage handles GET /v1/tenants/{tenantID}/qeetai/usage.
-func (h *Handler) usage(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := httpx.PathOrganization(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	out, err := h.Admin.UsageOf(r.Context(), organizationID)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, out)
-}
-
-// settings handles GET /v1/tenants/{tenantID}/qeetai/settings.
-func (h *Handler) settings(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := httpx.PathOrganization(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	out, err := h.Admin.SettingsOf(r.Context(), organizationID)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, out)
-}
-
-// putSettings handles PUT /v1/tenants/{tenantID}/qeetai/settings.
-func (h *Handler) putSettings(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := httpx.PathOrganization(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	var in struct {
-		ConversationRetentionDays *int `json:"conversation_retention_days"`
-	}
-	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	out, err := h.Admin.SetSettings(r.Context(), organizationID, in.ConversationRetentionDays, audit.ActorOf(r))
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, out)
 }

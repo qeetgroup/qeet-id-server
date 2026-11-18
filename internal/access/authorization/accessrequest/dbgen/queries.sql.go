@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const approveAccessRequest = `-- name: ApproveAccessRequest :exec
@@ -21,10 +20,10 @@ WHERE id = $5 AND organization_id = $6 AND status = 'pending'
 `
 
 type ApproveAccessRequestParams struct {
-	DecidedBy      pgtype.UUID
+	DecidedBy      *uuid.UUID
 	DecisionNote   *string
 	Granted        bool
-	AccessEndsAt   pgtype.Timestamptz
+	AccessEndsAt   *time.Time
 	ID             uuid.UUID
 	OrganizationID uuid.UUID
 }
@@ -78,7 +77,7 @@ WHERE id = $3 AND organization_id = $4 AND status = 'pending'
 `
 
 type DenyAccessRequestParams struct {
-	DecidedBy      pgtype.UUID
+	DecidedBy      *uuid.UUID
 	DecisionNote   *string
 	ID             uuid.UUID
 	OrganizationID uuid.UUID
@@ -165,12 +164,12 @@ type GetAccessRequestRow struct {
 	Status          string
 	CreatedAt       time.Time
 	ExpiresAt       time.Time
-	DecidedBy       pgtype.UUID
-	DecidedAt       pgtype.Timestamptz
+	DecidedBy       *uuid.UUID
+	DecidedAt       *time.Time
 	DecisionNote    *string
 	Granted         bool
-	AccessEndsAt    pgtype.Timestamptz
-	EndedAt         pgtype.Timestamptz
+	AccessEndsAt    *time.Time
+	EndedAt         *time.Time
 	RoleName        string
 	RoleDescription string
 	RequesterEmail  string
@@ -334,12 +333,12 @@ type ListAccessRequestsRow struct {
 	Status          string
 	CreatedAt       time.Time
 	ExpiresAt       time.Time
-	DecidedBy       pgtype.UUID
-	DecidedAt       pgtype.Timestamptz
+	DecidedBy       *uuid.UUID
+	DecidedAt       *time.Time
 	DecisionNote    *string
 	Granted         bool
-	AccessEndsAt    pgtype.Timestamptz
-	EndedAt         pgtype.Timestamptz
+	AccessEndsAt    *time.Time
+	EndedAt         *time.Time
 	RoleName        string
 	RoleDescription string
 	RequesterEmail  string
@@ -423,12 +422,12 @@ type ListMyAccessRequestsRow struct {
 	Status          string
 	CreatedAt       time.Time
 	ExpiresAt       time.Time
-	DecidedBy       pgtype.UUID
-	DecidedAt       pgtype.Timestamptz
+	DecidedBy       *uuid.UUID
+	DecidedAt       *time.Time
 	DecisionNote    *string
 	Granted         bool
-	AccessEndsAt    pgtype.Timestamptz
-	EndedAt         pgtype.Timestamptz
+	AccessEndsAt    *time.Time
+	EndedAt         *time.Time
 	RoleName        string
 	RoleDescription string
 	RequesterEmail  string

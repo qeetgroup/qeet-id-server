@@ -34,12 +34,6 @@ func AcrossOrganizations(ctx context.Context) context.Context {
 	return context.WithValue(ctx, scopeKey{}, "")
 }
 
-// ScopedTo reports the organization ctx is scoped to, if any.
-func ScopedTo(ctx context.Context) (uuid.UUID, bool) {
-	id, err := uuid.Parse(scopeOf(ctx))
-	return id, err == nil
-}
-
 // scopeOf is the organization ctx is scoped to, "" for none.
 func scopeOf(ctx context.Context) string {
 	s, _ := ctx.Value(scopeKey{}).(string)

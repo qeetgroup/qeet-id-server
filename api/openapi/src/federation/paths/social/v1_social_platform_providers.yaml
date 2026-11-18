@@ -2,7 +2,7 @@ get:
   operationId: listPlatformSocialProviders
   description: >-
     Lists the platform-level social login providers enabled in the deployment
-    configuration, as opposed to a tenant's own configured providers, with Qeet
+    configuration, as opposed to an organization's own configured providers, with Qeet
     acting as the OAuth client. Served without authentication so the hosted
     login can render the available sign-in options. Begin a sign-in with GET
     /v1/social/{provider}/start.

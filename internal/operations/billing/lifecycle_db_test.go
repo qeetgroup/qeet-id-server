@@ -12,7 +12,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
@@ -99,10 +98,10 @@ func TestSubscriptionsEndAtTheirPeriodEnd(t *testing.T) {
 		t.Errorf("free plan after its period: %+v, want active for a new period, renewed once", sub)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action LIKE 'billing.subscription_%'`, bystander); n != 0 {
-		t.Errorf("an organisation whose period runs on has %d subscription events", n)
+		t.Errorf("an organization whose period runs on has %d subscription events", n)
 	}
 	if sub, _ := svc.GetSubscription(ctx, bystander); sub.Status != "active" {
-		t.Errorf("an organisation whose period runs on is %s", sub.Status)
+		t.Errorf("an organization whose period runs on is %s", sub.Status)
 	}
 }
 
@@ -156,7 +155,7 @@ func TestRenewalsAreBilledAndLapseUnpaid(t *testing.T) {
 	if events(t, paid, "billing.invoice_paid", "") != 1 || events(t, paid, "billing.subscription_renewed", "") != 1 {
 		t.Error("paying the renewal wasn't audited as paid and renewed")
 	}
-	if err := svc.MarkInvoicePaid(ctx, renewal.ID, "UTR 4471"); !errors.Is(err, errs.ErrBillingInvoiceNotOpen) {
+	if err := svc.MarkInvoicePaid(ctx, renewal.ID, "UTR 4471"); !errors.Is(err, ErrInvoiceNotOpen) {
 		t.Errorf("mark a paid invoice paid again: %v, want invoice_not_open", err)
 	}
 
@@ -175,7 +174,7 @@ func TestRenewalsAreBilledAndLapseUnpaid(t *testing.T) {
 	if inv := latestInvoice(t, svc, unpaid); inv.Status != "void" {
 		t.Errorf("the unpaid renewal is %s, want void", inv.Status)
 	}
-	if _, err := svc.PayInvoice(ctx, unpaid, latestInvoice(t, svc, unpaid).ID, "https://console.example/ok", "https://console.example/no"); !errors.Is(err, errs.ErrBillingInvoiceNotOpen) {
+	if _, err := svc.PayInvoice(ctx, unpaid, latestInvoice(t, svc, unpaid).ID, "https://console.example/ok", "https://console.example/no"); !errors.Is(err, ErrInvoiceNotOpen) {
 		t.Errorf("pay a void invoice: %v, want invoice_not_open", err)
 	}
 }
@@ -193,8 +192,8 @@ func TestARenewalIsPaidThroughCheckout(t *testing.T) {
 	runPeriodEnds(t, svc)
 	renewal := latestInvoice(t, svc, organization)
 
-	if _, err := svc.PayInvoice(ctx, other, renewal.ID, "https://console.example/ok", "https://console.example/no"); !errors.Is(err, errs.ErrBillingInvoiceNotFound) {
-		t.Errorf("another organisation paying the invoice: %v, want not found", err)
+	if _, err := svc.PayInvoice(ctx, other, renewal.ID, "https://console.example/ok", "https://console.example/no"); !errors.Is(err, ErrInvoiceNotFound) {
+		t.Errorf("another organization paying the invoice: %v, want not found", err)
 	}
 	res, err := svc.PayInvoice(ctx, organization, renewal.ID, "https://console.example/ok", "https://console.example/no")
 	if err != nil {
@@ -222,7 +221,7 @@ func TestARenewalIsPaidThroughCheckout(t *testing.T) {
 		t.Errorf("payment method %+v, %v; want the sandbox's test card", m, err)
 	}
 	if m, err := svc.LastPaymentMethod(ctx, other); err != nil || m != nil {
-		t.Errorf("another organisation's payment method: %+v, %v", m, err)
+		t.Errorf("another organization's payment method: %+v, %v", m, err)
 	}
 
 	admin := dbtest.User(t, organization, organization)
@@ -230,7 +229,7 @@ func TestARenewalIsPaidThroughCheckout(t *testing.T) {
 	var body struct {
 		PaymentMethod *SavedPaymentMethod `json:"payment_method"`
 	}
-	dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, "/tenants/"+organization.String()+"/billing/payment-method", nil), &body)
+	dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, "/organizations/"+organization.String()+"/billing/payment-method", nil), &body)
 	if body.PaymentMethod == nil || body.PaymentMethod.Brand != "visa" {
 		t.Errorf("GET payment-method = %+v, want the test card", body.PaymentMethod)
 	}
@@ -251,7 +250,7 @@ func TestInvoiceOnlyActivationIsOpenUntilPaid(t *testing.T) {
 	if inv.Status != "open" || inv.Kind != invoiceKindPurchase || inv.DueAt == nil || inv.DueAt.Before(time.Now().Add(DefaultPaymentGrace-time.Hour)) {
 		t.Fatalf("invoice-only activation's invoice %+v, want open and due after the grace", inv)
 	}
-	if err := svc.MarkInvoicePaid(ctx, uuid.New(), "UTR 1"); !errors.Is(err, errs.ErrBillingInvoiceNotFound) {
+	if err := svc.MarkInvoicePaid(ctx, uuid.New(), "UTR 1"); !errors.Is(err, ErrInvoiceNotFound) {
 		t.Errorf("mark an unknown invoice paid: %v, want not found", err)
 	}
 	if err := svc.MarkInvoicePaid(ctx, inv.ID, "UTR 9031"); err != nil {

@@ -8,10 +8,10 @@ properties:
   affected_accounts:
     type: integer
     description: >-
-      Distinct accounts of the organisation with an open event, counting the
+      Distinct accounts of the organization with an open event, counting the
       account an event names and every account a password spray targeted (a
       password_spraying event lists them in metadata.targeted_user_ids, only the
-      organisation's own).
+      organization's own).
   high_severity_24h:
     type: integer
   open:

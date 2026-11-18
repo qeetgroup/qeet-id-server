@@ -55,6 +55,15 @@ type Cursor struct {
 	ID   uuid.UUID
 }
 
+// Before is the cursor as a list query's optional before_ts and before_id
+// parameters: both nil (NULL) on the first page.
+func (c Cursor) Before() (*time.Time, *uuid.UUID) {
+	if !c.Set {
+		return nil, nil
+	}
+	return &c.Time, &c.ID
+}
+
 // ParseCursor reads the cursor query parameter: absent is the first page, and
 // a malformed one is errs.ErrBadRequest.
 func ParseCursor(q url.Values) (Cursor, error) {
@@ -78,14 +87,4 @@ func Next[T any](items []T, limit int, key func(T) (time.Time, uuid.UUID)) ([]T,
 	items = items[:limit]
 	t, id := key(items[limit-1])
 	return items, EncodeTimeUUID(t, id)
-}
-
-// Page is the body of a keyset page: its items, and next_cursor only when
-// there is another page.
-func Page[T any](items []T, next string) map[string]any {
-	body := map[string]any{"items": items}
-	if next != "" {
-		body["next_cursor"] = next
-	}
-	return body
 }

@@ -1,6 +1,6 @@
 type: object
 properties:
-  tenant_id:
+  organization_id:
     type: string
     format: uuid
   password_min_length:
@@ -9,7 +9,7 @@ properties:
     writeOnly: true
     description: >-
       Accepted and ignored, and never returned. Password rules are the auth
-      policy's (AuthPolicy, PUT /v1/tenants/{tenantID}/auth-policy), which
+      policy's (AuthPolicy, PUT /v1/organizations/{organizationID}/auth-policy), which
       sign-in and the compliance checks apply.
   password_complexity:
     type: string
@@ -39,7 +39,7 @@ properties:
     minimum: 1
     maximum: 1000
     description: >-
-      How many live sessions one person may hold in the organisation at once;
+      How many live sessions one person may hold in the organization at once;
       null for no limit (the default). Counted and enforced as a session opens,
       so simultaneous sign-ins cannot exceed it.
   session_limit_action:

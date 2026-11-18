@@ -11,7 +11,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authpolicy"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authpolicy"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
@@ -61,7 +62,7 @@ func TestMagicLinkNamingAnotherOrganization(t *testing.T) {
 	ask := func(a dbtest.Account) {
 		t.Helper()
 		if err := svc.RequestMagicLink(ctx, MagicLinkRequest{Email: a.Email, OrganizationID: named}); err != nil {
-			t.Fatalf("ask for a link naming the other organisation: %v", err)
+			t.Fatalf("ask for a link naming the other organization: %v", err)
 		}
 		svc.deliveries.Wait()
 	}
@@ -69,41 +70,41 @@ func TestMagicLinkNamingAnotherOrganization(t *testing.T) {
 	ask(victim)
 	msg := mail.Last(t)
 	if msg.OrganizationID == named.String() {
-		t.Error("the message is branded as an organisation the account doesn't belong to")
+		t.Error("the message is branded as an organization the account doesn't belong to")
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM auth.magic_links WHERE email = $1 AND organization_id IS NULL
 		AND expires_at < NOW() + INTERVAL '11 minutes'`, victim.Email); n != 1 {
-		t.Error("the link isn't held to the account's own organisation's 10-minute lifetime")
+		t.Error("the link isn't held to the account's own organization's 10-minute lifetime")
 	}
-	if res, err := svc.ConsumeMagicLink(ctx, tokenIn(t, msg), AuditCtx{}); err != nil || res.UserID != victim.ID {
+	if res, err := svc.ConsumeMagicLink(ctx, tokenIn(t, msg), audit.Actor{}); err != nil || res.UserID != victim.ID {
 		t.Fatalf("use the link: %+v, %v", res, err)
 	}
 	for _, action := range []string{"auth.magic_link_requested", "auth.magic_link_consumed"} {
 		if n, own := recorded(action, named, victim), recorded(action, home, victim); n != 0 || own != 1 {
-			t.Errorf("%s recorded %d times by the named organisation and %d by the account's own; want 0 and 1", action, n, own)
+			t.Errorf("%s recorded %d times by the named organization and %d by the account's own; want 0 and 1", action, n, own)
 		}
 	}
 
 	ask(victim)
 	earlier := tokenIn(t, mail.Last(t))
 	magicLinksFor(t, home, false, 10)
-	if _, err := svc.ConsumeMagicLink(ctx, earlier, AuditCtx{}); !errors.Is(err, errs.ErrAuthMethodDisabled) {
-		t.Errorf("a link from before the account's organisation switched them off: %v, want %v", err, errs.ErrAuthMethodDisabled)
+	if _, err := svc.ConsumeMagicLink(ctx, earlier, audit.Actor{}); !errors.Is(err, errs.ErrAuthMethodDisabled) {
+		t.Errorf("a link from before the account's organization switched them off: %v, want %v", err, errs.ErrAuthMethodDisabled)
 	}
 	sent := mail.Len()
 	ask(victim)
 	if mail.Len() != sent {
-		t.Error("a link was sent though the account's own organisation has magic links off")
+		t.Error("a link was sent though the account's own organization has magic links off")
 	}
 
 	guestHome := dbtest.Organization(t)
 	guest := dbtest.User(t, guestHome, guestHome, named)
 	ask(guest)
 	if msg := mail.Last(t); msg.To != guest.Email || msg.OrganizationID != named.String() {
-		t.Errorf("a member's message went to %s branded %q; want %s branded as the named organisation", msg.To, msg.OrganizationID, guest.Email)
+		t.Errorf("a member's message went to %s branded %q; want %s branded as the named organization", msg.To, msg.OrganizationID, guest.Email)
 	}
 	if n, own := recorded("auth.magic_link_requested", named, guest), recorded("auth.magic_link_requested", guestHome, guest); n != 1 || own != 1 {
-		t.Errorf("a member's request recorded %d times by the named organisation and %d by their own; want once each", n, own)
+		t.Errorf("a member's request recorded %d times by the named organization and %d by their own; want once each", n, own)
 	}
 }
 
@@ -127,7 +128,7 @@ func TestMagicLinkIntoUnprovedAccountEndsItsPassword(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc.deliveries.Wait()
-	if res, err := svc.ConsumeMagicLink(ctx, tokenIn(t, mail.Last(t)), AuditCtx{}); err != nil || res.UserID != squatted.ID {
+	if res, err := svc.ConsumeMagicLink(ctx, tokenIn(t, mail.Last(t)), audit.Actor{}); err != nil || res.UserID != squatted.ID {
 		t.Fatalf("use the link: %+v, %v", res, err)
 	}
 	if held := heldCredentials(t, squatted); len(held) != 0 {
@@ -150,7 +151,7 @@ func TestMagicLinkIntoUnprovedAccountEndsItsPassword(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc.deliveries.Wait()
-	if _, err := svc.ConsumeMagicLink(ctx, tokenIn(t, mail.Last(t)), AuditCtx{}); err != nil {
+	if _, err := svc.ConsumeMagicLink(ctx, tokenIn(t, mail.Last(t)), audit.Actor{}); err != nil {
 		t.Fatal(err)
 	}
 	if held := heldCredentials(t, squatted); held["password"] != 1 {

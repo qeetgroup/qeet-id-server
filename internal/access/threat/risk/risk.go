@@ -8,10 +8,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"net/http"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -19,7 +17,6 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/threat/bot"
 	"github.com/qeetgroup/qeet-id-server/internal/access/threat/risk/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
@@ -116,12 +113,12 @@ func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool, q: db
 func (s *Service) Assess(ctx context.Context, organizationID, userID uuid.UUID, ip, ua, country string) Level {
 	settings, err := s.GetSettings(ctx, organizationID)
 	if err != nil {
-		slog.Warn("risk: could not load settings, defaulting to Low", "tenant_id", organizationID, "err", err)
+		slog.Warn("risk: could not load settings, defaulting to Low", "organization_id", organizationID, "err", err)
 		return Low
 	}
 
 	var impossibleTravel, newDevice bool
-	dk := deviceKey(ua)
+	dk := DeviceKey(ua)
 
 	if settings.ImpossibleTravelEnabled && country != "" {
 		lastCountry, lastSeenAt, ok := s.lastCountry(ctx, organizationID, userID)
@@ -146,7 +143,7 @@ func (s *Service) Assess(ctx context.Context, organizationID, userID uuid.UUID, 
 // assessments. A sign-in still to meet a challenge, or refused, is not
 // recorded, so asking again is assessed the same.
 func (s *Service) RecordSignIn(ctx context.Context, organizationID, userID uuid.UUID, ua, country string) {
-	s.recordLogin(ctx, organizationID, userID, deviceKey(ua), country)
+	s.recordLogin(ctx, organizationID, userID, DeviceKey(ua), country)
 }
 
 // ForceMFA reports whether the risk level should force MFA regardless of
@@ -191,68 +188,11 @@ func (s *Service) GetSettings(ctx context.Context, organizationID uuid.UUID) (Se
 	}, nil
 }
 
-// Handler exposes risk settings over HTTP.
-type Handler struct{ Service *Service }
-
-// Mount registers the risk setting routes on r.
-func (h *Handler) Mount(r chi.Router) {
-	r.Get("/tenants/{tenantID}/security/risk-settings", h.get)
-	r.Put("/tenants/{tenantID}/security/risk-settings", h.put)
-}
-
-func requireOrganization(r *http.Request) (uuid.UUID, error) {
-	id, err := uuid.Parse(chi.URLParam(r, "tenantID"))
-	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid tenantID")
-	}
-	scope, err := httpx.RequireOrganization(r)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	if id != scope {
-		return uuid.Nil, errs.ErrForbidden.WithDetail("tenant mismatch")
-	}
-	return scope, nil
-}
-
-func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requireOrganization(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	st, err := h.Service.GetSettings(r.Context(), organizationID)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, withCountrySignal(st))
-}
-
 // withCountrySignal sets the read-only country-header fields on st.
 func withCountrySignal(st Settings) Settings {
 	st.CountryHeaderConfigured = httpx.GeoCountryHeaderConfigured()
 	st.CountryLastSeenAt = httpx.GeoCountryLastSeen()
 	return st
-}
-
-func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requireOrganization(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	var in Settings
-	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	st, err := h.Service.UpdateSettings(r.Context(), organizationID, in, audit.ActorOf(r))
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, withCountrySignal(st))
 }
 
 // UpdateSettings stores the organization's risk settings, recorded as actor's with
@@ -299,7 +239,7 @@ func (s *Service) UpdateSettings(ctx context.Context, organizationID uuid.UUID, 
 	}); err != nil {
 		return Settings{}, err
 	}
-	if err := audit.Record(ctx, tx, actor.Event(organizationID, "risk.settings_updated", "tenant", organizationID,
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "risk.settings_updated", "organization", organizationID,
 		map[string]any{"changes": audit.Changes(before.audited(), in.audited()), "settings": in.audited()})); err != nil {
 		return Settings{}, err
 	}

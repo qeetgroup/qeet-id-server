@@ -15,12 +15,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/search/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 // permissionChecker reports whether a user holds a permission in an organization.
@@ -54,7 +54,7 @@ var supportedTypes = []string{
 // it in results.
 var typePermission = map[string]string{
 	TypeUser:         "user.read",
-	TypeOrganization: "tenant.read",
+	TypeOrganization: "organization.read",
 	TypeGroup:        "group.read",
 	TypeRole:         "role.read",
 	TypeOIDCClient:   "connection.read",
@@ -90,7 +90,7 @@ func NewService(pool *pgxpool.Pool, checker permissionChecker) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool), rbac: checker}
 }
 
-// Search returns up to limit results in organizationID (20 if limit is not in 1..50),
+// Search returns up to limit results in organizationID (20 when unset, at most 50),
 // best score first, and the next page's cursor, or "" on the last page. types
 // narrows the search and unknown types are ignored. With a non-nil userID, types
 // the user may not read are skipped; a nil userID skips the checks.
@@ -103,9 +103,7 @@ func (s *Service) Search(
 	cursor string,
 	limit int,
 ) ([]Result, string, error) {
-	if limit <= 0 || limit > 50 {
-		limit = 20
-	}
+	limit = paging.Clamp(limit, 20, 50)
 	// pattern is passed as a bind variable, never concatenated into SQL.
 	pattern := "%" + postgres.EscapeLike(q) + "%"
 
@@ -347,7 +345,7 @@ func (s *Service) fetchAuditEvents(ctx context.Context, organizationID uuid.UUID
 	rows, err := s.q.SearchAuditEvents(ctx, dbgen.SearchAuditEventsParams{
 		// audit.events.organization_id is NULL for platform rows; search always passes an
 		// organization.
-		OrganizationID: pgtype.UUID{Bytes: organizationID, Valid: true},
+		OrganizationID: &organizationID,
 		Q:              pattern,
 		RowLimit:       perTypeLimit,
 	})
@@ -358,8 +356,8 @@ func (s *Service) fetchAuditEvents(ctx context.Context, organizationID uuid.UUID
 	for _, r := range rows {
 		sc := maxScore(scoreText(r.Action, rawQ), scoreText(r.ResourceType, rawQ))
 		var resourceID string
-		if r.ResourceID.Valid {
-			resourceID = uuid.UUID(r.ResourceID.Bytes).String()
+		if r.ResourceID != nil {
+			resourceID = r.ResourceID.String()
 		}
 		out = append(out, Result{
 			Type:      TypeAuditEvent,

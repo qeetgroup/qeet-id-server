@@ -208,8 +208,8 @@ func TestParseSESEvent(t *testing.T) {
 }
 
 func TestAddressHashAndHint(t *testing.T) {
-	if HashAddress(" Ana@Example.COM ") != HashAddress("ana@example.com") {
-		t.Error("the hash must ignore case and surrounding space")
+	if got, want := HashAddress(" Ana@Example.COM "), "8e43ca37701228e74983efdbd0cff5c16b3b1e5d4e29a7c05626d4d25a018e11"; got != want {
+		t.Errorf("HashAddress = %q, want the hex SHA-256 of the address trimmed and lower-cased, %q", got, want)
 	}
 	if got := Hint("Ana.Lopez@example.com"); got != "a***@example.com" {
 		t.Errorf("Hint = %q", got)

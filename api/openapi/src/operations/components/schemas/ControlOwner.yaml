@@ -1,5 +1,5 @@
 type: object
-description: The person the organisation has made answer for a control, as it is now.
+description: The person the organization has made answer for a control, as it is now.
 properties:
   control_id:
     type: string

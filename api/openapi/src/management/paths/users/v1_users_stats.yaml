@@ -2,7 +2,7 @@ get:
   operationId: getUserStats
   summary: User directory summary
   description: >-
-    Tenant-wide member counts for the Users admin summary: total, active,
+    Organization-wide member counts for the Users admin summary: total, active,
     suspended, invited, with and without a second factor, new in the last 30
     days; members by when they were last seen (last_seen: today, week, month,
     older, never, with the same edges as the list's last_seen filter); owners

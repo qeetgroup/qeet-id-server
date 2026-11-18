@@ -203,7 +203,7 @@ func TestEnforce_OrganizationlessUserOnGatedRouteDenied(t *testing.T) {
 	uid := uuid.New()
 	organizationless := &httpx.Principal{UserID: &uid, ActorType: "user"} // no OrganizationID
 	if got := do(buildRouter(allow, organizationless), "POST", "/v1/users"); got != http.StatusForbidden {
-		t.Fatalf("tenant-less user on gated route = %d, want 403", got)
+		t.Fatalf("organization-less user on gated route = %d, want 403", got)
 	}
 }
 

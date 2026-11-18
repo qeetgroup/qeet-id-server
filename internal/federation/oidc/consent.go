@@ -50,7 +50,7 @@ func (s *Service) StartConsentRequest(ctx context.Context, loginSessionID, userI
 	}
 	for _, sc := range in.Scopes {
 		if !scopePermitted(info.Scopes, info.GrantTypes, sc) {
-			return uuid.Nil, errs.ErrOIDCScopeNotPermitted
+			return uuid.Nil, ErrScopeNotPermitted
 		}
 	}
 	if err := validateSignInRequest(info.Type, info.PkceExempt, in.Nonce, in.CodeChallenge, in.CodeChallengeMethod); err != nil {
@@ -83,17 +83,22 @@ func (s *Service) StartConsentRequest(ctx context.Context, loginSessionID, userI
 func (s *Service) GetConsentRequest(ctx context.Context, id, loginSessionID uuid.UUID) (*ConsentRequest, error) {
 	row, err := s.q.GetConsentRequest(ctx, dbgen.GetConsentRequestParams{ID: id, LoginSessionID: loginSessionID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrOIDCConsentRequestInvalid
+		return nil, ErrConsentRequestInvalid
 	}
 	if err != nil {
 		return nil, err
 	}
+	return consentRequestOf(row), nil
+}
+
+// consentRequestOf is the stored request a consent read or claim returns.
+func consentRequestOf(row dbgen.GetConsentRequestRow) *ConsentRequest {
 	return &ConsentRequest{
 		ID: row.ID, UserID: row.UserID, ClientID: row.ClientID, RedirectURI: row.RedirectUri,
 		Scopes: row.Scopes, State: row.State, Nonce: row.Nonce,
 		CodeChallenge: row.CodeChallenge, CodeChallengeMethod: row.CodeChallengeMethod,
 		Resource: row.Resource,
-	}, nil
+	}
 }
 
 // TakeConsentRequest claims an undecided request for the hosted-login session
@@ -102,15 +107,10 @@ func (s *Service) GetConsentRequest(ctx context.Context, id, loginSessionID uuid
 func (s *Service) TakeConsentRequest(ctx context.Context, id, loginSessionID uuid.UUID) (*ConsentRequest, error) {
 	row, err := s.q.TakeConsentRequest(ctx, dbgen.TakeConsentRequestParams{ID: id, LoginSessionID: loginSessionID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrOIDCConsentRequestInvalid
+		return nil, ErrConsentRequestInvalid
 	}
 	if err != nil {
 		return nil, err
 	}
-	return &ConsentRequest{
-		ID: row.ID, UserID: row.UserID, ClientID: row.ClientID, RedirectURI: row.RedirectUri,
-		Scopes: row.Scopes, State: row.State, Nonce: row.Nonce,
-		CodeChallenge: row.CodeChallenge, CodeChallengeMethod: row.CodeChallengeMethod,
-		Resource: row.Resource,
-	}, nil
+	return consentRequestOf(dbgen.GetConsentRequestRow(row)), nil
 }

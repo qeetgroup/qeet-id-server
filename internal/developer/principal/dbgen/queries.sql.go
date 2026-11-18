@@ -10,13 +10,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createServicePrincipal = `-- name: CreateServicePrincipal :one
 
 INSERT INTO auth.service_principals (organization_id, name, description, secret_hash, scopes, created_by)
-VALUES ($1, $2, $3, $4, $5, NULLIF($6::uuid, '00000000-0000-0000-0000-000000000000'))
+VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, organization_id, name, scopes, disabled_at, created_at, description
 `
 
@@ -26,7 +25,7 @@ type CreateServicePrincipalParams struct {
 	Description    string
 	SecretHash     string
 	Scopes         []string
-	CreatedBy      uuid.UUID
+	CreatedBy      *uuid.UUID
 }
 
 type CreateServicePrincipalRow struct {
@@ -34,14 +33,12 @@ type CreateServicePrincipalRow struct {
 	OrganizationID uuid.UUID
 	Name           string
 	Scopes         []string
-	DisabledAt     pgtype.Timestamptz
+	DisabledAt     *time.Time
 	CreatedAt      time.Time
 	Description    string
 }
 
 // Queries for the service-accounts (principal) domain.
-// Create and Disable accept a pgx.Tx from the handler so audit can share the
-// transaction; the sqlc queries are called via q.WithTx(tx).
 func (q *Queries) CreateServicePrincipal(ctx context.Context, arg CreateServicePrincipalParams) (CreateServicePrincipalRow, error) {
 	row := q.db.QueryRow(ctx, createServicePrincipal,
 		arg.OrganizationID,
@@ -67,7 +64,7 @@ func (q *Queries) CreateServicePrincipal(ctx context.Context, arg CreateServiceP
 const disableServicePrincipal = `-- name: DisableServicePrincipal :one
 UPDATE auth.service_principals SET disabled_at = NOW()
 WHERE id = $1 AND organization_id = $2 AND disabled_at IS NULL
-RETURNING organization_id, name
+RETURNING name
 `
 
 type DisableServicePrincipalParams struct {
@@ -75,18 +72,13 @@ type DisableServicePrincipalParams struct {
 	OrganizationID uuid.UUID
 }
 
-type DisableServicePrincipalRow struct {
-	OrganizationID uuid.UUID
-	Name           string
-}
-
-// DisableServicePrincipal marks the principal disabled. RETURNING organization_id
-// and name so the caller can write the audit row without a second query.
-func (q *Queries) DisableServicePrincipal(ctx context.Context, arg DisableServicePrincipalParams) (DisableServicePrincipalRow, error) {
+// DisableServicePrincipal marks the principal disabled, returning its name for
+// the audit row.
+func (q *Queries) DisableServicePrincipal(ctx context.Context, arg DisableServicePrincipalParams) (string, error) {
 	row := q.db.QueryRow(ctx, disableServicePrincipal, arg.ID, arg.OrganizationID)
-	var i DisableServicePrincipalRow
-	err := row.Scan(&i.OrganizationID, &i.Name)
-	return i, err
+	var name string
+	err := row.Scan(&name)
+	return name, err
 }
 
 const enableServicePrincipal = `-- name: EnableServicePrincipal :one
@@ -119,13 +111,14 @@ type GetServicePrincipalForAuthRow struct {
 	OrganizationID          uuid.UUID
 	SecretHash              string
 	Scopes                  []string
-	DisabledAt              pgtype.Timestamptz
+	DisabledAt              *time.Time
 	PreviousSecretHash      *string
-	PreviousSecretExpiresAt pgtype.Timestamptz
+	PreviousSecretExpiresAt *time.Time
 }
 
-// GetServicePrincipalForAuth finds no principal of a suspended or deleted
-// organization.
+// GetServicePrincipalForAuth is the credential row the client_credentials
+// grant (ClientCredentials) verifies a secret against, never returned to the
+// caller. It finds no principal of a suspended or deleted organization.
 func (q *Queries) GetServicePrincipalForAuth(ctx context.Context, id uuid.UUID) (GetServicePrincipalForAuthRow, error) {
 	row := q.db.QueryRow(ctx, getServicePrincipalForAuth, id)
 	var i GetServicePrincipalForAuthRow
@@ -152,11 +145,11 @@ type ListServicePrincipalsRow struct {
 	OrganizationID          uuid.UUID
 	Name                    string
 	Scopes                  []string
-	DisabledAt              pgtype.Timestamptz
+	DisabledAt              *time.Time
 	CreatedAt               time.Time
 	Description             string
-	LastUsedAt              pgtype.Timestamptz
-	PreviousSecretExpiresAt pgtype.Timestamptz
+	LastUsedAt              *time.Time
+	PreviousSecretExpiresAt *time.Time
 }
 
 // At most paging.MaxListItems+1 rows: the API truncates the rest.
@@ -196,11 +189,6 @@ JOIN organization.organizations t ON t.id = p.organization_id AND t.status = 'ac
 WHERE p.id = $1
 `
 
-// GetServicePrincipalForAuth fetches the full credential row for the
-// client_credentials grant (IssueClientCredentials). Includes secret_hash
-// for argon2/bcrypt verification — never returned to the API caller.
-// PrincipalLive reports whether a service principal exists and isn't
-// disabled. No row: it doesn't exist.
 // PrincipalLive is whether a principal is enabled, in an active
 // organization: no row for one of a suspended or deleted organization.
 func (q *Queries) PrincipalLive(ctx context.Context, id uuid.UUID) (bool, error) {
@@ -218,7 +206,7 @@ RETURNING name
 `
 
 type RotateServicePrincipalSecretParams struct {
-	PreviousExpiresAt pgtype.Timestamptz
+	PreviousExpiresAt *time.Time
 	SecretHash        string
 	ID                uuid.UUID
 	OrganizationID    uuid.UUID
@@ -269,29 +257,5 @@ type TouchServicePrincipalParams struct {
 // a minute.
 func (q *Queries) TouchServicePrincipal(ctx context.Context, arg TouchServicePrincipalParams) error {
 	_, err := q.db.Exec(ctx, touchServicePrincipal, arg.ID, arg.OrganizationID)
-	return err
-}
-
-const upgradeServicePrincipalSecretHash = `-- name: UpgradeServicePrincipalSecretHash :exec
-UPDATE auth.service_principals SET secret_hash = $1
-WHERE id = $2 AND organization_id = $3 AND secret_hash = $4
-`
-
-type UpgradeServicePrincipalSecretHashParams struct {
-	NewHash        string
-	ID             uuid.UUID
-	OrganizationID uuid.UUID
-	OldHash        string
-}
-
-// UpgradeServicePrincipalSecretHash replaces an Argon2id secret hash from before
-// with its SHA-256 form, once the secret has verified.
-func (q *Queries) UpgradeServicePrincipalSecretHash(ctx context.Context, arg UpgradeServicePrincipalSecretHashParams) error {
-	_, err := q.db.Exec(ctx, upgradeServicePrincipalSecretHash,
-		arg.NewHash,
-		arg.ID,
-		arg.OrganizationID,
-		arg.OldHash,
-	)
 	return err
 }

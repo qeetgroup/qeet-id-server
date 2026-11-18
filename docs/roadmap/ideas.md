@@ -264,9 +264,9 @@ storing a long-lived Qeet secret.
 
 **Proposed APIs:**
 ```text
-POST   /v1/tenants/{tenantID}/workload-trusts
-POST   /v1/tenants/{tenantID}/workload-trusts/{trustID}/evaluations
-DELETE /v1/tenants/{tenantID}/workload-trusts/{trustID}
+POST   /v1/organizations/{organizationID}/workload-trusts
+POST   /v1/organizations/{organizationID}/workload-trusts/{trustID}/evaluations
+DELETE /v1/organizations/{organizationID}/workload-trusts/{trustID}
 ```
 Evaluations preview a match without minting credentials. Actual issuance would
 use a separately reviewed federated-assertion authentication method on the
@@ -312,10 +312,10 @@ the same ten-call or monetary allowance.
 
 **Proposed APIs:**
 ```text
-POST /v1/tenants/{tenantID}/agent-tasks
-POST /v1/tenants/{tenantID}/agent-tasks/{taskID}/children
-POST /v1/tenants/{tenantID}/agent-tasks/{taskID}/cancellations
-GET  /v1/tenants/{tenantID}/agent-tasks/{taskID}/usage
+POST /v1/organizations/{organizationID}/agent-tasks
+POST /v1/organizations/{organizationID}/agent-tasks/{taskID}/children
+POST /v1/organizations/{organizationID}/agent-tasks/{taskID}/cancellations
+GET  /v1/organizations/{organizationID}/agent-tasks/{taskID}/usage
 ```
 A task records purpose, expiry, allowed resources/actions, root/parent identity
 and a shared reservation ledger. A child inherits at most the intersection of
@@ -334,7 +334,7 @@ a root allowance of ten admit at most ten; every mediated operation has one
 traceable root. Verify renewal/child creation cannot reset the root allowance.
 This controls integrated execution paths, not arbitrary calls made outside them.
 
-**Foundation/dependencies.** [Agent lifecycle](../../internal/developer/agents/agent.go),
+**Foundation/dependencies.** [Agent lifecycle](../../internal/developer/agent/agent.go),
 existing delegation, AI-01 and F-05's broker/enforcement boundary. The increment
 is a conserved execution-tree budget, not another broker or sponsor policy.
 Runtime/SDK propagation is required. Entra Agent ID already documents ephemeral
@@ -365,9 +365,9 @@ served after the user's access changes.
 
 **Proposed APIs:**
 ```text
-POST /v1/tenants/{tenantID}/ai/data-sources
-POST /v1/tenants/{tenantID}/ai/retrieval-authorizations
-GET  /v1/tenants/{tenantID}/ai/retrievals/{retrievalID}/provenance
+POST /v1/organizations/{organizationID}/ai/data-sources
+POST /v1/organizations/{organizationID}/ai/retrieval-authorizations
+GET  /v1/organizations/{organizationID}/ai/retrievals/{retrievalID}/provenance
 ```
 Keep content storage/vector search in the application or a scoped connector;
 Qeet supplies authorization and evidence, not a new general-purpose vector database.
@@ -417,9 +417,9 @@ was approved and stop unreviewed changes from reaching an agent.
 
 **Proposed APIs:**
 ```text
-POST /v1/tenants/{tenantID}/mcp/servers
-POST /v1/tenants/{tenantID}/mcp/servers/{serverID}/revisions
-POST /v1/tenants/{tenantID}/mcp/servers/{serverID}/revisions/{revisionID}/approvals
+POST /v1/organizations/{organizationID}/mcp/servers
+POST /v1/organizations/{organizationID}/mcp/servers/{serverID}/revisions
+POST /v1/organizations/{organizationID}/mcp/servers/{serverID}/revisions/{revisionID}/approvals
 ```
 Capture revisions server-side with verified origin, resource/audience, issuer,
 tool names, descriptions and schemas. Bind approval to the complete digest and
@@ -468,8 +468,8 @@ grants?" Separate role lists cannot reliably answer that question.
 
 **Proposed APIs:**
 ```text
-POST /v1/tenants/{tenantID}/exposure-analyses
-GET  /v1/tenants/{tenantID}/exposure-analyses/{analysisID}
+POST /v1/organizations/{organizationID}/exposure-analyses
+GET  /v1/organizations/{organizationID}/exposure-analyses/{analysisID}
 ```
 Return bounded access paths with evidence, captured context, configuration
 fingerprint, freshness and explicit conditional/unknown/truncated coverage.
@@ -487,7 +487,7 @@ in under ten minutes and identify a genuinely actionable exposure. Those are
 pilot targets, not current product performance claims.
 
 **Foundation/dependencies.** [ReBAC graph expansion](../../internal/access/authorization/rebac/rebac.go),
-[User 360](../../internal/identity/users/user360.go), stable finer permissions/ABAC and
+[User 360](../../internal/identity/user/user360.go), stable finer permissions/ABAC and
 resource classifications. External cloud/SaaS reachability requires explicit
 connectors and is outside the first slice. AWS Access Analyzer already documents
 access paths and internal/external exposure analysis [S7].
@@ -512,9 +512,9 @@ distinguish unnecessary access from emergency or seasonal business requirements.
 
 **Proposed APIs:**
 ```text
-POST /v1/tenants/{tenantID}/access-observations
-POST /v1/tenants/{tenantID}/least-privilege-analyses
-GET  /v1/tenants/{tenantID}/least-privilege-analyses/{analysisID}
+POST /v1/organizations/{organizationID}/access-observations
+POST /v1/organizations/{organizationID}/least-privilege-analyses
+GET  /v1/organizations/{organizationID}/least-privilege-analyses/{analysisID}
 ```
 Recommendations include observation windows, collector coverage, grant provenance,
 business exceptions and evidence. Authenticate collectors and bind their app and
@@ -557,9 +557,9 @@ it does not express a continuing two-party access agreement.
 
 **Proposed APIs:**
 ```text
-POST /v1/tenants/{tenantID}/partner-trust-offers
-POST /v1/tenants/{tenantID}/partner-trust-acceptances
-POST /v1/tenants/{tenantID}/partner-trusts/{trustID}/revocations
+POST /v1/organizations/{organizationID}/partner-trust-offers
+POST /v1/organizations/{organizationID}/partner-trust-acceptances
+POST /v1/organizations/{organizationID}/partner-trusts/{trustID}/revocations
 ```
 Each administrator acts only within their authenticated organization. The server
 links the two sides through an intended-recipient-bound offer. Both approve the
@@ -576,7 +576,7 @@ MFA claims. Define existing token/session revocation separately using F-03.
 **Measure.** Compare verified onboarding steps and elapsed time with two partners'
 current process; all unilateral, stale and foreign-organization approval tests deny.
 
-**Foundation/dependencies.** [Invitations](../../internal/identity/invitations/invite.go),
+**Foundation/dependencies.** [Invitations](../../internal/identity/invite/invite.go),
 organization membership, 4.1/4.2 and client/SDK/login integration. Entra already documents
 cross-organization policies and mutual B2B direct-connect agreements [S9]. Qeet's
 opportunity is an application-facing agreement workflow, not ambient cross-organization
@@ -604,8 +604,8 @@ identifiers. Give application owners a predictable, testable disclosure contract
 
 **Proposed APIs:**
 ```text
-POST /v1/tenants/{tenantID}/claim-release-policies
-POST /v1/tenants/{tenantID}/claim-release-evaluations
+POST /v1/organizations/{organizationID}/claim-release-policies
+POST /v1/organizations/{organizationID}/claim-release-evaluations
 ```
 Associate a policy with a verified client registration. Evaluations report claim
 names, reasons and required consent without unnecessarily returning values.
@@ -650,10 +650,10 @@ IdP or device outage without allowing one helpdesk operator to take over an owne
 
 **Proposed APIs:**
 ```text
-GET  /v1/tenants/{tenantID}/recovery-readiness
-POST /v1/tenants/{tenantID}/recovery-drills
-POST /v1/tenants/{tenantID}/recovery-cases
-POST /v1/tenants/{tenantID}/recovery-cases/{caseID}/approvals
+GET  /v1/organizations/{organizationID}/recovery-readiness
+POST /v1/organizations/{organizationID}/recovery-drills
+POST /v1/organizations/{organizationID}/recovery-cases
+POST /v1/organizations/{organizationID}/recovery-cases/{caseID}/approvals
 ```
 The first slice exposes readiness and simulated drills only; it cannot reset
 credentials. Live recovery cases require a separately approved assurance design.
@@ -723,13 +723,13 @@ and authentication assurance as separate evidence types.
 
 **Proposed APIs:**
 ```text
-GET  /v1/tenants/{tenantID}/device-assurance/policy
-PUT  /v1/tenants/{tenantID}/device-assurance/policy
-POST /v1/tenants/{tenantID}/device-assurance/providers
-GET  /v1/tenants/{tenantID}/device-assurance/assessments/{assessmentID}
+GET  /v1/organizations/{organizationID}/device-assurance/policy
+PUT  /v1/organizations/{organizationID}/device-assurance/policy
+POST /v1/organizations/{organizationID}/device-assurance/providers
+GET  /v1/organizations/{organizationID}/device-assurance/assessments/{assessmentID}
 ```
-The [passkey implementation](../../internal/access/passkeys/passkey.go) already retains
-credential/AAGUID and backup information; [trusted devices](../../internal/access/authentication/trusteddevice.go)
+The [passkey implementation](../../internal/access/passkey/passkey.go) already retains
+credential/AAGUID and backup information; [trusted devices](../../internal/access/auth/trusteddevice.go)
 and [risk signals](../../internal/access/threat/risk/risk.go) serve other purposes.
 Add trusted attestation assessment and separately authenticated posture-provider
 observations, not an administrator-writable `compliant: true` field.
@@ -775,11 +775,11 @@ This is not permission to move Qeet management enforcement out of the server.
 
 **Proposed management and separately scoped runtime APIs:**
 ```text
-POST /v1/tenants/{tenantID}/authorization/evaluators
-PUT  /v1/tenants/{tenantID}/authorization/evaluators/{evaluatorID}/distribution
-POST /v1/tenants/{tenantID}/authorization/evaluators/{evaluatorID}/revocations
-GET  /v1/tenants/{tenantID}/authorization/evaluators/{evaluatorID}/bundles/current
-POST /v1/tenants/{tenantID}/authorization/evaluators/{evaluatorID}/leases
+POST /v1/organizations/{organizationID}/authorization/evaluators
+PUT  /v1/organizations/{organizationID}/authorization/evaluators/{evaluatorID}/distribution
+POST /v1/organizations/{organizationID}/authorization/evaluators/{evaluatorID}/revocations
+GET  /v1/organizations/{organizationID}/authorization/evaluators/{evaluatorID}/bundles/current
+POST /v1/organizations/{organizationID}/authorization/evaluators/{evaluatorID}/leases
 ```
 Reuse [the composed decision semantics](../../internal/access/authorization/decide/decide.go)
 and [AuthZEN](../../internal/access/authorization/authzen/authzen.go). F-01 handles
@@ -831,14 +831,14 @@ and not the existing deployment-wide re-encryption worker.
 
 **Proposed APIs:**
 ```text
-POST /v1/tenants/{tenantID}/encryption-keys
-POST /v1/tenants/{tenantID}/encryption-keys/{keyID}/validations
-POST /v1/tenants/{tenantID}/encryption-keys/{keyID}/activations
-POST /v1/tenants/{tenantID}/encryption-keys/{keyID}/suspensions
-GET  /v1/tenants/{tenantID}/encryption-key-operations/{operationID}
+POST /v1/organizations/{organizationID}/encryption-keys
+POST /v1/organizations/{organizationID}/encryption-keys/{keyID}/validations
+POST /v1/organizations/{organizationID}/encryption-keys/{keyID}/activations
+POST /v1/organizations/{organizationID}/encryption-keys/{keyID}/suspensions
+GET  /v1/organizations/{organizationID}/encryption-key-operations/{operationID}
 ```
 Existing [envelopes](../../internal/platform/crypto/envelope/envelope.go) bind context;
-the [key-provider boundary](../../internal/developer/credentials/secrets/keyprovider.go)
+the [key-provider boundary](../../internal/developer/credentials/secret/keyprovider.go)
 and [bootstrap key registry](../../internal/bootstrap/keys.go) are the starting points.
 Not every encrypted-column context identifies an organization: some identify
 users, sessions or platform material. Map real ownership before extending custody.
@@ -888,10 +888,10 @@ This expands the private-connectivity discovery item, not physical data residenc
 
 **Proposed administrative APIs:**
 ```text
-POST /v1/tenants/{tenantID}/private-connectors/enrollments
-POST /v1/tenants/{tenantID}/private-connectors/{connectorID}/targets
-POST /v1/tenants/{tenantID}/private-connectors/{connectorID}/jobs
-POST /v1/tenants/{tenantID}/private-connectors/{connectorID}/revocations
+POST /v1/organizations/{organizationID}/private-connectors/enrollments
+POST /v1/organizations/{organizationID}/private-connectors/{connectorID}/targets
+POST /v1/organizations/{organizationID}/private-connectors/{connectorID}/jobs
+POST /v1/organizations/{organizationID}/private-connectors/{connectorID}/revocations
 ```
 Add a typed operation adapter beside [LDAP](../../internal/federation/ldap/ldap.go),
 preserving [public egress policy](../../internal/platform/network/egress/egress.go).
@@ -942,10 +942,10 @@ expands F-01 and the earlier promotion discovery item, not a second change engin
 
 **Proposed APIs:**
 ```text
-POST /v1/tenants/{tenantID}/configuration/plans
-GET  /v1/tenants/{tenantID}/configuration/plans/{planID}
-POST /v1/tenants/{tenantID}/configuration/plans/{planID}/approvals
-POST /v1/tenants/{tenantID}/configuration/plans/{planID}/apply
+POST /v1/organizations/{organizationID}/configuration/plans
+GET  /v1/organizations/{organizationID}/configuration/plans/{planID}
+POST /v1/organizations/{organizationID}/configuration/plans/{planID}/approvals
+POST /v1/organizations/{organizationID}/configuration/plans/{planID}/apply
 ```
 Build an allowlisted, versioned manifest over validated resource operations such
 as [OIDC client updates](../../internal/federation/oidc/clients_admin.go). Keep process
@@ -994,10 +994,10 @@ is the test subject: F-04 tests incoming IdP changes, and G-02 tests Qeet releas
 
 **Proposed APIs, only if a hosted workflow is justified:**
 ```text
-POST /v1/tenants/{tenantID}/integration-targets
-POST /v1/tenants/{tenantID}/integration-targets/{targetID}/runs
-GET  /v1/tenants/{tenantID}/integration-runs/{runID}
-POST /v1/tenants/{tenantID}/integration-runs/{runID}/cancellations
+POST /v1/organizations/{organizationID}/integration-targets
+POST /v1/organizations/{organizationID}/integration-targets/{targetID}/runs
+GET  /v1/organizations/{organizationID}/integration-runs/{runID}
+POST /v1/organizations/{organizationID}/integration-runs/{runID}/cancellations
 ```
 Reuse the scenarios behind [OAuth flow tests](../../internal/federation/oidc/authorize_db_test.go)
 and upstream conformance tooling where the selected profile fits [T6]. Test
@@ -1104,8 +1104,8 @@ which data or evidence has a long enough lifetime to prioritize.
 
 **Proposed APIs:**
 ```text
-GET /v1/tenants/{tenantID}/crypto/assets
-GET /v1/tenants/{tenantID}/crypto/exposure-plan
+GET /v1/organizations/{organizationID}/crypto/assets
+GET /v1/organizations/{organizationID}/crypto/exposure-plan
 ```
 Return purpose, algorithm/parameters, public key ID, owner, consumer dependencies,
 confidentiality/authenticity horizon, evidence source/freshness and unknowns.
@@ -1148,7 +1148,7 @@ used hybrid key establishment and where legacy peers or proxies prevented it.
 
 **Proposed API:**
 ```text
-GET /v1/tenants/{tenantID}/crypto/transport-evidence
+GET /v1/organizations/{organizationID}/crypto/transport-evidence
 ```
 Evidence identifies the connection segment, build/configuration reference, time,
 TLS version, negotiated group, certificate algorithms separately, resumption state,
@@ -1190,8 +1190,8 @@ strategy whose lifetime differs from short-lived access tokens.
 
 **Proposed APIs:**
 ```text
-POST /v1/tenants/{tenantID}/audit/exports/{exportID}/pq-evidence
-GET  /v1/tenants/{tenantID}/audit/exports/{exportID}/pq-evidence
+POST /v1/organizations/{organizationID}/audit/exports/{exportID}/pq-evidence
+GET  /v1/organizations/{organizationID}/audit/exports/{exportID}/pq-evidence
 ```
 These are opt-in future operations over an immutable, authorized export after
 5.3 exists. Operators select an approved signature/container profile and key

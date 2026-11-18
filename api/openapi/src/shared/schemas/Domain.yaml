@@ -38,7 +38,7 @@ properties:
   sso_enabled:
     type: boolean
     description: >-
-      Addresses on the domain sign in only through the organisation's active
+      Addresses on the domain sign in only through the organization's active
       SAML, LDAP or OpenID Connect connection (break-glass members and
       administrators single sign-on can't sign in excepted).
   status:

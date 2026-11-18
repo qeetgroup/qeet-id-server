@@ -59,7 +59,7 @@ func (service *Service) recordOperation(ctx context.Context, c *connFull, operat
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer cancel()
 	if err := service.observer.RecordLDAPOperation(ctx, op); err != nil {
-		slog.Warn("LDAP operation telemetry unavailable", "tenant_id", c.OrganizationID, "err", err)
+		slog.Warn("LDAP operation telemetry unavailable", "organization_id", c.OrganizationID, "err", err)
 	}
 }
 
@@ -70,11 +70,11 @@ func operationStatus(operation string, err error) int {
 	switch {
 	case err == nil:
 		return http.StatusOK
-	case errors.Is(err, errs.ErrLDAPInvalidCredentials), errors.Is(err, errs.ErrLDAPCredentialsRequired):
+	case errors.Is(err, ErrInvalidCredentials), errors.Is(err, ErrCredentialsRequired):
 		return http.StatusUnauthorized
-	case errors.Is(err, errs.ErrLDAPServiceBindFailed):
+	case errors.Is(err, ErrServiceBindFailed):
 		return http.StatusForbidden
-	case operation == "sign-in" && !errors.Is(err, errs.ErrLDAPDialFailed) && !errors.Is(err, errs.ErrLDAPDirectoryUnreachable):
+	case operation == "sign-in" && !errors.Is(err, ErrDialFailed) && !errors.Is(err, ErrDirectoryUnreachable):
 		return http.StatusUnprocessableEntity
 	default:
 		return http.StatusBadGateway

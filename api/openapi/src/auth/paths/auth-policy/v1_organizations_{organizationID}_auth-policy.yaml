@@ -1,0 +1,87 @@
+get:
+  operationId: getAuthPolicy
+  summary: Get auth policy
+  tags:
+    - Auth Policy
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  description: >-
+    The organization's authentication policy (defaults when none is stored), including
+    its sign-in lockout settings and, read-only, the platform defaults and
+    bounds for them.
+  responses:
+    '200':
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/AuthPolicy.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+put:
+  operationId: setAuthPolicy
+  summary: Update auth policy
+  tags:
+    - Auth Policy
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: false
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/AuthPolicy.yaml
+    description: >-
+      The whole policy (a full replace). `lockout_limits` is read-only and
+      ignored.
+  description: >-
+    Replaces the organization's authentication policy. The sign-in lockout settings
+    apply to the next sign-in attempt with no deployment. A lockout setting
+    outside the documented bounds (`lockout_limits.min`..`lockout_limits.max`)
+    is refused with 422 validation_failed, naming each field (code
+    out_of_range), and nothing is stored. The password minimum length (8..128)
+    and magic-link lifetime (5..1440 minutes) are clamped. Refused with 422
+    validation_failed, storing nothing, when the change would switch off every
+    sign-in method (password, passkey and magic link; field password_enabled,
+    code no_sign_in_method) or switch on otp_email_enabled / otp_sms_enabled
+    (code not_available — no one-time-code sign-in exists). Changes apply to the
+    next sign-in; the policy is not cached. Every sign-in method may be switched
+    off only while the organization has an active SAML, LDAP or OpenID Connect
+    connection to sign in through (a draft or disabled one does not count); its
+    members then sign in with single sign-on alone, break-glass members
+    included.
+  responses:
+    '200':
+      description: The stored policy
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/AuthPolicy.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '422':
+      description: A lockout setting is outside the documented bounds; nothing was stored.
+      content:
+        application/json:
+          schema:
+            $ref: ../../../shared/schemas/Error.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

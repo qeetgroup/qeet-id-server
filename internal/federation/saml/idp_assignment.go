@@ -11,10 +11,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
@@ -67,10 +65,10 @@ func (i *IdP) ListAssignments(ctx context.Context, organizationID, spID uuid.UUI
 	}
 	out := &SPAssignments{Users: make([]SPUserAssignment, len(users)), Groups: make([]SPGroupAssignment, len(groups))}
 	for j, u := range users {
-		out.Users[j] = SPUserAssignment{UserID: u.UserID, Email: u.Email, DisplayName: u.DisplayName, AssignedAt: u.AssignedAt, AssignedBy: optionalUUID(u.AssignedBy)}
+		out.Users[j] = SPUserAssignment{UserID: u.UserID, Email: u.Email, DisplayName: u.DisplayName, AssignedAt: u.AssignedAt, AssignedBy: u.AssignedBy}
 	}
 	for j, g := range groups {
-		out.Groups[j] = SPGroupAssignment{GroupID: g.GroupID, Name: g.Name, AssignedAt: g.AssignedAt, AssignedBy: optionalUUID(g.AssignedBy)}
+		out.Groups[j] = SPGroupAssignment{GroupID: g.GroupID, Name: g.Name, AssignedAt: g.AssignedAt, AssignedBy: g.AssignedBy}
 	}
 	return out, nil
 }
@@ -86,29 +84,81 @@ func requireSP(ctx context.Context, q *dbgen.Queries, organizationID, spID uuid.
 }
 
 // AssignUser assigns the person userID, whose home must be the organization, to its
-// service provider spID within tx, reporting whether they weren't already.
-func (i *IdP) AssignUser(ctx context.Context, tx pgx.Tx, organizationID, spID, userID uuid.UUID, by *uuid.UUID) (bool, error) {
-	q := i.q.WithTx(tx)
+// service provider spID, recorded as actor's when they weren't already.
+func (i *IdP) AssignUser(ctx context.Context, organizationID, spID, userID uuid.UUID, actor audit.Actor) error {
+	return i.changeAssignment(ctx, actor, organizationID, spID, "saml.sp_user_assigned", map[string]any{"user_id": userID},
+		func(q *dbgen.Queries) (bool, error) {
+			return assignUser(ctx, q, organizationID, spID, userID, actor.UserID)
+		})
+}
+
+// UnassignUser removes the person userID's own assignment to the organization's
+// service provider spID, recorded as actor's; one through a group stays.
+func (i *IdP) UnassignUser(ctx context.Context, organizationID, spID, userID uuid.UUID, actor audit.Actor) error {
+	return i.changeAssignment(ctx, actor, organizationID, spID, "saml.sp_user_unassigned", map[string]any{"user_id": userID},
+		func(q *dbgen.Queries) (bool, error) { return true, unassignUser(ctx, q, organizationID, spID, userID) })
+}
+
+// AssignGroup assigns the members of the organization's group groupID to its
+// service provider spID, recorded as actor's when it wasn't already.
+func (i *IdP) AssignGroup(ctx context.Context, organizationID, spID, groupID uuid.UUID, actor audit.Actor) error {
+	return i.changeAssignment(ctx, actor, organizationID, spID, "saml.sp_group_assigned", map[string]any{"group_id": groupID},
+		func(q *dbgen.Queries) (bool, error) {
+			return assignGroup(ctx, q, organizationID, spID, groupID, actor.UserID)
+		})
+}
+
+// UnassignGroup removes the group groupID's assignment to the organization's
+// service provider spID, recorded as actor's.
+func (i *IdP) UnassignGroup(ctx context.Context, organizationID, spID, groupID uuid.UUID, actor audit.Actor) error {
+	return i.changeAssignment(ctx, actor, organizationID, spID, "saml.sp_group_unassigned", map[string]any{"group_id": groupID},
+		func(q *dbgen.Queries) (bool, error) {
+			return true, unassignGroup(ctx, q, organizationID, spID, groupID)
+		})
+}
+
+// changeAssignment makes one assignment change to the organization's service
+// provider spID in a transaction, auditing it as actor's action when change
+// reports it changed anything.
+func (i *IdP) changeAssignment(ctx context.Context, actor audit.Actor, organizationID, spID uuid.UUID, action string, meta map[string]any, change func(*dbgen.Queries) (bool, error)) error {
+	tx, err := i.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	changed, err := change(i.q.WithTx(tx))
+	if err != nil {
+		return err
+	}
+	if changed {
+		if err := recordSPChange(ctx, tx, actor, organizationID, spID, action, meta); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+// assignUser assigns userID to spID through q, reporting whether they weren't
+// already.
+func assignUser(ctx context.Context, q *dbgen.Queries, organizationID, spID, userID uuid.UUID, by *uuid.UUID) (bool, error) {
 	if err := requireSP(ctx, q, organizationID, spID); err != nil {
 		return false, err
 	}
-	ok, err := q.IsSamlAssignableUser(ctx, dbgen.IsSamlAssignableUserParams{UserID: userID, OrganizationID: pgtype.UUID{Bytes: organizationID, Valid: true}})
+	ok, err := q.IsSamlAssignableUser(ctx, dbgen.IsSamlAssignableUserParams{UserID: userID, OrganizationID: &organizationID})
 	if err != nil {
 		return false, err
 	}
 	if !ok {
-		return false, errs.ErrSAMLAssigneeNotFound
+		return false, ErrAssigneeNotFound
 	}
 	n, err := q.InsertSamlSPUserAssignment(ctx, dbgen.InsertSamlSPUserAssignmentParams{
-		OrganizationID: organizationID, SpID: spID, UserID: userID, AssignedBy: pgUUID(by),
+		OrganizationID: organizationID, SpID: spID, UserID: userID, AssignedBy: by,
 	})
 	return n > 0, err
 }
 
-// UnassignUser removes the person userID's own assignment to the organization's
-// service provider spID within tx; one through a group stays.
-func (i *IdP) UnassignUser(ctx context.Context, tx pgx.Tx, organizationID, spID, userID uuid.UUID) error {
-	q := i.q.WithTx(tx)
+// unassignUser removes userID's own assignment to spID through q.
+func unassignUser(ctx context.Context, q *dbgen.Queries, organizationID, spID, userID uuid.UUID) error {
 	if err := requireSP(ctx, q, organizationID, spID); err != nil {
 		return err
 	}
@@ -122,10 +172,9 @@ func (i *IdP) UnassignUser(ctx context.Context, tx pgx.Tx, organizationID, spID,
 	return nil
 }
 
-// AssignGroup assigns the members of the organization's group groupID to its service
-// provider spID within tx, reporting whether it wasn't already.
-func (i *IdP) AssignGroup(ctx context.Context, tx pgx.Tx, organizationID, spID, groupID uuid.UUID, by *uuid.UUID) (bool, error) {
-	q := i.q.WithTx(tx)
+// assignGroup assigns groupID to spID through q, reporting whether it wasn't
+// already.
+func assignGroup(ctx context.Context, q *dbgen.Queries, organizationID, spID, groupID uuid.UUID, by *uuid.UUID) (bool, error) {
 	if err := requireSP(ctx, q, organizationID, spID); err != nil {
 		return false, err
 	}
@@ -134,18 +183,16 @@ func (i *IdP) AssignGroup(ctx context.Context, tx pgx.Tx, organizationID, spID, 
 		return false, err
 	}
 	if !ok {
-		return false, errs.ErrSAMLAssigneeNotFound
+		return false, ErrAssigneeNotFound
 	}
 	n, err := q.InsertSamlSPGroupAssignment(ctx, dbgen.InsertSamlSPGroupAssignmentParams{
-		OrganizationID: organizationID, SpID: spID, GroupID: groupID, AssignedBy: pgUUID(by),
+		OrganizationID: organizationID, SpID: spID, GroupID: groupID, AssignedBy: by,
 	})
 	return n > 0, err
 }
 
-// UnassignGroup removes the group groupID's assignment to the organization's service
-// provider spID within tx.
-func (i *IdP) UnassignGroup(ctx context.Context, tx pgx.Tx, organizationID, spID, groupID uuid.UUID) error {
-	q := i.q.WithTx(tx)
+// unassignGroup removes groupID's assignment to spID through q.
+func unassignGroup(ctx context.Context, q *dbgen.Queries, organizationID, spID, groupID uuid.UUID) error {
 	if err := requireSP(ctx, q, organizationID, spID); err != nil {
 		return err
 	}
@@ -159,34 +206,19 @@ func (i *IdP) UnassignGroup(ctx context.Context, tx pgx.Tx, organizationID, spID
 	return nil
 }
 
-func optionalUUID(v pgtype.UUID) *uuid.UUID {
-	if !v.Valid {
-		return nil
-	}
-	id := uuid.UUID(v.Bytes)
-	return &id
-}
-
-func pgUUID(v *uuid.UUID) pgtype.UUID {
-	if v == nil {
-		return pgtype.UUID{}
-	}
-	return pgtype.UUID{Bytes: *v, Valid: true}
-}
-
 // =====================================================================
 // Assignment admin handlers (user-JWT, organization-scoped)
 // =====================================================================
 
 func (h *Handler) listSPAssignments(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	spID, err := uuid.Parse(chi.URLParam(r, "id"))
+	spID, err := httpx.PathUUID(r, "id", ErrIDInvalid)
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrSAMLIDInvalid)
+		httpx.WriteError(w, r, err)
 		return
 	}
 	out, err := h.IdP.ListAssignments(r.Context(), organizationID, spID)
@@ -198,72 +230,40 @@ func (h *Handler) listSPAssignments(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) assignSPUser(w http.ResponseWriter, r *http.Request) {
-	h.changeAssignment(w, r, "userID", func(ctx context.Context, tx pgx.Tx, organizationID, spID, id uuid.UUID, by *uuid.UUID) (bool, error) {
-		return h.IdP.AssignUser(ctx, tx, organizationID, spID, id, by)
-	}, "saml.sp_user_assigned", "user_id")
+	h.changeAssignment(w, r, "userID", h.IdP.AssignUser)
 }
 
 func (h *Handler) unassignSPUser(w http.ResponseWriter, r *http.Request) {
-	h.changeAssignment(w, r, "userID", func(ctx context.Context, tx pgx.Tx, organizationID, spID, id uuid.UUID, _ *uuid.UUID) (bool, error) {
-		return true, h.IdP.UnassignUser(ctx, tx, organizationID, spID, id)
-	}, "saml.sp_user_unassigned", "user_id")
+	h.changeAssignment(w, r, "userID", h.IdP.UnassignUser)
 }
 
 func (h *Handler) assignSPGroup(w http.ResponseWriter, r *http.Request) {
-	h.changeAssignment(w, r, "groupID", func(ctx context.Context, tx pgx.Tx, organizationID, spID, id uuid.UUID, by *uuid.UUID) (bool, error) {
-		return h.IdP.AssignGroup(ctx, tx, organizationID, spID, id, by)
-	}, "saml.sp_group_assigned", "group_id")
+	h.changeAssignment(w, r, "groupID", h.IdP.AssignGroup)
 }
 
 func (h *Handler) unassignSPGroup(w http.ResponseWriter, r *http.Request) {
-	h.changeAssignment(w, r, "groupID", func(ctx context.Context, tx pgx.Tx, organizationID, spID, id uuid.UUID, _ *uuid.UUID) (bool, error) {
-		return true, h.IdP.UnassignGroup(ctx, tx, organizationID, spID, id)
-	}, "saml.sp_group_unassigned", "group_id")
+	h.changeAssignment(w, r, "groupID", h.IdP.UnassignGroup)
 }
 
-// assignmentChange makes one assignment change within tx, reporting whether it
-// changed anything.
-type assignmentChange func(ctx context.Context, tx pgx.Tx, organizationID, spID, id uuid.UUID, by *uuid.UUID) (bool, error)
-
 // changeAssignment applies change to the service provider and the person or
-// group the path's param names, auditing it as action when it changed
-// anything, and answers 204.
-func (h *Handler) changeAssignment(w http.ResponseWriter, r *http.Request, param string, change assignmentChange, action, metaKey string) {
-	organizationID, err := requirePathOrganization(r)
+// group the path's param names, as the caller, and answers 204.
+func (h *Handler) changeAssignment(w http.ResponseWriter, r *http.Request, param string, change func(ctx context.Context, organizationID, spID, id uuid.UUID, actor audit.Actor) error) {
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	spID, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		httpx.WriteError(w, r, errs.ErrSAMLIDInvalid)
-		return
-	}
-	id, err := uuid.Parse(chi.URLParam(r, param))
-	if err != nil {
-		httpx.WriteError(w, r, errs.ErrSAMLIDInvalid)
-		return
-	}
-	ctx := r.Context()
-	tx, err := h.IdP.Pool().Begin(ctx)
+	spID, err := httpx.PathUUID(r, "id", ErrIDInvalid)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	defer tx.Rollback(ctx)
-	by, _ := audit.ActorOf(r).Identity()
-	changed, err := change(ctx, tx, organizationID, spID, id, by)
+	id, err := httpx.PathUUID(r, param, ErrIDInvalid)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if changed {
-		if err := h.recordSPAudit(ctx, tx, r, organizationID, spID, action, map[string]any{metaKey: id}); err != nil {
-			httpx.WriteError(w, r, err)
-			return
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := change(r.Context(), organizationID, spID, id, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

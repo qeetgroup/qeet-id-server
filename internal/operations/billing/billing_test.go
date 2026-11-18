@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/billing/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/billing/dbgen"
 )
 
 func TestNormalizeCurrency(t *testing.T) {
@@ -129,7 +129,7 @@ func TestCostsNoMore(t *testing.T) {
 // the customer brings, data residency, a dedicated organization, a certification,
 // a custom sign-in domain, or usage metering.
 func TestBuiltinPlansPromiseOnlyWhatShips(t *testing.T) {
-	unsupported := []string{"uptime", "SLA", "BYOK", "residency", "Dedicated tenant", "HIPAA", "& domain", "metered"}
+	unsupported := []string{"uptime", "SLA", "BYOK", "residency", "Dedicated organization", "HIPAA", "& domain", "metered"}
 	for _, p := range builtins {
 		for _, line := range p.features {
 			for _, phrase := range unsupported {

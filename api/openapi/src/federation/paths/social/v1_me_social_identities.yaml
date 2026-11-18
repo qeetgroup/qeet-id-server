@@ -2,7 +2,7 @@ get:
   operationId: listMySocialIdentities
   summary: List my connected social accounts
   description: >-
-    The signed-in (tenant-less/console) user's connected social identities,
+    The signed-in (organization-less/console) user's connected social identities,
     recorded by platform sign-in and the link flow.
   tags:
     - Social

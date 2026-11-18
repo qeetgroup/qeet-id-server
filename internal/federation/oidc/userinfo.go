@@ -23,7 +23,7 @@ var userinfoClaims = map[string][]string{
 
 // claimsSupported is discovery's claims_supported list.
 func claimsSupported() []string {
-	out := []string{"sub", "iss", "aud", "exp", "iat", "auth_time", "nonce", "sid", "tenant_id"}
+	out := []string{"sub", "iss", "aud", "exp", "iat", "auth_time", "nonce", "sid", "organization_id"}
 	for _, scope := range []string{"profile", "email", "phone"} {
 		out = append(out, userinfoClaims[scope]...)
 	}
@@ -48,7 +48,7 @@ func (s *Service) userClaims(ctx context.Context, userID uuid.UUID, scopes []str
 	out := map[string]any{}
 	if slices.Contains(scopes, "email") {
 		out["email"] = u.Email
-		out["email_verified"] = u.EmailVerifiedAt.Valid
+		out["email_verified"] = u.EmailVerifiedAt != nil
 	}
 	if slices.Contains(scopes, "profile") {
 		if u.DisplayName != nil && *u.DisplayName != "" {
@@ -64,7 +64,7 @@ func (s *Service) userClaims(ctx context.Context, userID uuid.UUID, scopes []str
 	}
 	if slices.Contains(scopes, "phone") && u.Phone != nil && *u.Phone != "" {
 		out["phone_number"] = *u.Phone
-		out["phone_number_verified"] = u.PhoneVerifiedAt.Valid
+		out["phone_number_verified"] = u.PhoneVerifiedAt != nil
 	}
 	return out, nil
 }
@@ -93,7 +93,7 @@ func (h *Handler) userinfo(w http.ResponseWriter, r *http.Request) {
 	}
 	if !slices.Contains(p.Scopes, "openid") {
 		bearerChallenge(w, "insufficient_scope")
-		httpx.WriteError(w, r, errs.ErrOIDCInsufficientScope)
+		httpx.WriteError(w, r, ErrInsufficientScope)
 		return
 	}
 	claims, err := h.Service.userClaims(r.Context(), *p.UserID, p.Scopes)
@@ -108,7 +108,7 @@ func (h *Handler) userinfo(w http.ResponseWriter, r *http.Request) {
 	}
 	claims["sub"] = p.UserID
 	if p.OrganizationID != nil {
-		claims["tenant_id"] = p.OrganizationID
+		claims["organization_id"] = p.OrganizationID
 	}
 	httpx.WriteJSON(w, http.StatusOK, claims)
 }

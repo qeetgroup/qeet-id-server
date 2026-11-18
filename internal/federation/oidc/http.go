@@ -10,9 +10,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authpolicy"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/organization/branding"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
@@ -43,13 +44,6 @@ type RegistrationChecker interface {
 	SelfRegistrationEnabled(ctx context.Context, organizationID uuid.UUID) (bool, error)
 }
 
-// SignInMethodsChecker reports which sign-in methods an organization allows, so the
-// login-context tells the hosted login which to offer. Satisfied by
-// *authpolicy.Service (optional).
-type SignInMethodsChecker interface {
-	AllowedSignInMethods(ctx context.Context, organizationID uuid.UUID) (password, passkey, magicLink bool, err error)
-}
-
 // HostedPolicyReader returns what an organization's hosted sign-in pages say before anyone signs in: the
 // rules a new password must meet, how long a sign-in link works and how long a device is
 // remembered. Satisfied by *authpolicy.Service (optional).
@@ -64,13 +58,6 @@ type DeviceTrustChecker interface {
 	RememberDeviceEnabled(ctx context.Context, organizationID uuid.UUID) (bool, error)
 }
 
-// BrandingLister returns an organization's hosted-login branding (logo + brand colors)
-// so the login page can render the organization's brand on first paint. Returns empty
-// strings when unset. Satisfied by *branding.Repository (optional).
-type BrandingLister interface {
-	LoginBranding(ctx context.Context, organizationID uuid.UUID) (logoURL, primaryColor, secondaryColor, backgroundColor string)
-}
-
 // Handler serves the OIDC provider HTTP API.
 type Handler struct {
 	Service *Service
@@ -82,9 +69,9 @@ type Handler struct {
 	Providers    ProviderLister
 	Registration RegistrationChecker
 	DeviceTrust  DeviceTrustChecker
-	Methods      SignInMethodsChecker
+	Methods      authpolicy.SignInMethodsChecker
 	Policy       HostedPolicyReader
-	Branding     BrandingLister
+	Branding     branding.LoginBrandingReader
 	LoginBaseURL string
 	// CookieSecure marks the hosted-login SSO cookie Secure (HTTPS-only) when
 	// clearing it on logout; set from SERVICE_ENV != "dev".
@@ -103,24 +90,24 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/oauth/userinfo", h.userinfo) // OIDC Core §5.3.1 allows both
 	r.Get("/oauth/bc-authorize/pending", h.pendingBackchannel)
 	r.Post("/oauth/bc-authorize/decision", h.backchannelDecision)
-	r.Get("/tenants/{tenantID}/oauth/grants", h.listGrants)
-	r.Delete("/tenants/{tenantID}/oauth/grants/{id}", h.revokeGrant)
-	r.Post("/tenants/{tenantID}/oauth/grants/revoke", h.revokeGrants)
+	r.Get("/organizations/{organizationID}/oauth/grants", h.listGrants)
+	r.Delete("/organizations/{organizationID}/oauth/grants/{id}", h.revokeGrant)
+	r.Post("/organizations/{organizationID}/oauth/grants/revoke", h.revokeGrants)
 
 	// Organization-scoped OIDC client management (admin UI). Reads/writes are confined
 	// to the path organization; create + mutate + rotate are audited.
-	r.Post("/tenants/{tenantID}/oidc/clients", h.createOrganizationClient)
-	r.Get("/tenants/{tenantID}/oidc/clients", h.listClients)
-	r.Get("/tenants/{tenantID}/oidc/clients/{id}", h.getClient)
-	r.Patch("/tenants/{tenantID}/oidc/clients/{id}", h.patchClient)
-	r.Get("/tenants/{tenantID}/oidc/clients/{id}/auth-failures", h.clientAuthFailures)
-	r.Get("/tenants/{tenantID}/oidc/resources", h.listResources)
-	r.Post("/tenants/{tenantID}/oidc/resources", h.createResource)
-	r.Delete("/tenants/{tenantID}/oidc/resources/{id}", h.deleteResource)
-	r.Delete("/tenants/{tenantID}/oidc/clients/{id}", h.deleteClient)
-	r.Post("/tenants/{tenantID}/oidc/clients/{id}/rotate-secret", h.rotateClientSecret)
-	r.Get("/tenants/{tenantID}/oidc/clients/shadow-ai", h.shadowAI)
-	r.Post("/tenants/{tenantID}/oidc/clients/{id}/review", h.reviewShadowAI)
+	r.Post("/organizations/{organizationID}/oidc/clients", h.createOrganizationClient)
+	r.Get("/organizations/{organizationID}/oidc/clients", h.listClients)
+	r.Get("/organizations/{organizationID}/oidc/clients/{id}", h.getClient)
+	r.Patch("/organizations/{organizationID}/oidc/clients/{id}", h.patchClient)
+	r.Get("/organizations/{organizationID}/oidc/clients/{id}/auth-failures", h.clientAuthFailures)
+	r.Get("/organizations/{organizationID}/oidc/resources", h.listResources)
+	r.Post("/organizations/{organizationID}/oidc/resources", h.createResource)
+	r.Delete("/organizations/{organizationID}/oidc/resources/{id}", h.deleteResource)
+	r.Delete("/organizations/{organizationID}/oidc/clients/{id}", h.deleteClient)
+	r.Post("/organizations/{organizationID}/oidc/clients/{id}/rotate-secret", h.rotateClientSecret)
+	r.Get("/organizations/{organizationID}/oidc/clients/shadow-ai", h.shadowAI)
+	r.Post("/organizations/{organizationID}/oidc/clients/{id}/review", h.reviewShadowAI)
 
 	// The admin UI's list page wires Delete to the non-organization-scoped
 	// /v1/oidc/clients/{id}; the create sheet posts to /v1/oidc/clients (handled
@@ -129,17 +116,18 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Delete("/oidc/clients/{id}", h.deleteClientByScope)
 
 	// Admin device-authorization visibility (RFC 8628 rows), organization-scoped.
-	r.Get("/tenants/{tenantID}/oauth/devices", h.listDevices)
-	r.Delete("/tenants/{tenantID}/oauth/devices/{id}", h.revokeDevice)
+	r.Get("/organizations/{organizationID}/oauth/devices", h.listDevices)
+	r.Delete("/organizations/{organizationID}/oauth/devices/{id}", h.revokeDevice)
 
 	// Signing-key management (global/issuer-level, not organization-scoped).
 	r.Get("/oidc/signing-keys", h.signingKeys)
 }
 
-// MountToken registers the token endpoint, client-credential M2M traffic that
-// is CSRF-exempt in the router and rate-limited apart from sign-in.
+// MountToken registers the token endpoint, the one for every grant:
+// client-authenticated machine traffic that is CSRF-exempt in the router and
+// rate-limited apart from sign-in.
 func (h *Handler) MountToken(r chi.Router) {
-	r.Post("/oauth/token-code", h.tokenCode)
+	r.Post("/oauth/token", h.token)
 }
 
 // MountBrowser registers the browser/RP-facing OAuth endpoints that authenticate
@@ -156,7 +144,7 @@ func (h *Handler) MountBrowser(r chi.Router) {
 	r.Post("/oauth/logout", h.endSession) // (some RPs POST)
 	r.Get("/oauth/logout/continue", h.endSessionContinue)
 	// Device Authorization Grant (RFC 8628). device_authorization is
-	// client-authenticated M2M (CSRF-exempt in the router, like token-code);
+	// client-authenticated M2M (CSRF-exempt in the router, like the token endpoint);
 	// the device context + decision endpoints are SSO-cookie gated like
 	// authorize/decision (the hosted /device page posts the user's choice).
 	r.Post("/oauth/device_authorization", h.deviceAuthorization)
@@ -240,7 +228,7 @@ func (h *Handler) loginContext(w http.ResponseWriter, r *http.Request) {
 	}
 	out := map[string]any{
 		"client_name":               client.Name,
-		"tenant_id":                 organizationID,
+		"organization_id":           organizationID,
 		"providers":                 providers,
 		"self_registration_enabled": selfRegistration,
 		"remember_device_enabled":   rememberDevice,
@@ -288,56 +276,8 @@ func (h *Handler) registerClient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.OrganizationID = organizationID
-	ctx := r.Context()
-	if err := h.Service.checkClientLimit(ctx, organizationID); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	tx, err := h.Service.Pool().Begin(ctx)
+	c, secret, err := h.Service.CreateClient(r.Context(), in, audit.ActorOf(r))
 	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	defer tx.Rollback(ctx)
-	c, secret, err := h.Service.RegisterClient(ctx, tx, in)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	var actorID *uuid.UUID
-	actorType := "system"
-	if p := httpx.PrincipalFromCtx(ctx); p != nil {
-		actorID = p.UserID
-		if p.ActorType != "" {
-			actorType = p.ActorType
-		} else {
-			actorType = "user"
-		}
-	}
-	auditOrganizationID := c.OrganizationID
-	resourceID := c.ID
-	if err := audit.Record(ctx, tx, audit.Event{
-		OrganizationID: &auditOrganizationID,
-		ActorUserID:    actorID,
-		ActorType:      actorType,
-		Action:         "oidc.client_registered",
-		ResourceType:   "oidc_client",
-		ResourceID:     &resourceID,
-		IP:             httpx.ClientIP(r),
-		UserAgent:      r.UserAgent(),
-		RequestID:      httpx.RequestID(r),
-		Metadata: map[string]any{
-			"client_id":   c.ClientID,
-			"type":        c.Type,
-			"name":        c.Name,
-			"grant_types": c.GrantTypes,
-			"scopes":      c.Scopes,
-		},
-	}); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -404,8 +344,4 @@ func appendQuery(base string, kv ...string) string {
 		sep = "&"
 	}
 	return out
-}
-
-func requirePathOrganization(r *http.Request) (uuid.UUID, error) {
-	return httpx.PathOrganizationOr(r, errs.ErrOIDCOrganizationIDInvalid, errs.ErrOIDCOrganizationMismatch)
 }

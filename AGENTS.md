@@ -12,7 +12,8 @@ source of truth; they add nothing architectural.
 `qeet-id-server` is the **Go backend of Qeet ID** — a passkeys-first identity and access platform.
 It owns the API, all business logic, and **all enforcement**. Module
 `github.com/qeetgroup/qeet-id-server`. It is a modular monolith over one PostgreSQL database: the API
-is the primary deployable, with optional standalone worker and scheduler entry points.
+is the primary deployable and runs the background workers itself, with an optional standalone
+scheduler entry point.
 
 **It is the only place in Qeet ID where a security decision is made.** Consoles and UIs present;
 this repository decides.
@@ -54,13 +55,13 @@ section of the context document.
 ### 1. Inspect before editing
 
 **Never change code based on a filename or an assumption.** Read the file. Read its callers. This
-repository has over a hundred packages and near-identical names in different contexts — `internal/access/risk/ipallow`
+repository has over a hundred packages and near-identical names in different contexts — `internal/access/ipallow`
 and `internal/access/threat/risk` are different things.
 
 ### 2. Follow the existing architecture
 
 Reuse the established pattern before introducing an abstraction. Every domain package follows the
-same shape: `queries.sql` + `sqlc.yaml` + generated `dbgen/`, plus Go files named after the
+same shape: `queries.sql` (listed in the root `sqlc.yaml`) + generated `dbgen/`, plus Go files named after the
 **domain** — `passkey.go`, `agent.go`, `oidc.go`. **The convention is `<domain>.go`, not
 `service.go`/`repository.go`**: only four packages use layered names and 17 domain packages have an
 `http.go`. Check [docs/llm/subsystems.md](docs/llm/subsystems.md) for the real filenames before
@@ -68,9 +69,9 @@ looking for one.
 
 **Names.** Three words say who holds what: an **account** is a person's sign-in, an **organization**
 is a customer company, and an **application** is an app an organization connects. Use them in code,
-SQL, comments and docs, with the one spelling "organization". Never add a `tenant` name. The public
-contract still says tenant, and changes in one change of its own: the `/v1/tenants/{tenantID}/…`
-paths, the `tenant_id` JSON field and token claim, and the `tenant.*` permission, event and error
+SQL, comments and docs, with the one spelling "organization". Never add an `organization` name. The public
+contract still says organization, and changes in one change of its own: the `/v1/organizations/{organizationID}/…`
+paths, the `organization_id` JSON field and token claim, and the `organization.*` permission, event and error
 names. Leave those strings alone until then. A Microsoft Entra directory is also called a tenant;
 that is the provider's word and it stays (`allowed_idp_tenant_ids`).
 
@@ -81,8 +82,11 @@ Two rules, enforced by `depguard` in `golangci-lint` (`.golangci.yml`):
 - **R1** — `internal/platform/*` must not import a bounded context, `cmd/*`, or `internal/bootstrap`.
 - **R2** — a bounded context must not import `cmd/*` or `internal/bootstrap`.
 
-Cross-context imports are **not** currently enforced. Do not take that as permission — prefer
-consumer-declared interfaces over importing another context's concrete types.
+Cross-context imports are **not** currently enforced. Do not take that as permission — depend on an
+interface, not another context's concrete types. An interface several packages need is declared once,
+next to what satisfies it (`entitlements.PlanGate`, `PlanLimiter`, `SeatGuard`; `notification.Notifier`;
+`ipallow.AddressPolicy`; `authpolicy.PasswordRules`; `postgres.Querier`); declare one in the consumer
+only when no shared one fits.
 
 ### 4. `internal/bootstrap` is the composition root
 
@@ -105,7 +109,7 @@ too, but no other tests.
 Update the spec in the same change as the route. How the sources are laid out: `api/openapi/README.md`.
 
 **URLs.** The organization always comes from the caller's token (`httpx.RequireOrganization`). A new
-organization-administration route also names it in the path, `/v1/tenants/{tenantID}/…`
+organization-administration route also names it in the path, `/v1/organizations/{organizationID}/…`
 (`EnforceOrganizationScope` checks the two agree); a person's own routes live under `/v1/me/…`. The routes
 that predate this rule and take the organization from the token alone are frozen in
 `tokenScopedRoutes` (`internal/bootstrap/permissions_test.go`); don't add to that list.
@@ -122,13 +126,13 @@ something, mark it `deprecated: true` in the spec and answer with `Deprecation` 
 **Organization scope comes from the authenticated principal. Never from a path, body, query or header.**
 
 - Use `httpx.RequireOrganization(r)`. It is the only trustworthy source.
-- `httpx.EnforceOrganizationScope` compares any `{tenantID}` path parameter to the caller's own organization.
+- `httpx.EnforceOrganizationScope` compares any `{organizationID}` path parameter to the caller's own organization.
 - Every organization-scoped query carries `WHERE organization_id = $1`.
 - **Row-level security is the second layer** (migration 0011). Organization-administration
   requests — routes whose policy needs a permission or a machine scope — run scoped to the caller's
   organization (`scopeOrganizationRoutes` in `bootstrap/router.go`), and the organization-owned
   tables show and accept only its rows. A person's own routes, background jobs, sign-in and the
-  account-level tables (`accountLevelTables` in `migrations/schema_db_test.go`) run unscoped, so a
+  account-level tables (`accountLevelTables` in `migrations/runner_db_test.go`) run unscoped, so a
   missing predicate there is still a cross-organization data exposure. Code that acts across
   organizations by design calls `postgres.AcrossOrganizations`. The DB tests' `dbtest.Serve` scopes every
   request, so handler tests catch a cross-organization read. A new table with `organization_id` needs an
@@ -206,10 +210,10 @@ make test-db          # every test, database ones too, race detector on, one sha
 make ci               # the full local gate before a push: build, test-db, lint, sqlc-check, vuln, sast
 make lint             # go vet + golangci-lint, as CI runs it
 make sqlc             # regenerate dbgen/ from queries.sql
-make sqlc-check       # fail if dbgen/ is stale
+make sqlc-check       # fail if dbgen/ is stale or a queries.sql is missing from sqlc.yaml
 make db-up/db-down/db-reset      # docker compose: postgres :5001, nats :4222, mailpit :8025
 make migrate-down                # roll one migration back; the server applies them at start
-make seed/seed-reset             # demo data (development only)
+make seed/seed-reset             # demo data into an empty database / recreate the database, then seed (development only)
 make kill                        # free a stuck :4001
 ```
 
@@ -218,7 +222,7 @@ There is no `make help`, and no `dev-*` variants beyond `dev-secrets`.
 **`make lint` runs the same lint as CI:** `go vet` plus `golangci-lint` v2.15.0 over the whole tree,
 including the integration-tagged database tests, with the linters in `.golangci.yml`.
 
-Single test: `go test ./internal/access/authentication/... -run TestName`
+Single test: `go test ./internal/access/auth/... -run TestName`
 
 ---
 

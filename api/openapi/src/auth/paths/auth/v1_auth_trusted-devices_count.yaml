@@ -4,10 +4,10 @@ get:
   tags:
     - Auth
   description: >-
-    Number of live trusted devices in the caller's tenant, as used by the
+    Number of live trusted devices in the caller's organization, as used by the
     Authentication overview. Counts devices, not users, and excludes expired
-    rows — an expired device is no longer trusted. Tenant scope comes from the
-    principal, never a parameter. Returns 0 for tenants that have not enabled
+    rows — an expired device is no longer trusted. Organization scope comes from the
+    principal, never a parameter. Returns 0 for organizations that have not enabled
     adaptive MFA (`remember_device_enabled`), since nothing writes a trusted
     device until then.
   security:

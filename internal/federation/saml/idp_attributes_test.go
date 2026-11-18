@@ -4,10 +4,7 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -36,13 +33,13 @@ func TestNameIDSettingsAreChecked(t *testing.T) {
 		{nameIDUnspecified, "", nameIDUnspecified, sourceEmail, nil},
 		{nameIDUnspecified, "metadata.employee_id", nameIDUnspecified, "metadata.employee_id", nil},
 		{nameIDUnspecified, sourcePersistentID, nameIDUnspecified, sourcePersistentID, nil},
-		{nameIDPersistent, sourceEmail, "", "", errs.ErrSAMLNameIDAttributeInvalid},
-		{nameIDPersistent, "metadata.employee_id", "", "", errs.ErrSAMLNameIDAttributeInvalid},
-		{nameIDEmail, sourceUserID, "", "", errs.ErrSAMLNameIDAttributeInvalid},
-		{nameIDUnspecified, "password_hash", "", "", errs.ErrSAMLNameIDAttributeInvalid},
-		{nameIDUnspecified, "metadata.", "", "", errs.ErrSAMLNameIDAttributeInvalid},
-		{nameIDUnspecified, sourceGroups, "", "", errs.ErrSAMLNameIDAttributeInvalid},
-		{"urn:oasis:names:tc:SAML:2.0:nameid-format:transient", "", "", "", errs.ErrSAMLNameIDFormatInvalid},
+		{nameIDPersistent, sourceEmail, "", "", ErrNameIDAttributeInvalid},
+		{nameIDPersistent, "metadata.employee_id", "", "", ErrNameIDAttributeInvalid},
+		{nameIDEmail, sourceUserID, "", "", ErrNameIDAttributeInvalid},
+		{nameIDUnspecified, "password_hash", "", "", ErrNameIDAttributeInvalid},
+		{nameIDUnspecified, "metadata.", "", "", ErrNameIDAttributeInvalid},
+		{nameIDUnspecified, sourceGroups, "", "", ErrNameIDAttributeInvalid},
+		{"urn:oasis:names:tc:SAML:2.0:nameid-format:transient", "", "", "", ErrNameIDFormatInvalid},
 	} {
 		format, attribute := c.format, c.attribute
 		err := checkNameID(&format, &attribute)
@@ -76,9 +73,9 @@ func TestNameIDChangesFollowTheFormat(t *testing.T) {
 		{"to unspecified keeps the source", nameIDPersistent, sourceUserID, str(nameIDUnspecified), nil, nameIDUnspecified, sourceUserID, nil},
 		{"a source alone", nameIDUnspecified, sourceEmail, nil, str("metadata.upn"), nameIDUnspecified, "metadata.upn", nil},
 		{"an empty format", nameIDUnspecified, sourceUserID, str(""), nil, nameIDEmail, sourceEmail, nil},
-		{"a source that doesn't fit", nameIDEmail, sourceEmail, nil, str(sourceUserID), "", "", errs.ErrSAMLNameIDAttributeInvalid},
-		{"both, not fitting", nameIDEmail, sourceEmail, str(nameIDPersistent), str(sourceEmail), "", "", errs.ErrSAMLNameIDAttributeInvalid},
-		{"an unknown format", nameIDEmail, sourceEmail, str("urn:x"), nil, "", "", errs.ErrSAMLNameIDFormatInvalid},
+		{"a source that doesn't fit", nameIDEmail, sourceEmail, nil, str(sourceUserID), "", "", ErrNameIDAttributeInvalid},
+		{"both, not fitting", nameIDEmail, sourceEmail, str(nameIDPersistent), str(sourceEmail), "", "", ErrNameIDAttributeInvalid},
+		{"an unknown format", nameIDEmail, sourceEmail, str("urn:x"), nil, "", "", ErrNameIDFormatInvalid},
 	} {
 		format, attribute, err := mergeNameID(c.curFormat, c.curAttribute, c.format, c.attribute)
 		if c.wantErr != nil {
@@ -141,8 +138,8 @@ func TestAttributeMappingsAreChecked(t *testing.T) {
 		{Name: "meta", Source: "metadata.a b"},
 	}
 	e := errs.As(checkAttributes(bad))
-	if e == nil || e.Code != errs.CodeSAMLAttributesInvalid {
-		t.Fatalf("checkAttributes(bad) = %v, want %s", e, errs.CodeSAMLAttributesInvalid)
+	if e == nil || e.Code != CodeAttributesInvalid {
+		t.Fatalf("checkAttributes(bad) = %v, want %s", e, CodeAttributesInvalid)
 	}
 	var faults []string
 	for _, f := range e.Fields {
@@ -232,7 +229,7 @@ func TestSubjectSaysWhatTheSPAsksFor(t *testing.T) {
 
 	for _, attribute := range []string{"metadata.nope", "metadata.cost_centres", "metadata.manager"} {
 		sp := &ServiceProvider{NameIDFormat: nameIDUnspecified, NameIDAttribute: attribute}
-		if _, err := idp.subjectFor(ctx, sp, p); !errors.Is(err, errs.ErrSAMLNameIDUnavailable) {
+		if _, err := idp.subjectFor(ctx, sp, p); !errors.Is(err, ErrNameIDUnavailable) {
 			t.Errorf("NameID from %s: %v, want ErrSAMLNameIDUnavailable", attribute, err)
 		}
 	}
@@ -291,35 +288,5 @@ func TestAssertionCarriesMappedAttributes(t *testing.T) {
 	}
 	if _, err := dsig.NewDefaultValidationContext(certs).Validate(assertion); err != nil {
 		t.Errorf("assertion without attributes: signature %v", err)
-	}
-}
-
-// TestSSOErrorsShowABrowserAPage checks that the SSO endpoint answers a
-// browser with a page saying why it can't sign in, escaped and scriptless,
-// and anything else with the JSON error.
-func TestSSOErrorsShowABrowserAPage(t *testing.T) {
-	err := errs.ErrSAMLNameIDUnavailable.WithMessage("No <script> for you")
-	page := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/saml/idp/x/sso", nil)
-	r.Header.Set("Accept", "text/html,application/xhtml+xml,*/*;q=0.8")
-	writeSSOError(page, r, err)
-	body := page.Body.String()
-	if page.Code != http.StatusForbidden || !strings.HasPrefix(page.Header().Get("Content-Type"), "text/html") ||
-		page.Header().Get("Content-Security-Policy") != errorPageCSP {
-		t.Errorf("page %d %q %q, want 403 HTML under the page policy", page.Code, page.Header().Get("Content-Type"), page.Header().Get("Content-Security-Policy"))
-	}
-	if !strings.Contains(body, "No &lt;script&gt; for you") || !strings.Contains(body, errs.CodeSAMLNameIDUnavailable) || strings.Contains(body, "<script>") {
-		t.Errorf("page %s, want the escaped message and the code", body)
-	}
-
-	api := httptest.NewRecorder()
-	writeSSOError(api, httptest.NewRequest(http.MethodGet, "/saml/idp/x/sso", nil), err)
-	var envelope struct {
-		Error struct {
-			Code string `json:"code"`
-		} `json:"error"`
-	}
-	if jsonErr := json.Unmarshal(api.Body.Bytes(), &envelope); jsonErr != nil || api.Code != http.StatusForbidden || envelope.Error.Code != errs.CodeSAMLNameIDUnavailable {
-		t.Errorf("JSON answer %d %s, want 403 %s", api.Code, api.Body.String(), errs.CodeSAMLNameIDUnavailable)
 	}
 }

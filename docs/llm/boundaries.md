@@ -54,7 +54,7 @@ artifact.
 | SAML assertions, SCIM calls, LDAP binds | Customer identity providers | per organization |
 | Social OAuth callbacks | Google, GitHub, Microsoft, Apple, custom | per organization |
 | Payment webhooks | Stripe, Razorpay | optional |
-| Configuration | 138 environment variables | `DB_URL` plus the environment-specific requirements enforced by `Config.Validate()` |
+| Configuration | 111 environment variables | `DB_URL` plus the environment-specific requirements enforced by `Config.Validate()` |
 | Persistent state | PostgreSQL | **required** |
 
 ## Outputs
@@ -78,7 +78,7 @@ artifact.
 | OIDC / OAuth | `internal/federation/oidc/` | **every Qeet product**, external RPs |
 | SAML | `internal/federation/saml/` | customer IdPs and SPs |
 | SCIM 2.0 | `internal/federation/scim/` | customer IdPs |
-| Webhooks | `internal/developer/webhooks/` | customer endpoints |
+| Webhooks | `internal/developer/webhook/` | customer endpoints |
 | Database schema | `internal/platform/database/migrations/` | this repository only |
 
 **The four marked contracts have consumers outside Qeet's control.** Treat every change to them as
@@ -101,7 +101,8 @@ internal/platform      pure infrastructure     R1: must not import a context, cm
 ```
 
 **Not enforced:** cross-context imports. The five bounded contexts can import each other today.
-Prefer consumer-declared interfaces so the extraction seam survives.
+Depend on interfaces (declared once beside their implementation, or in the consumer when no shared
+one fits) so the extraction seam survives.
 
 ## Security boundaries
 

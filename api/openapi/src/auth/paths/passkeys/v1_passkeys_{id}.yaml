@@ -76,7 +76,7 @@ delete:
   description: >-
     Deletes one of the caller's passkeys. Needs a recent step-up; with the
     hosted-login session cookie (qe_ls, and the CSRF token) in place of a bearer
-    token, a sign-in within the organisation's step-up window stands in for one,
+    token, a sign-in within the organization's step-up window stands in for one,
     else 403 step_up_required. Audited as passkey.deleted (its id and name) in
     the audit trail of the organization the session is in, and the account
     holder is emailed that a passkey was removed. Removing the account's only

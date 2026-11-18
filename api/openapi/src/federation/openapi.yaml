@@ -15,23 +15,19 @@ info:
     - **Qeet ID → your app:** OIDC provider and SAML **Identity Provider**.
 
     - **External IdP → Qeet ID:** SAML **Service Provider**, **OpenID Connect
-    relying party** for an organisation's own provider, **LDAP** client, and
+    relying party** for an organization's own provider, **LDAP** client, and
     **OAuth client** for social logins.
 
     - **External IdP → Qeet ID (provisioning):** **SCIM** server.
 
 
-    ## Two OAuth token endpoints (current behavior)
+    ## One OAuth token endpoint
 
 
-    - `POST /v1/oauth/token-code` — authorization_code, refresh_token,
-    device_code, token-exchange, and CIBA. Discovery advertises this as the
-    `token_endpoint`.
-
-    - `POST /v1/oauth/token` — **client_credentials only** (machine-to-machine).
-
-
-    These endpoints are not interchangeable.
+    `POST /v1/oauth/token`, which discovery advertises as the `token_endpoint`,
+    serves every grant, chosen by `grant_type`: authorization_code,
+    refresh_token, device_code, token-exchange and CIBA for applications, and
+    client_credentials for service principals and AI agents.
 
 
     ## Path prefixes
@@ -46,17 +42,17 @@ info:
 
 
     Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization:
-    ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token),
+    ApiKey <key>` — legacy scheme), `scimBearer` (per-organization SCIM token),
     `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session).
     CSRF protection applies only to cookie sessions (`ssoCookie`): requests
     authorised by `bearerAuth` or `apiKeyAuth` bypass it, as do the
-    client-credentials token exchange (POST /v1/oauth/token) and the directory
+    token endpoint (POST /v1/oauth/token) and the directory
     sign-in (POST /ldap/{id}/authenticate), which carry their credentials in the
     request. Basic credentials do not bypass it. A request that fails the check
     is refused with 403 `csrf_failed`.
 
 
-    The responses of the two token endpoints, device and back-channel
+    The responses of the token endpoint, device and back-channel
     authorization, the consent decision (an authorization code), directory
     sign-in, social, SAML and OpenID Connect connection code exchange, the SAML
     IdP's sign-on page (a signed assertion), and of the operations returning a
@@ -75,7 +71,7 @@ info:
 
     - **Authentication & Access API** — login, passkeys, MFA, authorization
 
-    - **Identity Management API** — tenants, users, groups, invitations
+    - **Identity Management API** — organizations, users, groups, invitations
 
     - **Developer API** — API keys, agents, webhooks, vaults
 
@@ -109,26 +105,26 @@ tags:
       Identity Provider (serving downstream SPs).
   - name: OIDC Connections
     description: >-
-      An organisation's own OpenID Connect identity provider (Microsoft Entra
+      An organization's own OpenID Connect identity provider (Microsoft Entra
       ID, Okta, Google Workspace and the like), with Qeet as the relying party:
       connection management and the browser sign-in.
   - name: LDAP
     description: LDAP / Active Directory connection management and bind authentication.
   - name: Directory
-    description: Tenant-scoped directory connection inventory and synchronization metadata.
+    description: Organization-scoped directory connection inventory and synchronization metadata.
   - name: SCIM
     description: >-
-      SCIM 2.0 user/group provisioning (per-tenant bearer token presented by the
-      IdP) plus tenant-admin token management. The /scim/v2 surface returns the
+      SCIM 2.0 user/group provisioning (per-organization bearer token presented by the
+      IdP) plus organization-admin token management. The /scim/v2 surface returns the
       RFC 7644 error envelope, not the standard Qeet error shape. Every /scim/v2
-      request needs an organisation whose plan includes SCIM, not only the
+      request needs an organization whose plan includes SCIM, not only the
       token's issue: a token issued on a plan that has since lapsed is answered
       403 in that envelope.
   - name: Admin Portal
     description: >-
-      A unique, time-limited, capability-scoped link a tenant admin can hand to
+      A unique, time-limited, capability-scoped link an organization admin can hand to
       their own IT admin — no Qeet ID account required — to configure the
-      tenant's SAML connection and test it, roll its SCIM token, or verify its
+      organization's SAML connection and test it, roll its SCIM token, or verify its
       domains directly.
 paths:
   /.well-known/jwks.json:
@@ -169,8 +165,6 @@ paths:
     $ref: paths/oidc/v1_oauth_logout.yaml
   /v1/oauth/token:
     $ref: paths/oidc/v1_oauth_token.yaml
-  /v1/oauth/token-code:
-    $ref: paths/oidc/v1_oauth_token-code.yaml
   /v1/oauth/userinfo:
     $ref: paths/oidc/v1_oauth_userinfo.yaml
   /v1/oidc/clients:
@@ -183,38 +177,38 @@ paths:
     $ref: paths/oidc/v1_service-principals.yaml
   /v1/service-principals/{id}:
     $ref: paths/oidc/v1_service-principals_{id}.yaml
-  /v1/tenants/{tenantID}/service-principals/{id}/rotate-secret:
-    $ref: paths/oidc/v1_tenants_{tenantID}_service-principals_{id}_rotate-secret.yaml
-  /v1/tenants/{tenantID}/service-principals/{id}/enable:
-    $ref: paths/oidc/v1_tenants_{tenantID}_service-principals_{id}_enable.yaml
-  /v1/tenants/{tenantID}/oauth/devices:
-    $ref: paths/oidc/v1_tenants_{tenantID}_oauth_devices.yaml
-  /v1/tenants/{tenantID}/oauth/devices/{id}:
-    $ref: paths/oidc/v1_tenants_{tenantID}_oauth_devices_{id}.yaml
-  /v1/tenants/{tenantID}/oidc/clients:
-    $ref: paths/oidc/v1_tenants_{tenantID}_oidc_clients.yaml
-  /v1/tenants/{tenantID}/oidc/clients/{id}:
-    $ref: paths/oidc/v1_tenants_{tenantID}_oidc_clients_{id}.yaml
-  /v1/tenants/{tenantID}/oidc/clients/{id}/auth-failures:
-    $ref: paths/oidc/v1_tenants_{tenantID}_oidc_clients_{id}_auth-failures.yaml
-  /v1/tenants/{tenantID}/oidc/resources:
-    $ref: paths/oidc/v1_tenants_{tenantID}_oidc_resources.yaml
-  /v1/tenants/{tenantID}/oidc/resources/{id}:
-    $ref: paths/oidc/v1_tenants_{tenantID}_oidc_resources_{id}.yaml
-  /v1/tenants/{tenantID}/oidc/clients/{id}/rotate-secret:
-    $ref: paths/oidc/v1_tenants_{tenantID}_oidc_clients_{id}_rotate-secret.yaml
-  /v1/tenants/{tenantID}/oidc/clients/shadow-ai:
-    $ref: paths/oidc/v1_tenants_{tenantID}_oidc_clients_shadow-ai.yaml
-  /v1/tenants/{tenantID}/oidc/clients/{id}/review:
-    $ref: paths/oidc/v1_tenants_{tenantID}_oidc_clients_{id}_review.yaml
-  /v1/tenants/{tenantID}/oauth/grants:
-    $ref: paths/oidc/v1_tenants_{tenantID}_oauth_grants.yaml
-  /v1/tenants/{tenantID}/oauth/grants/{id}:
-    $ref: paths/oidc/v1_tenants_{tenantID}_oauth_grants_{id}.yaml
-  /v1/tenants/{tenantID}/oauth/grants/revoke:
-    $ref: paths/oidc/v1_tenants_{tenantID}_oauth_grants_revoke.yaml
-  /v1/tenants/{tenantID}/service-principals:
-    $ref: paths/oidc/v1_tenants_{tenantID}_service-principals.yaml
+  /v1/organizations/{organizationID}/service-principals/{id}/rotate-secret:
+    $ref: paths/oidc/v1_organizations_{organizationID}_service-principals_{id}_rotate-secret.yaml
+  /v1/organizations/{organizationID}/service-principals/{id}/enable:
+    $ref: paths/oidc/v1_organizations_{organizationID}_service-principals_{id}_enable.yaml
+  /v1/organizations/{organizationID}/oauth/devices:
+    $ref: paths/oidc/v1_organizations_{organizationID}_oauth_devices.yaml
+  /v1/organizations/{organizationID}/oauth/devices/{id}:
+    $ref: paths/oidc/v1_organizations_{organizationID}_oauth_devices_{id}.yaml
+  /v1/organizations/{organizationID}/oidc/clients:
+    $ref: paths/oidc/v1_organizations_{organizationID}_oidc_clients.yaml
+  /v1/organizations/{organizationID}/oidc/clients/{id}:
+    $ref: paths/oidc/v1_organizations_{organizationID}_oidc_clients_{id}.yaml
+  /v1/organizations/{organizationID}/oidc/clients/{id}/auth-failures:
+    $ref: paths/oidc/v1_organizations_{organizationID}_oidc_clients_{id}_auth-failures.yaml
+  /v1/organizations/{organizationID}/oidc/resources:
+    $ref: paths/oidc/v1_organizations_{organizationID}_oidc_resources.yaml
+  /v1/organizations/{organizationID}/oidc/resources/{id}:
+    $ref: paths/oidc/v1_organizations_{organizationID}_oidc_resources_{id}.yaml
+  /v1/organizations/{organizationID}/oidc/clients/{id}/rotate-secret:
+    $ref: paths/oidc/v1_organizations_{organizationID}_oidc_clients_{id}_rotate-secret.yaml
+  /v1/organizations/{organizationID}/oidc/clients/shadow-ai:
+    $ref: paths/oidc/v1_organizations_{organizationID}_oidc_clients_shadow-ai.yaml
+  /v1/organizations/{organizationID}/oidc/clients/{id}/review:
+    $ref: paths/oidc/v1_organizations_{organizationID}_oidc_clients_{id}_review.yaml
+  /v1/organizations/{organizationID}/oauth/grants:
+    $ref: paths/oidc/v1_organizations_{organizationID}_oauth_grants.yaml
+  /v1/organizations/{organizationID}/oauth/grants/{id}:
+    $ref: paths/oidc/v1_organizations_{organizationID}_oauth_grants_{id}.yaml
+  /v1/organizations/{organizationID}/oauth/grants/revoke:
+    $ref: paths/oidc/v1_organizations_{organizationID}_oauth_grants_revoke.yaml
+  /v1/organizations/{organizationID}/service-principals:
+    $ref: paths/oidc/v1_organizations_{organizationID}_service-principals.yaml
   /v1/social/exchange:
     $ref: paths/social/v1_social_exchange.yaml
   /v1/me/social/identities:
@@ -237,8 +231,8 @@ paths:
     $ref: paths/social/v1_social_platform_providers.yaml
   /v1/social/{provider}/start:
     $ref: paths/social/v1_social_{provider}_start.yaml
-  /v1/tenants/{tenantID}/social/providers:
-    $ref: paths/social/v1_tenants_{tenantID}_social_providers.yaml
+  /v1/organizations/{organizationID}/social/providers:
+    $ref: paths/social/v1_organizations_{organizationID}_social_providers.yaml
   /v1/users/{userID}/social/identities:
     $ref: paths/social/v1_users_{userID}_social_identities.yaml
   /saml/acs/{id}:
@@ -247,48 +241,48 @@ paths:
     $ref: paths/saml/saml_exchange.yaml
   /saml/session:
     $ref: paths/saml/saml_session.yaml
-  /saml/idp/{tenantID}/metadata:
-    $ref: paths/saml/saml_idp_{tenantID}_metadata.yaml
-  /saml/idp/{tenantID}/certificate:
-    $ref: paths/saml/saml_idp_{tenantID}_certificate.yaml
-  /saml/idp/{tenantID}/sso:
-    $ref: paths/saml/saml_idp_{tenantID}_sso.yaml
+  /saml/idp/{organizationID}/metadata:
+    $ref: paths/saml/saml_idp_{organizationID}_metadata.yaml
+  /saml/idp/{organizationID}/certificate:
+    $ref: paths/saml/saml_idp_{organizationID}_certificate.yaml
+  /saml/idp/{organizationID}/sso:
+    $ref: paths/saml/saml_idp_{organizationID}_sso.yaml
   /saml/login/{id}:
     $ref: paths/saml/saml_login_{id}.yaml
   /saml/metadata/{id}:
     $ref: paths/saml/saml_metadata_{id}.yaml
-  /v1/tenants/{tenantID}/saml:
-    $ref: paths/saml/v1_tenants_{tenantID}_saml.yaml
-  /v1/tenants/{tenantID}/saml-providers:
-    $ref: paths/saml/v1_tenants_{tenantID}_saml-providers.yaml
-  /v1/tenants/{tenantID}/saml-providers/{id}:
-    $ref: paths/saml/v1_tenants_{tenantID}_saml-providers_{id}.yaml
-  /v1/tenants/{tenantID}/saml/import:
-    $ref: paths/saml/v1_tenants_{tenantID}_saml_import.yaml
-  /v1/tenants/{tenantID}/saml/{id}/metadata:
-    $ref: paths/saml/v1_tenants_{tenantID}_saml_{id}_metadata.yaml
-  /v1/tenants/{tenantID}/saml/{id}/certificates:
-    $ref: paths/saml/v1_tenants_{tenantID}_saml_{id}_certificates.yaml
-  /v1/tenants/{tenantID}/saml/{id}/certificates/{certificateID}:
-    $ref: paths/saml/v1_tenants_{tenantID}_saml_{id}_certificates_{certificateID}.yaml
-  /v1/tenants/{tenantID}/saml-providers/{id}/assignments:
-    $ref: paths/saml/v1_tenants_{tenantID}_saml-providers_{id}_assignments.yaml
-  /v1/tenants/{tenantID}/saml-providers/{id}/assignments/users/{userID}:
-    $ref: paths/saml/v1_tenants_{tenantID}_saml-providers_{id}_assignments_users_{userID}.yaml
-  /v1/tenants/{tenantID}/saml-providers/{id}/assignments/groups/{groupID}:
-    $ref: paths/saml/v1_tenants_{tenantID}_saml-providers_{id}_assignments_groups_{groupID}.yaml
-  /v1/tenants/{tenantID}/saml/{id}/test:
-    $ref: paths/saml/v1_tenants_{tenantID}_saml_{id}_test.yaml
-  /v1/tenants/{tenantID}/saml/{id}/group-mappings:
-    $ref: paths/saml/v1_tenants_{tenantID}_saml_{id}_group-mappings.yaml
-  /v1/tenants/{tenantID}/saml/{id}/group-mappings/{mappingID}:
-    $ref: paths/saml/v1_tenants_{tenantID}_saml_{id}_group-mappings_{mappingID}.yaml
-  /v1/tenants/{tenantID}/saml/{id}:
-    $ref: paths/saml/v1_tenants_{tenantID}_saml_{id}.yaml
-  /v1/tenants/{tenantID}/oidc-connections:
-    $ref: paths/oidc-connections/v1_tenants_{tenantID}_oidc-connections.yaml
-  /v1/tenants/{tenantID}/oidc-connections/{id}:
-    $ref: paths/oidc-connections/v1_tenants_{tenantID}_oidc-connections_{id}.yaml
+  /v1/organizations/{organizationID}/saml:
+    $ref: paths/saml/v1_organizations_{organizationID}_saml.yaml
+  /v1/organizations/{organizationID}/saml-providers:
+    $ref: paths/saml/v1_organizations_{organizationID}_saml-providers.yaml
+  /v1/organizations/{organizationID}/saml-providers/{id}:
+    $ref: paths/saml/v1_organizations_{organizationID}_saml-providers_{id}.yaml
+  /v1/organizations/{organizationID}/saml/import:
+    $ref: paths/saml/v1_organizations_{organizationID}_saml_import.yaml
+  /v1/organizations/{organizationID}/saml/{id}/metadata:
+    $ref: paths/saml/v1_organizations_{organizationID}_saml_{id}_metadata.yaml
+  /v1/organizations/{organizationID}/saml/{id}/certificates:
+    $ref: paths/saml/v1_organizations_{organizationID}_saml_{id}_certificates.yaml
+  /v1/organizations/{organizationID}/saml/{id}/certificates/{certificateID}:
+    $ref: paths/saml/v1_organizations_{organizationID}_saml_{id}_certificates_{certificateID}.yaml
+  /v1/organizations/{organizationID}/saml-providers/{id}/assignments:
+    $ref: paths/saml/v1_organizations_{organizationID}_saml-providers_{id}_assignments.yaml
+  /v1/organizations/{organizationID}/saml-providers/{id}/assignments/users/{userID}:
+    $ref: paths/saml/v1_organizations_{organizationID}_saml-providers_{id}_assignments_users_{userID}.yaml
+  /v1/organizations/{organizationID}/saml-providers/{id}/assignments/groups/{groupID}:
+    $ref: paths/saml/v1_organizations_{organizationID}_saml-providers_{id}_assignments_groups_{groupID}.yaml
+  /v1/organizations/{organizationID}/saml/{id}/test:
+    $ref: paths/saml/v1_organizations_{organizationID}_saml_{id}_test.yaml
+  /v1/organizations/{organizationID}/saml/{id}/group-mappings:
+    $ref: paths/saml/v1_organizations_{organizationID}_saml_{id}_group-mappings.yaml
+  /v1/organizations/{organizationID}/saml/{id}/group-mappings/{mappingID}:
+    $ref: paths/saml/v1_organizations_{organizationID}_saml_{id}_group-mappings_{mappingID}.yaml
+  /v1/organizations/{organizationID}/saml/{id}:
+    $ref: paths/saml/v1_organizations_{organizationID}_saml_{id}.yaml
+  /v1/organizations/{organizationID}/oidc-connections:
+    $ref: paths/oidc-connections/v1_organizations_{organizationID}_oidc-connections.yaml
+  /v1/organizations/{organizationID}/oidc-connections/{id}:
+    $ref: paths/oidc-connections/v1_organizations_{organizationID}_oidc-connections_{id}.yaml
   /v1/sso/discovery:
     $ref: paths/oidc-connections/v1_sso_discovery.yaml
   /v1/oidc-connections/{id}/login:
@@ -303,38 +297,38 @@ paths:
     $ref: paths/ldap/ldap_{id}_session.yaml
   /ldap/{id}/authenticate:
     $ref: paths/ldap/ldap_{id}_authenticate.yaml
-  /v1/tenants/{tenantID}/ldap:
-    $ref: paths/ldap/v1_tenants_{tenantID}_ldap.yaml
-  /v1/tenants/{tenantID}/ldap/{id}:
-    $ref: paths/ldap/v1_tenants_{tenantID}_ldap_{id}.yaml
-  /v1/tenants/{tenantID}/ldap/{id}/test:
-    $ref: paths/ldap/v1_tenants_{tenantID}_ldap_{id}_test.yaml
-  /v1/tenants/{tenantID}/ldap/{id}/group-mappings:
-    $ref: paths/ldap/v1_tenants_{tenantID}_ldap_{id}_group-mappings.yaml
-  /v1/tenants/{tenantID}/ldap/{id}/group-mappings/{mappingID}:
-    $ref: paths/ldap/v1_tenants_{tenantID}_ldap_{id}_group-mappings_{mappingID}.yaml
-  /v1/tenants/{tenantID}/directory/connections/{connectionID}/mappings:
-    $ref: paths/directory/v1_tenants_{tenantID}_directory_connections_{connectionID}_mappings.yaml
-  /v1/tenants/{tenantID}/directory/connections/{connectionID}/mappings/{mappingID}:
-    $ref: paths/directory/v1_tenants_{tenantID}_directory_connections_{connectionID}_mappings_{mappingID}.yaml
-  /v1/tenants/{tenantID}/directory/connections/{connectionID}/mappings/preview:
-    $ref: paths/directory/v1_tenants_{tenantID}_directory_connections_{connectionID}_mappings_preview.yaml
-  /v1/tenants/{tenantID}/directory/errors:
-    $ref: paths/directory/v1_tenants_{tenantID}_directory_errors.yaml
-  /v1/tenants/{tenantID}/directory/errors/{eventID}/resolve:
-    $ref: paths/directory/v1_tenants_{tenantID}_directory_errors_{eventID}_resolve.yaml
-  /v1/tenants/{tenantID}/directory/errors/{eventID}/retry:
-    $ref: paths/directory/v1_tenants_{tenantID}_directory_errors_{eventID}_retry.yaml
-  /v1/tenants/{tenantID}/directory/activity:
-    $ref: paths/directory/v1_tenants_{tenantID}_directory_activity.yaml
-  /v1/tenants/{tenantID}/directory/alerts:
-    $ref: paths/directory/v1_tenants_{tenantID}_directory_alerts.yaml
-  /v1/tenants/{tenantID}/directory/alerts/{alertID}:
-    $ref: paths/directory/v1_tenants_{tenantID}_directory_alerts_{alertID}.yaml
-  /v1/tenants/{tenantID}/directory/profiles/{userID}:
-    $ref: paths/directory/v1_tenants_{tenantID}_directory_profiles_{userID}.yaml
-  /v1/tenants/{tenantID}/directory/connections:
-    $ref: paths/directory/v1_tenants_{tenantID}_directory_connections.yaml
+  /v1/organizations/{organizationID}/ldap:
+    $ref: paths/ldap/v1_organizations_{organizationID}_ldap.yaml
+  /v1/organizations/{organizationID}/ldap/{id}:
+    $ref: paths/ldap/v1_organizations_{organizationID}_ldap_{id}.yaml
+  /v1/organizations/{organizationID}/ldap/{id}/test:
+    $ref: paths/ldap/v1_organizations_{organizationID}_ldap_{id}_test.yaml
+  /v1/organizations/{organizationID}/ldap/{id}/group-mappings:
+    $ref: paths/ldap/v1_organizations_{organizationID}_ldap_{id}_group-mappings.yaml
+  /v1/organizations/{organizationID}/ldap/{id}/group-mappings/{mappingID}:
+    $ref: paths/ldap/v1_organizations_{organizationID}_ldap_{id}_group-mappings_{mappingID}.yaml
+  /v1/organizations/{organizationID}/directory/connections/{connectionID}/mappings:
+    $ref: paths/directory/v1_organizations_{organizationID}_directory_connections_{connectionID}_mappings.yaml
+  /v1/organizations/{organizationID}/directory/connections/{connectionID}/mappings/{mappingID}:
+    $ref: paths/directory/v1_organizations_{organizationID}_directory_connections_{connectionID}_mappings_{mappingID}.yaml
+  /v1/organizations/{organizationID}/directory/connections/{connectionID}/mappings/preview:
+    $ref: paths/directory/v1_organizations_{organizationID}_directory_connections_{connectionID}_mappings_preview.yaml
+  /v1/organizations/{organizationID}/directory/errors:
+    $ref: paths/directory/v1_organizations_{organizationID}_directory_errors.yaml
+  /v1/organizations/{organizationID}/directory/errors/{eventID}/resolve:
+    $ref: paths/directory/v1_organizations_{organizationID}_directory_errors_{eventID}_resolve.yaml
+  /v1/organizations/{organizationID}/directory/errors/{eventID}/retry:
+    $ref: paths/directory/v1_organizations_{organizationID}_directory_errors_{eventID}_retry.yaml
+  /v1/organizations/{organizationID}/directory/activity:
+    $ref: paths/directory/v1_organizations_{organizationID}_directory_activity.yaml
+  /v1/organizations/{organizationID}/directory/alerts:
+    $ref: paths/directory/v1_organizations_{organizationID}_directory_alerts.yaml
+  /v1/organizations/{organizationID}/directory/alerts/{alertID}:
+    $ref: paths/directory/v1_organizations_{organizationID}_directory_alerts_{alertID}.yaml
+  /v1/organizations/{organizationID}/directory/profiles/{userID}:
+    $ref: paths/directory/v1_organizations_{organizationID}_directory_profiles_{userID}.yaml
+  /v1/organizations/{organizationID}/directory/connections:
+    $ref: paths/directory/v1_organizations_{organizationID}_directory_connections.yaml
   /scim/v2/Groups:
     $ref: paths/scim/scim_v2_Groups.yaml
   /scim/v2/Groups/{id}:
@@ -349,24 +343,24 @@ paths:
     $ref: paths/scim/scim_v2_Users.yaml
   /scim/v2/Users/{id}:
     $ref: paths/scim/scim_v2_Users_{id}.yaml
-  /v1/tenants/{tenantID}/scim:
-    $ref: paths/scim/v1_tenants_{tenantID}_scim.yaml
-  /v1/tenants/{tenantID}/scim/token:
-    $ref: paths/scim/v1_tenants_{tenantID}_scim_token.yaml
-  /v1/tenants/{tenantID}/scim/tokens:
-    $ref: paths/scim/v1_tenants_{tenantID}_scim_tokens.yaml
-  /v1/tenants/{tenantID}/scim/tokens/{id}:
-    $ref: paths/scim/v1_tenants_{tenantID}_scim_tokens_{id}.yaml
-  /v1/tenants/{tenantID}/scim/tokens/{id}/rotate:
-    $ref: paths/scim/v1_tenants_{tenantID}_scim_tokens_{id}_rotate.yaml
-  /v1/tenants/{tenantID}/scim/groups:
-    $ref: paths/scim/v1_tenants_{tenantID}_scim_groups.yaml
-  /v1/tenants/{tenantID}/scim/users:
-    $ref: paths/scim/v1_tenants_{tenantID}_scim_users.yaml
-  /v1/tenants/{tenantID}/admin-portal/links:
-    $ref: paths/admin-portal/v1_tenants_{tenantID}_admin-portal_links.yaml
-  /v1/tenants/{tenantID}/admin-portal/links/{id}:
-    $ref: paths/admin-portal/v1_tenants_{tenantID}_admin-portal_links_{id}.yaml
+  /v1/organizations/{organizationID}/scim:
+    $ref: paths/scim/v1_organizations_{organizationID}_scim.yaml
+  /v1/organizations/{organizationID}/scim/token:
+    $ref: paths/scim/v1_organizations_{organizationID}_scim_token.yaml
+  /v1/organizations/{organizationID}/scim/tokens:
+    $ref: paths/scim/v1_organizations_{organizationID}_scim_tokens.yaml
+  /v1/organizations/{organizationID}/scim/tokens/{id}:
+    $ref: paths/scim/v1_organizations_{organizationID}_scim_tokens_{id}.yaml
+  /v1/organizations/{organizationID}/scim/tokens/{id}/rotate:
+    $ref: paths/scim/v1_organizations_{organizationID}_scim_tokens_{id}_rotate.yaml
+  /v1/organizations/{organizationID}/scim/groups:
+    $ref: paths/scim/v1_organizations_{organizationID}_scim_groups.yaml
+  /v1/organizations/{organizationID}/scim/users:
+    $ref: paths/scim/v1_organizations_{organizationID}_scim_users.yaml
+  /v1/organizations/{organizationID}/admin-portal/links:
+    $ref: paths/admin-portal/v1_organizations_{organizationID}_admin-portal_links.yaml
+  /v1/organizations/{organizationID}/admin-portal/links/{id}:
+    $ref: paths/admin-portal/v1_organizations_{organizationID}_admin-portal_links_{id}.yaml
   /v1/admin-portal/session:
     $ref: paths/admin-portal/v1_admin-portal_session.yaml
   /v1/admin-portal/context:

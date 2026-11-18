@@ -5,9 +5,9 @@ get:
     provider: issuer, authorization, token, userinfo, JWKS, revocation,
     introspection and end-session endpoints, plus the supported grant types,
     scopes (openid, profile, email, phone and offline_access) and algorithms.
-    The advertised token_endpoint is /v1/oauth/token-code, which serves the
-    interactive grants; the client_credentials-only endpoint at /v1/oauth/token
-    is separate and not advertised here. Served unauthenticated at the root, not
+    The advertised token_endpoint is /v1/oauth/token, which serves every
+    grant, client_credentials for the service principals and agents included.
+    Served unauthenticated at the root, not
     under /v1. Its issuer is the one the ID tokens and authorization responses
     carry (JWT_ISSUER). Any origin may read it (CORS
     Access-Control-Allow-Origin: *, without credentials).

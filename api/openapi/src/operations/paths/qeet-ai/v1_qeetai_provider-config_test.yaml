@@ -6,7 +6,7 @@ post:
     to confirm the provider accepts it. A failed test answers 400 naming the
     reason: qeetai_provider_unreachable, qeetai_provider_key_invalid,
     qeetai_provider_model_invalid or qeetai_provider_error.
-  summary: Test tenant AI provider credentials
+  summary: Test organization AI provider credentials
   tags:
     - Qeet AI
   security:

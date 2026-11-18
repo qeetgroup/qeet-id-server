@@ -8,8 +8,8 @@ import (
 
 	"github.com/google/uuid"
 
-	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
-	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
@@ -117,10 +117,10 @@ func TestOverviewCountsPurgedSessionsSignIns(t *testing.T) {
 
 	other, err := NewReader(pool).Overview(ctx, home)
 	if err != nil {
-		t.Fatalf("overview of the guest's own organisation: %v", err)
+		t.Fatalf("overview of the guest's own organization: %v", err)
 	}
 	if other.KPIs.MAU.Value != 1 || other.KPIs.LoginsToday.Value != 1 {
-		t.Errorf("the guest's own organisation counts mau %v and logins %v, want its one sign-in", other.KPIs.MAU.Value, other.KPIs.LoginsToday.Value)
+		t.Errorf("the guest's own organization counts mau %v and logins %v, want its one sign-in", other.KPIs.MAU.Value, other.KPIs.LoginsToday.Value)
 	}
 }
 
@@ -184,7 +184,7 @@ func TestOverviewBucketsSignInsByFirstFactor(t *testing.T) {
 	for _, method := range []string{
 		"password", "password_mfa", "password_email_confirmed", "passkey", "social_mfa", "saml",
 		"magic_link", "magic_link_mfa", "ldap", "ldap_email_confirmed",
-		"tenant_switch", "tenant_create", "invite_accept",
+		"organization_switch", "organization_create", "invite_accept",
 	} {
 		recordEvent(t, organization, "auth.login_succeeded", map[string]any{"method": method})
 	}

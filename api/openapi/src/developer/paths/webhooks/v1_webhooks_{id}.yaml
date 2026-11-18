@@ -43,7 +43,7 @@ delete:
     - bearerAuth: []
     - apiKeyAuth: []
   description: >-
-    Disables one of the organisation's webhook subscriptions: no further events
+    Disables one of the organization's webhook subscriptions: no further events
     are sent to it. Requires webhook.write. Needs a recent step-up.
   responses:
     '204':

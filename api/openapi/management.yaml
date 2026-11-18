@@ -4,21 +4,21 @@ info:
   title: Qeet ID — Identity Management API
   version: 0.2.0
   description: |-
-    Tenants, domains, users, groups, and invitations for Qeet ID.
+    Organizations, domains, users, groups, and invitations for Qeet ID.
 
-    ## Start here — the tenant lifecycle
+    ## Start here — the organization lifecycle
 
-    1. A newly registered user has **no tenant**. Create one with `POST /v1/tenants`; the caller becomes the tenant **owner**.
+    1. A newly registered user has **no organization**. Create one with `POST /v1/organizations`; the caller becomes the organization **owner**.
     2. (Optional) Prove control of a domain under **Domains** to unlock domain-based features.
     3. Add and manage users, organize them into groups, and invite teammates.
 
-    The `register → tenant-less user → create tenant → owner` sequence is the most common early surprise: authentication happens in the Authentication & Access API; tenant creation happens here.
+    The `register → organization-less user → create organization → owner` sequence is the most common early surprise: authentication happens in the Authentication & Access API; organization creation happens here.
 
     ## Authentication
 
-    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session). CSRF protection applies only to cookie sessions (`ssoCookie`): requests authorised by `bearerAuth` or `apiKeyAuth` bypass it, as do the client-credentials token exchange (POST /v1/oauth/token) and the directory sign-in (POST /ldap/{id}/authenticate), which carry their credentials in the request. Basic credentials do not bypass it. A request that fails the check is refused with 403 `csrf_failed`.
+    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>` — legacy scheme), `scimBearer` (per-organization SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session). CSRF protection applies only to cookie sessions (`ssoCookie`): requests authorised by `bearerAuth` or `apiKeyAuth` bypass it, as do the token endpoint (POST /v1/oauth/token) and the directory sign-in (POST /ldap/{id}/authenticate), which carry their credentials in the request. Basic credentials do not bypass it. A request that fails the check is refused with 403 `csrf_failed`.
 
-    The responses of tenant creation and invitation acceptance, including accepting with an existing account (sign-in tokens), are sent with `Cache-Control: no-store` and `Pragma: no-cache`.
+    The responses of organization creation and invitation acceptance, including accepting with an existing account (sign-in tokens), are sent with `Cache-Control: no-store` and `Pragma: no-cache`.
 
     Every response carries an `X-Request-Id` header naming the request; quote it when reporting a problem. An error body repeats it as `error.request_id`. A path with an encoded slash or backslash (`%2F`, `%5C`) is refused with 400 `bad_request`.
 
@@ -38,10 +38,10 @@ servers:
   - url: http://localhost:4001
     description: Local (make dev)
 tags:
-  - name: Tenants
-    description: Tenant (workspace) CRUD.
+  - name: Organizations
+    description: Organization (workspace) CRUD.
   - name: Domains
-    description: Tenant domain ownership — claim a domain, verify it via DNS, and manage verified domains.
+    description: Organization domain ownership — claim a domain, verify it via DNS, and manage verified domains.
   - name: Users
     description: User CRUD, password set, and soft-delete recycle bin (restore/purge).
   - name: Verification
@@ -49,20 +49,20 @@ tags:
   - name: Groups
     description: User groups and membership.
   - name: Invites
-    description: Tenant member invitations.
+    description: Organization member invitations.
   - name: Branding
-    description: Per-tenant hosted-login branding.
+    description: Per-organization hosted-login branding.
 paths:
   /v1/me/organizations:
     get:
       operationId: listMyOrganizations
       summary: List organizations available to the signed-in user
       tags:
-        - Tenants
+        - Organizations
       security:
         - bearerAuth: []
         - ssoCookie: []
-      description: Caller-scoped user-only list of the active, non-deleted organizations the caller belongs to (their own organization, and each one where they hold a role). No user or tenant identity is taken from query parameters. last_used_at excludes the current session so automatic sign-in scope is not labeled as a prior selection. Also accepts the hosted-login session cookie (qe_ls) in place of a bearer token, so Qeet ID's own hosted pages can list the caller's organizations by name. The cookie belongs to Qeet ID's sign-in domain, so another site's browser code cannot send it.
+      description: Caller-scoped user-only list of the active, non-deleted organizations the caller belongs to (their own organization, and each one where they hold a role). No user or organization identity is taken from query parameters. last_used_at excludes the current session so automatic sign-in scope is not labeled as a prior selection. Also accepts the hosted-login session cookie (qe_ls) in place of a bearer token, so Qeet ID's own hosted pages can list the caller's organizations by name. The cookie belongs to Qeet ID's sign-in domain, so another site's browser code cannot send it.
       parameters:
         - name: limit
           in: query
@@ -71,6 +71,7 @@ paths:
             minimum: 1
             maximum: 200
             default: 200
+          description: Maximum items to return; a larger one returns 200.
         - name: cursor
           in: query
           schema:
@@ -85,10 +86,9 @@ paths:
                 type: object
                 required:
                   - items
-                  - next_cursor
                 properties:
                   next_cursor:
-                    type: string
+                    $ref: '#/components/schemas/NextCursor'
                   items:
                     type: array
                     items:
@@ -135,13 +135,13 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/Unprocessable'
-  /v1/tenants:
+  /v1/organizations:
     get:
-      operationId: listTenants
-      description: Returns a page of the tenants the authenticated principal belongs to. Scope is taken from the caller's identity, never from a query parameter. Use the returned cursor to page through large result sets. A newly registered user with no tenant sees an empty page until a tenant is created.
-      summary: List tenants
+      operationId: listOrganizations
+      description: Returns a page of the organizations the authenticated principal belongs to. Scope is taken from the caller's identity, never from a query parameter. Use the returned cursor to page through large result sets. A newly registered user with no organization sees an empty page until an organization is created.
+      summary: List organizations
       tags:
-        - Tenants
+        - Organizations
       parameters:
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Cursor'
@@ -149,19 +149,19 @@ paths:
         - bearerAuth: []
       responses:
         '200':
-          description: Tenant page
+          description: Organization page
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TenantPage'
+                $ref: '#/components/schemas/OrganizationPage'
         '401':
           $ref: '#/components/responses/Unauthorized'
     post:
-      operationId: createTenant
-      description: Creates a tenant and makes the calling user its owner. A newly registered user has no tenant until this succeeds; every tenant-scoped endpoint requires one. A verified email is required before a tenant can be provisioned. Every organisation is created in the region this service is hosted in; asking for another is refused with 422 tenant.region_unavailable (metadata.available names the one there is). The response includes a tenant-scoped token pair so the client can immediately switch into the new tenant; it continues the caller's session (its sign-in, second factor and end), and is left out for a caller without one.
-      summary: Create tenant
+      operationId: createOrganization
+      description: Creates an organization and makes the calling user its owner. A newly registered user has no organization until this succeeds; every organization-scoped endpoint requires one. A verified email is required before an organization can be provisioned. Every organization is created in the region this service is hosted in; asking for another is refused with 422 organization.region_unavailable (metadata.available names the one there is). The response includes a organization-scoped token pair so the client can immediately switch into the new organization; it continues the caller's session (its sign-in, second factor and end), and is left out for a caller without one.
+      summary: Create organization
       tags:
-        - Tenants
+        - Organizations
       security:
         - bearerAuth: []
       requestBody:
@@ -175,7 +175,7 @@ paths:
               metadata:
                 industry: fintech
             schema:
-              $ref: '#/components/schemas/TenantCreate'
+              $ref: '#/components/schemas/OrganizationCreate'
       responses:
         '201':
           description: Created; caller becomes owner (token pair included)
@@ -187,7 +187,7 @@ paths:
           content:
             application/json:
               example:
-                tenant:
+                organization:
                   id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
                   slug: acme
                   name: Acme, Inc.
@@ -197,7 +197,7 @@ paths:
                   updated_at: '2026-09-24T10:15:00Z'
                   member_count: 1
                   mfa_enabled_count: 0
-                tenant_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
+                organization_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
                 roles:
                   - owner
                 access_token: eyJhbGciOiJFUzI1NiIsImtpZCI6ImsxIn0.eyJ0ZW5hbnQiOiJhY21lIn0.FAKE-signature
@@ -207,7 +207,7 @@ paths:
                 session_id: 018f2a72-7d8e-7f90-b123-4c5d6e7f8091
                 user_id: 018f2a70-1a2b-7c3d-9e4f-5a6b7c8d9e0f
               schema:
-                $ref: '#/components/schemas/TenantCreateResponse'
+                $ref: '#/components/schemas/OrganizationCreateResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -216,15 +216,15 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/Unprocessable'
-  /v1/tenants/{tenantID}:
+  /v1/organizations/{organizationID}:
     delete:
-      operationId: deleteTenant
-      description: 'Schedules the tenant''s deletion seven days from now (202 with deletion_due_at), audited as tenant.deletion_scheduled. Requires tenant.delete, and only a person who owns the tenant may (403 tenant.owner_only otherwise), and 409 tenant.deletion_scheduled answers one already scheduled. Until it is due the tenant keeps working and shows deletion_due_at, and an owner can call it off (POST /v1/tenants/{tenantID}/deletion/cancel). Once due, a background job soft-deletes it: members lose access and tenant-scoped calls stop resolving. Users who belonged only to this tenant are left without one and must create or join another. In the same transaction every session in the tenant ends (session.revoked with reason tenant_deleted) and the deletion is audited (tenant.deleted, by the system) and queued as an event; refresh and every sign-in refuse the tenant from then on (403 auth.tenant_inactive). The sessions'' access tokens stop working on this API at once; a service that verifies tokens offline accepts one until it expires. Thirty days after that its data is purged for good: every row of it, its audit trail included, and the accounts whose home it was (one still a member of another organisation is kept, with no home organisation). A record of the purge (when, and how many rows of each table) outlives it, with a platform audit event tenant.purged.'
-      summary: Delete tenant
+      operationId: deleteOrganization
+      description: 'Schedules the organization''s deletion seven days from now (202 with deletion_due_at), audited as organization.deletion_scheduled. Requires organization.delete, and only a person who owns the organization may (403 organization.owner_only otherwise), and 409 organization.deletion_scheduled answers one already scheduled. Until it is due the organization keeps working and shows deletion_due_at, and an owner can call it off (POST /v1/organizations/{organizationID}/deletion/cancel). Once due, a background job soft-deletes it: members lose access and organization-scoped calls stop resolving. Users who belonged only to this organization are left without one and must create or join another. In the same transaction every session in the organization ends (session.revoked with reason organization_deleted) and the deletion is audited (organization.deleted, by the system) and queued as an event; refresh and every sign-in refuse the organization from then on (403 auth.organization_inactive). The sessions'' access tokens stop working on this API at once; a service that verifies tokens offline accepts one until it expires. Thirty days after that its data is purged for good: every row of it, its audit trail included, and the accounts whose home it was (one still a member of another organization is kept, with no home organization). A record of the purge (when, and how many rows of each table) outlives it, with a platform audit event organization.purged.'
+      summary: Delete organization
       tags:
-        - Tenants
+        - Organizations
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -236,7 +236,7 @@ paths:
               schema:
                 type: object
                 properties:
-                  tenant_id:
+                  organization_id:
                     type: string
                     format: uuid
                   deletion_due_at:
@@ -251,23 +251,23 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
     get:
-      operationId: getTenant
-      description: Returns a single tenant by id. The caller must be a member of the tenant; requests for a tenant the principal does not belong to are rejected rather than disclosed.
-      summary: Get tenant
+      operationId: getOrganization
+      description: Returns a single organization by id. The caller must be a member of the organization; requests for an organization the principal does not belong to are rejected rather than disclosed.
+      summary: Get organization
       tags:
-        - Tenants
+        - Organizations
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
         '200':
-          description: Tenant
+          description: Organization
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Tenant'
+                $ref: '#/components/schemas/Organization'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -275,13 +275,13 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
     patch:
-      operationId: updateTenant
-      description: 'Updates mutable tenant attributes such as name and slug. Requires an administrative role within the tenant. Only the fields supplied in the request body are changed. Changing status is an owner''s (403 tenant.owner_only otherwise), and a tenant can''t suspend itself (403 tenant.self_suspend): that would lock out every member, its owners too, with nobody left to reactivate it; delete it instead. A tenant suspended another way that is reactivated is audited as tenant.reactivated and queued as an event. The region can''t be changed (422 tenant.region_read_only; the current value is accepted). A change to the name, logo or metadata is audited, in the same transaction, as tenant.updated naming every field that changed (changed), with the old and new name (changes); the logo and metadata are named but not copied. An update that changes nothing records nothing.'
-      summary: Update tenant
+      operationId: updateOrganization
+      description: 'Updates mutable organization attributes such as name and slug. Requires an administrative role within the organization. Only the fields supplied in the request body are changed. Changing status is an owner''s (403 organization.owner_only otherwise), and an organization can''t suspend itself (403 organization.self_suspend): that would lock out every member, its owners too, with nobody left to reactivate it; delete it instead. An organization suspended another way that is reactivated is audited as organization.reactivated and queued as an event. The region can''t be changed (422 organization.region_read_only; the current value is accepted). A change to the name, logo or metadata is audited, in the same transaction, as organization.updated naming every field that changed (changed), with the old and new name (changes); the logo and metadata are named but not copied. An update that changes nothing records nothing.'
+      summary: Update organization
       tags:
-        - Tenants
+        - Organizations
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -290,14 +290,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/TenantUpdate'
+              $ref: '#/components/schemas/OrganizationUpdate'
       responses:
         '200':
           description: Updated
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Tenant'
+                $ref: '#/components/schemas/Organization'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -308,15 +308,15 @@ paths:
           $ref: '#/components/responses/NotFound'
         '422':
           $ref: '#/components/responses/Unprocessable'
-  /v1/tenants/{tenantID}/deletion/cancel:
+  /v1/organizations/{organizationID}/deletion/cancel:
     post:
-      operationId: cancelTenantDeletion
-      description: Calls off the tenant's scheduled deletion and returns the tenant, audited as tenant.deletion_cancelled. Requires tenant.delete, and only a person who owns the tenant may (403 tenant.owner_only otherwise); 409 tenant.deletion_not_scheduled when none is.
-      summary: Cancel tenant deletion
+      operationId: cancelOrganizationDeletion
+      description: Calls off the organization's scheduled deletion and returns the organization, audited as organization.deletion_cancelled. Requires organization.delete, and only a person who owns the organization may (403 organization.owner_only otherwise); 409 organization.deletion_not_scheduled when none is.
+      summary: Cancel organization deletion
       tags:
-        - Tenants
+        - Organizations
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -326,7 +326,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Tenant'
+                $ref: '#/components/schemas/Organization'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -335,15 +335,15 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
-  /v1/tenants/{tenantID}/login-domain/check:
+  /v1/organizations/{organizationID}/login-domain/check:
     post:
       operationId: checkLoginDomain
       summary: Check the custom login domain now
       tags:
         - Domains
-      description: Checks every stage of the tenant's custom hosted-login hostname now (as GET /v1/tenants/{tenantID}/login-domain describes), keeps the result as the last check, and returns it with checked_at. Needs connection.read.
+      description: Checks every stage of the organization's custom hosted-login hostname now (as GET /v1/organizations/{organizationID}/login-domain describes), keeps the result as the last check, and returns it with checked_at. Needs connection.read.
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -358,15 +358,15 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-  /v1/tenants/{tenantID}/login-domain:
+  /v1/organizations/{organizationID}/login-domain:
     get:
       operationId: getLoginDomainStatus
       summary: Custom login domain status
       tags:
         - Domains
-      description: 'Provisioning state of the tenant''s custom hosted-login hostname, plus the DNS records to publish, as last checked (checked_at): a read returns the kept result, and checks only when the hostname was never checked or has changed since; POST /v1/tenants/{tenantID}/login-domain/check runs a new check. Each stage is checked in order: the TXT record (dns_verified); then, over HTTPS, a certificate valid for the hostname (tls_state issued; pending until one is served); then the hosted login answering its health check on the hostname (endpoint_state live, with endpoint_url). TLS and the login endpoint report their own stage rather than being inferred from the DNS result. status is active once all three are done, pending before, and not_configured without a hostname.'
+      description: 'Provisioning state of the organization''s custom hosted-login hostname, plus the DNS records to publish, as last checked (checked_at): a read returns the kept result, and checks only when the hostname was never checked or has changed since; POST /v1/organizations/{organizationID}/login-domain/check runs a new check. Each stage is checked in order: the TXT record (dns_verified); then, over HTTPS, a certificate valid for the hostname (tls_state issued; pending until one is served); then the hosted login answering its health check on the hostname (endpoint_state live, with endpoint_url). TLS and the login endpoint report their own stage rather than being inferred from the DNS result. status is active once all three are done, pending before, and not_configured without a hostname.'
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -387,15 +387,15 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/domains:
+  /v1/organizations/{organizationID}/domains:
     get:
       operationId: listDomains
-      description: Lists the domains claimed by the tenant together with the DNS record each requires and its current verification status. Use this to track which domains are pending, verified, or failing checks. New domains are added with the claim-domain call and confirmed with the verify-domain call.
+      description: Lists the domains claimed by the organization together with the DNS record each requires and its current verification status. Use this to track which domains are pending, verified, or failing checks. New domains are added with the claim-domain call and confirmed with the verify-domain call.
       summary: List domains
       tags:
         - Domains
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -419,12 +419,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
     post:
       operationId: claimDomain
-      description: Registers a domain for the tenant and returns the DNS TXT record that must be published to prove ownership. The record lives under a dedicated verification subdomain so it does not disturb existing apex TXT records such as SPF. Publish the returned record in DNS, then call the verify-domain endpoint to complete the claim.
+      description: Registers a domain for the organization and returns the DNS TXT record that must be published to prove ownership. The record lives under a dedicated verification subdomain so it does not disturb existing apex TXT records such as SPF. Publish the returned record in DNS, then call the verify-domain endpoint to complete the claim.
       summary: Claim domain
       tags:
         - Domains
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -454,7 +454,7 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/Unprocessable'
-  /v1/tenants/{tenantID}/domains/{id}/verify:
+  /v1/organizations/{organizationID}/domains/{id}/verify:
     post:
       operationId: verifyDomain
       description: Performs a live DNS lookup for the previously issued TXT record and, on a match, marks the domain verified by setting verified_at. Claim the domain first so the expected record is known; verification is only attempted when explicitly requested here, not in the background. Verifying ownership does not by itself enable SSO or just-in-time provisioning for the domain.
@@ -462,7 +462,7 @@ paths:
       tags:
         - Domains
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -489,15 +489,15 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/Unprocessable'
-  /v1/tenants/{tenantID}/domains/{id}:
+  /v1/organizations/{organizationID}/domains/{id}:
     patch:
       operationId: updateDomain
       summary: Update domain settings
       tags:
         - Domains
-      description: 'Toggles SSO routing and just-in-time provisioning. Each switch applies to the addresses the domain manages once it is verified: the domain itself and those below it that no closer verified domain takes. With sso_enabled on, while the organisation has an active SAML, LDAP or OpenID Connect connection, those addresses sign in only through it: password sign-in, magic links, passkey sign-in, password resets and self sign-up answer 403 auth.sso_required (with the connections to use), except for the organisation''s break-glass members (see the break-glass-members calls) and its administrators single sign-on can''t sign in. With jit_enabled on, a SAML, LDAP or OpenID Connect sign-in creates an account for an address that has none; with it off, only existing members are adopted (saml.jit_not_allowed / ldap.jit_not_allowed / oidc_connection.jit_not_allowed otherwise). Both are off for a new domain.'
+      description: 'Toggles SSO routing and just-in-time provisioning. Each switch applies to the addresses the domain manages once it is verified: the domain itself and those below it that no closer verified domain takes. With sso_enabled on, while the organization has an active SAML, LDAP or OpenID Connect connection, those addresses sign in only through it: password sign-in, magic links, passkey sign-in, password resets and self sign-up answer 403 auth.sso_required (with the connections to use), except for the organization''s break-glass members (see the break-glass-members calls) and its administrators single sign-on can''t sign in. With jit_enabled on, a SAML, LDAP or OpenID Connect sign-in creates an account for an address that has none; with it off, only existing members are adopted (saml.jit_not_allowed / ldap.jit_not_allowed / oidc_connection.jit_not_allowed otherwise). Both are off for a new domain.'
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -537,12 +537,12 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
     delete:
       operationId: deleteDomain
-      description: Removes a claimed or verified domain from the tenant. Any domain-based features that depended on it stop applying. Re-adding the domain later requires claiming and verifying it again.
+      description: Removes a claimed or verified domain from the organization. Any domain-based features that depended on it stop applying. Re-adding the domain later requires claiming and verifying it again.
       summary: Remove domain
       tags:
         - Domains
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -561,21 +561,21 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/tenants/{tenantID}/break-glass-members:
+  /v1/organizations/{organizationID}/break-glass-members:
     get:
       operationId: listBreakGlassMembers
       summary: List break-glass members
       tags:
         - Domains
-      description: Lists the members who keep their own sign-in methods (password, magic links, passkeys, password resets) on a domain where the organisation requires single sign-on, so an outage of its identity provider can't lock everyone out. Requires connection.read.
+      description: Lists the members who keep their own sign-in methods (password, magic links, passkeys, password resets) on a domain where the organization requires single sign-on, so an outage of its identity provider can't lock everyone out. Requires connection.read.
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
         '200':
-          description: The organisation's break-glass members
+          description: The organization's break-glass members
           content:
             application/json:
               schema:
@@ -591,15 +591,15 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-  /v1/tenants/{tenantID}/break-glass-members/{userID}:
+  /v1/organizations/{organizationID}/break-glass-members/{userID}:
     put:
       operationId: addBreakGlassMember
       summary: Make a member break-glass
       tags:
         - Domains
-      description: Lets a member keep their own sign-in methods on a domain where the organisation requires single sign-on. The member must belong to the organisation (it is their home, or they hold one of its roles), else 404 domainverify.not_member. Only an owner, in person, may (403 rbac.owner_only for anyone else, including an API key or other credential), with a recent step-up (403 step_up_required). Recorded in the audit trail as domain.break_glass_added in the same transaction; making a break-glass member break-glass again changes and records nothing.
+      description: Lets a member keep their own sign-in methods on a domain where the organization requires single sign-on. The member must belong to the organization (it is their home, or they hold one of its roles), else 404 domainverify.not_member. Only an owner, in person, may (403 rbac.owner_only for anyone else, including an API key or other credential), with a recent step-up (403 step_up_required). Recorded in the audit trail as domain.break_glass_added in the same transaction; making a break-glass member break-glass again changes and records nothing.
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: userID
           in: path
           required: true
@@ -625,9 +625,9 @@ paths:
       summary: Remove a break-glass member
       tags:
         - Domains
-      description: 'Makes a break-glass member an ordinary one again: on a domain where the organisation requires single sign-on they sign in only through it. Owner-only with a recent step-up, as for adding one. Recorded in the audit trail as domain.break_glass_removed in the same transaction; removing someone who isn''t break-glass changes and records nothing.'
+      description: 'Makes a break-glass member an ordinary one again: on a domain where the organization requires single sign-on they sign in only through it. Owner-only with a recent step-up, as for adding one. Recorded in the audit trail as domain.break_glass_removed in the same transaction; removing someone who isn''t break-glass changes and records nothing.'
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: userID
           in: path
           required: true
@@ -650,7 +650,7 @@ paths:
     get:
       operationId: listSuspendedUsers
       summary: List suspended users and review metrics
-      description: Requires user.read. Tenant scope comes only from the authenticated principal. Includes owned accounts and tenant members; private suspension metadata is masked for accounts owned elsewhere, with can_manage=false. Historical unknown timestamps and risk are not inferred.
+      description: Requires user.read. Organization scope comes only from the authenticated principal. Includes owned accounts and organization members; private suspension metadata is masked for accounts owned elsewhere, with can_manage=false. Historical unknown timestamps and risk are not inferred.
       tags:
         - Users
       security:
@@ -760,14 +760,14 @@ paths:
         '400':
           description: Invalid filters
         '401':
-          description: Authentication and tenant required
+          description: Authentication and organization required
         '403':
           description: Missing user.read
   /v1/users/{id}/reactivate:
     post:
       operationId: reactivateUser
       summary: Reactivate a suspended owned user
-      description: 'Requires user.suspend and ownership in the active tenant. Revokes existing sessions and records audit/outbox evidence atomically; old sessions are never restored. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one); acting on yourself is allowed.'
+      description: 'Requires user.suspend and ownership in the active organization. Revokes existing sessions and records audit/outbox evidence atomically; old sessions are never restored. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one); acting on yourself is allowed.'
       tags:
         - Users
       security:
@@ -792,7 +792,7 @@ paths:
         '403':
           description: Missing user.suspend
         '404':
-          description: Account not owned by this tenant
+          description: Account not owned by this organization
         '409':
           description: Account is no longer suspended
   /v1/users/{id}/suspension:
@@ -856,7 +856,7 @@ paths:
         '403':
           description: Missing user.suspend
         '404':
-          description: Account not owned by this tenant
+          description: Account not owned by this organization
         '409':
           description: Account is no longer suspended
   /v1/users/trends:
@@ -884,7 +884,7 @@ paths:
     get:
       operationId: getUserStats
       summary: User directory summary
-      description: 'Tenant-wide member counts for the Users admin summary: total, active, suspended, invited, with and without a second factor, new in the last 30 days; members by when they were last seen (last_seen: today, week, month, older, never, with the same edges as the list''s last_seen filter); owners and admins without a second factor; members whose email isn''t verified; and members by role and by department (metadata.department). Each count equals the list''s total for the matching filter. Requires `user.read`.'
+      description: 'Organization-wide member counts for the Users admin summary: total, active, suspended, invited, with and without a second factor, new in the last 30 days; members by when they were last seen (last_seen: today, week, month, older, never, with the same edges as the list''s last_seen filter); owners and admins without a second factor; members whose email isn''t verified; and members by role and by department (metadata.department). Each count equals the list''s total for the matching filter. Requires `user.read`.'
       tags:
         - Users
       security:
@@ -904,20 +904,13 @@ paths:
   /v1/users:
     get:
       operationId: listUsers
-      description: 'Returns a page of users in the caller''s tenant, with total, how many match. Every filter is optional and they combine: q (display name, email or phone, case-insensitive), role (a role name in the tenant), department (metadata.department), mfa (on or off: a confirmed second factor), email_verified, status (active, invited or suspended), last_seen (today: under a day; week: 1 to 7 days; month: 7 to 30 days; older: over 30 days; never). sort is created (the default, newest first), name or last_seen, with order asc or desc; a malformed value is refused with 400. Supports opaque cursor paging, in the default order only, or numeric offset paging to jump to a specific page. Requires an existing tenant; scope comes from the authenticated principal. Members are the organisation''s own users (their home is this organisation) and the people who hold a role in it; a member whose home is another organisation is shown with empty metadata, which their home organisation keeps; last_seen_at and last_seen_ip come from sessions in this organisation only.'
+      description: 'Returns a page of users in the caller''s organization, with total, how many match. Every filter is optional and they combine: q (display name, email or phone, case-insensitive), role (a role name in the organization), department (metadata.department), mfa (on or off: a confirmed second factor), email_verified, status (active, invited or suspended), last_seen (today: under a day; week: 1 to 7 days; month: 7 to 30 days; older: over 30 days; never). sort is created (the default, newest first), name or last_seen, with order asc or desc; a malformed value is refused with 400. Pages by opaque cursor, in the default order only: next_cursor is present while there is another page, and any other order answers its first page. Requires an existing organization; scope comes from the authenticated principal. Members are the organization''s own users (their home is this organization) and the people who hold a role in it; a member whose home is another organization is shown with empty metadata, which their home organization keeps; last_seen_at and last_seen_ip come from sessions in this organization only.'
       summary: List users
       tags:
         - Users
       parameters:
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Cursor'
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 0
-          description: Offset for numbered paging (jump to page N). Alternative to cursor.
         - name: q
           in: query
           required: false
@@ -1002,7 +995,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
     post:
       operationId: createUser
-      description: 'Creates a user within the caller''s tenant. An initial password may be supplied, otherwise the account is created without a password credential and the user signs in via passkey, magic link, or an admin-triggered reset. The password must meet the organisation''s password rules (minimum length and required character classes), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed (authpolicy.password_* or auth.password_weak). A refused password writes nothing. An address on a domain another organization has verified is refused with 409 user.domain_managed_elsewhere: only that organization creates accounts there. Requires an existing tenant. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, one still being processed 409 idempotency.in_progress, and one whose first request stopped before answering 409 idempotency.outcome_unknown: check whether it took effect, then retry with a new key.'
+      description: 'Creates a user within the caller''s organization. An initial password may be supplied, otherwise the account is created without a password credential and the user signs in via passkey, magic link, or an admin-triggered reset. The password must meet the organization''s password rules (minimum length and required character classes), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed (authpolicy.password_* or auth.password_weak). A refused password writes nothing. An address on a domain another organization has verified is refused with 409 user.domain_managed_elsewhere: only that organization creates accounts there. Requires an existing organization. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, one still being processed 409 idempotency.in_progress, and one whose first request stopped before answering 409 idempotency.outcome_unknown: check whether it took effect, then retry with a new key.'
       summary: Create user
       tags:
         - Users
@@ -1014,7 +1007,7 @@ paths:
         content:
           application/json:
             example:
-              tenant_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
+              organization_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
               email: grace@example.com
               display_name: Grace Hopper
             schema:
@@ -1031,7 +1024,7 @@ paths:
             application/json:
               example:
                 id: 018f2a73-4e5f-7a6b-8c7d-8e9f0a1b2c3d
-                tenant_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
+                organization_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
                 email: grace@example.com
                 email_verified_at: null
                 phone: null
@@ -1060,7 +1053,7 @@ paths:
     post:
       operationId: bulkCreateUsers
       summary: Bulk-create users
-      description: Create many users in one call. Each row is attempted independently — a bad or duplicate row, one on a domain another organization has verified, or one whose password the tenant's password rules refuse, is reported in the response with its reason rather than failing the whole batch (partial success).
+      description: Create many users in one call. Each row is attempted independently — a bad or duplicate row, one on a domain another organization has verified, or one whose password the organization's password rules refuse, is reported in the response with its reason rather than failing the whole batch (partial success).
       tags:
         - Users
       security:
@@ -1140,7 +1133,7 @@ paths:
   /v1/users/deleted:
     get:
       operationId: listDeletedUsers
-      description: Lists soft-deleted users held in the tenant recycle bin. From here an account can be brought back with the restore call or removed permanently with the purge call.
+      description: Lists soft-deleted users held in the organization recycle bin. From here an account can be brought back with the restore call or removed permanently with the purge call.
       summary: List deleted users
       tags:
         - Users
@@ -1191,7 +1184,7 @@ paths:
   /v1/users/{id}:
     delete:
       operationId: deleteUser
-      description: 'Soft-deletes the user, moving the account into the tenant recycle bin rather than erasing it. Requires user.delete. A soft-deleted account can be brought back with the restore call or removed for good with the purge call. It continues to appear in the deleted-users list until purged. In the same transaction every way the user is signed in ends (sessions, hosted-login sessions, application grants, remembered devices and pending authorizations), the deletion is audited (user.deleted, naming the admin) and a user.deleted event is queued; restoring the account brings none of those sessions back. The same transaction revokes the admin-portal links and pending invitations the user issued here and, when they created any integration here that still works (a service principal, SCIM token, webhook, auth hook or OIDC application), records the critical user.integrations_left event listing them for review. The answer names the deleted user, when, and by whom. Only the organization the account belongs to can delete it; for a member whose account belongs elsewhere the call answers 403 user.managed_elsewhere. Refused with 409 tenant.last_owner, and nothing changes, when it would leave this organization with no active owner: make someone else an owner first. An organization the person owns elsewhere doesn''t block it; it is left without an active owner. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one); acting on yourself is allowed.'
+      description: 'Soft-deletes the user, moving the account into the organization recycle bin rather than erasing it. Requires user.delete. A soft-deleted account can be brought back with the restore call or removed for good with the purge call. It continues to appear in the deleted-users list until purged. In the same transaction every way the user is signed in ends (sessions, hosted-login sessions, application grants, remembered devices and pending authorizations), the deletion is audited (user.deleted, naming the admin) and a user.deleted event is queued; restoring the account brings none of those sessions back. The same transaction revokes the admin-portal links and pending invitations the user issued here and, when they created any integration here that still works (a service principal, SCIM token, webhook, auth hook or OIDC application), records the critical user.integrations_left event listing them for review. The answer names the deleted user, when, and by whom. Only the organization the account belongs to can delete it; for a member whose account belongs elsewhere the call answers 403 user.managed_elsewhere. Refused with 409 organization.last_owner, and nothing changes, when it would leave this organization with no active owner: make someone else an owner first. An organization the person owns elsewhere doesn''t block it; it is left without an active owner. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one); acting on yourself is allowed.'
       summary: Delete user
       tags:
         - Users
@@ -1234,7 +1227,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     get:
       operationId: getUser
-      description: 'Returns a single user by id within the caller''s tenant. Requests for a user outside the tenant are rejected rather than disclosed. Anyone who belongs to the caller''s organization can be fetched: a role here, or here being their home. Anyone else is 404. Someone whose home is another organisation is shown with empty metadata, which their home organisation keeps.'
+      description: 'Returns a single user by id within the caller''s organization. Requests for a user outside the organization are rejected rather than disclosed. Anyone who belongs to the caller''s organization can be fetched: a role here, or here being their home. Anyone else is 404. Someone whose home is another organization is shown with empty metadata, which their home organization keeps.'
       summary: Get user
       tags:
         - Users
@@ -1261,7 +1254,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       operationId: updateUser
-      description: 'Updates mutable attributes of a user in the caller''s tenant. Only the fields present in the request body are modified. This edits directory attributes, not credentials or verification state. Changing the account (status, profile) belongs to the organization the account belongs to; for a member whose account belongs elsewhere the call answers 403 user.managed_elsewhere and nothing changes. Remove them from this organization instead (DELETE /v1/users/{id}/membership). Suspending is refused with 409 tenant.last_owner, and nothing changes, when it would leave this organization with no active owner: make someone else an owner first. An organization the person owns elsewhere doesn''t block it; it is left without an active owner. Changing the phone number clears its verification. A change to the display name, avatar, phone number or metadata is audited, in the same transaction, as user.updated naming the fields that changed (changed), never their values; a status change is audited as user.suspended or user.reactivated. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one); acting on yourself is allowed.'
+      description: 'Updates mutable attributes of a user in the caller''s organization. Only the fields present in the request body are modified. This edits directory attributes, not credentials or verification state. Changing the account (status, profile) belongs to the organization the account belongs to; for a member whose account belongs elsewhere the call answers 403 user.managed_elsewhere and nothing changes. Remove them from this organization instead (DELETE /v1/users/{id}/membership). Suspending is refused with 409 organization.last_owner, and nothing changes, when it would leave this organization with no active owner: make someone else an owner first. An organization the person owns elsewhere doesn''t block it; it is left without an active owner. Changing the phone number clears its verification. A change to the display name, avatar, phone number or metadata is audited, in the same transaction, as user.updated naming the fields that changed (changed), never their values; a status change is audited as user.suspended or user.reactivated. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one); acting on yourself is allowed.'
       summary: Update user
       tags:
         - Users
@@ -1301,7 +1294,7 @@ paths:
   /v1/users/{id}/password:
     post:
       operationId: setUserPassword
-      description: 'Administratively sets or replaces a user''s password. Requires user.credentials. The password must meet the organisation''s password rules (minimum length and required character classes), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed (authpolicy.password_* or auth.password_weak). Every way the user is signed in ends in the same step, as with the revoke-all-sessions call, since an admin password reset is treated as incident response: their sessions, their hosted sign-in (browser) sessions, so one opened with the old password can no longer start an application''s sign-in or enrol a passkey, the refresh grants their applications hold, the devices remembered to skip the second factor, and pending authorisations (unredeemed codes and device or back-channel sign-in requests). The user must authenticate again after this call. The audit record counts each (revoked_sessions, revoked_login_sessions, revoked_app_grants, revoked_trusted_devices, ended_pending_authorizations). Answers 501 not_implemented when this server is not configured to end sign-ins. Refused with 403 user.credentials_shared, and nothing changes, when the account also belongs to another organization: its password and second factors are the person''s credentials there too, so only they change them (the password reset link reaches only their address). Otherwise the person is emailed that an administrator of this organization made the change. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one); acting on yourself is allowed.'
+      description: 'Administratively sets or replaces a user''s password. Requires user.credentials. The password must meet the organization''s password rules (minimum length and required character classes), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed (authpolicy.password_* or auth.password_weak). Every way the user is signed in ends in the same step, as with the revoke-all-sessions call, since an admin password reset is treated as incident response: their sessions, their hosted sign-in (browser) sessions, so one opened with the old password can no longer start an application''s sign-in or enrol a passkey, the refresh grants their applications hold, the devices remembered to skip the second factor, and pending authorisations (unredeemed codes and device or back-channel sign-in requests). The user must authenticate again after this call. The audit record counts each (revoked_sessions, revoked_login_sessions, revoked_app_grants, revoked_trusted_devices, ended_pending_authorizations). Answers 501 not_implemented when this server is not configured to end sign-ins. Refused with 403 user.credentials_shared, and nothing changes, when the account also belongs to another organization: its password and second factors are the person''s credentials there too, so only they change them (the password reset link reaches only their address). Otherwise the person is emailed that an administrator of this organization made the change. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one); acting on yourself is allowed.'
       summary: Set password
       tags:
         - Users
@@ -1384,7 +1377,7 @@ paths:
     get:
       operationId: listUserTrustedDevices
       summary: List a member's remembered devices
-      description: Lists a member's devices remembered in the caller's organisation. Requires the user.read permission; 404 for someone who is not a member.
+      description: Lists a member's devices remembered in the caller's organization. Requires the user.read permission; 404 for someone who is not a member.
       tags:
         - Users
       parameters:
@@ -1415,12 +1408,12 @@ paths:
                         id:
                           type: string
                           format: uuid
-                        tenant_id:
+                        organization_id:
                           type:
                             - string
                             - 'null'
                           format: uuid
-                          description: The organisation the device was remembered in.
+                          description: The organization the device was remembered in.
                         device:
                           type: string
                           description: The device and browser in words, such as "Chrome on macOS".
@@ -1459,7 +1452,7 @@ paths:
     delete:
       operationId: forgetAllUserTrustedDevices
       summary: Forget a member's remembered devices
-      description: Forgets every device a member has remembered in the caller's organisation, so each is asked for the second factor at its next sign-in there. Requires the user.credentials permission; each is audited as auth.trusted_device_revoked. Refused with 403 rbac.target_is_owner when the member is an owner and the caller isn't, and 403 rbac.target_outranks_caller when they hold a permission the caller doesn't.
+      description: Forgets every device a member has remembered in the caller's organization, so each is asked for the second factor at its next sign-in there. Requires the user.credentials permission; each is audited as auth.trusted_device_revoked. Refused with 403 rbac.target_is_owner when the member is an owner and the caller isn't, and 403 rbac.target_outranks_caller when they hold a permission the caller doesn't.
       tags:
         - Users
       parameters:
@@ -1495,7 +1488,7 @@ paths:
     delete:
       operationId: forgetUserTrustedDevice
       summary: Forget one of a member's remembered devices
-      description: Forgets one device a member has remembered in the caller's organisation. Requires the user.credentials permission; 404 for a device that is not theirs there. Audited as auth.trusted_device_revoked. Refused with 403 rbac.target_is_owner when the member is an owner and the caller isn't, and 403 rbac.target_outranks_caller when they hold a permission the caller doesn't.
+      description: Forgets one device a member has remembered in the caller's organization. Requires the user.credentials permission; 404 for a device that is not theirs there. Audited as auth.trusted_device_revoked. Refused with 403 rbac.target_is_owner when the member is an owner and the caller isn't, and 403 rbac.target_outranks_caller when they hold a permission the caller doesn't.
       tags:
         - Users
       parameters:
@@ -1537,7 +1530,7 @@ paths:
     get:
       operationId: listUserPushDevices
       summary: List a member's linked phones
-      description: Lists the phones a member has linked for push approval. Requires the user.read permission; 404 for someone who is not a member of the caller's organisation.
+      description: Lists the phones a member has linked for push approval. Requires the user.read permission; 404 for someone who is not a member of the caller's organization.
       tags:
         - Users
       parameters:
@@ -1817,7 +1810,7 @@ paths:
     get:
       operationId: getUserAccess
       summary: User access summary
-      description: 'Per-user access within the caller''s tenant (User 360): the organization (tenant), directly-assigned roles, group memberships, and counts of consented applications and enabled tenant policies. Requires `user.read`.'
+      description: 'Per-user access within the caller''s organization (User 360): the organization (organization), directly-assigned roles, group memberships, and counts of consented applications and enabled organization policies. Requires `user.read`.'
       tags:
         - Users
       parameters:
@@ -1968,7 +1961,7 @@ paths:
     delete:
       operationId: removeUserMembership
       summary: Remove a member from this organization
-      description: 'Removes a member whose account belongs to another organization (or to none) from the caller''s organization (requires user.delete), in one transaction: their roles and groups here, their sessions here, and the application grants and API keys they hold here. Their account and their other organizations are left alone. Audited as user.removed_from_organization, with an event; the admin-portal links and pending invitations they issued here are revoked, and the integrations they created here are listed in the critical user.integrations_left event, as on deleting an account. The organization''s own accounts are suspended or deleted instead (409 user.managed_here); someone who doesn''t belong here is 404. Removing an owner is refused with 409 tenant.last_owner, and nothing changes, when it would leave the organization with no active owner. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one); acting on yourself is allowed.'
+      description: 'Removes a member whose account belongs to another organization (or to none) from the caller''s organization (requires user.delete), in one transaction: their roles and groups here, their sessions here, and the application grants and API keys they hold here. Their account and their other organizations are left alone. Audited as user.removed_from_organization, with an event; the admin-portal links and pending invitations they issued here are revoked, and the integrations they created here are listed in the critical user.integrations_left event, as on deleting an account. The organization''s own accounts are suspended or deleted instead (409 user.managed_here); someone who doesn''t belong here is 404. Removing an owner is refused with 409 organization.last_owner, and nothing changes, when it would leave the organization with no active owner. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one); acting on yourself is allowed.'
       tags:
         - Users
       parameters:
@@ -2007,7 +2000,7 @@ paths:
   /v1/users/{id}/restore:
     post:
       operationId: restoreUser
-      description: 'Brings a soft-deleted user back from the tenant recycle bin, reversing an earlier delete call and returning the reactivated account. Requires user.delete. Only accounts that are still soft-deleted (not yet purged) can be restored. It is the counterpart to the purge call. An address another account has taken since the deletion is refused with 409 auth.email_exists. Audited as user.restored, in the same transaction as the restore. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one); acting on yourself is allowed.'
+      description: 'Brings a soft-deleted user back from the organization recycle bin, reversing an earlier delete call and returning the reactivated account. Requires user.delete. Only accounts that are still soft-deleted (not yet purged) can be restored. It is the counterpart to the purge call. An address another account has taken since the deletion is refused with 409 auth.email_exists. Audited as user.restored, in the same transaction as the restore. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one); acting on yourself is allowed.'
       summary: Restore user
       tags:
         - Users
@@ -2136,7 +2129,7 @@ paths:
     post:
       operationId: startMyEmailChange
       summary: Start changing my email
-      description: 'Sends an 8-digit verification code to the address the caller wants to move to, to prove they control it; confirm it with the confirm-email-change call. A new code replaces the caller''s earlier ones, and one the mail provider refuses is withdrawn. At most ten codes an hour go to one person, and five to one address over every account, an address in use included (429 verification.code_send_limited with retry_after, in seconds). The answer is the same whether or not the address is already in use by another account. An address in use is sent a notice that it already has an account instead of a code, and is never assigned to the caller. An organisation decides some changes, refused with 403 verification.email_managed saying which: an address its directory (SCIM) or single sign-on provides changes there; an address on a domain the account''s organisation manages moves only to another of its domains; and no address moves onto a domain another organisation manages.'
+      description: 'Sends an 8-digit verification code to the address the caller wants to move to, to prove they control it; confirm it with the confirm-email-change call. A new code replaces the caller''s earlier ones, and one the mail provider refuses is withdrawn. At most ten codes an hour go to one person, and five to one address over every account, an address in use included (429 verification.code_send_limited with retry_after, in seconds). The answer is the same whether or not the address is already in use by another account. An address in use is sent a notice that it already has an account instead of a code, and is never assigned to the caller. An organization decides some changes, refused with 403 verification.email_managed saying which: an address its directory (SCIM) or single sign-on provides changes there; an address on a domain the account''s organization manages moves only to another of its domains; and no address moves onto a domain another organization manages.'
       tags:
         - Verification
       security:
@@ -2177,7 +2170,7 @@ paths:
     post:
       operationId: confirmMyEmailChange
       summary: Confirm my email change
-      description: Verifies the code sent to the new address and swaps it onto the account (marking it verified). Returns the new email. Only a code from the start-email-change call counts. The previous address is sent a notice of the change, and the reset and magic links already sent to it stop working. The organisation's rules of the start call are applied again here (403 verification.email_managed), so a domain verified in between counts. Five wrong codes retire a code, and ten wrong codes in an hour, over every code asked for in between, refuse even the right one until the hour has passed (429 verification.attempts_exceeded with retry_after, in seconds).
+      description: Verifies the code sent to the new address and swaps it onto the account (marking it verified). Returns the new email. Only a code from the start-email-change call counts. The previous address is sent a notice of the change, and the reset and magic links already sent to it stop working. The organization's rules of the start call are applied again here (403 verification.email_managed), so a domain verified in between counts. Five wrong codes retire a code, and ten wrong codes in an hour, over every code asked for in between, refuse even the right one until the hour has passed (429 verification.attempts_exceeded with retry_after, in seconds).
       tags:
         - Verification
       security:
@@ -2368,7 +2361,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/GroupCreateInput'
-      description: 'Creates a group in the caller''s tenant. A parent_id must name one of the tenant''s own groups; otherwise the call answers 404 group.parent_not_found, the same for a missing id as for another tenant''s group. The name is stored trimmed, and a blank one answers 422 validation_failed. A name another of the organization''s groups already uses, ignoring case and surrounding spaces, answers 409 group.name_exists; groups an identity provider provisions over SCIM with an externalId don''t count. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, one still being processed 409 idempotency.in_progress, and one whose first request stopped before answering 409 idempotency.outcome_unknown: check whether it took effect, then retry with a new key.'
+      description: 'Creates a group in the caller''s organization. A parent_id must name one of the organization''s own groups; otherwise the call answers 404 group.parent_not_found, the same for a missing id as for another organization''s group. The name is stored trimmed, and a blank one answers 422 validation_failed. A name another of the organization''s groups already uses, ignoring case and surrounding spaces, answers 409 group.name_exists; groups an identity provider provisions over SCIM with an externalId don''t count. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, one still being processed 409 idempotency.in_progress, and one whose first request stopped before answering 409 idempotency.outcome_unknown: check whether it took effect, then retry with a new key.'
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
@@ -2415,7 +2408,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/GroupUpdateInput'
-      description: 'Changes only the fields sent: an omitted name, description or parent_id keeps its value, and "parent_id": null makes the group top-level. A new parent must be one of the tenant''s own groups (404 group.parent_not_found otherwise) and not the group itself or one of its subgroups (400 group.cycle). Renaming to a name another of the organization''s groups uses, ignoring case, answers 409 group.name_exists.'
+      description: 'Changes only the fields sent: an omitted name, description or parent_id keeps its value, and "parent_id": null makes the group top-level. A new parent must be one of the organization''s own groups (404 group.parent_not_found otherwise) and not the group itself or one of its subgroups (400 group.cycle). Renaming to a name another of the organization''s groups uses, ignoring case, answers 409 group.name_exists.'
       responses:
         '200':
           description: Updated
@@ -2452,7 +2445,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Deletes one of the organisation''s groups and its subgroups; members keep their accounts. Requires group.write and a fresh second factor (step-up). Deleting takes the group''s roles from its members, so it is held to the rule for giving them: only an owner deletes a group holding the owner role (403 rbac.owner_only), and nobody deletes one whose roles carry a permission they lack (403 rbac.grant_exceeds_caller).'
+      description: 'Deletes one of the organization''s groups and its subgroups; members keep their accounts. Requires group.write and a fresh second factor (step-up). Deleting takes the group''s roles from its members, so it is held to the rule for giving them: only an owner deletes a group holding the owner role (403 rbac.owner_only), and nobody deletes one whose roles carry a permission they lack (403 rbac.grant_exceeds_caller).'
       responses:
         '204':
           description: No Content
@@ -2589,7 +2582,7 @@ paths:
           schema:
             type: string
             format: uuid
-      description: Creates every group in the template in one transaction, optionally under an existing parent. The parent must belong to the caller's tenant. Group names are unique in an organization, ignoring case, so applying a template whose groups already exist, including applying it a second time, answers 409 group.name_exists with the first colliding name in the error detail, and creates nothing. To apply it again (say, for another office), give a prefix, put before every group's name, and optionally a root_name for a template with one top group; names are checked trimmed, at most 200 characters (422 validation_failed before anything is made), and the audit event records both.
+      description: Creates every group in the template in one transaction, optionally under an existing parent. The parent must belong to the caller's organization. Group names are unique in an organization, ignoring case, so applying a template whose groups already exist, including applying it a second time, answers 409 group.name_exists with the first colliding name in the error detail, and creates nothing. To apply it again (say, for another office), give a prefix, put before every group's name, and optionally a root_name for a template with one top group; names are checked trimmed, at most 200 characters (422 validation_failed before anything is made), and the audit event records both.
       requestBody:
         required: false
         content:
@@ -2787,7 +2780,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Adds a user to one of the caller's groups. The user must be a live member of the caller's tenant, or have it as their home tenant; otherwise the call answers 404 group.user_not_found, the same for a missing id as for another tenant's user. Adding someone already in the group is a no-op, except that a membership a single sign-on made becomes the administrator's, so the person's sign-ins no longer remove it. Joining a group gives its roles, so the caller must hold every permission they carry (403 rbac.grant_exceeds_caller naming one), and only an owner adds someone to a group holding the owner role (403 rbac.owner_only). Like the other routes that hand out authority, it needs a recent step-up. Someone holding no role who joins a group that carries one takes a seat; when the plan's seats are all taken they are not added (402 billing.plan_limit, metadata resource seats).
+      description: Adds a user to one of the caller's groups. The user must be a live member of the caller's organization, or have it as their home organization; otherwise the call answers 404 group.user_not_found, the same for a missing id as for another organization's user. Adding someone already in the group is a no-op, except that a membership a single sign-on made becomes the administrator's, so the person's sign-ins no longer remove it. Joining a group gives its roles, so the caller must hold every permission they carry (403 rbac.grant_exceeds_caller naming one), and only an owner adds someone to a group holding the owner role (403 rbac.owner_only). Like the other routes that hand out authority, it needs a recent step-up. Someone holding no role who joins a group that carries one takes a seat; when the plan's seats are all taken they are not added (402 billing.plan_limit, metadata resource seats).
       responses:
         '204':
           description: Added
@@ -2803,14 +2796,14 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/groups:
+  /v1/organizations/{organizationID}/groups:
     get:
       operationId: listGroups
       summary: List groups
       tags:
         - Groups
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: role
           in: query
           required: false
@@ -2830,7 +2823,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Lists the organisation's groups. Requires group.read. A caller who also holds role.read gets each group's roles (those granted to the group itself), all read in one query, and may filter by them; without it roles are left out, and a role filter is refused with 403.
+      description: Lists the organization's groups. Requires group.read. A caller who also holds role.read gets each group's roles (those granted to the group itself), all read in one query, and may filter by them; without it roles are left out, and a role filter is refused with 403.
       responses:
         '200':
           description: OK
@@ -2873,7 +2866,7 @@ paths:
             example:
               email: grace@example.com
               role_id: 018f2a6d-7b8c-7d9e-a0f1-2b3c4d5e6f70
-              tenant_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
+              organization_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
             schema:
               $ref: '#/components/schemas/InviteCreateInput'
       description: 'Creates an invitation and emails its accept link. Requires member.invite. The address is kept lower-case and matched without regard to case. An invitation with no role_id, to someone already at home in another organization, is refused with 422 invite.role_required, as accepting it would join them to nothing. The accept link goes only to the invited address; the response carries the invitation and invite.delivery: status sent when a provider accepted the email, or not_sent with code and message when it did not (email.suppressed: the address bounced or reported spam before; email.provider_unavailable: no provider is configured). The invitation is created either way. A role_id that is not a role of the caller''s organization is refused with 404 not_found, the same answer whether the role does not exist or belongs to another organization, and no invitation is created. A pending invitation holds a seat, as does each person holding a role, directly or through a group; when the plan''s seats are all taken the invitation is refused with 402 billing.plan_limit (metadata resource seats, limit), and accepting it later takes no further seat. An invitation a person sent is accepted only while they still may give it: active, still in the organization and able to give its role, or acceptance is refused with 400 invite.invalid; removing them from the organization or deleting their account withdraws the invitations they sent. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, one still being processed 409 idempotency.in_progress, and one whose first request stopped before answering 409 idempotency.outcome_unknown: check whether it took effect, then retry with a new key.'
@@ -2890,7 +2883,7 @@ paths:
               example:
                 invite:
                   id: 018f2a74-5f6a-7b7c-9d8e-9f0a1b2c3d4e
-                  tenant_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
+                  organization_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
                   email: grace@example.com
                   role_id: 018f2a6d-7b8c-7d9e-a0f1-2b3c4d5e6f70
                   status: pending
@@ -2933,7 +2926,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/AcceptInput'
-      description: 'Creates the invited account and signs it in. Its address is not verified by this: the account proves it later with a code or link sent to it (its invitations inbox stays closed until then). The response is a token pair, or, where the organisation requires a second factor, the sign-in''s challenge instead (mfa_required, mfa_token and, for an account with no factor yet, enrollment_required), met as at sign-in. Where the inviting organisation has password sign-in switched off, accepting with a password is refused with 403 auth.method_disabled and nothing is created. An address on a domain another organisation has verified gets no new account here (409 user.domain_managed_elsewhere): that organisation creates it, and the invitee then signs in and accepts as themselves. An invitation whose sender may no longer give it (no longer active or in the organisation, or no longer holding its role''s permissions) is refused with 400 invite.invalid.'
+      description: 'Creates the invited account and signs it in. Its address is not verified by this: the account proves it later with a code or link sent to it (its invitations inbox stays closed until then). The response is a token pair, or, where the organization requires a second factor, the sign-in''s challenge instead (mfa_required, mfa_token and, for an account with no factor yet, enrollment_required), met as at sign-in. Where the inviting organization has password sign-in switched off, accepting with a password is refused with 403 auth.method_disabled and nothing is created. An address on a domain another organization has verified gets no new account here (409 user.domain_managed_elsewhere): that organization creates it, and the invitee then signs in and accepts as themselves. An invitation whose sender may no longer give it (no longer active or in the organization, or no longer holding its role''s permissions) is refused with 400 invite.invalid.'
       responses:
         '200':
           description: A token pair, or the second-factor challenge to complete first.
@@ -2960,7 +2953,7 @@ paths:
     post:
       operationId: lookUpInvite
       summary: Look up an invitation (public)
-      description: 'Previews the invitation an emailed link names, so the acceptance screen can show the organisation and address and offer the ways of accepting it. A password is offered where the organisation allows password sign-in, and a passkey where it allows passkeys. account_exists means an account already holds the address, so the invitee signs in and accepts as themselves. Refused like acceptance: invite.link_invalid, invite.invalid (no longer pending, or its sender may no longer give it), invite.expired. Read-only. The token travels in the body so it stays out of logs.'
+      description: 'Previews the invitation an emailed link names, so the acceptance screen can show the organization and address and offer the ways of accepting it. A password is offered where the organization allows password sign-in, and a passkey where it allows passkeys. account_exists means an account already holds the address, so the invitee signs in and accepts as themselves. Refused like acceptance: invite.link_invalid, invite.invalid (no longer pending, or its sender may no longer give it), invite.expired. Read-only. The token travels in the body so it stays out of logs.'
       tags:
         - Invites
       security: []
@@ -3014,7 +3007,7 @@ paths:
     post:
       operationId: beginPasskeyInviteAcceptance
       summary: Accept an invitation with a passkey — begin (public)
-      description: Starts accepting an invitation by founding the new account on a passkey instead of a password, returning the WebAuthn credential-creation options. The account's email and organisation come from the invitation, never from the request. Refused like POST /v1/invites/accept (invite.link_invalid, invite.invalid, invite.expired, invite.account_exists — the invitee signs in and accepts as themselves, user.domain_managed_elsewhere), and with passkey.disabled when the organisation has passkeys switched off. Starting again replaces an unfinished ceremony for the same invitation; the invitation stays pending until one finishes.
+      description: Starts accepting an invitation by founding the new account on a passkey instead of a password, returning the WebAuthn credential-creation options. The account's email and organization come from the invitation, never from the request. Refused like POST /v1/invites/accept (invite.link_invalid, invite.invalid, invite.expired, invite.account_exists — the invitee signs in and accepts as themselves, user.domain_managed_elsewhere), and with passkey.disabled when the organization has passkeys switched off. Starting again replaces an unfinished ceremony for the same invitation; the invitation stays pending until one finishes.
       tags:
         - Invites
       security: []
@@ -3062,7 +3055,7 @@ paths:
     post:
       operationId: finishPasskeyInviteAcceptance
       summary: Accept an invitation with a passkey — finish (public)
-      description: 'Verifies the passkey and, in one transaction, creates the account in the inviting organisation with it, grants the invited role and marks the invitation accepted; then signs the invitee in, returning a token pair as POST /v1/invites/accept does. Each ceremony finishes once: a second attempt, or one after the ceremony expired (auth.session_expired), creates nothing and leaves the invitation as it was. Refused, with nothing created, when the invitation was accepted, revoked or expired meanwhile, its sender may no longer give it (400 invite.invalid), or the organisation switched passkeys off.'
+      description: 'Verifies the passkey and, in one transaction, creates the account in the inviting organization with it, grants the invited role and marks the invitation accepted; then signs the invitee in, returning a token pair as POST /v1/invites/accept does. Each ceremony finishes once: a second attempt, or one after the ceremony expired (auth.session_expired), creates nothing and leaves the invitation as it was. Refused, with nothing created, when the invitation was accepted, revoked or expired meanwhile, its sender may no longer give it (400 invite.invalid), or the organization switched passkeys off.'
       tags:
         - Invites
       security: []
@@ -3157,7 +3150,7 @@ paths:
                   type: string
               required:
                 - token
-      description: 'Joins the caller''s existing account to the invited tenant (no new user, no password) and returns a tenant-scoped token pair. The invite must be addressed to the caller''s own email (`invite.email_mismatch` otherwise), and its sender must still be able to give it (400 `invite.invalid`). An organisation that requires a second factor of the caller (its security policy, or administrators-only for its administrators) is entered (the pair issued) only by a session whose sign-in met one, or that holds a fresh step-up; otherwise 403 step_up_required (step up, then switch in) or 403 mfa.enrollment_required (set a factor up first), unless the organisation''s grace period still lets the caller put the setup off. The new session carries the factor on, and continues the caller''s sign-in: it ends when the caller''s session would. The invite stays accepted when the pair is refused.'
+      description: 'Joins the caller''s existing account to the invited organization (no new user, no password) and returns an organization-scoped token pair. The invite must be addressed to the caller''s own email (`invite.email_mismatch` otherwise), and its sender must still be able to give it (400 `invite.invalid`). An organization that requires a second factor of the caller (its security policy, or administrators-only for its administrators) is entered (the pair issued) only by a session whose sign-in met one, or that holds a fresh step-up; otherwise 403 step_up_required (step up, then switch in) or 403 mfa.enrollment_required (set a factor up first), unless the organization''s grace period still lets the caller put the setup off. The new session carries the factor on, and continues the caller''s sign-in: it ends when the caller''s session would. The invite stays accepted when the pair is refused.'
       responses:
         '200':
           description: OK
@@ -3195,7 +3188,7 @@ paths:
           schema:
             type: string
             format: uuid
-      description: Same as accepting by token, but selects the invite by id (from GET /v1/me/invites). Returns a tenant-scoped token pair, under the same second-factor rule. Answers 403 invite.email_not_verified until the account's address is verified.
+      description: Same as accepting by token, but selects the invite by id (from GET /v1/me/invites). Returns an organization-scoped token pair, under the same second-factor rule. Answers 403 invite.email_not_verified until the account's address is verified.
       responses:
         '200':
           description: OK
@@ -3285,7 +3278,7 @@ paths:
   /v1/invites/{id}/resend:
     post:
       operationId: resendInvite
-      description: 'Rotates the invitation token, extends its expiry, and re-sends the invitation email; the new link goes only to the invited address. Requires member.invite, and, as creating it does, every permission of the role the invitation grants (403 rbac.grant_exceeds_caller naming one the caller lacks; nothing changes). The response carries the invitation. Only pending or expired invites belonging to the caller''s tenant qualify; already-accepted or revoked invites are rejected. The recipient completes the flow through the accept-invite call, as with the original invitation. invite.delivery says whether the email went out (as on create): a suppressed address reports not_sent with email.suppressed rather than success.'
+      description: 'Rotates the invitation token, extends its expiry, and re-sends the invitation email; the new link goes only to the invited address. Requires member.invite, and, as creating it does, every permission of the role the invitation grants (403 rbac.grant_exceeds_caller naming one the caller lacks; nothing changes). The response carries the invitation. Only pending or expired invites belonging to the caller''s organization qualify; already-accepted or revoked invites are rejected. The recipient completes the flow through the accept-invite call, as with the original invitation. invite.delivery says whether the email went out (as on create): a suppressed address reports not_sent with email.suppressed rather than success.'
       summary: Resend an invitation
       tags:
         - Invites
@@ -3317,7 +3310,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/tenants/{tenantID}/users/{id}/sessions/{sessionID}:
+  /v1/organizations/{organizationID}/users/{id}/sessions/{sessionID}:
     delete:
       operationId: revokeUserSession
       tags:
@@ -3325,7 +3318,7 @@ paths:
       summary: End one of a user's sessions
       description: 'Ends one of the user''s live sessions, as GET /v1/users/{id}/sessions lists them: one in the caller''s organization, or an account-level one when it is the user''s home organization. Its refresh tokens stop working at once; access tokens it was issued are refused as the session''s end is noticed. Requires session.revoke. The person must not outrank the caller: only an owner signs out an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one). A session that isn''t theirs there, or has already ended, answers 404. Audited as session.admin_revoked with the session''s ID, and announced to session.revoked subscribers with reason admin_revoked.'
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -3352,7 +3345,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/tenants/{tenantID}/users/{id}/passkeys:
+  /v1/organizations/{organizationID}/users/{id}/passkeys:
     get:
       operationId: listUserPasskeys
       tags:
@@ -3360,7 +3353,7 @@ paths:
       summary: List a user's passkeys
       description: 'The passkeys on a member''s account, oldest first: each one''s name, when it was added and when it last signed them in. Requires user.read; someone who doesn''t belong to the caller''s organization answers 404.'
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -3406,7 +3399,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/tenants/{tenantID}/users/{id}/passkeys/{passkeyID}:
+  /v1/organizations/{organizationID}/users/{id}/passkeys/{passkeyID}:
     delete:
       operationId: deleteUserPasskey
       tags:
@@ -3414,7 +3407,7 @@ paths:
       summary: Remove a user's passkey
       description: 'Removes a passkey from a user''s account, for example a lost device''s, so it no longer signs them in. Requires user.credentials and a recent sign-in (step-up). Like a second-factor reset it is for the account''s home organization only (403 user.managed_elsewhere for a member from elsewhere), and is refused with 403 user.credentials_shared, nothing changing, while the account also belongs to another organization. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one). The account''s last way to sign in isn''t removed (409 auth.last_sign_in_method). A passkey that isn''t theirs answers 404. Audited as passkey.admin_deleted with the passkey''s ID and name, and the person is emailed that an administrator of this organization removed it.'
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -3443,15 +3436,15 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
-  /v1/tenants/{tenantID}/users/{id}/sign-ins:
+  /v1/organizations/{organizationID}/users/{id}/sign-ins:
     get:
       operationId: getUserSignInSummary
       summary: A person's sign-in summary
-      description: 'How the member signed in to the organisation over a period, from its audit log: sign-ins by first method, with how many met a second step (recorded as metadata.second_factor from this release, or a method ending _mfa); by address (the 20 most used, with the last time); by browser and platform, as the session list names them; and failed sign-ins by reason. The period is from and to (RFC 3339), or days back from to (or now); 30 days by default, at most 366. A person from another organisation counts their sign-ins to this one. Requires audit.read.'
+      description: 'How the member signed in to the organization over a period, from its audit log: sign-ins by first method, with how many met a second step (recorded as metadata.second_factor from this release, or a method ending _mfa); by address (the 20 most used, with the last time); by browser and platform, as the session list names them; and failed sign-ins by reason. The period is from and to (RFC 3339), or days back from to (or now); 30 days by default, at most 366. A person from another organization counts their sign-ins to this one. Requires audit.read.'
       tags:
         - Users
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -3552,18 +3545,18 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/tenants/{tenantID}/invites:
+  /v1/organizations/{organizationID}/invites:
     get:
       operationId: listInvites
       summary: List invites
       tags:
         - Invites
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Lists the organisation's invitations, without their tokens. Requires user.read.
+      description: Lists the organization's invitations, without their tokens. Requires user.read.
       responses:
         '200':
           description: OK
@@ -3590,16 +3583,16 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
-  /v1/branding/{tenantID}/logo:
+  /v1/branding/{organizationID}/logo:
     get:
       operationId: getBrandingLogo
-      summary: An organisation's uploaded logo (public)
-      description: 'The image an organisation uploaded as its logo (a PNG, JPEG, WEBP or SVG data URL in its branding), served so its emails and hosted pages can link to it: those get this address, with ?v= a hash of the image, in place of the data URL. Needs no credential, like the logo it shows. 404 when the organisation uploaded none, links its logo by URL instead, or its plan lacks custom_branding. Served with X-Content-Type-Options nosniff and a sandboxing Content-Security-Policy, so an SVG''s scripts never run; cacheable for an hour.'
+      summary: An organization's uploaded logo (public)
+      description: 'The image an organization uploaded as its logo (a PNG, JPEG, WEBP or SVG data URL in its branding), served so its emails and hosted pages can link to it: those get this address, with ?v= a hash of the image, in place of the data URL. Needs no credential, like the logo it shows. 404 when the organization uploaded none, links its logo by URL instead, or its plan lacks custom_branding. Served with X-Content-Type-Options nosniff and a sandboxing Content-Security-Policy, so an SVG''s scripts never run; cacheable for an hour.'
       tags:
         - Branding
       security: []
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: v
           in: query
           required: false
@@ -3628,25 +3621,25 @@ paths:
                 format: binary
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/tenants/{tenantID}/branding:
+  /v1/organizations/{organizationID}/branding:
     get:
       operationId: getBranding
       summary: Get branding
       tags:
         - Branding
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Organization branding, including optional background_color and email_reply_to values in settings. Unknown settings are preserved by clients. Custom sender addresses are configuration preferences and do not activate a provider identity. The saved branding is returned whatever the plan, but the hosted login and emails show it only while the organisation's plan includes custom_branding; after the plan lapses they use the default appearance.
+      description: Organization branding, including optional background_color and email_reply_to values in settings. Unknown settings are preserved by clients. Custom sender addresses are configuration preferences and do not activate a provider identity. The saved branding is returned whatever the plan, but the hosted login and emails show it only while the organization's plan includes custom_branding; after the plan lapses they use the default appearance.
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TenantBranding'
+                $ref: '#/components/schemas/OrganizationBranding'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3663,7 +3656,7 @@ paths:
       tags:
         - Branding
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -3672,16 +3665,16 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/TenantBranding'
-        description: Complete editable branding fields and settings. Preserve unrelated settings when updating. The tenant ID is enforced by the authenticated route scope.
-      description: Requires custom_branding entitlement. Accepts at most 3 MiB of JSON, including an optional base64 PNG, JPEG, WEBP or SVG logo of at most 2 MiB decoded. settings.background_color is a six-digit hex color or empty for the default; settings.email_reply_to is a single mailbox or empty. Sender name and reply-to apply only to tenant invitations and magic links. The provider-approved From address is retained.
+              $ref: '#/components/schemas/OrganizationBranding'
+        description: Complete editable branding fields and settings. Preserve unrelated settings when updating. The organization ID is enforced by the authenticated route scope.
+      description: Requires custom_branding entitlement. Accepts at most 3 MiB of JSON, including an optional base64 PNG, JPEG, WEBP or SVG logo of at most 2 MiB decoded. settings.background_color is a six-digit hex color or empty for the default; settings.email_reply_to is a single mailbox or empty. Sender name and reply-to apply only to organization invitations and magic links. The provider-approved From address is retained.
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TenantBranding'
+                $ref: '#/components/schemas/OrganizationBranding'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3703,11 +3696,11 @@ components:
       type: apiKey
       in: header
       name: Authorization
-      description: 'API key credential. Send `Authorization: ApiKey <key>` (note the `ApiKey ` prefix). Accepted on the same authenticated routes as bearerAuth. A key works only while its organisation is active, not while it is suspended or deleted.'
+      description: 'API key credential. Send `Authorization: ApiKey <key>` (note the `ApiKey ` prefix). Accepted on the same authenticated routes as bearerAuth. A key works only while its organization is active, not while it is suspended or deleted.'
     scimBearer:
       type: http
       scheme: bearer
-      description: 'An organisation''s SCIM provisioning token, presented by its identity provider: `Authorization: Bearer <scim-token>`. Distinct from user JWTs. An organisation can hold several, managed under /v1/tenants/{tenantID}/scim/tokens. A revoked or expired token, and every token of an organisation that is suspended or due for deletion, is refused with 401.'
+      description: 'An organization''s SCIM provisioning token, presented by its identity provider: `Authorization: Bearer <scim-token>`. Distinct from user JWTs. An organization can hold several, managed under /v1/organizations/{organizationID}/scim/tokens. A revoked or expired token, and every token of an organization that is suspended or due for deletion, is refused with 401.'
     clientCredentials:
       type: oauth2
       description: OAuth 2.0 client credentials. Clients authenticate at the token endpoint via form params (`client_id`/`client_secret`) or HTTP Basic. Revocation/introspection use the same client auth.
@@ -3720,30 +3713,10 @@ components:
       in: cookie
       name: qe_ls
       description: Hosted-login SSO session cookie (HttpOnly). Set by POST /v1/auth/session and consumed by the OAuth authorize/consent flow, and by the few signed-in routes the hosted login calls itself (listing, renaming and adding passkeys). State-changing calls made with it need the CSRF token.
-  headers:
-    RequestId:
-      description: The request's ID, sent on every response. Quote it when reporting a problem; an error body repeats it as error.request_id.
-      schema:
-        type: string
-    NoStoreCacheControl:
-      description: 'no-store: the response carries a token, a secret or a sign-in session, so no cache may keep it.'
-      schema:
-        type: string
-        enum:
-          - no-store
-    NoStorePragma:
-      description: no-cache, the same instruction for HTTP/1.0 caches.
-      schema:
-        type: string
-        enum:
-          - no-cache
-    IdempotentReplayed:
-      description: true when this is the stored answer to an earlier request with the same Idempotency-Key and body, sent again rather than run twice. Absent otherwise.
-      schema:
-        type: string
-        enum:
-          - 'true'
   schemas:
+    NextCursor:
+      type: string
+      description: 'Present when there is another page: send it back as cursor to read that page. Absent on the last page.'
     Error:
       type: object
       required:
@@ -3803,7 +3776,7 @@ components:
             - string
             - 'null'
           description: Cursor for the next page; empty/absent at the end.
-    Tenant:
+    Organization:
       type: object
       properties:
         id:
@@ -3826,7 +3799,7 @@ components:
             - enterprise
         region:
           type: string
-          description: The region this service is hosted in, where the organisation's data is held. It is the same for every organisation of a deployment and isn't a per-organisation data-residency choice.
+          description: The region this service is hosted in, where the organization's data is held. It is the same for every organization of a deployment and isn't a per-organization data-residency choice.
         metadata:
           type:
             - object
@@ -3850,7 +3823,7 @@ components:
         mfa_enabled_count:
           type: integer
           description: List-only. Members with at least one MFA factor enrolled.
-    TenantPage:
+    OrganizationPage:
       allOf:
         - $ref: '#/components/schemas/Page'
       type: object
@@ -3858,12 +3831,10 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/Tenant'
+            $ref: '#/components/schemas/Organization'
         next_cursor:
-          type:
-            - string
-            - 'null'
-    TenantCreate:
+          $ref: '#/components/schemas/NextCursor'
+    OrganizationCreate:
       type: object
       required:
         - slug
@@ -3885,17 +3856,17 @@ components:
             - enterprise
         region:
           type: string
-          description: Optional. Only the region this service is hosted in is accepted (422 tenant.region_unavailable, with metadata.available, otherwise); the organisation is created there either way.
+          description: Optional. Only the region this service is hosted in is accepted (422 organization.region_unavailable, with metadata.available, otherwise); the organization is created there either way.
           maxLength: 64
         metadata:
           type: object
           additionalProperties: true
-    TenantCreateResponse:
+    OrganizationCreateResponse:
       type: object
       properties:
-        tenant:
-          $ref: '#/components/schemas/Tenant'
-        tenant_id:
+        organization:
+          $ref: '#/components/schemas/Organization'
+        organization_id:
           type: string
           format: uuid
         roles:
@@ -3919,7 +3890,7 @@ components:
         user_id:
           type: string
           format: uuid
-    TenantUpdate:
+    OrganizationUpdate:
       type: object
       properties:
         name:
@@ -3939,7 +3910,7 @@ components:
             - enterprise
         region:
           type: string
-          description: 'Read-only: the same value is accepted, as a form sends every field back; another is refused with 422 tenant.region_read_only.'
+          description: 'Read-only: the same value is accepted, as a form sends every field back; another is refused with 422 organization.region_read_only.'
           maxLength: 64
         metadata:
           type: object
@@ -4039,7 +4010,7 @@ components:
           type: string
         sso_enabled:
           type: boolean
-          description: Addresses on the domain sign in only through the organisation's active SAML, LDAP or OpenID Connect connection (break-glass members and administrators single sign-on can't sign in excepted).
+          description: Addresses on the domain sign in only through the organization's active SAML, LDAP or OpenID Connect connection (break-glass members and administrators single sign-on can't sign in excepted).
         status:
           type: string
         verification_token:
@@ -4068,9 +4039,6 @@ components:
         created_at:
           type: string
           format: date-time
-    NextCursor:
-      type: string
-      description: 'Present when there is another page: send it back as cursor to read that page. Absent on the last page.'
     SuspendedDirectoryUser:
       type: object
       properties:
@@ -4132,7 +4100,7 @@ components:
         - phone
         - phone_verified_at
         - status
-        - tenant_id
+        - organization_id
         - updated_at
       properties:
         avatar_url:
@@ -4183,7 +4151,7 @@ components:
             type: string
         status:
           type: string
-        tenant_id:
+        organization_id:
           type: string
           format: uuid
         updated_at:
@@ -4262,7 +4230,7 @@ components:
         id:
           type: string
           format: uuid
-        tenant_id:
+        organization_id:
           type: string
           format: uuid
         email:
@@ -4312,7 +4280,7 @@ components:
           type: array
           items:
             type: string
-          description: Role names in the tenant reading the user, on the list and GET /v1/users/{id}.
+          description: Role names in the organization reading the user, on the list and GET /v1/users/{id}.
         assigned_roles:
           type: array
           description: The same roles with their IDs.
@@ -4329,28 +4297,28 @@ components:
           description: True if the user has a confirmed TOTP, a verified OTP factor, or a push device; on the list and GET /v1/users/{id}.
         groups_count:
           type: integer
-          description: Number of groups the user belongs to in this tenant; on the list and GET /v1/users/{id}.
+          description: Number of groups the user belongs to in this organization; on the list and GET /v1/users/{id}.
         last_seen_at:
           type:
             - string
             - 'null'
           format: date-time
-          description: Their most recent session activity or sign-in in this tenant, or null; on the list and GET /v1/users/{id}.
+          description: Their most recent session activity or sign-in in this organization, or null; on the list and GET /v1/users/{id}.
         last_seen_ip:
           type:
             - string
             - 'null'
           description: The address of that session or sign-in, or null.
-        home_tenant_name:
+        home_organization_name:
           type:
             - string
             - 'null'
-          description: The name of the organisation that manages the account (tenant_id).
+          description: The name of the organization that manages the account (organization_id).
         suspension:
           type:
             - object
             - 'null'
-          description: On GET /v1/users/{id}, for a suspended person whose home is this tenant; absent otherwise.
+          description: On GET /v1/users/{id}, for a suspended person whose home is this organization; absent otherwise.
           properties:
             reason:
               type: string
@@ -4381,19 +4349,17 @@ components:
           items:
             $ref: '#/components/schemas/User'
         next_cursor:
-          type:
-            - string
-            - 'null'
+          $ref: '#/components/schemas/NextCursor'
         total:
           type: integer
           description: How many members the filters match.
     UserCreate:
       type: object
       required:
-        - tenant_id
+        - organization_id
         - email
       properties:
-        tenant_id:
+        organization_id:
           type: string
           format: uuid
         email:
@@ -4417,14 +4383,14 @@ components:
       required:
         - users
       properties:
-        tenant_id:
+        organization_id:
           type: string
           format: uuid
-          description: Optional; when present must match the caller's tenant.
+          description: Optional; when present must match the caller's organization.
         role_id:
           type: string
           format: uuid
-          description: A role of the organisation to give every user the import makes, with the user in one transaction, audited as role.assigned. The whole import is refused, making nobody, when the caller lacks role.write or the authority the role carries (403 rbac.permission_denied, rbac.grant_exceeds_caller, rbac.owner_only), or the role isn't the organisation's (404). Each user's role takes one of the plan's seats; once they are all taken, the rest of the rows are refused one by one with billing.plan_limit, making no account.
+          description: A role of the organization to give every user the import makes, with the user in one transaction, audited as role.assigned. The whole import is refused, making nobody, when the caller lacks role.write or the authority the role carries (403 rbac.permission_denied, rbac.grant_exceeds_caller, rbac.owner_only), or the role isn't the organization's (404). Each user's role takes one of the plan's seats; once they are all taken, the rest of the rows are refused one by one with billing.plan_limit, making no account.
         users:
           type: array
           minItems: 1
@@ -4546,7 +4512,7 @@ components:
           additionalProperties: true
     GroupCreateInput:
       type: object
-      description: The group's organisation is the caller's; it is never taken from the body.
+      description: The group's organization is the caller's; it is never taken from the body.
       required:
         - name
       properties:
@@ -4559,7 +4525,7 @@ components:
             - string
             - 'null'
           format: uuid
-          description: One of the organisation's groups to nest it under; omit or null for a top-level group.
+          description: One of the organization's groups to nest it under; omit or null for a top-level group.
     Group:
       type: object
       required:
@@ -4569,7 +4535,7 @@ components:
         - member_count
         - name
         - parent_id
-        - tenant_id
+        - organization_id
       properties:
         created_at:
           type: string
@@ -4588,7 +4554,7 @@ components:
             - string
             - 'null'
           format: uuid
-        tenant_id:
+        organization_id:
           type: string
           format: uuid
         roles:
@@ -4646,7 +4612,7 @@ components:
         - id
         - name
         - nodes
-        - tenant_id
+        - organization_id
         - updated_at
       properties:
         created_at:
@@ -4665,7 +4631,7 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/TemplateNode'
-        tenant_id:
+        organization_id:
           type: string
           format: uuid
         updated_at:
@@ -4755,7 +4721,7 @@ components:
       required:
         - email
         - role_id
-        - tenant_id
+        - organization_id
       properties:
         email:
           type: string
@@ -4764,7 +4730,7 @@ components:
             - string
             - 'null'
           format: uuid
-        tenant_id:
+        organization_id:
           type: string
           format: uuid
     Delivery:
@@ -4788,7 +4754,7 @@ components:
         - id
         - role_id
         - status
-        - tenant_id
+        - organization_id
       properties:
         accepted_at:
           type:
@@ -4815,7 +4781,7 @@ components:
           format: uuid
         status:
           type: string
-        tenant_id:
+        organization_id:
           type: string
           format: uuid
     AcceptInput:
@@ -4856,21 +4822,21 @@ components:
         session_expires_at:
           type: string
           format: date-time
-          description: 'When the session ends however active it is: the organisation''s maximum session age from sign-in (the platform default where it sets none). Switching organisation never moves it later.'
+          description: 'When the session ends however active it is: the organization''s maximum session age from sign-in (the platform default where it sets none). Switching organization never moves it later.'
         idle_expires_at:
           type: string
           format: date-time
-          description: 'When the session ends unless it is renewed before then: the organisation''s idle timeout from this sign-in or renewal, never after session_expires_at. Clients can warn the user ahead of either time; the server refuses a renewal after them with 401 auth.session_timed_out whatever the client does.'
+          description: 'When the session ends unless it is renewed before then: the organization''s idle timeout from this sign-in or renewal, never after session_expires_at. Clients can warn the user ahead of either time; the server refuses a renewal after them with 401 auth.session_timed_out whatever the client does.'
         session_id:
           type: string
           format: uuid
         user_id:
           type: string
           format: uuid
-        tenant_id:
+        organization_id:
           type: string
           format: uuid
-          description: The organisation the token is scoped to; absent for a session that belongs to no organisation.
+          description: The organization the token is scoped to; absent for a session that belongs to no organization.
     LoginFactor:
       type: object
       properties:
@@ -4892,7 +4858,7 @@ components:
           description: An email or SMS factor's masked address or number.
     MFAChallenge:
       type: object
-      description: 'A sign-in stopped before its session: the account holds a second factor, or must have one — its organisation requires MFA (of everyone, or of administrators) or it is marked as requiring it. Complete it at POST /v1/auth/mfa (token sign-in) or /v1/auth/session/mfa (hosted login). Each challenge is audited as auth.mfa_challenged with its reason (enrolled, tenant_required, admin_required or user_required) and how the first factor was proven (password, magic_link, social or ldap); meeting it as auth.mfa_verified.'
+      description: 'A sign-in stopped before its session: the account holds a second factor, or must have one — its organization requires MFA (of everyone, or of administrators) or it is marked as requiring it. Complete it at POST /v1/auth/mfa (token sign-in) or /v1/auth/session/mfa (hosted login). Each challenge is audited as auth.mfa_challenged with its reason (enrolled, organization_required, admin_required or user_required) and how the first factor was proven (password, magic_link, social or ldap); meeting it as auth.mfa_verified.'
       properties:
         mfa_required:
           type: boolean
@@ -4912,7 +4878,7 @@ components:
               - push
         factors:
           type: array
-          description: Exactly the second factors this person can complete the challenge with — an authenticator app, recovery codes, each confirmed email or SMS factor (with its id and masked destination, for POST /v1/auth/mfa/send), passkeys while the organisation allows them, and push devices. Empty for an enrolment challenge.
+          description: Exactly the second factors this person can complete the challenge with — an authenticator app, recovery codes, each confirmed email or SMS factor (with its id and masked destination, for POST /v1/auth/mfa/send), passkeys while the organization allows them, and push devices. Empty for an enrolment challenge.
           items:
             $ref: '#/components/schemas/LoginFactor'
         enrollment_required:
@@ -4921,7 +4887,7 @@ components:
         enrollment_due_at:
           type: string
           format: date-time
-          description: 'On an enrolment challenge in the organisation''s grace period: when it ends. Until then the setup may be put off (skip: true).'
+          description: 'On an enrolment challenge in the organization''s grace period: when it ends. Until then the setup may be put off (skip: true).'
     AuthenticatorSelection:
       type: object
       properties:
@@ -5021,9 +4987,9 @@ components:
         - expires_at
         - id
         - role_id
-        - tenant_id
-        - tenant_name
-        - tenant_slug
+        - organization_id
+        - organization_name
+        - organization_slug
       properties:
         created_at:
           type: string
@@ -5041,17 +5007,17 @@ components:
             - string
             - 'null'
           format: uuid
-        tenant_id:
+        organization_id:
           type: string
           format: uuid
-        tenant_name:
+        organization_name:
           type: string
-        tenant_slug:
+        organization_slug:
           type: string
-    TenantBranding:
+    OrganizationBranding:
       type: object
       properties:
-        tenant_id:
+        organization_id:
           type: string
           format: uuid
         logo_url:
@@ -5081,7 +5047,7 @@ components:
             - 'null'
           deprecated: true
           writeOnly: true
-          description: Accepted and ignored, and never returned. Email is sent from the platform's own address (an organisation's domain would need verifying with the email provider); replies go to settings.email_reply_to.
+          description: Accepted and ignored, and never returned. Email is sent from the platform's own address (an organization's domain would need verifying with the email provider); replies go to settings.email_reply_to.
         settings:
           type: object
           additionalProperties: true
@@ -5092,7 +5058,30 @@ components:
               description: Hosted-login page background; empty keeps the default theme.
             email_reply_to:
               type: string
-              description: Single reply mailbox for tenant-scoped messages; empty omits Reply-To.
+              description: Single reply mailbox for organization-scoped messages; empty omits Reply-To.
+  headers:
+    RequestId:
+      description: The request's ID, sent on every response. Quote it when reporting a problem; an error body repeats it as error.request_id.
+      schema:
+        type: string
+    NoStoreCacheControl:
+      description: 'no-store: the response carries a token, a secret or a sign-in session, so no cache may keep it.'
+      schema:
+        type: string
+        enum:
+          - no-store
+    NoStorePragma:
+      description: no-cache, the same instruction for HTTP/1.0 caches.
+      schema:
+        type: string
+        enum:
+          - no-cache
+    IdempotentReplayed:
+      description: true when this is the stored answer to an earlier request with the same Idempotency-Key and body, sent again rather than run twice. Absent otherwise.
+      schema:
+        type: string
+        enum:
+          - 'true'
   responses:
     Unauthorized:
       description: Missing or invalid credentials
@@ -5257,11 +5246,11 @@ components:
       schema:
         type: string
       description: Opaque pagination cursor from a prior response's next_cursor.
-    TenantID:
-      name: tenantID
+    OrganizationID:
+      name: organizationID
       in: path
       required: true
-      description: 'The organisation''s ID. On an authenticated route it must be the organisation of the caller''s credential: another is refused with 403, and a value that is not a UUID with 400.'
+      description: 'The organization''s ID. On an authenticated route it must be the organization of the caller''s credential: another is refused with 403, and a value that is not a UUID with 400.'
       schema:
         type: string
         format: uuid

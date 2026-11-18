@@ -47,7 +47,7 @@ func TestObjectsAndTypesListAndPeopleAreNamed(t *testing.T) {
 		t.Errorf("second page of documents: %+v, %v; want document:c alone", rest, err)
 	}
 	if none, err := svc.Objects(ctx, other, "document", 0, ""); err != nil || none.Total != 0 {
-		t.Errorf("another tenant's documents: %+v, %v; want none", none, err)
+		t.Errorf("another organization's documents: %+v, %v; want none", none, err)
 	}
 
 	tuples, err := svc.List(ctx, organization, "document:a")

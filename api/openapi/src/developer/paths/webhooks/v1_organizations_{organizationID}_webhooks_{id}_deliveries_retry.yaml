@@ -1,0 +1,36 @@
+post:
+  operationId: retryFailedWebhookDeliveries
+  summary: Retry given-up deliveries
+  description: >-
+    Sends again, each with a fresh budget of attempts, up to 1,000 of the
+    webhook's given-up deliveries, and says how many. Audited as
+    webhook.deliveries_retried.
+  tags:
+    - Webhooks
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: How many were re-queued
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              requeued:
+                type: integer
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml

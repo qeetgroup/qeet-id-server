@@ -9,7 +9,6 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const directoryHealth = `-- name: DirectoryHealth :one
@@ -51,7 +50,7 @@ type EmailHealthRow struct {
 // Queries for the service-health domain.
 // EmailHealth counts the organization's emails of the last hour handed to the
 // provider, and those it failed to take.
-func (q *Queries) EmailHealth(ctx context.Context, organizationID pgtype.UUID) (EmailHealthRow, error) {
+func (q *Queries) EmailHealth(ctx context.Context, organizationID *uuid.UUID) (EmailHealthRow, error) {
 	row := q.db.QueryRow(ctx, emailHealth, organizationID)
 	var i EmailHealthRow
 	err := row.Scan(&i.Attempted, &i.Failed)

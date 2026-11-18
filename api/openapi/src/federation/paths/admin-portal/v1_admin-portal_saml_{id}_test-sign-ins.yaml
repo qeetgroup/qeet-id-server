@@ -5,7 +5,7 @@ post:
     Starts a real sign-in through the connection in the IT admin's browser that
     signs nobody in: no account is created or changed and no session is issued,
     and a draft connection can be tested. Requires the link's capabilities to
-    include saml; the connection must belong to the tenant bound to the portal
+    include saml; the connection must belong to the organization bound to the portal
     session. Send the browser to redirect_url. The IdP's answer is validated
     exactly as a sign-in's (signature, issuer, audience, destination, validity
     period, correlation, replay) and only in the browser that began the test;

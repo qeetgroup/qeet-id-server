@@ -52,6 +52,7 @@ func TestDeleteInBatches(t *testing.T) {
 
 // execer counts the rows each statement is asked to delete.
 type execer struct {
+	Querier
 	rows int64
 	args [][]any
 }

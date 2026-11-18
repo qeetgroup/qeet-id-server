@@ -2,16 +2,16 @@ post:
   operationId: finishPasskeySignUp
   description: >-
     Completes passwordless signup by verifying the authenticator attestation
-    from the begin step and creating a tenant-less user with the new passkey as
+    from the begin step and creating an organization-less user with the new passkey as
     its founding credential. On success it returns a token pair; because the
     passkey is first-class, the account has no password and can both
     authenticate and satisfy MFA with the passkey alone. As with password
-    signup, create a tenant through the Identity Management API before any
-    tenant-scoped call, and the creator becomes the tenant owner. An address
-    already taken, or on a domain an organisation has verified, is refused with
+    signup, create an organization through the Identity Management API before any
+    organization-scoped call, and the creator becomes the organization owner. An address
+    already taken, or on a domain an organization has verified, is refused with
     the neutral 422 unprocessable of POST /v1/auth/signup, which does not name
     the reason, and nothing is created.
-  summary: Passkey-first signup finish (tenant-less)
+  summary: Passkey-first signup finish (organization-less)
   tags:
     - Passkeys
   security: []
@@ -33,7 +33,7 @@ post:
             name:
               type: string
     description: >-
-      Verifies the attestation, creates the tenant-less user with the passkey as
+      Verifies the attestation, creates the organization-less user with the passkey as
       its founding credential, and returns a token pair.
   responses:
     '201':

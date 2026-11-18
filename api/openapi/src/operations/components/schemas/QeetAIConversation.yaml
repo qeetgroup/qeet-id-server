@@ -1,10 +1,10 @@
 type: object
-description: A named qeetai conversation thread (tenant + user scoped).
+description: A named qeetai conversation thread (organization + user scoped).
 properties:
   id:
     type: string
     format: uuid
-  tenant_id:
+  organization_id:
     type: string
     format: uuid
   user_id:

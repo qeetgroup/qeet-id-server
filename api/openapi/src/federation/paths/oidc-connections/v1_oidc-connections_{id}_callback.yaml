@@ -17,15 +17,15 @@ get:
     sent; any failure answers 401 oidc_connection.id_token_invalid. The subject
     (issuer and sub) is linked to the connection, so another connection
     asserting it signs nobody in. A linked subject signs in while the
-    organisation is still its account's home (403
-    oidc_connection.user_tenant_mismatch). An address not yet linked is adopted
-    or given an account only on a domain the organisation has verified (403
+    organization is still its account's home (403
+    oidc_connection.user_organization_mismatch). An address not yet linked is adopted
+    or given an account only on a domain the organization has verified (403
     oidc_connection.email_domain_unverified), and not when the provider's
     email_verified is false (403 oidc_connection.email_unverified); a provider
     that doesn't say (Microsoft Entra ID) is trusted for those domains. An
-    adopted account must have the organisation as its home and a verified
+    adopted account must have the organization as its home and a verified
     address (403 oidc_connection.account_unverified), and one that owns or
-    administers the organisation is never adopted by its address (403
+    administers the organization is never adopted by its address (403
     oidc_connection.account_administers). A suspended account is refused. Every
     refusal is audited as auth.sign_in_failed with the error code as its reason.
     On success the browser goes to the console's /sso/callback with a one-time
@@ -69,7 +69,7 @@ get:
       $ref: ../../../shared/responses/Unauthorized.yaml
     '402':
       description: >-
-        The organisation's plan no longer includes enterprise SSO
+        The organization's plan no longer includes enterprise SSO
         (`billing.upgrade_required`).
       content:
         application/json:

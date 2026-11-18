@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const addressHolder = `-- name: AddressHolder :one
@@ -24,7 +23,7 @@ FROM account.users u WHERE u.id = $1
 
 type AddressHolderRow struct {
 	Email          string
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 	Provided       bool
 }
 
@@ -36,6 +35,49 @@ func (q *Queries) AddressHolder(ctx context.Context, userID uuid.UUID) (AddressH
 	var i AddressHolderRow
 	err := row.Scan(&i.Email, &i.OrganizationID, &i.Provided)
 	return i, err
+}
+
+const chargeEmailCodeGuess = `-- name: ChargeEmailCodeGuess :one
+UPDATE account.email_verifications
+SET attempts = attempts + 1,
+    used_at  = CASE WHEN attempts + 1 >= $1::int THEN NOW() ELSE used_at END
+WHERE id = $2
+RETURNING (attempts >= $1::int)::boolean AS exhausted
+`
+
+type ChargeEmailCodeGuessParams struct {
+	MaxAttempts int32
+	ID          uuid.UUID
+}
+
+// ChargeEmailCodeGuess counts one wrong guess at email code id and reports
+// whether that spent its @max_attempts, retiring it on the guess that does.
+func (q *Queries) ChargeEmailCodeGuess(ctx context.Context, arg ChargeEmailCodeGuessParams) (bool, error) {
+	row := q.db.QueryRow(ctx, chargeEmailCodeGuess, arg.MaxAttempts, arg.ID)
+	var exhausted bool
+	err := row.Scan(&exhausted)
+	return exhausted, err
+}
+
+const chargePhoneCodeGuess = `-- name: ChargePhoneCodeGuess :one
+UPDATE account.phone_verifications
+SET attempts = attempts + 1,
+    used_at  = CASE WHEN attempts + 1 >= $1::int THEN NOW() ELSE used_at END
+WHERE id = $2
+RETURNING (attempts >= $1::int)::boolean AS exhausted
+`
+
+type ChargePhoneCodeGuessParams struct {
+	MaxAttempts int32
+	ID          uuid.UUID
+}
+
+// ChargePhoneCodeGuess is ChargeEmailCodeGuess for phone codes.
+func (q *Queries) ChargePhoneCodeGuess(ctx context.Context, arg ChargePhoneCodeGuessParams) (bool, error) {
+	row := q.db.QueryRow(ctx, chargePhoneCodeGuess, arg.MaxAttempts, arg.ID)
+	var exhausted bool
+	err := row.Scan(&exhausted)
+	return exhausted, err
 }
 
 const deleteEmailVerification = `-- name: DeleteEmailVerification :exec
@@ -161,103 +203,6 @@ WHERE LOWER(email) = (SELECT LOWER(u.email) FROM account.users u WHERE u.id = $1
 func (q *Queries) ExpireRecoveryLinksForUser(ctx context.Context, userID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, expireRecoveryLinksForUser, userID)
 	return err
-}
-
-const getLatestEmailChange = `-- name: GetLatestEmailChange :one
-SELECT id, email, expires_at, used_at
-FROM account.email_verifications
-WHERE user_id = $1 AND code_hash = $2
-ORDER BY created_at DESC
-LIMIT 1
-FOR UPDATE
-`
-
-type GetLatestEmailChangeParams struct {
-	UserID   uuid.UUID
-	CodeHash string
-}
-
-type GetLatestEmailChangeRow struct {
-	ID        uuid.UUID
-	Email     string
-	ExpiresAt time.Time
-	UsedAt    pgtype.Timestamptz
-}
-
-// GetLatestEmailChange is like GetLatestEmailVerification but also returns the
-// pending new email so confirm can swap it onto the user.
-func (q *Queries) GetLatestEmailChange(ctx context.Context, arg GetLatestEmailChangeParams) (GetLatestEmailChangeRow, error) {
-	row := q.db.QueryRow(ctx, getLatestEmailChange, arg.UserID, arg.CodeHash)
-	var i GetLatestEmailChangeRow
-	err := row.Scan(
-		&i.ID,
-		&i.Email,
-		&i.ExpiresAt,
-		&i.UsedAt,
-	)
-	return i, err
-}
-
-const getLatestEmailVerification = `-- name: GetLatestEmailVerification :one
-SELECT id, expires_at, used_at
-FROM account.email_verifications
-WHERE user_id = $1 AND code_hash = $2
-ORDER BY created_at DESC
-LIMIT 1
-FOR UPDATE
-`
-
-type GetLatestEmailVerificationParams struct {
-	UserID   uuid.UUID
-	CodeHash string
-}
-
-type GetLatestEmailVerificationRow struct {
-	ID        uuid.UUID
-	ExpiresAt time.Time
-	UsedAt    pgtype.Timestamptz
-}
-
-// GetLatestEmailVerification selects the most-recent verification row for the
-// given user + code and locks it for update so concurrent Confirm calls don't race.
-func (q *Queries) GetLatestEmailVerification(ctx context.Context, arg GetLatestEmailVerificationParams) (GetLatestEmailVerificationRow, error) {
-	row := q.db.QueryRow(ctx, getLatestEmailVerification, arg.UserID, arg.CodeHash)
-	var i GetLatestEmailVerificationRow
-	err := row.Scan(&i.ID, &i.ExpiresAt, &i.UsedAt)
-	return i, err
-}
-
-const getLatestPhoneVerification = `-- name: GetLatestPhoneVerification :one
-SELECT id, phone, expires_at, used_at
-FROM account.phone_verifications
-WHERE user_id = $1 AND code_hash = $2
-ORDER BY created_at DESC
-LIMIT 1
-FOR UPDATE
-`
-
-type GetLatestPhoneVerificationParams struct {
-	UserID   uuid.UUID
-	CodeHash string
-}
-
-type GetLatestPhoneVerificationRow struct {
-	ID        uuid.UUID
-	Phone     string
-	ExpiresAt time.Time
-	UsedAt    pgtype.Timestamptz
-}
-
-func (q *Queries) GetLatestPhoneVerification(ctx context.Context, arg GetLatestPhoneVerificationParams) (GetLatestPhoneVerificationRow, error) {
-	row := q.db.QueryRow(ctx, getLatestPhoneVerification, arg.UserID, arg.CodeHash)
-	var i GetLatestPhoneVerificationRow
-	err := row.Scan(
-		&i.ID,
-		&i.Phone,
-		&i.ExpiresAt,
-		&i.UsedAt,
-	)
-	return i, err
 }
 
 const getUserEmail = `-- name: GetUserEmail :one
@@ -409,15 +354,77 @@ func (q *Queries) MarkUserEmailVerified(ctx context.Context, arg MarkUserEmailVe
 	return result.RowsAffected(), nil
 }
 
-const markUserPhoneVerified = `-- name: MarkUserPhoneVerified :exec
-UPDATE account.users
-SET phone_verified_at = COALESCE(phone_verified_at, NOW()), updated_at = NOW()
-WHERE id = $1
+const newestEmailCode = `-- name: NewestEmailCode :one
+SELECT id, code_hash, email, expires_at, used_at, attempts
+FROM account.email_verifications
+WHERE user_id = $1 AND purpose = $2
+ORDER BY created_at DESC
+LIMIT 1
+FOR UPDATE
 `
 
-func (q *Queries) MarkUserPhoneVerified(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, markUserPhoneVerified, id)
-	return err
+type NewestEmailCodeParams struct {
+	UserID  uuid.UUID
+	Purpose string
+}
+
+type NewestEmailCodeRow struct {
+	ID        uuid.UUID
+	CodeHash  string
+	Email     string
+	ExpiresAt time.Time
+	UsedAt    *time.Time
+	Attempts  int32
+}
+
+// NewestEmailCode locks and returns the user's most recent email code for
+// purpose. It doesn't filter on the submitted code, so only the newest code
+// can match: a resend supersedes the code before it.
+func (q *Queries) NewestEmailCode(ctx context.Context, arg NewestEmailCodeParams) (NewestEmailCodeRow, error) {
+	row := q.db.QueryRow(ctx, newestEmailCode, arg.UserID, arg.Purpose)
+	var i NewestEmailCodeRow
+	err := row.Scan(
+		&i.ID,
+		&i.CodeHash,
+		&i.Email,
+		&i.ExpiresAt,
+		&i.UsedAt,
+		&i.Attempts,
+	)
+	return i, err
+}
+
+const newestPhoneCode = `-- name: NewestPhoneCode :one
+SELECT id, code_hash, phone, expires_at, used_at, attempts
+FROM account.phone_verifications
+WHERE user_id = $1
+ORDER BY created_at DESC
+LIMIT 1
+FOR UPDATE
+`
+
+type NewestPhoneCodeRow struct {
+	ID        uuid.UUID
+	CodeHash  string
+	Phone     string
+	ExpiresAt time.Time
+	UsedAt    *time.Time
+	Attempts  int32
+}
+
+// NewestPhoneCode is NewestEmailCode for phone codes.
+func (q *Queries) NewestPhoneCode(ctx context.Context, userID uuid.UUID) (NewestPhoneCodeRow, error) {
+	row := q.db.QueryRow(ctx, newestPhoneCode, userID)
+	var i NewestPhoneCodeRow
+	err := row.Scan(
+		&i.ID,
+		&i.CodeHash,
+		&i.Phone,
+		&i.ExpiresAt,
+		&i.UsedAt,
+		&i.Attempts,
+	)
+	return i, err
 }
 
 const phoneCodeFailures = `-- name: PhoneCodeFailures :one
@@ -495,9 +502,9 @@ type SetUserVerifiedPhoneParams struct {
 	UserID uuid.UUID
 }
 
-// SetUserVerifiedPhone persists the just-verified number AND stamps the verified
-// time. Unlike MarkUserPhoneVerified it writes users.phone and re-stamps the time
-// (no COALESCE) — the number just changed, so its prior verification is void.
+// SetUserVerifiedPhone persists the just-verified number and stamps the
+// verified time afresh: the number may have changed, voiding any earlier
+// verification.
 func (q *Queries) SetUserVerifiedPhone(ctx context.Context, arg SetUserVerifiedPhoneParams) error {
 	_, err := q.db.Exec(ctx, setUserVerifiedPhone, arg.Phone, arg.UserID)
 	return err

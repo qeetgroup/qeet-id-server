@@ -1,0 +1,74 @@
+get:
+  operationId: getSignInMethodUsage
+  summary: How the organization's people sign in
+  description: >-
+    Counts of the organization's live accounts by way of signing in: with a
+    password, with a passkey, and per social provider it set up (linked
+    accounts); for each, only is how many have no other way in (no other
+    credential and no linked identity), so would be left out were it turned off.
+    Magic links and email codes aren't counted as a way in; magic_link_enabled
+    says whether they are one. Needs policy.read.
+  tags:
+    - Auth Policy
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: The counts
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - people
+              - password
+              - passkey
+              - social
+              - magic_link_enabled
+            properties:
+              people:
+                type: integer
+              password:
+                type: object
+                required:
+                  - people
+                  - only
+                properties:
+                  people:
+                    type: integer
+                  only:
+                    type: integer
+              passkey:
+                type: object
+                required:
+                  - people
+                  - only
+                properties:
+                  people:
+                    type: integer
+                  only:
+                    type: integer
+              social:
+                type: array
+                items:
+                  type: object
+                  required:
+                    - provider
+                    - linked
+                    - only
+                  properties:
+                    provider:
+                      type: string
+                    linked:
+                      type: integer
+                    only:
+                      type: integer
+              magic_link_enabled:
+                type: boolean
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml

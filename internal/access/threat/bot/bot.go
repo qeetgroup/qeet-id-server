@@ -8,20 +8,16 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/threat/bot/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
@@ -100,9 +96,15 @@ const outcomeWindow = 5 * time.Minute
 
 // Page is a page of detections, newest first, with how many there are.
 type Page struct {
-	Items      []Event `json:"items"`
-	NextCursor string  `json:"next_cursor,omitempty"`
-	Total      int     `json:"total"`
+	paging.Result[Event]
+	Total int `json:"total"`
+}
+
+// Overview is the bot-detection screen's body: a page of detections and the
+// counts above them.
+type Overview struct {
+	*Page
+	Stats *Stats `json:"stats"`
 }
 
 // Stats counts the organization's blocked and challenged requests over the last
@@ -136,10 +138,10 @@ func (s *Service) Evaluate(ctx context.Context, email, ip, ua string) {
 	if err != nil {
 		return // no organization to scope the verdict to
 	}
-	if !row.OrganizationID.Valid {
+	if row.OrganizationID == nil {
 		return
 	}
-	organizationID, userID := uuid.UUID(row.OrganizationID.Bytes), row.ID
+	organizationID, userID := *row.OrganizationID, row.ID
 	settings, err := s.GetSettings(ctx, organizationID)
 	if err != nil || !settings.UACheck {
 		return // UA scoring disabled for this organization
@@ -151,70 +153,42 @@ func (s *Service) Evaluate(ctx context.Context, email, ip, ua string) {
 	case score >= challengeFloor:
 		verdict = "challenged"
 	}
-	// InsertBotEvent left raw: NULLIF($2,'')::inet causes sqlc parameter-type
-	// ambiguity for the inet cast.
-	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.bot_events (organization_id, ip, user_agent, score, verdict, user_id)
-		VALUES ($1, NULLIF($2,'')::inet, $3, $4, $5, $6)
-	`, organizationID, ip, ua, score, verdict, userID); err != nil {
+	if err := s.q.InsertBotEvent(ctx, dbgen.InsertBotEventParams{
+		OrganizationID: organizationID, Ip: ip, UserAgent: ua, Score: float32(score), Verdict: verdict, UserID: &userID,
+	}); err != nil {
 		slog.Warn("record bot event", "err", err)
 	}
 }
 
-// List returns a page of up to limit of the organization's detections (50 when not
-// in 1..200), newest first, after cursor, of verdict when given, and how many
-// there are.
-func (s *Service) List(ctx context.Context, organizationID uuid.UUID, limit int, cursor, verdict string) (*Page, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 50
-	}
-	page := &Page{Items: []Event{}}
-	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM auth.bot_events WHERE organization_id = $1 AND ($2 = '' OR verdict = $2)`,
-		organizationID, verdict).Scan(&page.Total); err != nil {
-		return nil, err
-	}
-	afterTs, afterID := time.Now().Add(time.Hour), uuid.Max
-	if cursor != "" {
-		var err error
-		if afterTs, afterID, err = paging.DecodeTimeUUID(cursor); err != nil {
-			return nil, errs.ErrBadRequest.WithDetail("invalid cursor")
-		}
-	}
-	rows, err := s.pool.Query(ctx, `
-		SELECT b.id, host(b.ip), b.user_agent, b.score, b.verdict, b.created_at, b.user_id, u.email,
-		       COALESCE((
-				SELECT CASE e.action WHEN 'auth.login_succeeded' THEN 'signed_in' ELSE 'failed' END
-				FROM audit.events e
-				WHERE e.organization_id = b.organization_id AND e.actor_user_id = b.user_id
-				  AND e.action IN ('auth.login_succeeded', 'auth.sign_in_failed')
-				  AND e.ip IS NOT DISTINCT FROM b.ip
-				  AND e.created_at >= b.created_at AND e.created_at < b.created_at + $5::interval
-				ORDER BY e.created_at LIMIT 1), 'unknown') AS outcome
-		FROM auth.bot_events b
-		LEFT JOIN account.users u ON u.id = b.user_id
-		WHERE b.organization_id = $1 AND ($2 = '' OR b.verdict = $2) AND (b.created_at, b.id) < ($3, $4)
-		ORDER BY b.created_at DESC, b.id DESC LIMIT $6
-	`, organizationID, verdict, afterTs, afterID, outcomeWindow.String(), limit+1)
+// List returns a page of up to limit of the organization's detections (50 when
+// unset, at most 200), newest first, after the cursor, of verdict when given,
+// and how many there are.
+func (s *Service) List(ctx context.Context, organizationID uuid.UUID, limit int, after paging.Cursor, verdict string) (*Page, error) {
+	limit = paging.Clamp(limit, 50, 200)
+	total, err := s.q.CountBotEvents(ctx, dbgen.CountBotEventsParams{OrganizationID: organizationID, Verdict: verdict})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var e Event
-		if err := rows.Scan(&e.ID, &e.IP, &e.UserAgent, &e.Score, &e.Verdict, &e.CreatedAt, &e.UserID, &e.UserEmail, &e.Outcome); err != nil {
-			return nil, err
-		}
-		page.Items = append(page.Items, e)
+	params := dbgen.ListBotEventsParams{
+		OrganizationID: organizationID, Verdict: verdict, OutcomeWindow: outcomeWindow.String(),
+		Lim: int32(limit + 1), // #nosec G115 -- at most 201
 	}
-	if err := rows.Err(); err != nil {
+	params.BeforeTs, params.BeforeID = after.Before()
+	rows, err := s.q.ListBotEvents(ctx, params)
+	if err != nil {
 		return nil, err
 	}
-	if len(page.Items) > limit {
-		page.Items = page.Items[:limit]
-		last := page.Items[limit-1]
-		page.NextCursor = paging.EncodeTimeUUID(last.CreatedAt, last.ID)
+	items := make([]Event, len(rows))
+	for i, row := range rows {
+		items[i] = Event{
+			ID: row.ID, IP: postgres.NullIfZero(row.Ip), UserAgent: row.UserAgent, Score: float64(row.Score),
+			Verdict: row.Verdict, CreatedAt: row.CreatedAt, UserID: row.UserID, UserEmail: row.UserEmail, Outcome: row.Outcome,
+		}
 	}
-	return page, nil
+	return &Page{
+		Result: paging.Page(paging.Next(items, limit, func(e Event) (time.Time, uuid.UUID) { return e.CreatedAt, e.ID })),
+		Total:  int(total),
+	}, nil
 }
 
 // Stats returns the organization's bot-detection counts.
@@ -286,7 +260,7 @@ func (s *Service) UpdateSettings(ctx context.Context, organizationID uuid.UUID, 
 	}); err != nil {
 		return Settings{}, err
 	}
-	if err := audit.Record(ctx, tx, actor.Event(organizationID, "bot.settings_updated", "tenant", organizationID,
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "bot.settings_updated", "organization", organizationID,
 		map[string]any{"changes": audit.Changes(before.audited(), in.audited()), "settings": in.audited()})); err != nil {
 		return Settings{}, err
 	}
@@ -303,77 +277,4 @@ func (st Settings) audited() map[string]any {
 		"ua_check": st.UACheck, "honeypot": st.Honeypot, "captcha": st.Captcha,
 		"signature": st.Signature, "score_threshold": float32(st.ScoreThreshold),
 	}
-}
-
-// Handler serves the bot detection HTTP API.
-type Handler struct {
-	Service *Service
-}
-
-// Mount registers the bot detection routes on r.
-func (h *Handler) Mount(r chi.Router) {
-	r.Get("/tenants/{tenantID}/security/bots", h.overview)
-	r.Get("/tenants/{tenantID}/security/bots/settings", h.getSettings)
-	r.Put("/tenants/{tenantID}/security/bots/settings", h.putSettings)
-}
-
-func (h *Handler) overview(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := httpx.PathOrganization(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	query := r.URL.Query()
-	limit, _ := strconv.Atoi(query.Get("limit"))
-	verdict := query.Get("verdict")
-	if verdict != "" && verdict != "allowed" && verdict != "challenged" && verdict != "blocked" {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid verdict"))
-		return
-	}
-	page, err := h.Service.List(r.Context(), organizationID, limit, query.Get("cursor"), verdict)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	stats, err := h.Service.Stats(r.Context(), organizationID)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"recent": page.Items, "next_cursor": page.NextCursor, "total": page.Total, "stats": stats,
-	})
-}
-
-func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := httpx.PathOrganization(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	st, err := h.Service.GetSettings(r.Context(), organizationID)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, st)
-}
-
-func (h *Handler) putSettings(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := httpx.PathOrganization(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	var in Settings
-	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	st, err := h.Service.UpdateSettings(r.Context(), organizationID, in, audit.ActorOf(r))
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, st)
 }

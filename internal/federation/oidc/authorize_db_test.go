@@ -3,133 +3,23 @@
 package oidc
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
-	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
-
-const (
-	loginBase  = "https://login.example.test"
-	publicBase = "https://id.example.test"
-)
-
-// provider is the OpenID provider as browsers and applications reach it: the
-// service, a real hosted-login session service, the public routes and the
-// authenticated ones.
-type provider struct {
-	svc      *Service
-	sessions *auth.Service
-	public   http.Handler
-	mount    func(chi.Router)
-}
-
-// newProvider returns the provider wired as production wires it, sign-out
-// notices included.
-func newProvider(t *testing.T) *provider {
-	t.Helper()
-	pool := dbtest.Pool(t)
-	issuer := dbtest.Issuer(t)
-	svc := NewService(pool, issuer)
-	sessions := auth.NewService(pool, user.NewRepository(pool), issuer)
-	sessions.SetSignOutNotifier(svc)
-	h := &Handler{Service: svc, Sessions: sessions, LoginBaseURL: loginBase, PublicBaseURL: publicBase}
-	public := chi.NewRouter()
-	h.MountPublic(public)
-	h.MountBrowser(public)
-	h.MountToken(public)
-	return &provider{svc: svc, sessions: sessions, public: public, mount: h.Mount}
-}
-
-// signIn opens a hosted-login session for userID and returns the browser's
-// cookie and the session's id.
-func (p *provider) signIn(t *testing.T, userID uuid.UUID) (*http.Cookie, uuid.UUID) {
-	t.Helper()
-	ctx := dbtest.Context(t)
-	raw, err := p.sessions.CreateLoginSession(ctx, userID, "192.0.2.1", "test")
-	if err != nil {
-		t.Fatalf("sign in: %v", err)
-	}
-	sessionID, _, err := p.sessions.ResolveLoginSessionWithID(ctx, raw)
-	if err != nil {
-		t.Fatalf("resolve the session: %v", err)
-	}
-	return &http.Cookie{Name: auth.LoginSessionCookie, Value: raw}, sessionID
-}
-
-// asApplication serves the authenticated routes to the bearer of an access
-// token issued to an application, as the API's token middleware would.
-func (p *provider) asApplication(t *testing.T, accessToken string) http.Handler {
-	t.Helper()
-	claims, err := p.svc.issuer.VerifyAccessAnyAudience(accessToken)
-	if err != nil {
-		t.Fatalf("verify the access token: %v", err)
-	}
-	principal := dbtest.Principal(claims.UserID, claims.OrganizationID)
-	principal.Scopes = strings.Fields(claims.Scope)
-	return dbtest.Serve(principal, p.mount)
-}
-
-// browse sends a request as a browser holding cookie (nil for none), with
-// body (when not nil) as JSON.
-func browse(t *testing.T, h http.Handler, method, target string, cookie *http.Cookie, body any) *httptest.ResponseRecorder {
-	t.Helper()
-	var raw []byte
-	if body != nil {
-		var err error
-		if raw, err = json.Marshal(body); err != nil {
-			t.Fatalf("encode the body: %v", err)
-		}
-	}
-	req := httptest.NewRequestWithContext(dbtest.Context(t), method, target, bytes.NewReader(raw))
-	req.Header.Set("Content-Type", "application/json")
-	if cookie != nil {
-		req.AddCookie(cookie)
-	}
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	return rec
-}
-
-// postForm posts form to path, with Basic credentials when user is not
-// empty.
-func postForm(t *testing.T, h http.Handler, path string, form url.Values, user, pass string) *httptest.ResponseRecorder {
-	t.Helper()
-	req := httptest.NewRequestWithContext(dbtest.Context(t), http.MethodPost, path, strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if user != "" {
-		req.SetBasicAuth(user, pass)
-	}
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	return rec
-}
-
-// redirected returns where a 302 sends the browser, without the query, and
-// the query; any other answer fails t.
-func redirected(t *testing.T, rec *httptest.ResponseRecorder) (string, url.Values) {
-	t.Helper()
-	if rec.Code != http.StatusFound {
-		t.Fatalf("want a redirect, got %d %s", rec.Code, rec.Body.String())
-	}
-	return splitURL(t, rec.Header().Get("Location"))
-}
 
 // splitURL returns raw without its query, and the query.
 func splitURL(t *testing.T, raw string) (string, url.Values) {
@@ -178,13 +68,13 @@ func TestBrowserSignInToAnApplication(t *testing.T) {
 
 	var app struct {
 		ClientName     string    `json:"client_name"`
-		OrganizationID uuid.UUID `json:"tenant_id"`
+		OrganizationID uuid.UUID `json:"organization_id"`
 	}
 	dbtest.Decode(t, browse(t, p.public, http.MethodGet, "/oauth/login-context?client_id="+client.ClientID, nil, nil), &app)
 	if app.ClientName != client.Name || app.OrganizationID != organization {
-		t.Errorf("login context %+v, want the application's name and organisation", app)
+		t.Errorf("login context %+v, want the application's name and organization", app)
 	}
-	if rec := browse(t, p.public, http.MethodGet, "/oauth/login-context?client_id=qci_unknown", nil, nil); !strings.Contains(rec.Body.String(), errs.CodeOIDCClientNotFound) {
+	if rec := browse(t, p.public, http.MethodGet, "/oauth/login-context?client_id=qci_unknown", nil, nil); !strings.Contains(rec.Body.String(), CodeClientNotFound) {
 		t.Errorf("login context for an unknown client: %d %s", rec.Code, rec.Body.String())
 	}
 	to, q := redirected(t, browse(t, p.public, http.MethodGet, target, nil, nil))
@@ -198,7 +88,7 @@ func TestBrowserSignInToAnApplication(t *testing.T) {
 	}
 
 	consent := "/oauth/authorize/request?request_id=" + requestID
-	if rec := browse(t, p.public, http.MethodGet, consent, otherBrowser, nil); !strings.Contains(rec.Body.String(), errs.CodeOIDCConsentRequestInvalid) {
+	if rec := browse(t, p.public, http.MethodGet, consent, otherBrowser, nil); !strings.Contains(rec.Body.String(), CodeConsentRequestInvalid) {
 		t.Errorf("another browser read the consent request: %d %s", rec.Code, rec.Body.String())
 	}
 	var shown struct {
@@ -212,7 +102,7 @@ func TestBrowserSignInToAnApplication(t *testing.T) {
 
 	decide := "/oauth/authorize/decision"
 	approve := map[string]any{"request_id": requestID, "approve": true}
-	if rec := browse(t, p.public, http.MethodPost, decide, otherBrowser, approve); !strings.Contains(rec.Body.String(), errs.CodeOIDCConsentRequestInvalid) {
+	if rec := browse(t, p.public, http.MethodPost, decide, otherBrowser, approve); !strings.Contains(rec.Body.String(), CodeConsentRequestInvalid) {
 		t.Errorf("another browser decided the request: %d %s", rec.Code, rec.Body.String())
 	}
 	rec := browse(t, p.public, http.MethodPost, decide, cookie, approve)
@@ -225,12 +115,12 @@ func TestBrowserSignInToAnApplication(t *testing.T) {
 	if rec.Code != http.StatusOK || to != testRedirect || code == "" || q.Get("state") != "st-1" || q.Get("iss") != p.svc.issuer.JWTIssuer() {
 		t.Fatalf("approve: %d %s, want the registered redirect with a code, the state and iss", rec.Code, decided.Redirect)
 	}
-	if rec := browse(t, p.public, http.MethodPost, decide, cookie, approve); !strings.Contains(rec.Body.String(), errs.CodeOIDCConsentRequestInvalid) {
+	if rec := browse(t, p.public, http.MethodPost, decide, cookie, approve); !strings.Contains(rec.Body.String(), CodeConsentRequestInvalid) {
 		t.Errorf("decide the request twice: %d %s", rec.Code, rec.Body.String())
 	}
 
 	form := url.Values{"grant_type": {"authorization_code"}, "code": {code}, "redirect_uri": {testRedirect}, "code_verifier": {verifier}}
-	rec = postForm(t, p.public, "/oauth/token-code", form, client.ClientID, secret)
+	rec = postForm(t, p.public, "/oauth/token", form, client.ClientID, secret)
 	var issued TokenResponse
 	dbtest.Decode(t, rec, &issued)
 	if rec.Code != http.StatusOK || issued.TokenType != "Bearer" || issued.Scope != "openid email" || issued.RefreshToken == "" || issued.ExpiresIn <= 0 {
@@ -242,7 +132,7 @@ func TestBrowserSignInToAnApplication(t *testing.T) {
 	}
 	for claim, want := range map[string]any{
 		"iss": p.svc.issuer.JWTIssuer(), "aud": client.ClientID, "sub": person.ID.String(), "nonce": "n-1",
-		"sid": sessionID.String(), "tenant_id": organization.String(), "email": person.Email, "email_verified": false,
+		"sid": sessionID.String(), "organization_id": organization.String(), "email": person.Email, "email_verified": false,
 	} {
 		if id[claim] != want {
 			t.Errorf("ID token %s = %v, want %v", claim, id[claim], want)
@@ -324,7 +214,7 @@ func TestOrganizationsOwnAccountsSignInWithoutARole(t *testing.T) {
 	}
 	createdCookie, _ := p.signIn(t, created.ID)
 	if n := dbtest.Count(t, `SELECT count(*) FROM rbac.user_roles WHERE organization_id = $1`, organization); n != 0 {
-		t.Fatalf("the organisation's accounts hold %d roles, want none", n)
+		t.Fatalf("the organization's accounts hold %d roles, want none", n)
 	}
 	for name, cookie := range map[string]*http.Cookie{
 		"a self-registered account":           {Name: auth.LoginSessionCookie, Value: registered.RawCookie},
@@ -336,7 +226,7 @@ func TestOrganizationsOwnAccountsSignInWithoutARole(t *testing.T) {
 			continue
 		}
 		form := url.Values{"grant_type": {"authorization_code"}, "code": {q.Get("code")}, "redirect_uri": {testRedirect}, "code_verifier": {verifier}}
-		rec := postForm(t, p.public, "/oauth/token-code", form, client.ClientID, secret)
+		rec := postForm(t, p.public, "/oauth/token", form, client.ClientID, secret)
 		var issued TokenResponse
 		dbtest.Decode(t, rec, &issued)
 		if rec.Code != http.StatusOK || issued.RefreshToken == "" {
@@ -369,15 +259,15 @@ func TestOrganizationsOwnAccountsSignInWithoutARole(t *testing.T) {
 		tokens  *TokenResponse
 		renewal error
 	}{
-		{"a guest whose roles were removed", formerGuest, guestCookie, guestTokens, errs.ErrOIDCUserOrganizationMismatch},
-		{"a suspended account of the organisation", suspended, suspendedCookie, suspendedTokens, errs.ErrAuthAccountSuspended},
+		{"a guest whose roles were removed", formerGuest, guestCookie, guestTokens, ErrUserOrganizationMismatch},
+		{"a suspended account of the organization", suspended, suspendedCookie, suspendedTokens, errs.ErrAuthAccountSuspended},
 	} {
 		if to, q, _ := p.authorizeInBrowser(t, tc.cookie, client.ClientID); q.Get("code") != "" {
 			t.Errorf("%s signed in to the application: sent to %s %v", tc.name, to, q)
 		}
 		_, challenge, _ := codes.URLToken()
-		if _, _, err := p.svc.Authorize(ctx, tc.account.ID, client.ClientID, testRedirect, []string{"openid"}, "n-1", challenge, "S256"); !errors.Is(err, errs.ErrOIDCUserOrganizationMismatch) {
-			t.Errorf("%s authorized: %v, want %v", tc.name, err, errs.ErrOIDCUserOrganizationMismatch)
+		if _, _, err := p.svc.Authorize(ctx, tc.account.ID, client.ClientID, testRedirect, []string{"openid"}, "n-1", challenge, "S256"); !errors.Is(err, ErrUserOrganizationMismatch) {
+			t.Errorf("%s authorized: %v, want %v", tc.name, err, ErrUserOrganizationMismatch)
 		}
 		if out, err := p.svc.Introspect(ctx, client.ClientID, secret, tc.tokens.AccessToken, ""); err != nil || out["active"] == true {
 			t.Errorf("%s's access token introspects %v, %v; want inactive", tc.name, out, err)
@@ -445,7 +335,7 @@ func TestAuthorizeRemembersConsentAndHonoursPrompt(t *testing.T) {
 	}
 	tampered := map[string]any{"request_id": q.Get("request_id"), "approve": true, "redirect_uri": "https://evil.example.test/callback"}
 	for _, body := range []map[string]any{tampered, {"request_id": q.Get("request_id"), "approve": true}} {
-		if rec := browse(t, p.public, http.MethodPost, "/oauth/authorize/decision", cookie, body); !strings.Contains(rec.Body.String(), errs.CodeOIDCConsentRequestInvalid) {
+		if rec := browse(t, p.public, http.MethodPost, "/oauth/authorize/decision", cookie, body); !strings.Contains(rec.Body.String(), CodeConsentRequestInvalid) {
 			t.Errorf("decide %v after a tampered decision: %d %s, want it refused", body, rec.Code, rec.Body.String())
 		}
 	}
@@ -495,7 +385,7 @@ func TestAuthorizeAnswersOnlyRegisteredRedirects(t *testing.T) {
 		{"no PKCE challenge", []string{"code_challenge", ""}, cookie, "invalid_request"},
 		{"a plain PKCE challenge", []string{"code_challenge_method", "plain"}, cookie, "invalid_request"},
 		{"an unregistered resource", []string{"resource", "https://api.example.test"}, cookie, "invalid_target"},
-		{"a person of another organisation", nil, outsiderCookie, "access_denied"},
+		{"a person of another organization", nil, outsiderCookie, "access_denied"},
 	} {
 		target, _ := authorizeURL(t, client.ClientID, append(tc.params, "state", "s-1")...)
 		to, q := redirected(t, browse(t, p.public, http.MethodGet, target, tc.cookie, nil))
@@ -561,8 +451,8 @@ func TestLoopbackRedirectOnAnyPort(t *testing.T) {
 	if to != asked || q.Get("code") == "" {
 		t.Fatalf("authorize on port 49152: sent to %s %v, want a code at that port", to, q)
 	}
-	if _, err := p.svc.ExchangeCode(ctx, native.ClientID, "", q.Get("code"), "http://127.0.0.1:49153/callback", verifier, ""); !errors.Is(err, errs.ErrOIDCRedirectURIMismatch) {
-		t.Errorf("redeem at another port: %v, want %v", err, errs.ErrOIDCRedirectURIMismatch)
+	if _, err := p.svc.ExchangeCode(ctx, native.ClientID, "", q.Get("code"), "http://127.0.0.1:49153/callback", verifier, ""); !errors.Is(err, ErrRedirectURIMismatch) {
+		t.Errorf("redeem at another port: %v, want %v", err, ErrRedirectURIMismatch)
 	}
 	if issued, err := p.svc.ExchangeCode(ctx, native.ClientID, "", q.Get("code"), asked, verifier, ""); err != nil || issued.AccessToken == "" {
 		t.Errorf("redeem at the port it asked for: %+v, %v", issued, err)
@@ -628,8 +518,8 @@ func TestOfflineAccessControlsRefreshTokens(t *testing.T) {
 		}
 	}
 	_, challenge, _ := codes.URLToken()
-	if _, _, err := p.svc.Authorize(ctx, person.ID, codeOnly.ClientID, testRedirect, []string{"openid", "offline_access"}, "", challenge, "S256"); !errors.Is(err, errs.ErrOIDCScopeNotPermitted) {
-		t.Errorf("offline_access from an application not registered for refresh: %v, want %v", err, errs.ErrOIDCScopeNotPermitted)
+	if _, _, err := p.svc.Authorize(ctx, person.ID, codeOnly.ClientID, testRedirect, []string{"openid", "offline_access"}, "", challenge, "S256"); !errors.Is(err, ErrScopeNotPermitted) {
+		t.Errorf("offline_access from an application not registered for refresh: %v, want %v", err, ErrScopeNotPermitted)
 	}
 
 	device, _ := registerClientWith(t, p.svc, CreateClientInput{
@@ -643,56 +533,12 @@ func TestOfflineAccessControlsRefreshTokens(t *testing.T) {
 		if rec := browse(t, p.public, http.MethodPost, "/oauth/device/decision", cookie, map[string]any{"user_code": started.UserCode, "approve": true}); rec.Code != http.StatusOK {
 			t.Fatalf("device scope %q: approve: %d %s", scope, rec.Code, rec.Body.String())
 		}
-		rec = postForm(t, p.public, "/oauth/token-code", url.Values{"grant_type": {grantTypeDeviceCode}, "client_id": {device.ClientID}, "device_code": {started.DeviceCode}}, "", "")
+		rec = postForm(t, p.public, "/oauth/token", url.Values{"grant_type": {grantTypeDeviceCode}, "client_id": {device.ClientID}, "device_code": {started.DeviceCode}}, "", "")
 		var issued TokenResponse
 		dbtest.Decode(t, rec, &issued)
 		if rec.Code != http.StatusOK || (issued.RefreshToken != "") != refresh {
 			t.Errorf("device scope %q: %d %s, want a refresh token %v", scope, rec.Code, rec.Body.String(), refresh)
 		}
-	}
-}
-
-// TestRefreshedIDTokenKeepsTheSignIn checks that an ID token issued again on a
-// refresh, and on the refresh after it, reports the original sign-in's
-// auth_time and hosted-login session (OIDC Core 12.2), and no nonce.
-func TestRefreshedIDTokenKeepsTheSignIn(t *testing.T) {
-	ctx := dbtest.Context(t)
-	p := newProvider(t)
-	organization := dbtest.Organization(t)
-	person := dbtest.User(t, organization, organization)
-	client, secret := registerClient(t, p.svc, organization)
-	cookie, sessionID := p.signIn(t, person.ID)
-	if err := p.svc.GrantConsent(ctx, person.ID, client.ClientID, []string{"openid"}); err != nil {
-		t.Fatalf("consent: %v", err)
-	}
-	target, verifier := authorizeURL(t, client.ClientID)
-	_, q := redirected(t, browse(t, p.public, http.MethodGet, target, cookie, nil))
-	issued, err := p.svc.ExchangeCode(ctx, client.ClientID, secret, q.Get("code"), testRedirect, verifier, "")
-	if err != nil {
-		t.Fatalf("redeem the code: %v", err)
-	}
-	first, err := p.svc.issuer.VerifySigned(issued.IDToken)
-	if err != nil || first["auth_time"] == nil || first["sid"] != sessionID.String() {
-		t.Fatalf("first ID token %v, %v; want auth_time and the session", first, err)
-	}
-
-	refresh := issued.RefreshToken
-	for i := 1; i <= 2; i++ {
-		renewed, err := p.svc.RefreshToken(ctx, client.ClientID, secret, refresh, "")
-		if err != nil {
-			t.Fatalf("refresh %d: %v", i, err)
-		}
-		id, err := p.svc.issuer.VerifySigned(renewed.IDToken)
-		if err != nil {
-			t.Fatalf("refresh %d: verify the ID token: %v", i, err)
-		}
-		if id["auth_time"] != first["auth_time"] || id["sid"] != first["sid"] || id["sub"] != first["sub"] || id["aud"] != first["aud"] {
-			t.Errorf("refresh %d: ID token %v, want the first one's auth_time, sid, sub and aud (%v)", i, id, first)
-		}
-		if _, ok := id["nonce"]; ok {
-			t.Errorf("refresh %d: the ID token carries a nonce", i)
-		}
-		refresh = renewed.RefreshToken
 	}
 }
 
@@ -710,147 +556,5 @@ func TestAuthorizeRefusesScopesBeforeConsent(t *testing.T) {
 	to, q := redirected(t, browse(t, p.public, http.MethodGet, target, cookie, nil))
 	if to != testRedirect || q.Get("error") != "invalid_scope" {
 		t.Errorf("a scope the application may not have: sent to %s %v, want invalid_scope", to, q)
-	}
-}
-
-// TestDiscoveryNamesTheIssuerTokensCarry checks that both metadata documents
-// name as issuer the iss of the authorization response and of the ID token,
-// which relying parties compare exactly.
-func TestDiscoveryNamesTheIssuerTokensCarry(t *testing.T) {
-	ctx := dbtest.Context(t)
-	p := newProvider(t)
-	organization := dbtest.Organization(t)
-	person := dbtest.User(t, organization, organization)
-	client, secret := registerClient(t, p.svc, organization)
-	cookie, _ := p.signIn(t, person.ID)
-	if err := p.svc.GrantConsent(ctx, person.ID, client.ClientID, []string{"openid"}); err != nil {
-		t.Fatalf("consent: %v", err)
-	}
-	target, verifier := authorizeURL(t, client.ClientID)
-	_, q := redirected(t, browse(t, p.public, http.MethodGet, target, cookie, nil))
-	issued, err := p.svc.ExchangeCode(ctx, client.ClientID, secret, q.Get("code"), testRedirect, verifier, "")
-	if err != nil {
-		t.Fatalf("redeem the code: %v", err)
-	}
-	id, err := p.svc.issuer.VerifySigned(issued.IDToken)
-	if err != nil {
-		t.Fatalf("verify the ID token: %v", err)
-	}
-
-	for _, path := range []string{"/.well-known/openid-configuration", "/.well-known/oauth-authorization-server"} {
-		var doc map[string]any
-		dbtest.Decode(t, browse(t, p.public, http.MethodGet, path, nil, nil), &doc)
-		if doc["issuer"] != q.Get("iss") || doc["issuer"] != id["iss"] {
-			t.Errorf("%s issuer %v; the authorization response says %q and the ID token %v", path, doc["issuer"], q.Get("iss"), id["iss"])
-		}
-	}
-}
-
-// TestCodeRedemptionRules checks that a code redeems only for the application
-// it was issued to, at its redirect_uri, before it expires and while the
-// account is active, and that a PKCE exemption waives the proof key only for
-// a confidential application and only while it lasts.
-func TestCodeRedemptionRules(t *testing.T) {
-	ctx := dbtest.Context(t)
-	pool := dbtest.Pool(t)
-	svc := NewService(pool, dbtest.Issuer(t))
-	organization := dbtest.Organization(t)
-	person := dbtest.User(t, organization, organization)
-	client, secret := registerClient(t, svc, organization)
-	sibling, siblingSecret := registerClient(t, svc, organization)
-	public, _ := registerClientWith(t, svc, CreateClientInput{OrganizationID: organization, Type: "public"})
-	authorize := func(clientID string) (string, string) {
-		t.Helper()
-		verifier, challenge, _ := codes.URLToken()
-		code, _, err := svc.Authorize(ctx, person.ID, clientID, testRedirect, []string{"openid"}, "n-1", challenge, "S256")
-		if err != nil {
-			t.Fatalf("authorize: %v", err)
-		}
-		return code, verifier
-	}
-
-	code, verifier := authorize(client.ClientID)
-	if _, err := svc.ExchangeCode(ctx, sibling.ClientID, siblingSecret, code, testRedirect, verifier, ""); !errors.Is(err, errs.ErrOIDCAuthCodeInvalid) {
-		t.Errorf("redeem by another application: %v, want %v", err, errs.ErrOIDCAuthCodeInvalid)
-	}
-	if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, testRedirect+"/other", verifier, ""); !errors.Is(err, errs.ErrOIDCRedirectURIMismatch) {
-		t.Errorf("redeem at another redirect_uri: %v, want %v", err, errs.ErrOIDCRedirectURIMismatch)
-	}
-	if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, testRedirect, verifier, ""); err != nil {
-		t.Errorf("redeem after the refused attempts: %v", err)
-	}
-
-	code, verifier = authorize(client.ClientID)
-	if _, err := pool.Exec(ctx, `UPDATE auth.oidc_authorization_codes SET expires_at = NOW() - INTERVAL '1 second'
-		WHERE organization_id = $1 AND code_hash = $2`, organization, codes.Hash(code)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, testRedirect, verifier, ""); !errors.Is(err, errs.ErrOIDCAuthCodeExpired) {
-		t.Errorf("redeem an expired code: %v, want %v", err, errs.ErrOIDCAuthCodeExpired)
-	}
-
-	code, verifier = authorize(client.ClientID)
-	setStatus := func(status string) {
-		t.Helper()
-		if _, err := pool.Exec(ctx, `UPDATE account.users SET status = $2 WHERE organization_id = $1 AND id = $3`, organization, status, person.ID); err != nil {
-			t.Fatal(err)
-		}
-	}
-	setStatus("suspended")
-	if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, testRedirect, verifier, ""); !errors.Is(err, errs.ErrAuthAccountSuspended) {
-		t.Errorf("redeem for a suspended account: %v, want %v", err, errs.ErrAuthAccountSuspended)
-	}
-	setStatus("active")
-	if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, testRedirect, verifier, ""); !errors.Is(err, errs.ErrOIDCAuthCodeUsed) {
-		t.Errorf("redeem again once the account is back: %v, want %v (the code is spent)", err, errs.ErrOIDCAuthCodeUsed)
-	}
-
-	code, verifier = authorize(public.ClientID)
-	if issued, err := svc.ExchangeCode(ctx, public.ClientID, "", code, testRedirect, verifier, ""); err != nil || issued.AccessToken == "" {
-		t.Errorf("a public application redeems with its verifier alone: %+v, %v", issued, err)
-	}
-
-	exemption := func(c *Client, until *time.Time) error {
-		t.Helper()
-		tx, err := pool.Begin(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer tx.Rollback(ctx)
-		if _, err := svc.UpdateClient(ctx, tx, organization, c.ID, UpdateClientInput{PKCEExemptUntil: OptionalTime{Set: true, At: until}}); err != nil {
-			return err
-		}
-		return tx.Commit(ctx)
-	}
-	soon, tooLate := time.Now().Add(time.Hour), time.Now().Add(pkceExemptionMax+time.Hour)
-	if err := exemption(public, &soon); !errors.Is(err, errs.ErrOIDCPKCEExemptionInvalid) {
-		t.Errorf("exempt a public application: %v, want %v", err, errs.ErrOIDCPKCEExemptionInvalid)
-	}
-	if err := exemption(client, &tooLate); !errors.Is(err, errs.ErrOIDCPKCEExemptionInvalid) {
-		t.Errorf("exempt for longer than allowed: %v, want %v", err, errs.ErrOIDCPKCEExemptionInvalid)
-	}
-	if _, _, err := svc.Authorize(ctx, person.ID, public.ClientID, testRedirect, []string{"openid"}, "n-1", "", ""); !errors.Is(err, errs.ErrOIDCCodeChallengeRequired) {
-		t.Errorf("a public application without a challenge: %v, want %v", err, errs.ErrOIDCCodeChallengeRequired)
-	}
-	if err := exemption(client, &soon); err != nil {
-		t.Fatalf("exempt the confidential application: %v", err)
-	}
-	unproved := func() string {
-		t.Helper()
-		code, _, err := svc.Authorize(ctx, person.ID, client.ClientID, testRedirect, []string{"openid"}, "", "", "")
-		if err != nil {
-			t.Fatalf("authorize while exempt: %v", err)
-		}
-		return code
-	}
-	if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, unproved(), testRedirect, "", ""); err != nil {
-		t.Errorf("redeem an unproved code while exempt: %v", err)
-	}
-	code = unproved()
-	if err := exemption(client, nil); err != nil {
-		t.Fatalf("end the exemption: %v", err)
-	}
-	if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, testRedirect, "", ""); !errors.Is(err, errs.ErrOIDCCodeChallengeRequired) {
-		t.Errorf("redeem an unproved code after the exemption ended: %v, want %v", err, errs.ErrOIDCCodeChallengeRequired)
 	}
 }

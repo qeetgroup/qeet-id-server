@@ -118,7 +118,7 @@ func newRateLimits(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Po
 	}
 	return rateLimits{
 		store:        rlStore,
-		organization: newOrganizationLim(organizationLimitDefault, "tenant"),
+		organization: newOrganizationLim(organizationLimitDefault, "organization"),
 		user:         newOrganizationLim(userLimitDefault, "user"),
 		apiKey:       newOrganizationLim(apiKeyLimitDefault, "api_key"),
 		magicAddress: ratelimit.NewWithStore(magicStore, magicAddressLimit.Rate, magicAddressLimit.Capacity),

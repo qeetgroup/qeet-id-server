@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const activeSuppression = `-- name: ActiveSuppression :one
@@ -21,7 +20,7 @@ WHERE address_hash = $1 AND cleared_at IS NULL
 
 type ActiveSuppressionRow struct {
 	ID             uuid.UUID
-	OrganizationID uuid.NullUUID
+	OrganizationID *uuid.UUID
 	Reason         string
 	Detail         string
 	CreatedAt      time.Time
@@ -48,9 +47,9 @@ RETURNING address_hint, reason
 `
 
 type ClearSuppressionParams struct {
-	ClearedBy      uuid.NullUUID
+	ClearedBy      *uuid.UUID
 	ID             uuid.UUID
-	OrganizationID uuid.NullUUID
+	OrganizationID *uuid.UUID
 }
 
 type ClearSuppressionRow struct {
@@ -94,7 +93,7 @@ RETURNING id
 `
 
 type InsertMessageParams struct {
-	OrganizationID    uuid.NullUUID
+	OrganizationID    *uuid.UUID
 	ToHash            string
 	ToHint            string
 	Template          string
@@ -132,10 +131,10 @@ LIMIT $5
 `
 
 type ListMessagesToParams struct {
-	OrganizationID uuid.NullUUID
+	OrganizationID *uuid.UUID
 	ToHash         string
-	BeforeTs       pgtype.Timestamptz
-	BeforeID       uuid.NullUUID
+	BeforeTs       *time.Time
+	BeforeID       *uuid.UUID
 	Lim            int32
 }
 
@@ -192,9 +191,9 @@ LIMIT $4
 `
 
 type ListSuppressionsParams struct {
-	OrganizationID uuid.NullUUID
-	BeforeTs       pgtype.Timestamptz
-	BeforeID       uuid.NullUUID
+	OrganizationID *uuid.UUID
+	BeforeTs       *time.Time
+	BeforeID       *uuid.UUID
 	Lim            int32
 }
 
@@ -250,7 +249,7 @@ type MessageByProviderIDParams struct {
 
 type MessageByProviderIDRow struct {
 	ID             uuid.UUID
-	OrganizationID uuid.NullUUID
+	OrganizationID *uuid.UUID
 	Template       string
 	Status         string
 }
@@ -291,12 +290,12 @@ ON CONFLICT (address_hash) WHERE cleared_at IS NULL DO NOTHING
 `
 
 type SuppressParams struct {
-	OrganizationID uuid.NullUUID
+	OrganizationID *uuid.UUID
 	AddressHash    string
 	AddressHint    string
 	Reason         string
 	Detail         string
-	MessageID      uuid.NullUUID
+	MessageID      *uuid.UUID
 }
 
 // A second hard bounce or complaint for an address already suppressed keeps

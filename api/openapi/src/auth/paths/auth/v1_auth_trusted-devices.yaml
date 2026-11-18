@@ -2,9 +2,9 @@ get:
   operationId: listMyTrustedDevices
   summary: List my remembered devices
   description: >-
-    Lists the caller's own remembered devices, in every organisation, newest
+    Lists the caller's own remembered devices, in every organization, newest
     first: each device skips the second factor at sign-in until it expires or is
-    forgotten. A device is remembered for its organisation's
+    forgotten. A device is remembered for its organization's
     remember_device_days after the sign-in that remembered it, and is forgotten
     when its owner changes their password, signs out everywhere, or has their
     factors reset.
@@ -30,12 +30,12 @@ get:
                     id:
                       type: string
                       format: uuid
-                    tenant_id:
+                    organization_id:
                       type:
                         - string
                         - 'null'
                       format: uuid
-                      description: The organisation the device was remembered in.
+                      description: The organization the device was remembered in.
                     device:
                       type: string
                       description: >-

@@ -29,14 +29,14 @@ const (
 	ReasonPasswordChanged         = "password_changed"          // other sessions end; the current one stays
 	ReasonPasswordReset           = "password_reset"            // every session ends
 	ReasonAdminPasswordSet        = "admin_password_set"        // an administrator set the password
-	ReasonOrganizationSwitch      = "tenant_switch"             // replaced by a session in another organization
+	ReasonOrganizationSwitch      = "organization_switch"       // replaced by a session in another organization
 	ReasonSuspended               = "suspended"                 // the account was suspended
 	ReasonDeprovisioned           = "deprovisioned"             // SCIM deactivated the account
 	ReasonReactivated             = "reactivated"               // sessions from before the suspension stay ended
 	ReasonDeleted                 = "deleted"                   // the account was deleted
 	ReasonRemovedFromOrganization = "removed_from_organization" // the user was removed from the organization
-	ReasonOrganizationSuspended   = "tenant_suspended"          // the session's organization was suspended
-	ReasonOrganizationDeleted     = "tenant_deleted"            // the session's organization was deleted
+	ReasonOrganizationSuspended   = "organization_suspended"    // the session's organization was suspended
+	ReasonOrganizationDeleted     = "organization_deleted"      // the session's organization was deleted
 	ReasonExpired                 = "expired"                   // all refresh tokens expired; sent at cleanup
 	ReasonSessionLimit            = "session_limit"             // ended to stay within the session limit
 )
@@ -105,12 +105,12 @@ func (s *Signaller) queue(ctx context.Context, tx pgx.Tx, reason string, session
 			destinations = ds
 		}
 		payload := map[string]any{
-			"event_id":   uuid.New(),
-			"user_id":    sess.UserID,
-			"session_id": sess.ID,
-			"tenant_id":  organization,
-			"reason":     reason,
-			"revoked_at": now,
+			"event_id":        uuid.New(),
+			"user_id":         sess.UserID,
+			"session_id":      sess.ID,
+			"organization_id": organization,
+			"reason":          reason,
+			"revoked_at":      now,
 		}
 		for _, tid := range destinations {
 			if err := s.enqueue(ctx, tx, tid, EventType, payload); err != nil {

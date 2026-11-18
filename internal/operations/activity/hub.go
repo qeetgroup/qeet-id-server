@@ -109,10 +109,10 @@ func (h *Hub) dispatch(msg *nats.Msg) {
 		return
 	}
 
-	// Events without a tenant_id, such as platform system events, have no
+	// Events without an organization_id, such as platform system events, have no
 	// subscribers.
 	var tip struct {
-		OrganizationID *uuid.UUID `json:"tenant_id"`
+		OrganizationID *uuid.UUID `json:"organization_id"`
 	}
 	if err := json.Unmarshal(msg.Data, &tip); err != nil || tip.OrganizationID == nil {
 		return
@@ -139,7 +139,7 @@ func (h *Hub) fanOut(organizationID uuid.UUID, ev ActivityEvent) {
 			s.lostOnce.Do(func() {
 				close(s.lost)
 				slog.Warn("activity hub: subscriber fell behind; its stream reconnects",
-					"tenant_id", organizationID, "event_type", ev.Type)
+					"organization_id", organizationID, "event_type", ev.Type)
 			})
 		}
 	}

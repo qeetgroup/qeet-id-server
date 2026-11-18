@@ -17,12 +17,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/accessrequest/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/notification"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/strutil"
 )
 
 const (
@@ -110,11 +112,6 @@ type Approvers interface {
 	UsersWithPermission(ctx context.Context, organizationID uuid.UUID, permKey string) ([]uuid.UUID, error)
 }
 
-// Notifier puts a line in someone's in-app inbox (notification.Service).
-type Notifier interface {
-	Notify(ctx context.Context, organizationID, userID uuid.UUID, kind, title, description, href string) error
-}
-
 // PhoneNotifier tells someone's linked phones (Qeet ID on the phone) about
 // something waiting for them. Optional.
 type PhoneNotifier interface {
@@ -127,7 +124,7 @@ type Service struct {
 	q         *dbgen.Queries
 	roles     RoleGranter
 	approvers Approvers
-	notifier  Notifier
+	notifier  notification.Notifier
 	phones    PhoneNotifier
 	now       func() time.Time
 }
@@ -138,7 +135,7 @@ func NewService(pool *pgxpool.Pool, roles RoleGranter, approvers Approvers) *Ser
 }
 
 // SetNotifier sets where in-app notifications go.
-func (s *Service) SetNotifier(n Notifier) { s.notifier = n }
+func (s *Service) SetNotifier(n notification.Notifier) { s.notifier = n }
 
 // SetPhoneNotifier sets how linked phones are told.
 func (s *Service) SetPhoneNotifier(p PhoneNotifier) { s.phones = p }
@@ -186,7 +183,7 @@ func (s *Service) Create(ctx context.Context, organizationID, requesterID uuid.U
 		return nil, err
 	}
 	if held {
-		return nil, errs.ErrAccessRequestRoleHeld
+		return nil, ErrRoleHeld
 	}
 
 	tx, err := s.pool.Begin(ctx)
@@ -201,7 +198,7 @@ func (s *Service) Create(ctx context.Context, organizationID, requesterID uuid.U
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return nil, errs.ErrAccessRequestPending
+			return nil, ErrPending
 		}
 		return nil, err
 	}
@@ -242,7 +239,7 @@ func (s *Service) tellApprovers(ctx context.Context, organizationID uuid.UUID, r
 		s.notify(ctx, organizationID, id, "info", title, req.Reason)
 		if s.phones != nil {
 			s.phones.NotifyPhones(ctx, id, "Access request", title,
-				map[string]string{"kind": "access_request", "access_request_id": req.ID.String(), "tenant_id": organizationID.String()})
+				map[string]string{"kind": "access_request", "access_request_id": req.ID.String(), "organization_id": organizationID.String()})
 		}
 	}
 }
@@ -278,9 +275,7 @@ func (s *Service) Get(ctx context.Context, organizationID, id uuid.UUID) (*Acces
 // List returns up to limit of organizationID's requests, newest first; status, when
 // not empty, keeps only those with it.
 func (s *Service) List(ctx context.Context, organizationID uuid.UUID, status string, limit int) ([]AccessRequest, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 100
-	}
+	limit = paging.Clamp(limit, 100, 200)
 	var st *string
 	if status != "" {
 		switch status {
@@ -290,7 +285,7 @@ func (s *Service) List(ctx context.Context, organizationID uuid.UUID, status str
 		}
 		st = &status
 	}
-	rows, err := s.q.ListAccessRequests(ctx, dbgen.ListAccessRequestsParams{OrganizationID: organizationID, Status: st, RowLimit: int32(limit)})
+	rows, err := s.q.ListAccessRequests(ctx, dbgen.ListAccessRequestsParams{OrganizationID: organizationID, Status: st, RowLimit: int32(limit)}) // #nosec G115 -- clamped to at most 200
 	if err != nil {
 		return nil, err
 	}
@@ -353,7 +348,7 @@ func (s *Service) Cancel(ctx context.Context, organizationID, requesterID, id uu
 		if gerr != nil {
 			return gerr
 		}
-		return errs.ErrAccessRequestClosed
+		return ErrClosed
 	}
 	if err := audit.Record(ctx, tx, actor.Event(organizationID, "access_request.cancelled", "access_request", id, nil)); err != nil {
 		return err
@@ -384,7 +379,7 @@ func (s *Service) Approve(ctx context.Context, organizationID, id, approverID uu
 		return nil, err
 	}
 	if row.RequesterID == approverID {
-		return nil, errs.ErrAccessRequestOwn
+		return nil, ErrOwn
 	}
 	held, err := qtx.HoldsRole(ctx, dbgen.HoldsRoleParams{UserID: row.RequesterID, OrganizationID: organizationID, RoleID: row.RoleID})
 	if err != nil {
@@ -399,19 +394,19 @@ func (s *Service) Approve(ctx context.Context, organizationID, id, approverID uu
 			return nil, err
 		}
 	}
-	var ends pgtype.Timestamptz
+	var ends *time.Time
 	if row.DurationHours != nil && !held {
-		ends = pgtype.Timestamptz{Time: s.now().Add(time.Duration(*row.DurationHours) * time.Hour), Valid: true}
+		ends = new(s.now().Add(time.Duration(*row.DurationHours) * time.Hour))
 	}
 	if err := qtx.ApproveAccessRequest(ctx, dbgen.ApproveAccessRequestParams{
-		ID: id, OrganizationID: organizationID, DecidedBy: pgtype.UUID{Bytes: approverID, Valid: true},
-		DecisionNote: textOrNil(note), Granted: !held, AccessEndsAt: ends,
+		ID: id, OrganizationID: organizationID, DecidedBy: &approverID,
+		DecisionNote: strutil.NilIfEmpty(note), Granted: !held, AccessEndsAt: ends,
 	}); err != nil {
 		return nil, err
 	}
 	meta := map[string]any{"role_id": row.RoleID, "requester_id": row.RequesterID, "already_held": held}
-	if ends.Valid {
-		meta["access_ends_at"] = ends.Time
+	if ends != nil {
+		meta["access_ends_at"] = *ends
 	}
 	if note != "" {
 		meta["note"] = note
@@ -444,7 +439,7 @@ func (s *Service) Deny(ctx context.Context, organizationID, id, approverID uuid.
 		return nil, err
 	}
 	if note == "" {
-		return nil, errs.ErrAccessRequestNoteNeeded
+		return nil, ErrNoteNeeded
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -457,10 +452,10 @@ func (s *Service) Deny(ctx context.Context, organizationID, id, approverID uuid.
 		return nil, err
 	}
 	if row.RequesterID == approverID {
-		return nil, errs.ErrAccessRequestOwn
+		return nil, ErrOwn
 	}
 	if err := qtx.DenyAccessRequest(ctx, dbgen.DenyAccessRequestParams{
-		ID: id, OrganizationID: organizationID, DecidedBy: pgtype.UUID{Bytes: approverID, Valid: true}, DecisionNote: &note,
+		ID: id, OrganizationID: organizationID, DecidedBy: &approverID, DecisionNote: &note,
 	}); err != nil {
 		return nil, err
 	}
@@ -486,13 +481,13 @@ func (s *Service) lockPending(ctx context.Context, qtx *dbgen.Queries, organizat
 		if _, gerr := qtx.GetAccessRequest(ctx, dbgen.GetAccessRequestParams{ID: id, OrganizationID: organizationID}); errors.Is(gerr, pgx.ErrNoRows) {
 			return row, errs.ErrNotFound
 		}
-		return row, errs.ErrAccessRequestClosed
+		return row, ErrClosed
 	}
 	if err != nil {
 		return row, err
 	}
 	if !s.now().Before(row.ExpiresAt) {
-		return row, errs.ErrAccessRequestClosed
+		return row, ErrClosed
 	}
 	return row, nil
 }
@@ -544,34 +539,9 @@ func (s *Service) Sweep(ctx context.Context) (SweepResult, error) {
 
 // recordSystem audits something the scheduler did, in its own transaction.
 func (s *Service) recordSystem(ctx context.Context, organizationID uuid.UUID, action string, id uuid.UUID, meta map[string]any) {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		slog.ErrorContext(ctx, "access request: audit", "err", err)
-		return
-	}
-	defer tx.Rollback(ctx)
-	if err := audit.Record(ctx, tx, audit.Actor{Type: "system"}.Event(organizationID, action, "access_request", id, meta)); err != nil {
-		slog.ErrorContext(ctx, "access request: audit", "err", err)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := audit.RecordAlone(ctx, s.pool, audit.Actor{Type: "system"}.Event(organizationID, action, "access_request", id, meta)); err != nil {
 		slog.ErrorContext(ctx, "access request: audit", "err", err)
 	}
-}
-
-func textOrNil(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
-}
-
-func timePtr(t pgtype.Timestamptz) *time.Time {
-	if !t.Valid {
-		return nil
-	}
-	v := t.Time
-	return &v
 }
 
 func toRequest(r dbgen.GetAccessRequestRow) *AccessRequest {
@@ -583,16 +553,16 @@ func toRequest(r dbgen.GetAccessRequestRow) *AccessRequest {
 		Status:       r.Status,
 		CreatedAt:    r.CreatedAt,
 		ExpiresAt:    r.ExpiresAt,
-		DecidedAt:    timePtr(r.DecidedAt),
-		AccessEndsAt: timePtr(r.AccessEndsAt),
-		EndedAt:      timePtr(r.EndedAt),
+		DecidedAt:    r.DecidedAt,
+		AccessEndsAt: r.AccessEndsAt,
+		EndedAt:      r.EndedAt,
 	}
 	if r.DurationHours != nil {
 		h := int(*r.DurationHours)
 		out.DurationHours = &h
 	}
-	if r.DecidedBy.Valid {
-		out.DecidedBy = &Person{ID: r.DecidedBy.Bytes, Email: r.DeciderEmail, Name: r.DeciderName}
+	if r.DecidedBy != nil {
+		out.DecidedBy = &Person{ID: *r.DecidedBy, Email: r.DeciderEmail, Name: r.DeciderName}
 	}
 	if r.DecisionNote != nil {
 		out.DecisionNote = *r.DecisionNote

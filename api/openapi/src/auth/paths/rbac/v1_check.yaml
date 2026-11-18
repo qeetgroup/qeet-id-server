@@ -1,7 +1,7 @@
 get:
   operationId: checkPermission
   description: >-
-    Evaluates whether a user may use a permission in a tenant, composing every
+    Evaluates whether a user may use a permission in an organization, composing every
     model: an ABAC deny policy (resource type and action read from the key, so
     doc:write is resource doc, action write) refuses and stops; otherwise a role
     granting the permission, or an ABAC allow policy, permits; otherwise it is
@@ -21,7 +21,7 @@ get:
         type: string
         format: uuid
     - in: query
-      name: tenant_id
+      name: organization_id
       required: true
       schema:
         type: string
@@ -89,7 +89,7 @@ get:
                   type: string
                 description: >-
                   With explain=true. Each step in order, prefixed with its model
-                  (tenant, abac, rbac, rebac, none).
+                  (organization, abac, rbac, rebac, none).
     '400':
       $ref: ../../../shared/responses/BadRequest.yaml
     '401':

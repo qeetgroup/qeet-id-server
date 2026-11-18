@@ -52,28 +52,28 @@ post:
     IPv6 /64). Reaching the threshold within the window locks the account for
     that network for the lock duration, so a stranger on another network cannot
     lock the owner out. The threshold, window and duration are those of the
-    tenant of the OAuth client named by `client_id` (its authentication policy),
+    organization of the OAuth client named by `client_id` (its authentication policy),
     or the platform defaults when no client is named. Failures from any mix of
-    networks also lock the account everywhere at a looser cap (the threshold
-    times LOGIN_LOCKOUT_ACCOUNT_MULTIPLIER), and a source network that fails
-    against too many distinct accounts (LOGIN_SPRAY_ACCOUNTS within
-    LOGIN_SPRAY_WINDOW) is refused password sign-in for LOGIN_SPRAY_BLOCK. An
+    networks also lock the account everywhere at a looser cap (4 times the
+    platform threshold), and a source network that fails against too many
+    distinct accounts (30 within 15 minutes) is refused password sign-in for 15
+    minutes. An
     address with no account is counted and answered exactly like a wrong
     password, and so is a wrong password for a suspended or otherwise inactive
     account (401 auth.invalid_credentials); only the right password is refused
     with 403 auth.account_inactive. When the counters cannot be read or written
     the sign-in is refused with 503 auth.sign_in_unavailable (fail closed). When
-    the organisation of the named client_id has switched password sign-in off,
+    the organization of the named client_id has switched password sign-in off,
     the request is refused with 403 auth.method_disabled before any password is
     checked (the same answer for any account or none); without a client_id, the
-    account's own organisation decides once the password is verified. While the
-    address rules of that client's organisation are on, an address they refuse
+    account's own organization decides once the password is verified. While the
+    address rules of that client's organization are on, an address they refuse
     is answered 403 auth.address_not_allowed before any password is checked, and
-    no cookie is set; the account's own organisation's address rules then apply
+    no cookie is set; the account's own organization's address rules then apply
     as well, whichever application asked, since the session reaches the
     account's self-service routes. A body not sent as JSON is refused (415
     unsupported_media_type). Failed attempts are recorded as for POST
-    /v1/auth/login. On a domain whose organisation requires single sign-on, the
+    /v1/auth/login. On a domain whose organization requires single sign-on, the
     sign-in is refused with 403 auth.sso_required before any account is looked
     up or password checked, and nothing is counted against the lockout (see the
     SSORequired response).

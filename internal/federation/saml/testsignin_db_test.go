@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -21,7 +22,7 @@ const testReturnURL = "https://login.example.test/enterprise-setup" // where a t
 // draftConnection has organization's admin create a draft connection to idp over HTTP.
 func (s *spSide) draftConnection(t *testing.T, organization uuid.UUID, idp *upstreamIdP) Connection {
 	t.Helper()
-	rec := dbtest.Do(t, s.asAdmin(t, organization), http.MethodPost, "/tenants/"+organization.String()+"/saml", map[string]any{
+	rec := dbtest.Do(t, s.asAdmin(t, organization), http.MethodPost, "/organizations/"+organization.String()+"/saml", map[string]any{
 		"name": "Okta", "idp_entity_id": idp.entityID, "idp_sso_url": upstreamSSO, "idp_certificate": idp.certPEM,
 		"email_attribute": "email", "name_attribute": "name",
 	})
@@ -60,22 +61,14 @@ func (s *spSide) beginTest(t *testing.T, organization, connID uuid.UUID) (*TestS
 func (s *spSide) tryTest(t *testing.T, organization, connID uuid.UUID) (*TestSignIn, error) {
 	t.Helper()
 	ctx := dbtest.Context(t)
-	tx, err := dbtest.Pool(t).Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(ctx)
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/v1/admin-portal/saml/"+connID.String()+"/test-sign-ins", nil)
 	for _, c := range s.browser {
 		req.AddCookie(c)
 	}
 	rec := httptest.NewRecorder()
-	test, err := s.handler.BeginTestSignIn(rec, req, tx, organization, connID, testReturnURL)
+	test, err := s.handler.BeginTestSignIn(rec, req, organization, connID, testReturnURL, audit.Actor{Type: "admin_portal"})
 	if err != nil {
 		return nil, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatal(err)
 	}
 	s.keep(rec)
 	return test, nil
@@ -126,16 +119,16 @@ func TestSAMLTestSignIn(t *testing.T) {
 			t.Errorf("the test left %d %s, want none", n, what)
 		}
 	}
-	if rec := sp.post(t, conn.ID, response); !strings.Contains(rec.Body.String(), errs.CodeSAMLOtherBrowser) {
-		t.Errorf("a test's answer posted again: %d %s, want %s", rec.Code, rec.Body.String(), errs.CodeSAMLOtherBrowser)
+	if rec := sp.post(t, conn.ID, response); !strings.Contains(rec.Body.String(), CodeOtherBrowser) {
+		t.Errorf("a test's answer posted again: %d %s, want %s", rec.Code, rec.Body.String(), CodeOtherBrowser)
 	}
 
 	// Another browser can't complete a test it didn't begin.
 	pending, pendingRequest := sp.beginTest(t, organization, conn.ID)
 	mine := sp.browser
 	sp.browser = nil
-	if rec := sp.post(t, conn.ID, idp.respond(t, conn.ID, answer{inResponseTo: pendingRequest, email: tester})); !strings.Contains(rec.Body.String(), errs.CodeSAMLOtherBrowser) {
-		t.Errorf("a test answered in another browser: %d %s, want %s", rec.Code, rec.Body.String(), errs.CodeSAMLOtherBrowser)
+	if rec := sp.post(t, conn.ID, idp.respond(t, conn.ID, answer{inResponseTo: pendingRequest, email: tester})); !strings.Contains(rec.Body.String(), CodeOtherBrowser) {
+		t.Errorf("a test answered in another browser: %d %s, want %s", rec.Code, rec.Body.String(), CodeOtherBrowser)
 	}
 	sp.browser = mine
 	if got, err := sp.handler.Service.TestSignIn(ctx, pending.ID, conn.ID, organization); err != nil || got.Status != testPending {
@@ -149,11 +142,11 @@ func TestSAMLTestSignIn(t *testing.T) {
 		code     string
 		asserted bool
 	}{
-		"an answer for another audience":              {answer{email: tester, audience: "https://other-sp.example.test"}, errs.CodeSAMLAssertionConditions, true},
+		"an answer for another audience":              {answer{email: tester, audience: "https://other-sp.example.test"}, CodeAssertionConditions, true},
 		"an unsigned answer":                          {answer{email: tester, unsigned: true}, errs.CodeSAMLAssertionInvalid, false},
 		"an answer from another issuer":               {answer{email: tester, issuer: "https://impostor.example.test"}, errs.CodeSAMLAssertionInvalid, false},
-		"an address on a domain nobody verified":      {answer{email: dbtest.Unique("x") + "@example.test"}, errs.CodeSAMLEmailDomainUnverified, true},
-		"an address on another organisation's domain": {answer{email: "x@" + dbtest.Domain(t, other)}, errs.CodeSAMLEmailDomainUnverified, true},
+		"an address on a domain nobody verified":      {answer{email: dbtest.Unique("x") + "@example.test"}, CodeEmailDomainUnverified, true},
+		"an address on another organization's domain": {answer{email: "x@" + dbtest.Domain(t, other)}, CodeEmailDomainUnverified, true},
 	} {
 		test, requestID := sp.beginTest(t, organization, conn.ID)
 		c.a.inResponseTo = requestID
@@ -178,12 +171,12 @@ func TestSAMLTestSignIn(t *testing.T) {
 	}
 
 	// Another organization can neither read the test nor test its connection.
-	if _, err := sp.handler.Service.TestSignIn(ctx, test.ID, conn.ID, other); !errors.Is(err, errs.ErrSAMLTestSignInNotFound) {
-		t.Errorf("another organisation reads the test: %v, want %s", err, errs.CodeSAMLTestSignInNotFound)
+	if _, err := sp.handler.Service.TestSignIn(ctx, test.ID, conn.ID, other); !errors.Is(err, ErrTestSignInNotFound) {
+		t.Errorf("another organization reads the test: %v, want %s", err, CodeTestSignInNotFound)
 	}
 	theirs := sp.draftConnection(t, other, idp)
 	if _, err := sp.tryTest(t, organization, theirs.ID); !errors.Is(err, errs.ErrNotFound) {
-		t.Errorf("testing another organisation's connection: %v, want not found", err)
+		t.Errorf("testing another organization's connection: %v, want not found", err)
 	}
 
 	// Purged, and the connection on, the test's answer still signs nobody in.
@@ -193,13 +186,13 @@ func TestSAMLTestSignIn(t *testing.T) {
 	if n, err := PurgeTestSignIns(ctx, dbtest.Pool(t), TestSignInRetention); err != nil || n != 1 {
 		t.Fatalf("purge: %d %v, want the one old test", n, err)
 	}
-	if _, err := sp.handler.Service.TestSignIn(ctx, test.ID, conn.ID, organization); !errors.Is(err, errs.ErrSAMLTestSignInNotFound) {
-		t.Errorf("a purged test: %v, want %s", err, errs.CodeSAMLTestSignInNotFound)
+	if _, err := sp.handler.Service.TestSignIn(ctx, test.ID, conn.ID, organization); !errors.Is(err, ErrTestSignInNotFound) {
+		t.Errorf("a purged test: %v, want %s", err, CodeTestSignInNotFound)
 	}
 	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE organization.saml_connections SET status = 'active' WHERE id = $1 AND organization_id = $2`, conn.ID, organization); err != nil {
 		t.Fatal(err)
 	}
-	if rec := sp.post(t, conn.ID, response); rec.Code == http.StatusFound || !strings.Contains(rec.Body.String(), errs.CodeSAMLReplayDetected) {
-		t.Errorf("a test's answer as a sign-in: %d %s, want %s", rec.Code, rec.Body.String(), errs.CodeSAMLReplayDetected)
+	if rec := sp.post(t, conn.ID, response); rec.Code == http.StatusFound || !strings.Contains(rec.Body.String(), CodeReplayDetected) {
+		t.Errorf("a test's answer as a sign-in: %d %s, want %s", rec.Code, rec.Body.String(), CodeReplayDetected)
 	}
 }

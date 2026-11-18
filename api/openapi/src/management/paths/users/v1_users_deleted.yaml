@@ -1,7 +1,7 @@
 get:
   operationId: listDeletedUsers
   description: >-
-    Lists soft-deleted users held in the tenant recycle bin. From here an
+    Lists soft-deleted users held in the organization recycle bin. From here an
     account can be brought back with the restore call or removed permanently
     with the purge call.
   summary: List deleted users

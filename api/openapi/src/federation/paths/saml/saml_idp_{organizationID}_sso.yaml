@@ -1,0 +1,154 @@
+get:
+  operationId: startSamlIdpSso
+  description: >-
+    The organization's SAML SingleSignOnService over the HTTP-Redirect binding, with
+    Qeet acting as the Identity Provider. It handles SP-initiated SSO from the
+    AuthnRequest of a Service Provider registered in that organization and
+    IdP-initiated SSO by SP reference; only SPs of the organization in the path are
+    matched. The user is authenticated by the hosted-login SSO cookie, and the
+    browser is bounced to the hosted login when no session exists. On success it
+    returns an auto-submitting HTML form that POSTs a signed SAMLResponse to the
+    SP's registered ACS URL. Only people whose home is the organization are signed in
+    (403 saml.user_organization_mismatch otherwise), and an SP with
+    assignment_required only those assigned to it, themselves or through a group
+    of the organization they belong to: anyone else is refused with 403
+    saml.sp_not_assigned, and the refusal is audited as
+    saml.idp_assertion_refused. The assertion's NameID follows the SP's
+    name_id_format and name_id_attribute (an emailAddress NameID is the email; a
+    persistent one an opaque value made for this person at this SP the first
+    time they sign in to it, which never changes, or their user id when
+    name_id_attribute is user_id); a NameID from a metadata key the person has
+    no single value for is refused with 403 saml.name_id_unavailable, also
+    audited. The assertion carries the attributes the SP maps, each the person
+    has a value for. A browser asking for HTML gets every error as a page
+    showing its message and code; anything else gets the JSON error. An unknown
+    or inactive organization, or an unknown SP, returns 404; a disabled SP answers 403
+    saml.service_provider_disabled, and one still in draft 403
+    saml.service_provider_draft, whether or not anyone is signed in (a signed-in
+    person's attempt is audited as saml.idp_assertion_refused, reason draft).
+    The organization's plan must include enterprise SSO at every sign-in, not
+    only when the SP was registered (402 billing.upgrade_required). As at OIDC
+    authorize, the organization's address rules apply (403
+    auth.address_not_allowed, recorded as auth.address_refused with path
+    saml_idp), and so does its second-factor requirement: a session whose
+    sign-in didn't meet it is sent to sign in again (302 to the hosted login's
+    /sign-in with prompt=login, returning here marked with login_after), and a
+    fresh sign-in that still hasn't is refused with 403 step_up_required or
+    mfa.enrollment_required, audited as saml.idp_assertion_refused with reason
+    second_factor_required. An SP with
+    require_signed_requests is signed in only by a request signed with its
+    certificate, over the query as the Redirect binding defines (RSA or ECDSA
+    with SHA-256 or SHA-512) or by an enveloped XML signature, and is otherwise
+    refused with 403 saml.request_signature_invalid, as is a Redirect-binding
+    query that gives SAMLRequest, RelayState, SigAlg or Signature twice or
+    under a percent-encoded name; IdP-initiated sign-in is unaffected. An SP with encrypt_assertions gets the signed assertion as an
+    EncryptedAssertion to its certificate. The POST-binding variant is POST
+    /saml/idp/{organizationID}/sso.
+  summary: '[idp] IdP SSO (redirect binding)'
+  tags:
+    - SAML
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - in: query
+      name: SAMLRequest
+      schema:
+        type: string
+    - in: query
+      name: RelayState
+      schema:
+        type: string
+  security: []
+  responses:
+    '200':
+      description: Auto-submit POST form back to the SP ACS with a signed SAMLResponse
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+      content:
+        text/html:
+          schema:
+            type: string
+    '302':
+      description: Redirect to hosted login when no SSO session
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '402':
+      description: >-
+        The organization's plan does not include enterprise SSO
+        (billing.upgrade_required).
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+post:
+  operationId: startSamlIdpSsoWithPost
+  description: >-
+    The organization's SAML SingleSignOnService over the HTTP-POST binding, with Qeet
+    acting as the Identity Provider; equivalent to GET /saml/idp/{organizationID}/sso
+    for Service Providers that send the AuthnRequest via POST. Only SPs of the
+    organization in the path are matched. The user is authenticated by the
+    hosted-login SSO cookie, with a redirect to the hosted login when no session
+    exists; that sign-in returns to GET /saml/idp/{organizationID}/sso carrying the
+    request and RelayState, so the flow resumes. A posted request over 256 KiB
+    is refused with saml.authn_request_invalid. Any supplied
+    AssertionConsumerServiceURL must match the SP's registered ACS. On success
+    it returns an auto-submitting form that POSTs a signed SAMLResponse to that
+    ACS. Who is signed in, and what the assertion says, is as for GET
+    /saml/idp/{organizationID}/sso: an SP with assignment_required refuses anyone not
+    assigned to it with an audited 403 saml.sp_not_assigned. An unknown or
+    inactive organization, or an unknown SP, returns 404. The organization's plan must
+    include enterprise SSO at every sign-in (402 billing.upgrade_required), and
+    its address rules and second-factor requirement apply as for GET.
+  summary: '[idp] IdP SSO (POST binding)'
+  tags:
+    - SAML
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  security: []
+  requestBody:
+    required: true
+    content:
+      application/x-www-form-urlencoded:
+        schema:
+          type: object
+          properties:
+            SAMLRequest:
+              type: string
+            RelayState:
+              type: string
+  responses:
+    '200':
+      description: Auto-submit POST form back to the SP ACS with a signed SAMLResponse
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+      content:
+        text/html:
+          schema:
+            type: string
+    '302':
+      description: Redirect to hosted login when no SSO session
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '402':
+      description: >-
+        The organization's plan does not include enterprise SSO
+        (billing.upgrade_required).
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml

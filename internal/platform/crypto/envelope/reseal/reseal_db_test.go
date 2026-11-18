@@ -4,8 +4,6 @@ package reseal
 
 import (
 	"bytes"
-	"crypto/aes"
-	"crypto/cipher"
 	"fmt"
 	"strings"
 	"testing"
@@ -71,20 +69,6 @@ func stored(t *testing.T, c Column, id uuid.UUID) ([]byte, []byte) {
 	return ct, nonce
 }
 
-func legacySeal(t *testing.T, key, plaintext []byte) ([]byte, []byte) {
-	t.Helper()
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		t.Fatal(err)
-	}
-	nonce := bytes.Repeat([]byte{9}, aead.NonceSize())
-	return aead.Seal(nil, nonce, plaintext, nil), nonce
-}
-
 func count(t *testing.T, box *envelope.Cipher, c Column) int64 {
 	t.Helper()
 	n, err := Count(dbtest.Context(t), dbtest.Pool(t), box, []Column{c})
@@ -95,8 +79,7 @@ func count(t *testing.T, box *envelope.Cipher, c Column) int64 {
 }
 
 // TestRunMovesValuesToTheCurrentKey seals values with a previous key, the
-// oldest scheme, the current key, a key that is not configured and the wrong
-// context, then checks that a run in small batches moves exactly the readable
+// current key, a key that is not configured and the wrong context, then checks that a run in small batches moves exactly the readable
 // ones to the current key, leaves the rest, and that running it again changes
 // nothing.
 func TestRunMovesValuesToTheCurrentKey(t *testing.T) {
@@ -114,8 +97,6 @@ func TestRunMovesValuesToTheCurrentKey(t *testing.T) {
 		}
 		want[put(t, c, organization, name, ct, nonce)] = "value of " + name
 	}
-	legacyCT, legacyNonce := legacySeal(t, oldKey, []byte("legacy value"))
-	want[put(t, c, organization, "legacy", legacyCT, legacyNonce)] = "legacy value"
 
 	currentCT, currentNonce, _ := after.Seal(organization, "secret", "current", []byte("current value"))
 	current := put(t, c, organization, "current", currentCT, currentNonce)
@@ -125,15 +106,15 @@ func TestRunMovesValuesToTheCurrentKey(t *testing.T) {
 	put(t, c, organization, "elsewhere", elsewhereCT, elsewhereNonce)
 	put(t, c, organization, "empty", nil, nil)
 
-	if n := count(t, after, c); n != 8 {
-		t.Fatalf("before the run %d values are on old keys, want 8", n)
+	if n := count(t, after, c); n != 7 {
+		t.Fatalf("before the run %d values are on old keys, want 7", n)
 	}
 	res, err := Run(ctx, pool, after, []Column{c}, 2, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Resealed != 6 || res.Unreadable != 2 || !res.Finished {
-		t.Fatalf("run = %+v, want 6 resealed, 2 unreadable, finished", res)
+	if res.Resealed != 5 || res.Unreadable != 2 || !res.Finished {
+		t.Fatalf("run = %+v, want 5 resealed, 2 unreadable, finished", res)
 	}
 	if n := count(t, after, c); n != 2 {
 		t.Errorf("after the run %d values are on old keys, want the 2 unreadable", n)

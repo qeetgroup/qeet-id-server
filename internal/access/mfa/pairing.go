@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/mfa/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -84,9 +84,10 @@ func normalizePairingCode(raw string) string {
 }
 
 // CreatePushPairing issues a single-use code that can link a phone to userID's
-// account for pushPairingTTL, ending their earlier unused codes. The code is
-// returned only here. Past pushPairingsPerHour it fails with retry_after.
-func (s *Service) CreatePushPairing(ctx context.Context, userID uuid.UUID, organizationID *uuid.UUID, ip, ua string) (PushPairing, string, error) {
+// account for pushPairingTTL, ending their earlier unused codes, recorded in
+// by's organization as userID's from by's request. The code is returned only
+// here. Past pushPairingsPerHour it fails with retry_after.
+func (s *Service) CreatePushPairing(ctx context.Context, userID uuid.UUID, by Caller) (PushPairing, string, error) {
 	code, err := newPairingCode()
 	if err != nil {
 		return PushPairing{}, "", err
@@ -97,45 +98,33 @@ func (s *Service) CreatePushPairing(ctx context.Context, userID uuid.UUID, organ
 	}
 	defer tx.Rollback(ctx)
 	// One request at a time per person, so two cannot both pass the limit.
+	// Raw SQL: pg_advisory_xact_lock returns void, which sqlc cannot model.
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('mfa_push_pairing:' || $1::text, 0))`, userID); err != nil {
 		return PushPairing{}, "", err
 	}
-	var issued int
-	var oldest *time.Time
-	if err := tx.QueryRow(ctx, `
-		SELECT count(*), min(created_at) FROM auth.mfa_push_pairings
-		WHERE user_id = $1 AND created_at > NOW() - INTERVAL '1 hour'
-	`, userID).Scan(&issued, &oldest); err != nil {
+	q := s.q.WithTx(tx)
+	recent, err := q.RecentPushPairings(ctx, userID)
+	if err != nil {
 		return PushPairing{}, "", err
 	}
-	if issued >= pushPairingsPerHour {
-		wait := time.Hour
-		if oldest != nil {
-			wait = time.Until(oldest.Add(time.Hour))
-		}
+	if recent.Issued >= pushPairingsPerHour {
+		wait := time.Until(recent.Oldest.Add(time.Hour))
 		return PushPairing{}, "", errs.ErrTooManyRequests.WithMetadata(map[string]any{
 			"retry_after": max(1, int(wait.Round(time.Second).Seconds()))})
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE auth.mfa_push_pairings SET expires_at = NOW()
-		WHERE user_id = $1 AND used_at IS NULL AND expires_at > NOW()
-	`, userID); err != nil {
+	if err := q.ExpireLivePushPairings(ctx, userID); err != nil {
 		return PushPairing{}, "", err
 	}
-	p := PushPairing{Status: "pending"}
-	if err := tx.QueryRow(ctx, `
-		INSERT INTO auth.mfa_push_pairings (user_id, organization_id, code_hash, expires_at)
-		VALUES ($1, $2, $3, NOW() + make_interval(secs => $4))
-		RETURNING id, expires_at
-	`, userID, organizationID, secretHash(normalizePairingCode(code)), pushPairingTTL.Seconds()).Scan(&p.ID, &p.ExpiresAt); err != nil {
+	row, err := q.InsertPushPairing(ctx, dbgen.InsertPushPairingParams{
+		UserID: userID, OrganizationID: by.OrganizationID, CodeHash: secretHash(normalizePairingCode(code)),
+		TtlSeconds: pushPairingTTL.Seconds(),
+	})
+	if err != nil {
 		return PushPairing{}, "", err
 	}
-	if err := audit.Record(ctx, tx, audit.Event{
-		OrganizationID: organizationID, ActorUserID: &userID, ActorType: "user",
-		Action: "mfa.push_pairing_created", ResourceType: "push_pairing", ResourceID: &p.ID,
-		IP: ip, UserAgent: ua,
-		Metadata: map[string]any{"expires_at": p.ExpiresAt},
-	}); err != nil {
+	p := PushPairing{ID: row.ID, Status: "pending", ExpiresAt: row.ExpiresAt}
+	if err := audit.Record(ctx, tx, as(by.Actor, "user", userID).EventIn(by.OrganizationID, "mfa.push_pairing_created", "push_pairing", p.ID,
+		map[string]any{"expires_at": p.ExpiresAt})); err != nil {
 		return PushPairing{}, "", err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -147,19 +136,16 @@ func (s *Service) CreatePushPairing(ctx context.Context, userID uuid.UUID, organ
 // GetPushPairing returns one of userID's pairing codes; not found when it is
 // someone else's.
 func (s *Service) GetPushPairing(ctx context.Context, userID, id uuid.UUID) (PushPairing, error) {
-	p := PushPairing{ID: id}
-	var used *time.Time
-	err := s.pool.QueryRow(ctx, `
-		SELECT expires_at, used_at, device_id FROM auth.mfa_push_pairings WHERE id = $1 AND user_id = $2
-	`, id, userID).Scan(&p.ExpiresAt, &used, &p.DeviceID)
+	row, err := s.q.GetPushPairing(ctx, dbgen.GetPushPairingParams{ID: id, UserID: userID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PushPairing{}, errs.ErrNotFound
 	}
 	if err != nil {
 		return PushPairing{}, err
 	}
+	p := PushPairing{ID: id, ExpiresAt: row.ExpiresAt, DeviceID: row.DeviceID}
 	switch {
-	case used != nil:
+	case row.UsedAt != nil:
 		p.Status = "linked"
 	case !time.Now().Before(p.ExpiresAt):
 		p.Status = "expired"
@@ -174,15 +160,7 @@ func (s *Service) GetPushPairing(ctx context.Context, userID, id uuid.UUID) (Pus
 // left as it is (remove the phone instead); not found when it is someone
 // else's.
 func (s *Service) WithdrawPushPairing(ctx context.Context, userID, id uuid.UUID) error {
-	var found bool
-	err := s.pool.QueryRow(ctx, `
-		WITH withdrawn AS (
-		    UPDATE auth.mfa_push_pairings SET expires_at = LEAST(expires_at, NOW())
-		    WHERE id = $1 AND user_id = $2 AND used_at IS NULL
-		    RETURNING id
-		)
-		SELECT EXISTS (SELECT 1 FROM auth.mfa_push_pairings WHERE id = $1 AND user_id = $2)
-	`, id, userID).Scan(&found)
+	found, err := s.q.WithdrawPushPairing(ctx, dbgen.WithdrawPushPairingParams{ID: id, UserID: userID})
 	if err != nil {
 		return err
 	}
@@ -212,63 +190,50 @@ type PushPairingAccount struct {
 // ClaimPushPairing links the phone presenting code to the account that asked
 // for it, as RegisterPushDevice does, and uses the code up. A wrong, used or
 // expired code, or one for an inactive account, gets the same
-// ErrMFAPairingCodeInvalid. Audited as mfa.push_device_linked.
-func (s *Service) ClaimPushPairing(ctx context.Context, code, name, pushToken, platform, ip, ua string) (PushPairingClaim, error) {
+// ErrMFAPairingCodeInvalid. Audited as mfa.push_device_linked, the phone the
+// actor, from the request from.
+func (s *Service) ClaimPushPairing(ctx context.Context, code, name, pushToken, platform string, from audit.Actor) (PushPairingClaim, error) {
 	normalized := normalizePairingCode(code)
 	if normalized == "" {
-		return PushPairingClaim{}, errs.ErrMFAPairingCodeInvalid
+		return PushPairingClaim{}, ErrPairingCodeInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return PushPairingClaim{}, err
 	}
 	defer tx.Rollback(ctx)
-	var pairingID, userID uuid.UUID
-	var organizationID *uuid.UUID
-	var email string
-	err = tx.QueryRow(ctx, `
-		SELECT p.id, p.user_id, p.organization_id, u.email
-		FROM auth.mfa_push_pairings p
-		JOIN account.users u ON u.id = p.user_id
-		WHERE p.code_hash = $1 AND p.used_at IS NULL AND p.expires_at > NOW()
-		  AND u.status = 'active' AND u.deleted_at IS NULL
-		FOR UPDATE OF p
-	`, secretHash(normalized)).Scan(&pairingID, &userID, &organizationID, &email)
+	q := s.q.WithTx(tx)
+	pairing, err := q.ClaimablePushPairing(ctx, secretHash(normalized))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return PushPairingClaim{}, errs.ErrMFAPairingCodeInvalid
+		return PushPairingClaim{}, ErrPairingCodeInvalid
 	}
 	if err != nil {
 		return PushPairingClaim{}, err
 	}
-	device, token, err := s.registerPushDeviceTx(ctx, tx, userID, name, pushToken, platform)
+	device, token, err := s.registerPushDeviceTx(ctx, tx, pairing.UserID, name, pushToken, platform)
 	if err != nil {
 		return PushPairingClaim{}, err
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE auth.mfa_push_pairings SET used_at = NOW(), device_id = $2 WHERE id = $1
-	`, pairingID, device.ID); err != nil {
+	if err := q.UsePushPairing(ctx, dbgen.UsePushPairingParams{ID: pairing.ID, DeviceID: &device.ID}); err != nil {
 		return PushPairingClaim{}, err
 	}
-	if err := audit.Record(ctx, tx, audit.Event{
-		OrganizationID: organizationID, ActorUserID: &userID, ActorType: "device",
-		Action: "mfa.push_device_linked", ResourceType: "push_device", ResourceID: &device.ID,
-		IP: ip, UserAgent: ua,
-		Metadata: map[string]any{"pairing_id": pairingID, "platform": device.Platform},
-	}); err != nil {
+	if err := audit.Record(ctx, tx, as(from, "device", pairing.UserID).EventIn(pairing.OrganizationID, "mfa.push_device_linked",
+		"push_device", device.ID, map[string]any{"pairing_id": pairing.ID, "platform": device.Platform})); err != nil {
 		return PushPairingClaim{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return PushPairingClaim{}, err
 	}
-	return PushPairingClaim{UserID: userID, Device: device, DeviceToken: token, Account: &PushPairingAccount{Email: email}}, nil
+	return PushPairingClaim{UserID: pairing.UserID, Device: device, DeviceToken: token, Account: &PushPairingAccount{Email: pairing.Email}}, nil
 }
 
 // PurgeExpiredPushPairings deletes pairing codes that expired longer ago than
 // retention, used or not, and returns how many. Run on a schedule.
 func PurgeExpiredPushPairings(ctx context.Context, pool *pgxpool.Pool, retention time.Duration) (int64, error) {
-	return postgres.PurgeInBatches(ctx, pool, `DELETE FROM auth.mfa_push_pairings WHERE ctid = ANY(ARRAY(
-		SELECT p.ctid FROM auth.mfa_push_pairings p WHERE p.expires_at < $1 LIMIT $2))`,
-		time.Now().UTC().Add(-retention))
+	q, cutoff := dbgen.New(pool), time.Now().UTC().Add(-retention)
+	return postgres.DeleteInBatches(ctx, func(ctx context.Context, limit int32) (int64, error) {
+		return q.PurgeExpiredPushPairings(ctx, dbgen.PurgeExpiredPushPairingsParams{Cutoff: cutoff, MaxRows: limit})
+	})
 }
 
 // --- HTTP: the signed-in person (authenticated) ---
@@ -280,7 +245,7 @@ func (h *Handler) createPushPairing(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
 		return
 	}
-	pairing, code, err := h.Service.CreatePushPairing(r.Context(), *p.UserID, p.OrganizationID, httpx.ClientIP(r), r.UserAgent())
+	pairing, code, err := h.Service.CreatePushPairing(r.Context(), *p.UserID, CallerOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -297,9 +262,9 @@ func pairingInScope(w http.ResponseWriter, r *http.Request) (uuid.UUID, uuid.UUI
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
 		return uuid.Nil, uuid.Nil, false
 	}
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	id, err := httpx.PathUUID(r, "id", errs.ErrBadRequest.WithDetail("invalid id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, err)
 		return uuid.Nil, uuid.Nil, false
 	}
 	return *p.UserID, id, true
@@ -358,8 +323,7 @@ func (h *Handler) claimPushPairing(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("platform must be ios or android"))
 		return
 	}
-	claim, err := h.Service.ClaimPushPairing(r.Context(), in.Code, in.Name, in.PushToken, in.Platform,
-		httpx.ClientIP(r), r.UserAgent())
+	claim, err := h.Service.ClaimPushPairing(r.Context(), in.Code, in.Name, in.PushToken, in.Platform, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

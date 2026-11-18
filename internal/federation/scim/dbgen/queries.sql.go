@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const addGroupMember = `-- name: AddGroupMember :exec
@@ -41,7 +40,7 @@ SELECT EXISTS(
 
 type CheckUserInOrganizationParams struct {
 	ID             uuid.UUID
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 }
 
 func (q *Queries) CheckUserInOrganization(ctx context.Context, arg CheckUserInOrganizationParams) (bool, error) {
@@ -49,6 +48,39 @@ func (q *Queries) CheckUserInOrganization(ctx context.Context, arg CheckUserInOr
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const claimUnattributedSuspension = `-- name: ClaimUnattributedSuspension :exec
+UPDATE account.users SET suspension_source = 'scim', suspension_reason = 'provider'
+WHERE organization_id = $1 AND id = $2 AND suspension_source = 'unknown'
+`
+
+type ClaimUnattributedSuspensionParams struct {
+	OrganizationID *uuid.UUID
+	ID             uuid.UUID
+}
+
+// A suspension nothing else claimed becomes the directory's.
+func (q *Queries) ClaimUnattributedSuspension(ctx context.Context, arg ClaimUnattributedSuspensionParams) error {
+	_, err := q.db.Exec(ctx, claimUnattributedSuspension, arg.OrganizationID, arg.ID)
+	return err
+}
+
+const countHomeUsersByEmail = `-- name: CountHomeUsersByEmail :one
+SELECT count(*) FROM account.users
+WHERE organization_id = $1 AND deleted_at IS NULL AND LOWER(email) = LOWER($2)
+`
+
+type CountHomeUsersByEmailParams struct {
+	OrganizationID *uuid.UUID
+	Email          string
+}
+
+func (q *Queries) CountHomeUsersByEmail(ctx context.Context, arg CountHomeUsersByEmailParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countHomeUsersByEmail, arg.OrganizationID, arg.Email)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const countLiveScimTokens = `-- name: CountLiveScimTokens :one
@@ -71,8 +103,31 @@ SELECT count(*) FROM account.users
 WHERE organization_id = $1 AND provisioned_via = 'scim' AND deleted_at IS NULL
 `
 
-func (q *Queries) CountProvisionedUsers(ctx context.Context, organizationID pgtype.UUID) (int64, error) {
+func (q *Queries) CountProvisionedUsers(ctx context.Context, organizationID *uuid.UUID) (int64, error) {
 	row := q.db.QueryRow(ctx, countProvisionedUsers, organizationID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countScimGroups = `-- name: CountScimGroups :one
+
+SELECT count(*) FROM organization.groups
+WHERE organization_id = $1 AND provisioned_via = 'scim'
+  AND ($2::text = '' OR LOWER(name) = LOWER($2))
+`
+
+type CountScimGroupsParams struct {
+	OrganizationID uuid.UUID
+	Name           string
+}
+
+// ==========================================================================
+// Groups
+// ==========================================================================
+// An empty name counts every group SCIM made.
+func (q *Queries) CountScimGroups(ctx context.Context, arg CountScimGroupsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countScimGroups, arg.OrganizationID, arg.Name)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -117,7 +172,7 @@ FROM account.users WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
 
 type GetProvisionedUserParams struct {
 	ID             uuid.UUID
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 }
 
 type GetProvisionedUserRow struct {
@@ -149,7 +204,6 @@ func (q *Queries) GetProvisionedUser(ctx context.Context, arg GetProvisionedUser
 }
 
 const getScimGroup = `-- name: GetScimGroup :one
-
 SELECT id, name, external_id, created_at, updated_at
 FROM organization.groups WHERE id = $1 AND organization_id = $2 AND provisioned_via = 'scim'
 `
@@ -167,9 +221,6 @@ type GetScimGroupRow struct {
 	UpdatedAt  time.Time
 }
 
-// ==========================================================================
-// Groups
-// ==========================================================================
 func (q *Queries) GetScimGroup(ctx context.Context, arg GetScimGroupParams) (GetScimGroupRow, error) {
 	row := q.db.QueryRow(ctx, getScimGroup, arg.ID, arg.OrganizationID)
 	var i GetScimGroupRow
@@ -247,7 +298,7 @@ type InsertScimTokenParams struct {
 	Name           string
 	TokenHash      string
 	TokenPrefix    string
-	ExpiresAt      pgtype.Timestamptz
+	ExpiresAt      *time.Time
 	CreatedBy      uuid.UUID
 }
 
@@ -256,10 +307,10 @@ type InsertScimTokenRow struct {
 	Name        string
 	TokenPrefix string
 	CreatedAt   time.Time
-	ExpiresAt   pgtype.Timestamptz
-	LastUsedAt  pgtype.Timestamptz
-	RevokedAt   pgtype.Timestamptz
-	ReplacedBy  pgtype.UUID
+	ExpiresAt   *time.Time
+	LastUsedAt  *time.Time
+	RevokedAt   *time.Time
+	ReplacedBy  *uuid.UUID
 }
 
 func (q *Queries) InsertScimToken(ctx context.Context, arg InsertScimTokenParams) (InsertScimTokenRow, error) {
@@ -364,6 +415,297 @@ func (q *Queries) ListGroupMembers(ctx context.Context, arg ListGroupMembersPara
 	return items, nil
 }
 
+const listHomeUsersByEmail = `-- name: ListHomeUsersByEmail :many
+SELECT id, email, display_name, status, external_id, created_at, updated_at
+FROM account.users
+WHERE organization_id = $1 AND deleted_at IS NULL AND LOWER(email) = LOWER($2)
+ORDER BY created_at DESC, id DESC
+LIMIT $4::bigint OFFSET $3::bigint
+`
+
+type ListHomeUsersByEmailParams struct {
+	OrganizationID *uuid.UUID
+	Email          string
+	Off            int64
+	Lim            int64
+}
+
+type ListHomeUsersByEmailRow struct {
+	ID          uuid.UUID
+	Email       string
+	DisplayName *string
+	Status      string
+	ExternalID  *string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+func (q *Queries) ListHomeUsersByEmail(ctx context.Context, arg ListHomeUsersByEmailParams) ([]ListHomeUsersByEmailRow, error) {
+	rows, err := q.db.Query(ctx, listHomeUsersByEmail,
+		arg.OrganizationID,
+		arg.Email,
+		arg.Off,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListHomeUsersByEmailRow{}
+	for rows.Next() {
+		var i ListHomeUsersByEmailRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.DisplayName,
+			&i.Status,
+			&i.ExternalID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProvisionedUsers = `-- name: ListProvisionedUsers :many
+
+SELECT id, email, display_name, status, external_id, created_at, updated_at
+FROM account.users
+WHERE organization_id = $1 AND deleted_at IS NULL AND provisioned_via = 'scim'
+ORDER BY created_at DESC, id DESC
+LIMIT $3::bigint OFFSET $2::bigint
+`
+
+type ListProvisionedUsersParams struct {
+	OrganizationID *uuid.UUID
+	Off            int64
+	Lim            int64
+}
+
+type ListProvisionedUsersRow struct {
+	ID          uuid.UUID
+	Email       string
+	DisplayName *string
+	Status      string
+	ExternalID  *string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+// The SCIM protocol's user list pages by offset, newest first: the
+// organization's provisioned users, or a userName lookup of any account at
+// home there.
+func (q *Queries) ListProvisionedUsers(ctx context.Context, arg ListProvisionedUsersParams) ([]ListProvisionedUsersRow, error) {
+	rows, err := q.db.Query(ctx, listProvisionedUsers, arg.OrganizationID, arg.Off, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListProvisionedUsersRow{}
+	for rows.Next() {
+		var i ListProvisionedUsersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.DisplayName,
+			&i.Status,
+			&i.ExternalID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProvisionedUsersPage = `-- name: ListProvisionedUsersPage :many
+SELECT id, email, display_name, status, external_id, created_at
+FROM account.users
+WHERE organization_id = $1 AND deleted_at IS NULL AND provisioned_via = 'scim'
+  AND ($2::timestamptz IS NULL OR created_at < $2
+       OR (created_at = $2 AND id < $3::uuid))
+ORDER BY created_at DESC, id DESC
+LIMIT $4
+`
+
+type ListProvisionedUsersPageParams struct {
+	OrganizationID *uuid.UUID
+	BeforeTs       *time.Time
+	BeforeID       *uuid.UUID
+	Lim            int32
+}
+
+type ListProvisionedUsersPageRow struct {
+	ID          uuid.UUID
+	Email       string
+	DisplayName *string
+	Status      string
+	ExternalID  *string
+	CreatedAt   time.Time
+}
+
+// ListProvisionedUsersPage is a console page of the provisioned users, newest
+// first, before the cursor (created_at, id) when before_ts is set.
+func (q *Queries) ListProvisionedUsersPage(ctx context.Context, arg ListProvisionedUsersPageParams) ([]ListProvisionedUsersPageRow, error) {
+	rows, err := q.db.Query(ctx, listProvisionedUsersPage,
+		arg.OrganizationID,
+		arg.BeforeTs,
+		arg.BeforeID,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListProvisionedUsersPageRow{}
+	for rows.Next() {
+		var i ListProvisionedUsersPageRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.DisplayName,
+			&i.Status,
+			&i.ExternalID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listScimGroups = `-- name: ListScimGroups :many
+SELECT id, name, external_id, created_at, updated_at
+FROM organization.groups
+WHERE organization_id = $1 AND provisioned_via = 'scim'
+  AND ($2::text = '' OR LOWER(name) = LOWER($2))
+ORDER BY created_at DESC, id DESC
+LIMIT $4::bigint OFFSET $3::bigint
+`
+
+type ListScimGroupsParams struct {
+	OrganizationID uuid.UUID
+	Name           string
+	Off            int64
+	Lim            int64
+}
+
+type ListScimGroupsRow struct {
+	ID         uuid.UUID
+	Name       string
+	ExternalID *string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
+func (q *Queries) ListScimGroups(ctx context.Context, arg ListScimGroupsParams) ([]ListScimGroupsRow, error) {
+	rows, err := q.db.Query(ctx, listScimGroups,
+		arg.OrganizationID,
+		arg.Name,
+		arg.Off,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListScimGroupsRow{}
+	for rows.Next() {
+		var i ListScimGroupsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.ExternalID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listScimGroupsPage = `-- name: ListScimGroupsPage :many
+SELECT g.id, g.name, g.external_id, g.created_at, g.updated_at,
+       (SELECT count(*) FROM organization.group_members gm JOIN account.users u ON u.id = gm.user_id
+        WHERE gm.group_id = g.id AND gm.organization_id = g.organization_id AND u.deleted_at IS NULL)::int AS members
+FROM organization.groups g
+WHERE g.organization_id = $1 AND g.provisioned_via = 'scim'
+  AND ($2::timestamptz IS NULL OR g.created_at < $2
+       OR (g.created_at = $2 AND g.id < $3::uuid))
+ORDER BY g.created_at DESC, g.id DESC
+LIMIT $4
+`
+
+type ListScimGroupsPageParams struct {
+	OrganizationID uuid.UUID
+	BeforeTs       *time.Time
+	BeforeID       *uuid.UUID
+	Lim            int32
+}
+
+type ListScimGroupsPageRow struct {
+	ID         uuid.UUID
+	Name       string
+	ExternalID *string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+	Members    int32
+}
+
+// ListScimGroupsPage is a console page of the groups SCIM made, newest first,
+// each with its count of live members, before the cursor when before_ts is set.
+func (q *Queries) ListScimGroupsPage(ctx context.Context, arg ListScimGroupsPageParams) ([]ListScimGroupsPageRow, error) {
+	rows, err := q.db.Query(ctx, listScimGroupsPage,
+		arg.OrganizationID,
+		arg.BeforeTs,
+		arg.BeforeID,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListScimGroupsPageRow{}
+	for rows.Next() {
+		var i ListScimGroupsPageRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.ExternalID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Members,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listScimTokens = `-- name: ListScimTokens :many
 
 
@@ -379,19 +721,13 @@ type ListScimTokensRow struct {
 	Name        string
 	TokenPrefix string
 	CreatedAt   time.Time
-	ExpiresAt   pgtype.Timestamptz
-	LastUsedAt  pgtype.Timestamptz
-	RevokedAt   pgtype.Timestamptz
-	ReplacedBy  pgtype.UUID
+	ExpiresAt   *time.Time
+	LastUsedAt  *time.Time
+	RevokedAt   *time.Time
+	ReplacedBy  *uuid.UUID
 }
 
-// Queries for the SCIM domain.
-// DYNAMIC queries kept hand-written:
-//
-//	listProvisioned  — conditional WHERE + dynamic parameter positions for LIMIT/OFFSET
-//	listGroups       — same conditional pattern with optional name filter
-//	touchGroupTx     — CASE WHEN bool flag controls external_id update
-//
+// Queries for the SCIM domain, compiled by sqlc into ./dbgen.
 // ==========================================================================
 // Token management
 // ==========================================================================
@@ -443,10 +779,10 @@ type LockScimTokenRow struct {
 	Name        string
 	TokenPrefix string
 	CreatedAt   time.Time
-	ExpiresAt   pgtype.Timestamptz
-	LastUsedAt  pgtype.Timestamptz
-	RevokedAt   pgtype.Timestamptz
-	ReplacedBy  pgtype.UUID
+	ExpiresAt   *time.Time
+	LastUsedAt  *time.Time
+	RevokedAt   *time.Time
+	ReplacedBy  *uuid.UUID
 }
 
 // LockScimToken reads one of the organization's tokens and locks it for a
@@ -531,7 +867,7 @@ RETURNING id, name, token_prefix, created_at, expires_at, last_used_at, revoked_
 `
 
 type ReplaceScimTokenParams struct {
-	ReplacedBy     pgtype.UUID
+	ReplacedBy     *uuid.UUID
 	OverlapHours   int32
 	ID             uuid.UUID
 	OrganizationID uuid.UUID
@@ -542,10 +878,10 @@ type ReplaceScimTokenRow struct {
 	Name        string
 	TokenPrefix string
 	CreatedAt   time.Time
-	ExpiresAt   pgtype.Timestamptz
-	LastUsedAt  pgtype.Timestamptz
-	RevokedAt   pgtype.Timestamptz
-	ReplacedBy  pgtype.UUID
+	ExpiresAt   *time.Time
+	LastUsedAt  *time.Time
+	RevokedAt   *time.Time
+	ReplacedBy  *uuid.UUID
 }
 
 // ReplaceScimToken records a token's rotation: it names its replacement and
@@ -584,7 +920,7 @@ WHERE t.token_hash = $1
 type ResolveScimTokenRow struct {
 	ID             uuid.UUID
 	OrganizationID uuid.UUID
-	LastUsedAt     pgtype.Timestamptz
+	LastUsedAt     *time.Time
 }
 
 // ResolveScimToken finds the token an identity provider presented, if it
@@ -606,7 +942,7 @@ WHERE organization_id = $2 AND revoked_at IS NULL
 `
 
 type RevokeLiveScimTokensParams struct {
-	Replacement    pgtype.UUID
+	Replacement    *uuid.UUID
 	OrganizationID uuid.UUID
 }
 
@@ -636,10 +972,10 @@ type RevokeScimTokenRow struct {
 	Name        string
 	TokenPrefix string
 	CreatedAt   time.Time
-	ExpiresAt   pgtype.Timestamptz
-	LastUsedAt  pgtype.Timestamptz
-	RevokedAt   pgtype.Timestamptz
-	ReplacedBy  pgtype.UUID
+	ExpiresAt   *time.Time
+	LastUsedAt  *time.Time
+	RevokedAt   *time.Time
+	ReplacedBy  *uuid.UUID
 }
 
 func (q *Queries) RevokeScimToken(ctx context.Context, arg RevokeScimTokenParams) (RevokeScimTokenRow, error) {
@@ -658,6 +994,38 @@ func (q *Queries) RevokeScimToken(ctx context.Context, arg RevokeScimTokenParams
 	return i, err
 }
 
+const setProvisionedUserEmail = `-- name: SetProvisionedUserEmail :exec
+UPDATE account.users SET email = $1, email_verified_at = NOW(), updated_at = NOW()
+WHERE id = $2 AND organization_id = $3
+`
+
+type SetProvisionedUserEmailParams struct {
+	Email          string
+	ID             uuid.UUID
+	OrganizationID *uuid.UUID
+}
+
+// The directory vouches for the address it gives.
+func (q *Queries) SetProvisionedUserEmail(ctx context.Context, arg SetProvisionedUserEmailParams) error {
+	_, err := q.db.Exec(ctx, setProvisionedUserEmail, arg.Email, arg.ID, arg.OrganizationID)
+	return err
+}
+
+const setScimSuspension = `-- name: SetScimSuspension :exec
+UPDATE account.users SET suspension_source = 'scim', suspension_reason = 'provider'
+WHERE organization_id = $1 AND id = $2
+`
+
+type SetScimSuspensionParams struct {
+	OrganizationID *uuid.UUID
+	ID             uuid.UUID
+}
+
+func (q *Queries) SetScimSuspension(ctx context.Context, arg SetScimSuspensionParams) error {
+	_, err := q.db.Exec(ctx, setScimSuspension, arg.OrganizationID, arg.ID)
+	return err
+}
+
 const tagProvisionedUser = `-- name: TagProvisionedUser :exec
 UPDATE account.users
     SET external_id    = $1,
@@ -674,6 +1042,38 @@ type TagProvisionedUserParams struct {
 func (q *Queries) TagProvisionedUser(ctx context.Context, arg TagProvisionedUserParams) error {
 	_, err := q.db.Exec(ctx, tagProvisionedUser, arg.ExternalID, arg.ID)
 	return err
+}
+
+const touchScimGroup = `-- name: TouchScimGroup :execrows
+UPDATE organization.groups SET
+    name        = COALESCE($1, name),
+    external_id = CASE WHEN $2::bool THEN $3 ELSE external_id END,
+    updated_at  = NOW()
+WHERE id = $4 AND organization_id = $5 AND provisioned_via = 'scim'
+`
+
+type TouchScimGroupParams struct {
+	Name           *string
+	SetExternalID  bool
+	ExternalID     *string
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+// Sets the name when given, the external ID when set_external_id (NULL clears
+// it), and bumps updated_at.
+func (q *Queries) TouchScimGroup(ctx context.Context, arg TouchScimGroupParams) (int64, error) {
+	result, err := q.db.Exec(ctx, touchScimGroup,
+		arg.Name,
+		arg.SetExternalID,
+		arg.ExternalID,
+		arg.ID,
+		arg.OrganizationID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const touchScimTokenUsed = `-- name: TouchScimTokenUsed :exec

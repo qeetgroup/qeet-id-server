@@ -5,8 +5,6 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 // RefuseApplicationTokens answers 403 auth.application_token to a request made
@@ -29,7 +27,7 @@ func RefuseApplicationTokens(allowed []string) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			WriteError(w, r, errs.ErrAuthApplicationToken)
+			WriteError(w, r, ErrAuthApplicationToken)
 		})
 	}
 }

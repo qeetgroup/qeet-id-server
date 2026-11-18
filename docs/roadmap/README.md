@@ -83,7 +83,7 @@ Resolve naming and contracts before implementation. Retain the current modular
 monolith and consumer-declared interfaces; wire dependencies in bootstrap. Do not
 introduce microservices or a second authorization engine just to implement a pilot.
 
-- Organization scope comes from `httpx.RequireOrganization(r)`. A `{tenantID}` path
+- Organization scope comes from `httpx.RequireOrganization(r)`. A `{organizationID}` path
   must match it; no path/body/header organization value grants authority. Every related
   object must be looked up within that scope, with SQL predicates and applicable RLS.
 - Separate administrative configuration, integration evaluation and a person's
@@ -143,11 +143,11 @@ Numbers such as "4.4" or "5.3" in these pages are items of the October 2026 ente
 | 3.1 | Domain capture: "SSO required" per verified domain (wire sso_enabled/jit_enabled), break-glass admins, SSO-only orgs |
 | 3.3 | JIT roles/groups + attribute sync on every SSO sign-in (SAML attributes, LDAP memberOf) |
 | 3.4 | SAML SP robustness: certificate rollover (2 certs), clock skew, metadata URL import/refresh, encrypted assertions |
-| 3.5 | Enterprise OIDC connections (validated ID token, issuer/tenant restriction, claim mapping) |
+| 3.5 | Enterprise OIDC connections (validated ID token, issuer/organization restriction, claim mapping) |
 | 3.6 | Admin portal completes a setup (SP/SCIM URLs, domain verification, test sign-in) |
 | 3.8 | SCIM tokens: several, expiring, overlap on rotation, refused for suspended orgs |
 | 4.1 | Organization-aware apps: one app for many customer orgs, `organization` parameter, org_id/roles/permissions claims, per-org custom permissions |
-| 4.2 | Finer permissions (user.delete/suspend/credentials, session.revoke, member.invite, tenant.delete) + built-in Admin/Member/Viewer roles + rename/delete roles |
+| 4.2 | Finer permissions (user.delete/suspend/credentials, session.revoke, member.invite, organization.delete) + built-in Admin/Member/Viewer roles + rename/delete roles |
 | 4.4 | M2M for customers' APIs (client_credentials on machine apps with resource/scope), private_key_jwt, secret rotation with overlap |
 | 4.6 | Consent withdrawal + "connected apps" API; grants list filters/cursor |
 | 4.7 | Webhook events: user.created from every path, sign-in success/failure, MFA, invitations, roles, apps/keys |
@@ -225,8 +225,8 @@ not evidence that a vendor lacks a capability.
 The review looked at these and decided against them. Don't reopen them without new evidence.
 
 - API-key creator-scope checks and suspended-user rejection are present in
-  [the handler](../../internal/developer/api-keys/apikey.go) and
-  [verification query](../../internal/developer/api-keys/queries.sql). These duplicate
+  [the handler](../../internal/developer/apikey/apikey.go) and
+  [verification query](../../internal/developer/apikey/queries.sql). These duplicate
   1.1 and 1.10; do not reopen them on the earlier reviewer's claims.
 - Token-vault S256/browser binding is present in
   [connect](../../internal/developer/credentials/tokenvault/tokenvault.go) and

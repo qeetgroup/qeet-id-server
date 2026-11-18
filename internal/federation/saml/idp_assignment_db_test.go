@@ -15,7 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -33,14 +33,14 @@ func TestAssignedOnlySPSignsInWhoIsAssigned(t *testing.T) {
 	aliceCookie, bobCookie := s.signIn(alice.ID), s.signIn(bob.ID)
 	sp := spWith(t, ctx, s.idp, organization, CreateSPInput{AssignmentRequired: true})
 	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: &Service{}, IdP: s.idp}).Mount)
-	assignments := "/tenants/" + organization.String() + "/saml-providers/" + sp.ID.String() + "/assignments"
+	assignments := "/organizations/" + organization.String() + "/saml-providers/" + sp.ID.String() + "/assignments"
 	sso := func(cookie string) *httptest.ResponseRecorder {
 		return idpGet(t, s.router, "/saml/idp/"+organization.String()+"/sso?sp="+sp.ID.String(), cookie)
 	}
 	refused := func(who string, rec *httptest.ResponseRecorder) {
 		t.Helper()
-		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeSAMLSPNotAssigned) || strings.Contains(rec.Body.String(), "SAMLResponse") {
-			t.Errorf("%s: %d %s, want 403 %s", who, rec.Code, rec.Body.String(), errs.CodeSAMLSPNotAssigned)
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), CodeSPNotAssigned) || strings.Contains(rec.Body.String(), "SAMLResponse") {
+			t.Errorf("%s: %d %s, want 403 %s", who, rec.Code, rec.Body.String(), CodeSPNotAssigned)
 		}
 	}
 	change := func(method, path string, want int) {
@@ -61,7 +61,7 @@ func TestAssignedOnlySPSignsInWhoIsAssigned(t *testing.T) {
 	page := httptest.NewRecorder()
 	s.router.ServeHTTP(page, req)
 	if page.Code != http.StatusForbidden || !strings.HasPrefix(page.Header().Get("Content-Type"), "text/html") ||
-		!strings.Contains(page.Body.String(), "access to this app") || !strings.Contains(page.Body.String(), errs.CodeSAMLSPNotAssigned) {
+		!strings.Contains(page.Body.String(), "access to this app") || !strings.Contains(page.Body.String(), CodeSPNotAssigned) {
 		t.Errorf("a browser refused: %d %q %s, want a page saying why", page.Code, page.Header().Get("Content-Type"), page.Body.String())
 	}
 
@@ -105,7 +105,7 @@ func TestAssignedOnlySPSignsInWhoIsAssigned(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.idp.UpdateSP(ctx, tx, sp.ID, organization, setOpen); err != nil {
+	if _, err := s.idp.updateSP(ctx, tx, sp.ID, organization, setOpen); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -130,22 +130,22 @@ func TestAssignmentsStayInTheirOrganization(t *testing.T) {
 	theirSP := spWith(t, ctx, idp, other, CreateSPInput{AssignmentRequired: true})
 	theirGroup := newGroup(t, other, "Theirs", outsider.ID)
 	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: &Service{}, IdP: idp}).Mount)
-	mine := "/tenants/" + organization.String() + "/saml-providers/"
+	mine := "/organizations/" + organization.String() + "/saml-providers/"
 
 	for _, c := range []struct {
 		name, method, path string
 		status             int
 		code               string
 	}{
-		{"another organisation's person", http.MethodPost, mine + sp.ID.String() + "/assignments/users/" + outsider.ID.String(), http.StatusNotFound, errs.CodeSAMLAssigneeNotFound},
-		{"a guest whose home is elsewhere", http.MethodPost, mine + sp.ID.String() + "/assignments/users/" + guest.ID.String(), http.StatusNotFound, errs.CodeSAMLAssigneeNotFound},
-		{"an unknown person", http.MethodPost, mine + sp.ID.String() + "/assignments/users/" + uuid.NewString(), http.StatusNotFound, errs.CodeSAMLAssigneeNotFound},
-		{"another organisation's group", http.MethodPost, mine + sp.ID.String() + "/assignments/groups/" + theirGroup.String(), http.StatusNotFound, errs.CodeSAMLAssigneeNotFound},
-		{"another organisation's SP", http.MethodPost, mine + theirSP.ID.String() + "/assignments/users/" + member.ID.String(), http.StatusNotFound, errs.CodeNotFound},
-		{"another organisation's SP's list", http.MethodGet, mine + theirSP.ID.String() + "/assignments", http.StatusNotFound, errs.CodeNotFound},
-		{"another organisation's SP, removing", http.MethodDelete, mine + theirSP.ID.String() + "/assignments/groups/" + theirGroup.String(), http.StatusNotFound, errs.CodeNotFound},
-		{"another organisation's path", http.MethodPost, "/tenants/" + other.String() + "/saml-providers/" + theirSP.ID.String() + "/assignments/users/" + outsider.ID.String(), http.StatusForbidden, ""},
-		{"a malformed person", http.MethodPost, mine + sp.ID.String() + "/assignments/users/not-a-uuid", http.StatusBadRequest, errs.CodeSAMLIDInvalid},
+		{"another organization's person", http.MethodPost, mine + sp.ID.String() + "/assignments/users/" + outsider.ID.String(), http.StatusNotFound, CodeAssigneeNotFound},
+		{"a guest whose home is elsewhere", http.MethodPost, mine + sp.ID.String() + "/assignments/users/" + guest.ID.String(), http.StatusNotFound, CodeAssigneeNotFound},
+		{"an unknown person", http.MethodPost, mine + sp.ID.String() + "/assignments/users/" + uuid.NewString(), http.StatusNotFound, CodeAssigneeNotFound},
+		{"another organization's group", http.MethodPost, mine + sp.ID.String() + "/assignments/groups/" + theirGroup.String(), http.StatusNotFound, CodeAssigneeNotFound},
+		{"another organization's SP", http.MethodPost, mine + theirSP.ID.String() + "/assignments/users/" + member.ID.String(), http.StatusNotFound, errs.CodeNotFound},
+		{"another organization's SP's list", http.MethodGet, mine + theirSP.ID.String() + "/assignments", http.StatusNotFound, errs.CodeNotFound},
+		{"another organization's SP, removing", http.MethodDelete, mine + theirSP.ID.String() + "/assignments/groups/" + theirGroup.String(), http.StatusNotFound, errs.CodeNotFound},
+		{"another organization's path", http.MethodPost, "/organizations/" + other.String() + "/saml-providers/" + theirSP.ID.String() + "/assignments/users/" + outsider.ID.String(), http.StatusForbidden, ""},
+		{"a malformed person", http.MethodPost, mine + sp.ID.String() + "/assignments/users/not-a-uuid", http.StatusBadRequest, CodeIDInvalid},
 	} {
 		rec := dbtest.Do(t, h, c.method, c.path, nil)
 		if rec.Code != c.status || !strings.Contains(rec.Body.String(), c.code) {
@@ -154,19 +154,19 @@ func TestAssignmentsStayInTheirOrganization(t *testing.T) {
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM organization.saml_sp_user_assignments WHERE sp_id IN ($1, $2)`, sp.ID, theirSP.ID) +
 		dbtest.Count(t, `SELECT count(*) FROM organization.saml_sp_group_assignments WHERE sp_id IN ($1, $2)`, sp.ID, theirSP.ID); n != 0 {
-		t.Errorf("%d assignments made across organisations, want none", n)
+		t.Errorf("%d assignments made across organizations, want none", n)
 	}
 
 	for name, insert := range map[string]func() error{
-		"another organisation's group": func() error {
+		"another organization's group": func() error {
 			_, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO organization.saml_sp_group_assignments (organization_id, sp_id, group_id) VALUES ($1, $2, $3)`, organization, sp.ID, theirGroup)
 			return err
 		},
-		"another organisation's SP": func() error {
+		"another organization's SP": func() error {
 			_, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO organization.saml_sp_user_assignments (organization_id, sp_id, user_id) VALUES ($1, $2, $3)`, organization, theirSP.ID, member.ID)
 			return err
 		},
-		"another organisation's SP's persistent NameID": func() error {
+		"another organization's SP's persistent NameID": func() error {
 			_, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO organization.saml_idp_persistent_ids (organization_id, sp_id, user_id, name_id) VALUES ($1, $2, $3, 'x')`, organization, theirSP.ID, member.ID)
 			return err
 		},

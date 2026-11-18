@@ -1,9 +1,9 @@
 type: object
 required:
-  - tenant_id
+  - organization_id
   - name
 properties:
-  tenant_id:
+  organization_id:
     type: string
     format: uuid
   user_id:

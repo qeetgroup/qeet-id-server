@@ -53,7 +53,7 @@ post:
       $ref: ../../../shared/responses/Unauthorized.yaml
     '402':
       description: >-
-        The organisation's plan does not include LDAP
+        The organization's plan does not include LDAP
         (billing.upgrade_required).
     '403':
       $ref: ../../../shared/responses/Forbidden.yaml

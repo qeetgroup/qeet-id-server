@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
-	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -52,7 +52,7 @@ func TestAdminListsPageAndConfigTellsTheLastRequest(t *testing.T) {
 		NextCursor string `json:"next_cursor"`
 		Total      int    `json:"total"`
 	}
-	base := "/tenants/" + organization.String() + "/scim/"
+	base := "/organizations/" + organization.String() + "/scim/"
 	var first, second page
 	dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, base+"users?limit=1", nil), &first)
 	if first.Total != 2 || len(first.Items) != 1 || first.NextCursor == "" {

@@ -1,11 +1,9 @@
 package password
 
 import (
-	"context"
-	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/base64"
-	"strings"
+
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 )
 
 // Machine secrets — API keys and the secrets of service principals, agents and
@@ -17,19 +15,10 @@ import (
 const secretPrefix = "sha256$" // marks a machine secret's SHA-256 hash
 
 // HashSecret returns the stored form of a machine secret.
-func HashSecret(raw string) string {
-	sum := sha256.Sum256([]byte(raw))
-	return secretPrefix + base64.RawURLEncoding.EncodeToString(sum[:])
-}
+func HashSecret(raw string) string { return secretPrefix + codes.Hash(raw) }
 
-// VerifySecret reports whether raw is the machine secret hash was made from,
-// and whether hash is an Argon2id one from before, to replace with
-// HashSecret(raw) now that raw is known to be right. An Argon2id one waits for
-// the hasher as a password does (VerifyWithin): ErrHasherBusy when it is full.
-func VerifySecret(ctx context.Context, hash, raw string) (ok, rehash bool, err error) {
-	if strings.HasPrefix(hash, secretPrefix) {
-		return subtle.ConstantTimeCompare([]byte(hash), []byte(HashSecret(raw))) == 1, false, nil
-	}
-	ok, err = VerifyWithin(ctx, hash, raw)
-	return ok, ok, err
+// VerifySecret reports whether raw is the machine secret hash was made from by
+// HashSecret. Any other hash matches nothing.
+func VerifySecret(hash, raw string) bool {
+	return subtle.ConstantTimeCompare([]byte(hash), []byte(HashSecret(raw))) == 1
 }

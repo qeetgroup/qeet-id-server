@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"maps"
 	"strings"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
@@ -9,420 +10,9 @@ import (
 // userPermissionMap maps "METHOD /v1/pattern" routes to the user permission
 // they need: <resource>.read for reads and <resource>.write for writes. Routes
 // missing from the combined policy table are denied, so every mutation must be
-// listed.
+// listed. Each context lists its own routes (wire_<context>.go).
 func userPermissionMap() map[string]string {
-	return map[string]string{
-		// Organizations (GET /v1/tenants lists the caller's own memberships — ungated).
-		"GET /v1/tenants/{tenantID}":                  "tenant.read",
-		"PATCH /v1/tenants/{tenantID}":                "tenant.write",
-		"DELETE /v1/tenants/{tenantID}":               "tenant.delete",
-		"POST /v1/tenants/{tenantID}/deletion/cancel": "tenant.delete",
-
-		// Users.
-		"GET /v1/users":                    "user.read",
-		"GET /v1/users/stats":              "user.read",
-		"GET /v1/users/trends":             "user.read",
-		"POST /v1/users":                   "user.write",
-		"POST /v1/users/bulk":              "user.write",
-		"POST /v1/users/bulk/import":       "user.write",
-		"GET /v1/users/deleted":            "user.read",
-		"GET /v1/users/suspended":          "user.read",
-		"POST /v1/users/{id}/reactivate":   "user.suspend",
-		"PUT /v1/users/{id}/suspension":    "user.suspend",
-		"GET /v1/users/{id}":               "user.read",
-		"PATCH /v1/users/{id}":             "user.write",
-		"DELETE /v1/users/{id}":            "user.delete",
-		"DELETE /v1/users/{id}/membership": "user.delete",
-		"POST /v1/users/{id}/restore":      "user.delete",
-		"DELETE /v1/users/{id}/purge":      "user.delete",
-		"POST /v1/users/{id}/password":     "user.credentials",
-		"DELETE /v1/users/{id}/mfa":        "user.credentials", // admin MFA reset
-		// A member's remembered devices, in the administrator's organization.
-		"GET /v1/users/{id}/trusted-devices":               "user.read",
-		"DELETE /v1/users/{id}/trusted-devices":            "user.credentials",
-		"DELETE /v1/users/{id}/trusted-devices/{deviceID}": "user.credentials",
-		// A member's linked phones, in the administrator's organization.
-		"GET /v1/users/{id}/push-devices":               "user.read",
-		"DELETE /v1/users/{id}/push-devices/{deviceID}": "user.credentials",
-
-		// User 360 — per-user admin read surfaces + force sign-out (see user360.go).
-		"GET /v1/users/{id}/security":                                   "user.read",
-		"GET /v1/users/{id}/sessions":                                   "user.read",
-		"GET /v1/users/{id}/access":                                     "user.read",
-		"POST /v1/users/{id}/sessions/revoke-all":                       "session.revoke",
-		"DELETE /v1/tenants/{tenantID}/users/{id}/sessions/{sessionID}": "session.revoke",
-		"GET /v1/tenants/{tenantID}/users/{id}/passkeys":                "user.read",
-		"GET /v1/tenants/{tenantID}/users/{id}/sign-ins":                "audit.read",
-		"DELETE /v1/tenants/{tenantID}/users/{id}/passkeys/{passkeyID}": "user.credentials",
-		"PUT /v1/users/{id}/mfa-required":                               "user.credentials",
-
-		// Invites (inviting/removing members is user management).
-		"POST /v1/invites":                   "member.invite",
-		"GET /v1/tenants/{tenantID}/invites": "user.read",
-		"POST /v1/invites/{id}/resend":       "member.invite",
-		"DELETE /v1/invites/{id}":            "member.invite",
-
-		// RBAC: roles, permissions, assignments, checks.
-		"GET /v1/permissions":                                         "role.read",
-		"GET /v1/tenants/{tenantID}/roles":                            "role.read",
-		"GET /v1/tenants/{tenantID}/roles/{roleID}/holders":           "role.read",
-		"POST /v1/tenants/{tenantID}/roles":                           "role.write",
-		"PATCH /v1/tenants/{tenantID}/roles/{roleID}":                 "role.write",
-		"DELETE /v1/tenants/{tenantID}/roles/{roleID}":                "role.write",
-		"PUT /v1/tenants/{tenantID}/roles/{roleID}/permissions":       "role.write",
-		"GET /v1/roles/{roleID}/permissions":                          "role.read",
-		"POST /v1/roles/{roleID}/permissions/{permID}":                "role.write",
-		"DELETE /v1/roles/{roleID}/permissions/{permID}":              "role.write",
-		"POST /v1/users/{userID}/tenants/{tenantID}/roles/{roleID}":   "role.write",
-		"DELETE /v1/users/{userID}/tenants/{tenantID}/roles/{roleID}": "role.write",
-
-		// Access requests: reading them. Answering one is in RoutePolicies.
-		"GET /v1/tenants/{tenantID}/access-requests":            "role.read",
-		"GET /v1/tenants/{tenantID}/access-requests/{id}":       "role.read",
-		"GET /v1/users/{userID}/tenants/{tenantID}/permissions": "role.read",
-		"GET /v1/check": "role.read",
-		"GET /v1/tenants/{tenantID}/groups/{groupID}/roles": "role.read",
-
-		// ABAC: attribute-based access control policy CRUD.
-		// Reads are gated on policy.read; mutations on policy.write. The
-		// evaluate endpoint is a PDP call and is ungated beyond organization scope
-		// (it gates itself via requirePathOrganization in the handler).
-		"GET /v1/tenants/{tenantID}/abac/policies":                                  "policy.read",
-		"POST /v1/tenants/{tenantID}/abac/policies":                                 "policy.write",
-		"GET /v1/tenants/{tenantID}/abac/policies/{id}":                             "policy.read",
-		"PATCH /v1/tenants/{tenantID}/abac/policies/{id}":                           "policy.write",
-		"DELETE /v1/tenants/{tenantID}/abac/policies/{id}":                          "policy.write",
-		"GET /v1/tenants/{tenantID}/abac/policies/{id}/versions":                    "policy.read",
-		"POST /v1/tenants/{tenantID}/abac/policies/{id}/versions/{version}/restore": "policy.write",
-		"POST /v1/tenants/{tenantID}/abac/evaluate":                                 "policy.read",
-		"POST /v1/tenants/{tenantID}/access/v1/evaluation":                          "role.read",
-		"POST /v1/tenants/{tenantID}/access/v1/evaluations":                         "role.read",
-		"GET /v1/tenants/{tenantID}/authorization/decisions":                        "policy.read",
-
-		// ReBAC: relationship tuples + identity graph.
-		// Reads are gated on role.read (structural authz data). Writes/deletes
-		// and the /check endpoint are ungated beyond organization scope (they gate
-		// themselves via requirePathOrganization + the relation-tuple payload).
-		"GET /v1/tenants/{tenantID}/relation-tuples":                    "role.read",
-		"POST /v1/tenants/{tenantID}/relation-tuples":                   "role.write",
-		"DELETE /v1/tenants/{tenantID}/relation-tuples/{id}":            "role.write",
-		"POST /v1/tenants/{tenantID}/relation-tuples/check":             "role.read",
-		"GET /v1/tenants/{tenantID}/relation-tuples/graph":              "role.read",
-		"GET /v1/tenants/{tenantID}/relation-tuples/types":              "role.read",
-		"GET /v1/tenants/{tenantID}/relation-tuples/objects":            "role.read",
-		"POST /v1/tenants/{tenantID}/groups/{groupID}/roles/{roleID}":   "role.write",
-		"DELETE /v1/tenants/{tenantID}/groups/{groupID}/roles/{roleID}": "role.write",
-
-		// Groups.
-		"POST /v1/groups":                         "group.write",
-		"GET /v1/tenants/{tenantID}/groups":       "group.read",
-		"DELETE /v1/groups/{id}":                  "group.write",
-		"PATCH /v1/groups/{id}":                   "group.write",
-		"POST /v1/groups/{id}/members/{userID}":   "group.write",
-		"DELETE /v1/groups/{id}/members/{userID}": "group.write",
-		"GET /v1/groups/{id}/members":             "group.read",
-		// Reusable group-shape templates and bulk import. Applying a template
-		// and importing both create groups, so they take the write permission.
-		"GET /v1/groups/templates":             "group.read",
-		"POST /v1/groups/templates":            "group.write",
-		"DELETE /v1/groups/templates/{id}":     "group.write",
-		"POST /v1/groups/templates/{id}/apply": "group.write",
-		"POST /v1/groups/import":               "group.write",
-
-		// API keys + service principals (M2M).
-		"POST /v1/api-keys":                                                 "apikey.write",
-		"GET /v1/tenants/{tenantID}/api-keys":                               "apikey.read",
-		"DELETE /v1/api-keys/{id}":                                          "apikey.write",
-		"POST /v1/service-principals":                                       "apikey.write",
-		"GET /v1/tenants/{tenantID}/service-principals":                     "apikey.read",
-		"DELETE /v1/service-principals/{id}":                                "apikey.write",
-		"POST /v1/tenants/{tenantID}/api-keys/{id}/rotate":                  "apikey.write",
-		"POST /v1/tenants/{tenantID}/service-principals/{id}/rotate-secret": "apikey.write",
-		"POST /v1/tenants/{tenantID}/service-principals/{id}/enable":        "apikey.write",
-
-		// SSO / identity connections: OIDC clients + grants/devices.
-		"GET /v1/oidc/signing-keys":                                   "connection.read",
-		"POST /v1/oidc/clients":                                       "connection.write",
-		"DELETE /v1/oidc/clients/{id}":                                "connection.write",
-		"GET /v1/tenants/{tenantID}/oidc/clients":                     "connection.read",
-		"POST /v1/tenants/{tenantID}/oidc/clients":                    "connection.write",
-		"GET /v1/tenants/{tenantID}/oidc/clients/{id}":                "connection.read",
-		"PATCH /v1/tenants/{tenantID}/oidc/clients/{id}":              "connection.write",
-		"GET /v1/tenants/{tenantID}/oidc/clients/{id}/auth-failures":  "connection.read",
-		"GET /v1/tenants/{tenantID}/oidc/resources":                   "connection.read",
-		"POST /v1/tenants/{tenantID}/oidc/resources":                  "connection.write",
-		"DELETE /v1/tenants/{tenantID}/oidc/resources/{id}":           "connection.write",
-		"DELETE /v1/tenants/{tenantID}/oidc/clients/{id}":             "connection.write",
-		"POST /v1/tenants/{tenantID}/oidc/clients/{id}/rotate-secret": "connection.write",
-		"GET /v1/tenants/{tenantID}/oidc/clients/shadow-ai":           "connection.read",
-		"POST /v1/tenants/{tenantID}/oidc/clients/{id}/review":        "connection.write",
-		"GET /v1/tenants/{tenantID}/oauth/grants":                     "connection.read",
-		"DELETE /v1/tenants/{tenantID}/oauth/grants/{id}":             "connection.write",
-		"POST /v1/tenants/{tenantID}/oauth/grants/revoke":             "connection.write",
-		"GET /v1/tenants/{tenantID}/oauth/devices":                    "connection.read",
-		// Organization-wide trusted-device estate (adaptive MFA "remember this
-		// device"), distinct from the OAuth device-grant flows above.
-		"GET /v1/auth/trusted-devices/count":               "connection.read",
-		"DELETE /v1/tenants/{tenantID}/oauth/devices/{id}": "connection.write",
-
-		// SSO connections: SAML / OIDC / SCIM / LDAP / social provider config.
-		"GET /v1/tenants/{tenantID}/saml":                                                         "connection.read",
-		"POST /v1/tenants/{tenantID}/saml":                                                        "connection.write",
-		"GET /v1/tenants/{tenantID}/saml/{id}":                                                    "connection.read",
-		"PATCH /v1/tenants/{tenantID}/saml/{id}":                                                  "connection.write",
-		"POST /v1/tenants/{tenantID}/saml/{id}/test":                                              "connection.write",
-		"DELETE /v1/tenants/{tenantID}/saml/{id}":                                                 "connection.write",
-		"GET /v1/tenants/{tenantID}/saml/{id}/group-mappings":                                     "connection.read",
-		"POST /v1/tenants/{tenantID}/saml/{id}/group-mappings":                                    "group.write", // decides who sign-ins put in a group
-		"DELETE /v1/tenants/{tenantID}/saml/{id}/group-mappings/{mappingID}":                      "group.write",
-		"GET /v1/tenants/{tenantID}/ldap/{id}/group-mappings":                                     "connection.read",
-		"POST /v1/tenants/{tenantID}/ldap/{id}/group-mappings":                                    "group.write", // decides who sign-ins put in a group
-		"DELETE /v1/tenants/{tenantID}/ldap/{id}/group-mappings/{mappingID}":                      "group.write",
-		"POST /v1/tenants/{tenantID}/saml/import":                                                 "connection.write",
-		"POST /v1/tenants/{tenantID}/saml/{id}/metadata":                                          "connection.write",
-		"POST /v1/tenants/{tenantID}/saml/{id}/certificates":                                      "connection.write",
-		"DELETE /v1/tenants/{tenantID}/saml/{id}/certificates/{certificateID}":                    "connection.write",
-		"GET /v1/tenants/{tenantID}/saml-providers":                                               "connection.read",
-		"POST /v1/tenants/{tenantID}/saml-providers":                                              "connection.write",
-		"GET /v1/tenants/{tenantID}/saml-providers/{id}":                                          "connection.read",
-		"PATCH /v1/tenants/{tenantID}/saml-providers/{id}":                                        "connection.write",
-		"DELETE /v1/tenants/{tenantID}/saml-providers/{id}":                                       "connection.write",
-		"GET /v1/tenants/{tenantID}/saml-providers/{id}/assignments":                              "connection.read",
-		"POST /v1/tenants/{tenantID}/saml-providers/{id}/assignments/users/{userID}":              "connection.write",
-		"DELETE /v1/tenants/{tenantID}/saml-providers/{id}/assignments/users/{userID}":            "connection.write",
-		"POST /v1/tenants/{tenantID}/saml-providers/{id}/assignments/groups/{groupID}":            "connection.write",
-		"DELETE /v1/tenants/{tenantID}/saml-providers/{id}/assignments/groups/{groupID}":          "connection.write",
-		"GET /v1/tenants/{tenantID}/scim":                                                         "connection.read",
-		"GET /v1/tenants/{tenantID}/directory/connections":                                        "connection.read",
-		"GET /v1/tenants/{tenantID}/directory/profiles/{userID}":                                  "user.read",
-		"GET /v1/tenants/{tenantID}/directory/connections/{connectionID}/mappings":                "connection.read",
-		"POST /v1/tenants/{tenantID}/directory/connections/{connectionID}/mappings":               "connection.write",
-		"POST /v1/tenants/{tenantID}/directory/connections/{connectionID}/mappings/preview":       "connection.read",
-		"PUT /v1/tenants/{tenantID}/directory/connections/{connectionID}/mappings/{mappingID}":    "connection.write",
-		"DELETE /v1/tenants/{tenantID}/directory/connections/{connectionID}/mappings/{mappingID}": "connection.write",
-		"GET /v1/tenants/{tenantID}/directory/errors":                                             "connection.read",
-		"POST /v1/tenants/{tenantID}/directory/errors/{eventID}/resolve":                          "connection.write",
-		"POST /v1/tenants/{tenantID}/directory/errors/{eventID}/retry":                            "connection.write",
-		"GET /v1/tenants/{tenantID}/directory/activity":                                           "connection.read",
-		"POST /v1/tenants/{tenantID}/directory/alerts":                                            "connection.write",
-		"GET /v1/tenants/{tenantID}/directory/alerts":                                             "connection.read",
-		"PATCH /v1/tenants/{tenantID}/directory/alerts/{alertID}":                                 "connection.write",
-		"DELETE /v1/tenants/{tenantID}/directory/alerts/{alertID}":                                "connection.write",
-		"POST /v1/tenants/{tenantID}/scim/token":                                                  "connection.write",
-		"DELETE /v1/tenants/{tenantID}/scim/token":                                                "connection.write",
-		"GET /v1/tenants/{tenantID}/scim/tokens":                                                  "connection.read",
-		"POST /v1/tenants/{tenantID}/scim/tokens":                                                 "connection.write",
-		"POST /v1/tenants/{tenantID}/scim/tokens/{id}/rotate":                                     "connection.write",
-		"DELETE /v1/tenants/{tenantID}/scim/tokens/{id}":                                          "connection.write",
-		"GET /v1/tenants/{tenantID}/scim/users":                                                   "connection.read",
-		"GET /v1/tenants/{tenantID}/scim/groups":                                                  "connection.read",
-		"POST /v1/tenants/{tenantID}/admin-portal/links":                                          "connection.write",
-		"GET /v1/tenants/{tenantID}/admin-portal/links":                                           "connection.read",
-		"DELETE /v1/tenants/{tenantID}/admin-portal/links/{id}":                                   "connection.write",
-		"GET /v1/tenants/{tenantID}/ldap":                                                         "connection.read",
-		"POST /v1/tenants/{tenantID}/ldap":                                                        "connection.write",
-		"GET /v1/tenants/{tenantID}/ldap/{id}":                                                    "connection.read",
-		"PATCH /v1/tenants/{tenantID}/ldap/{id}":                                                  "connection.write",
-		"DELETE /v1/tenants/{tenantID}/ldap/{id}":                                                 "connection.write",
-		"POST /v1/tenants/{tenantID}/ldap/{id}/test":                                              "connection.write",
-		"GET /v1/tenants/{tenantID}/oidc-connections":                                             "connection.read",
-		"POST /v1/tenants/{tenantID}/oidc-connections":                                            "connection.write",
-		"GET /v1/tenants/{tenantID}/oidc-connections/{id}":                                        "connection.read",
-		"PATCH /v1/tenants/{tenantID}/oidc-connections/{id}":                                      "connection.write",
-		"DELETE /v1/tenants/{tenantID}/oidc-connections/{id}":                                     "connection.write",
-		"GET /v1/tenants/{tenantID}/social/providers":                                             "connection.read",
-		"POST /v1/social/providers":                                                               "connection.write",
-		"PATCH /v1/social/providers/{provider}":                                                   "connection.write",
-		"DELETE /v1/social/providers/{provider}":                                                  "connection.write",
-		"GET /v1/users/{userID}/social/identities":                                                "user.read",
-		"DELETE /v1/social/identities/{id}":                                                       "user.write",
-
-		// Webhooks.
-		"GET /v1/tenants/{tenantID}/webhooks":                                       "webhook.read",
-		"GET /v1/tenants/{tenantID}/webhooks/events":                                "webhook.read",
-		"POST /v1/tenants/{tenantID}/webhooks/{id}/enable":                          "webhook.write",
-		"POST /v1/tenants/{tenantID}/webhooks/{id}/rotate-secret":                   "webhook.write",
-		"PATCH /v1/tenants/{tenantID}/webhooks/{id}":                                "webhook.write",
-		"POST /v1/tenants/{tenantID}/webhooks/{id}/deliveries/retry":                "webhook.write",
-		"GET /v1/tenants/{tenantID}/webhooks/{id}/deliveries/{deliveryID}/attempts": "webhook.read",
-		"GET /v1/webhooks/{id}":                                                     "webhook.read",
-		"GET /v1/webhooks/{id}/deliveries":                                          "webhook.read",
-		"POST /v1/webhooks":                                                         "webhook.write",
-		"DELETE /v1/webhooks/{id}":                                                  "webhook.write",
-		"POST /v1/webhooks/{id}/test":                                               "webhook.write",
-		"POST /v1/webhooks/{id}/deliveries/{deliveryID}/retry":                      "webhook.write",
-
-		// Secrets vault.
-		"GET /v1/tenants/{tenantID}/secrets":              "secret.read",
-		"POST /v1/tenants/{tenantID}/secrets":             "secret.write",
-		"PATCH /v1/tenants/{tenantID}/secrets/{id}":       "secret.write",
-		"DELETE /v1/tenants/{tenantID}/secrets/{id}":      "secret.write",
-		"POST /v1/tenants/{tenantID}/secrets/{id}/reveal": "secret.read",
-
-		// Third-party token-vault provider administration.
-		"GET /v1/tenants/{tenantID}/vault/tokens/providers":               "secret.read",
-		"POST /v1/tenants/{tenantID}/vault/tokens/providers":              "secret.write",
-		"DELETE /v1/tenants/{tenantID}/vault/tokens/providers/{provider}": "secret.write",
-
-		// Verifiable credentials.
-		"GET /v1/tenants/{tenantID}/credentials":              "secret.read",
-		"POST /v1/tenants/{tenantID}/credentials":             "secret.write",
-		"POST /v1/tenants/{tenantID}/credentials/{id}/revoke": "secret.write",
-
-		// Agent identities share the existing non-human identity permissions.
-		"GET /v1/tenants/{tenantID}/agents":                                 "apikey.read",
-		"POST /v1/tenants/{tenantID}/agents":                                "apikey.write",
-		"POST /v1/tenants/{tenantID}/agents/kill-all":                       "apikey.write",
-		"POST /v1/tenants/{tenantID}/agents/resume-all":                     "apikey.write",
-		"POST /v1/tenants/{tenantID}/agents/{id}/rotate-secret":             "apikey.write",
-		"DELETE /v1/tenants/{tenantID}/agents/{id}":                         "apikey.write",
-		"PATCH /v1/tenants/{tenantID}/agents/{id}":                          "apikey.write",
-		"POST /v1/tenants/{tenantID}/agents/{id}/suspend":                   "apikey.write",
-		"POST /v1/tenants/{tenantID}/agents/{id}/resume":                    "apikey.write",
-		"POST /v1/tenants/{tenantID}/agents/{id}/decommission":              "apikey.write",
-		"GET /v1/tenants/{tenantID}/agents/sponsored-by/{userID}":           "apikey.read",
-		"POST /v1/tenants/{tenantID}/agents/sponsored-by/{userID}/transfer": "apikey.write",
-
-		// Qeet AI provider config (BYOK) — org owner/admin only. Reuses the
-		// secrets permission so a newly added capability need not be backfilled
-		// onto existing owner roles. The other /qeetai/* routes are user-level.
-		"GET /v1/qeetai/provider-config":             "secret.read",
-		"PUT /v1/qeetai/provider-config":             "secret.write",
-		"DELETE /v1/qeetai/provider-config":          "secret.write",
-		"POST /v1/qeetai/provider-config/test":       "secret.write",
-		"GET /v1/tenants/{tenantID}/qeetai/usage":    "secret.read",
-		"GET /v1/tenants/{tenantID}/qeetai/settings": "secret.read",
-		"PUT /v1/tenants/{tenantID}/qeetai/settings": "secret.write",
-
-		// Branding + email templates (GET branding is harmless — ungated).
-		"PUT /v1/tenants/{tenantID}/branding":                       "branding.write",
-		"PUT /v1/tenants/{tenantID}/email-templates/{key}":          "branding.write",
-		"DELETE /v1/tenants/{tenantID}/email-templates/{key}":       "branding.write",
-		"POST /v1/tenants/{tenantID}/email-templates/{key}/preview": "branding.write",
-		"POST /v1/tenants/{tenantID}/email-templates/{key}/test":    "branding.write",
-		"GET /v1/tenants/{tenantID}/branding":                       "tenant.read",
-		"GET /v1/tenants/{tenantID}/email-templates":                "branding.write",
-		"GET /v1/tenants/{tenantID}/email-templates/{key}":          "branding.write",
-
-		// Security / auth policy, IP rules, retention.
-		"GET /v1/tenants/{tenantID}/policy":                           "policy.read",
-		"PUT /v1/tenants/{tenantID}/policy":                           "policy.write",
-		"PATCH /v1/tenants/{tenantID}/policy":                         "policy.write",
-		"GET /v1/tenants/{tenantID}/auth-policy":                      "policy.read",
-		"GET /v1/tenants/{tenantID}/auth-policy/usage":                "policy.read",
-		"PUT /v1/tenants/{tenantID}/auth-policy":                      "policy.write",
-		"GET /v1/tenants/{tenantID}/ip-rules":                         "policy.read",
-		"POST /v1/tenants/{tenantID}/ip-rules":                        "policy.write",
-		"DELETE /v1/tenants/{tenantID}/ip-rules/{ruleID}":             "policy.write",
-		"PUT /v1/tenants/{tenantID}/ip-rules/config":                  "policy.write",
-		"POST /v1/tenants/{tenantID}/ip-rules/check":                  "policy.read",
-		"GET /v1/tenants/{tenantID}/retention":                        "policy.read",
-		"PUT /v1/tenants/{tenantID}/retention":                        "policy.write",
-		"POST /v1/tenants/{tenantID}/retention/preview":               "policy.read",
-		"POST /v1/tenants/{tenantID}/retention/run":                   "policy.write",
-		"GET /v1/tenants/{tenantID}/security/anomalies":               "policy.read",
-		"GET /v1/tenants/{tenantID}/security/anomalies/summary":       "policy.read",
-		"POST /v1/tenants/{tenantID}/security/anomalies/{id}/resolve": "policy.write",
-		"GET /v1/tenants/{tenantID}/security/bots":                    "policy.read",
-		"GET /v1/tenants/{tenantID}/security/bots/settings":           "policy.read",
-		"PUT /v1/tenants/{tenantID}/security/bots/settings":           "policy.write",
-		"GET /v1/tenants/{tenantID}/security/risk-settings":           "policy.read",
-		"PUT /v1/tenants/{tenantID}/security/risk-settings":           "policy.write",
-		"GET /v1/tenants/{tenantID}/rate-limits":                      "policy.read",
-		"PUT /v1/tenants/{tenantID}/rate-limits":                      "policy.write",
-		"DELETE /v1/tenants/{tenantID}/rate-limits":                   "policy.write",
-
-		// Synchronous login hooks are organization security policy.
-		"GET /v1/tenants/{tenantID}/auth-hooks":            "policy.read",
-		"POST /v1/tenants/{tenantID}/auth-hooks":           "policy.write",
-		"PATCH /v1/tenants/{tenantID}/auth-hooks/{id}":     "policy.write",
-		"POST /v1/tenants/{tenantID}/auth-hooks/{id}/test": "policy.write",
-		"DELETE /v1/tenants/{tenantID}/auth-hooks/{id}":    "policy.write",
-
-		// Verified domains affect hosted authentication routing.
-		"GET /v1/tenants/{tenantID}/domains":              "connection.read",
-		"POST /v1/tenants/{tenantID}/domains":             "connection.write",
-		"POST /v1/tenants/{tenantID}/domains/{id}/verify": "connection.write",
-		"DELETE /v1/tenants/{tenantID}/domains/{id}":      "connection.write",
-		"PATCH /v1/tenants/{tenantID}/domains/{id}":       "connection.write",
-		"GET /v1/tenants/{tenantID}/login-domain":         "connection.read",
-		"POST /v1/tenants/{tenantID}/login-domain/check":  "connection.read",
-		// Members who keep their own sign-in methods on a domain that requires
-		// single sign-on; changing them is also owner-only (domainverify).
-		"GET /v1/tenants/{tenantID}/break-glass-members":             "connection.read",
-		"PUT /v1/tenants/{tenantID}/break-glass-members/{userID}":    "connection.write",
-		"DELETE /v1/tenants/{tenantID}/break-glass-members/{userID}": "connection.write",
-
-		// GDPR.
-		"POST /v1/gdpr/purge":                                                 "gdpr.write",
-		"GET /v1/tenants/{tenantID}/gdpr/purge":                               "gdpr.write",
-		"DELETE /v1/gdpr/purge/{id}":                                          "gdpr.write",
-		"POST /v1/gdpr/export":                                                "gdpr.write",
-		"GET /v1/tenants/{tenantID}/gdpr/export":                              "gdpr.write",
-		"GET /v1/tenants/{tenantID}/gdpr/export/{id}":                         "gdpr.write",
-		"POST /v1/tenants/{tenantID}/compliance/{framework}/evidence":         "audit.write",
-		"GET /v1/tenants/{tenantID}/compliance/{framework}/evidence":          "audit.read",
-		"GET /v1/tenants/{tenantID}/compliance/evidence/{id}":                 "audit.read",
-		"GET /v1/tenants/{tenantID}/compliance/controls/owners":               "audit.read",
-		"PUT /v1/tenants/{tenantID}/compliance/controls/{controlID}/owner":    "audit.write",
-		"DELETE /v1/tenants/{tenantID}/compliance/controls/{controlID}/owner": "audit.write",
-		"GET /v1/tenants/{tenantID}/compliance/audits":                        "audit.read",
-		"POST /v1/tenants/{tenantID}/compliance/audits":                       "audit.write",
-		"DELETE /v1/tenants/{tenantID}/compliance/audits/{id}":                "audit.write",
-
-		// Audit (sensitive read).
-		"GET /v1/tenants/{tenantID}/audit":              "audit.read",
-		"GET /v1/tenants/{tenantID}/critical-events":    "audit.read",
-		"GET /v1/tenants/{tenantID}/audit/verify":       "audit.read",
-		"GET /v1/tenants/{tenantID}/audit/verification": "audit.read",
-
-		// Live Activity feed — sourced from the audit log; same sensitivity.
-		"GET /v1/activity":                         "audit.read",
-		"GET /v1/activity/summary":                 "audit.read",
-		"GET /v1/activity/stream":                  "audit.read",
-		"GET /v1/activity/{id}/related":            "audit.read",
-		"GET /v1/tenants/{tenantID}/activity/{id}": "audit.read",
-
-		// Audit intelligence: behavioral-baseline anomaly detection over audit.events.
-		"GET /v1/tenants/{tenantID}/audit/anomalies":               "audit.read",
-		"GET /v1/tenants/{tenantID}/audit/anomalies/summary":       "audit.read",
-		"POST /v1/tenants/{tenantID}/audit/anomalies/{id}/resolve": "audit.write",
-		"GET /v1/tenants/{tenantID}/audit/anomaly-settings":        "audit.read",
-		"PUT /v1/tenants/{tenantID}/audit/anomaly-settings":        "audit.write",
-
-		// Billing. GET /v1/billing/plans is the catalogue: any signed-in person may
-		// read it, with no permission, but it is a person's route (user-only, below).
-		"GET /v1/tenants/{tenantID}/billing/subscription":              "billing.read",
-		"PUT /v1/tenants/{tenantID}/billing/subscription":              "billing.write",
-		"POST /v1/tenants/{tenantID}/billing/subscription/cancel":      "billing.write",
-		"GET /v1/tenants/{tenantID}/billing/invoices":                  "billing.read",
-		"POST /v1/tenants/{tenantID}/billing/invoices/{invoiceID}/pay": "billing.write",
-		"GET /v1/tenants/{tenantID}/billing/payment-method":            "billing.read",
-		"GET /v1/tenants/{tenantID}/billing/profile":                   "billing.read",
-		"PUT /v1/tenants/{tenantID}/billing/profile":                   "billing.write",
-		"POST /v1/tenants/{tenantID}/billing/trial":                    "billing.write",
-		"POST /v1/tenants/{tenantID}/billing/checkout":                 "billing.write",
-		"GET /v1/tenants/{tenantID}/entitlements":                      "billing.read",
-		"GET /v1/tenants/{tenantID}/entitlements/usage":                "billing.read",
-
-		// Analytics.
-		"GET /v1/tenants/{tenantID}/analytics/overview": "analytics.read",
-		"GET /v1/tenants/{tenantID}/service-health":     "tenant.read",
-
-		// Email delivery: whether the organization's mail arrived (support),
-		// and lifting a suppression its mail caused (administrators).
-		"GET /v1/tenants/{tenantID}/email/messages":             "user.read",
-		"GET /v1/tenants/{tenantID}/email/suppressions":         "user.read",
-		"DELETE /v1/tenants/{tenantID}/email/suppressions/{id}": "user.write",
-
-		// SIEM/log streaming contains organization audit data.
-		"GET /v1/tenants/{tenantID}/log-sinks":            "audit.read",
-		"POST /v1/tenants/{tenantID}/log-sinks":           "audit.write",
-		"PATCH /v1/tenants/{tenantID}/log-sinks/{id}":     "audit.write",
-		"DELETE /v1/tenants/{tenantID}/log-sinks/{id}":    "audit.write",
-		"POST /v1/tenants/{tenantID}/log-sinks/test":      "audit.write",
-		"POST /v1/tenants/{tenantID}/log-sinks/{id}/test": "audit.write",
-	}
+	return routeTable(accessPermissions(), identityPermissions(), federationPermissions(), developerPermissions(), operationsPermissions())
 }
 
 // RoutePolicies returns the authorization policy of every authenticated route,
@@ -436,119 +26,45 @@ func RoutePolicies() map[string]rbac.RoutePolicy {
 
 	// Explicit user-only routes. These are self-service or personal resources;
 	// machine principals cannot inherit them merely by carrying a user id.
-	for _, route := range []string{
-		"POST /v1/auth/logout",
-		"POST /v1/auth/switch-tenant",
-		"GET /v1/auth/sessions",
-		"POST /v1/auth/sessions/revoke-others",
-		"POST /v1/auth/sessions/revoke-all",
-		"DELETE /v1/auth/sessions/{id}",
-		"GET /v1/auth/trusted-devices",
-		"DELETE /v1/auth/trusted-devices",
-		"DELETE /v1/auth/trusted-devices/{id}",
-		"GET /v1/auth/me",
-		"GET /v1/auth/password",
-		"GET /v1/auth/sign-in-methods",
-		"POST /v1/auth/password",
-		"GET /v1/me",
-		"PATCH /v1/me",
-		"GET /v1/tenants",
-		"GET /v1/me/organizations",
-		"POST /v1/tenants",
-		"GET /v1/me/invites",
-		"POST /v1/me/invites/accept",
-		"POST /v1/me/invites/{id}/accept",
-		"POST /v1/me/invites/{id}/decline",
-		"GET /v1/me/access-requests",
-		"POST /v1/me/access-requests",
-		"GET /v1/me/access-requests/roles",
-		"POST /v1/me/access-requests/{id}/cancel",
-		"POST /v1/users/{id}/verify/email/start",
-		"POST /v1/users/{id}/verify/email/confirm",
-		"POST /v1/users/{id}/verify/phone/start",
-		"POST /v1/users/{id}/verify/phone/confirm",
-		"POST /v1/me/email/change/start",
-		"POST /v1/me/email/change/confirm",
-		"GET /v1/passkeys",
-		"PATCH /v1/passkeys/{id}",
-		"DELETE /v1/passkeys/{id}",
-		"POST /v1/passkeys/register/begin",
-		"POST /v1/passkeys/register/finish",
-		"GET /v1/mfa/totp",
-		"POST /v1/mfa/totp/enroll/start",
-		"POST /v1/mfa/totp/enroll/confirm",
-		"POST /v1/mfa/totp/verify",
-		"DELETE /v1/mfa/totp",
-		"GET /v1/mfa/recovery-codes",
-		"POST /v1/mfa/recovery-codes/regenerate",
-		"GET /v1/mfa/otp/factors",
-		"POST /v1/mfa/otp/factors",
-		"POST /v1/mfa/otp/factors/{id}/confirm",
-		"POST /v1/mfa/otp/factors/{id}/challenge",
-		"DELETE /v1/mfa/otp/factors/{id}",
-		"POST /v1/mfa/otp/verify",
-		"POST /v1/mfa/webauthn/challenge",
-		"POST /v1/mfa/webauthn/verify",
-		"GET /v1/mfa/push/devices",
-		"POST /v1/mfa/push/devices",
-		"DELETE /v1/mfa/push/devices/{id}",
-		"POST /v1/mfa/push/pairing",
-		"GET /v1/mfa/push/pairing/{id}",
-		"DELETE /v1/mfa/push/pairing/{id}",
-		"GET /v1/mfa/step-up/status",
-		"POST /v1/mfa/push/step-up",
-		"POST /v1/mfa/push/step-up/{id}/complete",
-		"GET /v1/oauth/userinfo",
-		"POST /v1/oauth/userinfo",
-		"GET /v1/oauth/bc-authorize/pending",
-		"POST /v1/oauth/bc-authorize/decision",
-		"GET /v1/me/social/identities",
-		"DELETE /v1/me/social/identities/{id}",
-		"POST /v1/social/{provider}/link/start",
-		"POST /v1/social/link/complete",
-		"GET /v1/vault/tokens",
-		"GET /v1/vault/tokens/{provider}/connect",
-		"DELETE /v1/vault/tokens/{provider}",
-		"GET /v1/notifications",
-		"POST /v1/notifications/mark-all-read",
-		"POST /v1/account/export",
-		"POST /v1/account/delete",
-		"GET /v1/billing/plans",
-		"POST /v1/signup/checkout",
-		"GET /v1/qeetai/status",
-		"POST /v1/qeetai/conversations",
-		"GET /v1/qeetai/conversations",
-		"GET /v1/qeetai/conversations/{conversationID}",
-		"PATCH /v1/qeetai/conversations/{conversationID}",
-		"DELETE /v1/qeetai/conversations/{conversationID}",
-		"POST /v1/qeetai/conversations/{conversationID}/messages",
-		"POST /v1/sales/leads",
-	} {
+	for _, route := range routeList(accessUserOnlyRoutes(), identityUserOnlyRoutes(), federationUserOnlyRoutes(),
+		developerUserOnlyRoutes(), operationsUserOnlyRoutes()) {
 		policies[route] = rbac.UserOnlyPolicy(accountScope(route))
 	}
-	// Userinfo is the one route made for applications (ApplicationTokenRoutes),
-	// and OpenID Connect needs openid of a token reading it.
-	policies["GET /v1/oauth/userinfo"] = rbac.UserOnlyPolicy("openid")
-	policies["POST /v1/oauth/userinfo"] = rbac.UserOnlyPolicy("openid")
-
-	// These routes derive a vault:<resource> scope from the path and enforce it
-	// in the handler; the central catalogue still classifies the actor surface.
-	policies["GET /v1/vault/{name}"] = rbac.HandlerAuthorizedPolicy(true, "vault:read")
-	policies["GET /v1/vault/tokens/{provider}/access-token"] = rbac.HandlerAuthorizedPolicy(true, "vault:read")
-
-	// Search performs per-result-type RBAC checks in its service. Keep it user
-	// only until an equivalent per-type machine-scope evaluator is implemented.
-	policies["GET /v1/search"] = rbac.UserOnlyPolicy("user.read")
-
-	// Answering an access request gives a role or refuses it, a person's
-	// decision recorded as theirs: role.write, and no machine credential.
-	for _, route := range []string{
-		"POST /v1/tenants/{tenantID}/access-requests/{id}/approve",
-		"POST /v1/tenants/{tenantID}/access-requests/{id}/deny",
-	} {
-		policies[route] = rbac.RoutePolicy{UserPermission: "role.write", ApplicationScope: "role.write", AllowUser: true}
-	}
+	// The routes whose policy is neither, which replace any given above.
+	maps.Copy(policies, routeTable(accessPolicies(), federationPolicies(), developerPolicies(), operationsPolicies()))
 	return policies
+}
+
+// routeTable merges the contexts' tables of one kind into one, refusing a
+// route that two of them name: each route has one owner.
+func routeTable[V any](tables ...map[string]V) map[string]V {
+	out := map[string]V{}
+	for _, table := range tables {
+		for route, v := range table {
+			if _, dup := out[route]; dup {
+				panic("bootstrap: two contexts list the route " + route)
+			}
+			out[route] = v
+		}
+	}
+	return out
+}
+
+// routeList joins the contexts' lists of one kind, refusing a route that two
+// of them name, or one names twice.
+func routeList(lists ...[]string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, list := range lists {
+		for _, route := range list {
+			if seen[route] {
+				panic("bootstrap: the route " + route + " is listed twice")
+			}
+			seen[route] = true
+			out = append(out, route)
+		}
+	}
+	return out
 }
 
 // accountScope is the scope an application's token needs on a route of the

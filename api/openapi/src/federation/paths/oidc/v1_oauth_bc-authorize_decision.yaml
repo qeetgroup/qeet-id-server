@@ -4,9 +4,9 @@ post:
   description: >-
     Records the authenticated user's decision on one of their own pending
     requests (the id from GET .../pending, not the raw auth_req_id). Approving
-    is a sign-in to the application, held to its organisation's rules as
+    is a sign-in to the application, held to its organization's rules as
     device approval is: the user must still be an active member of it (403
-    oidc.user_tenant_mismatch), approve from an address its rules allow (403
+    oidc.user_organization_mismatch), approve from an address its rules allow (403
     auth.address_not_allowed, recorded as auth.address_refused with path
     ciba_approval), and through a session that met the second factor it
     requires (403 step_up_required or mfa.enrollment_required). A refused

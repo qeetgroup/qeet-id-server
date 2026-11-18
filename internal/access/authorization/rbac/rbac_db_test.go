@@ -51,28 +51,28 @@ func TestRolesStayInTheirOrganization(t *testing.T) {
 		{http.MethodGet, roleAPath, http.StatusNotFound},
 		{http.MethodPost, roleAPath + "/" + permID.String(), http.StatusNotFound},
 		{http.MethodDelete, roleAPath + "/" + permID.String(), http.StatusNotFound},
-		{http.MethodPost, "/users/" + memberB.ID.String() + "/tenants/" + organizationB.String() + "/roles/" + roleA.String(), http.StatusNotFound},
-		{http.MethodPost, "/users/" + userA.ID.String() + "/tenants/" + organizationB.String() + "/roles/" + roleB.String(), http.StatusNotFound},
-		{http.MethodDelete, "/users/" + userA.ID.String() + "/tenants/" + organizationA.String() + "/roles/" + roleA.String(), http.StatusForbidden},
-		{http.MethodGet, "/users/" + userA.ID.String() + "/tenants/" + organizationA.String() + "/permissions", http.StatusForbidden},
-		{http.MethodGet, "/tenants/" + organizationA.String() + "/roles", http.StatusForbidden},
+		{http.MethodPost, "/users/" + memberB.ID.String() + "/organizations/" + organizationB.String() + "/roles/" + roleA.String(), http.StatusNotFound},
+		{http.MethodPost, "/users/" + userA.ID.String() + "/organizations/" + organizationB.String() + "/roles/" + roleB.String(), http.StatusNotFound},
+		{http.MethodDelete, "/users/" + userA.ID.String() + "/organizations/" + organizationA.String() + "/roles/" + roleA.String(), http.StatusForbidden},
+		{http.MethodGet, "/users/" + userA.ID.String() + "/organizations/" + organizationA.String() + "/permissions", http.StatusForbidden},
+		{http.MethodGet, "/organizations/" + organizationA.String() + "/roles", http.StatusForbidden},
 	} {
 		if rec := dbtest.Do(t, asB, tc.method, tc.path, nil); rec.Code != tc.want {
-			t.Errorf("tenant B %s %s: status %d, want %d (%s)", tc.method, tc.path, rec.Code, tc.want, rec.Body.String())
+			t.Errorf("organization B %s %s: status %d, want %d (%s)", tc.method, tc.path, rec.Code, tc.want, rec.Body.String())
 		}
 	}
-	if ids := dbtest.IDs(t, dbtest.Do(t, asB, http.MethodGet, "/tenants/"+organizationB.String()+"/roles", nil)); slices.Contains(ids, roleA) {
-		t.Error("tenant B's role list includes tenant A's role")
+	if ids := dbtest.IDs(t, dbtest.Do(t, asB, http.MethodGet, "/organizations/"+organizationB.String()+"/roles", nil)); slices.Contains(ids, roleA) {
+		t.Error("organization B's role list includes organization A's role")
 	}
 
 	if ok, err := repo.Check(ctx, userA.ID, organizationA, perm); err != nil || !ok {
-		t.Errorf("tenant A's user lost %s: %v, %v", perm, ok, err)
+		t.Errorf("organization A's user lost %s: %v, %v", perm, ok, err)
 	}
 	if ok, err := repo.Check(ctx, memberB.ID, organizationB, perm); err != nil || ok {
-		t.Errorf("tenant B's member holds tenant A's %s: %v, %v", perm, ok, err)
+		t.Errorf("organization B's member holds organization A's %s: %v, %v", perm, ok, err)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM rbac.user_roles WHERE user_id = $1 AND organization_id = $2`, userA.ID, organizationB); n != 0 {
-		t.Error("tenant A's user was given a role in tenant B")
+		t.Error("organization A's user was given a role in organization B")
 	}
 }
 
@@ -153,7 +153,7 @@ func TestRoleLifecycle(t *testing.T) {
 			organization, action, role.ID, admin.ID, perm, permID.String())
 	}
 	if n := permissionChanged("role.permission_granted"); n != 1 {
-		t.Errorf("%d role.permission_granted records in the organisation, want 1", n)
+		t.Errorf("%d role.permission_granted records in the organization, want 1", n)
 	}
 	if holds(direct) || enforced(direct) != http.StatusForbidden {
 		t.Fatal("a person without the role holds its permission")
@@ -184,7 +184,7 @@ func TestRoleLifecycle(t *testing.T) {
 		t.Fatalf("revoke permission: %v", err)
 	}
 	if n := permissionChanged("role.permission_revoked"); n != 1 {
-		t.Errorf("%d role.permission_revoked records in the organisation, want 1", n)
+		t.Errorf("%d role.permission_revoked records in the organization, want 1", n)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id IS NULL AND resource_id = $1`, role.ID); n != 0 {
 		t.Errorf("%d of the role's changes are on the platform's record, want none", n)
@@ -237,7 +237,7 @@ func TestRolesSayWhoHoldsThem(t *testing.T) {
 
 	repo := NewRepository(pool)
 	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Repo: repo, Service: NewService(repo), Validate: validator.New()}).Mount)
-	base := "/tenants/" + organization.String() + "/roles"
+	base := "/organizations/" + organization.String() + "/roles"
 	var list struct {
 		Items []Role `json:"items"`
 	}
@@ -275,7 +275,7 @@ func TestRolesSayWhoHoldsThem(t *testing.T) {
 		t.Errorf("second page: %d people, cursor %q; want the last one", len(page.People), page.NextCursor)
 	}
 	if rec := dbtest.Do(t, h, http.MethodGet, base+"/"+foreign.String()+"/holders", nil); rec.Code != http.StatusNotFound {
-		t.Errorf("another organisation's role: %d, want 404", rec.Code)
+		t.Errorf("another organization's role: %d, want 404", rec.Code)
 	}
 }
 
@@ -304,7 +304,7 @@ func TestRemovingAGuestsLastRoleEndsTheirSessions(t *testing.T) {
 	}
 	unassign := func(userID, role uuid.UUID) {
 		t.Helper()
-		if rec := dbtest.Do(t, h, http.MethodDelete, "/users/"+userID.String()+"/tenants/"+organization.String()+"/roles/"+role.String(), nil); rec.Code != http.StatusNoContent {
+		if rec := dbtest.Do(t, h, http.MethodDelete, "/users/"+userID.String()+"/organizations/"+organization.String()+"/roles/"+role.String(), nil); rec.Code != http.StatusNoContent {
 			t.Fatalf("remove the role: %d %s", rec.Code, rec.Body.String())
 		}
 	}
@@ -320,10 +320,10 @@ func TestRemovingAGuestsLastRoleEndsTheirSessions(t *testing.T) {
 	}
 	unassign(guest.ID, second)
 	if live(there) {
-		t.Error("the guest's session in the organisation outlived their last role there")
+		t.Error("the guest's session in the organization outlived their last role there")
 	}
 	if !live(atHome) {
-		t.Error("the guest's session in their home organisation was ended")
+		t.Error("the guest's session in their home organization was ended")
 	}
 
 	member := dbtest.User(t, organization)

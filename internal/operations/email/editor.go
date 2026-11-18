@@ -5,9 +5,6 @@ import (
 	"errors"
 	"html"
 	"io"
-	"net/http"
-	"net/mail"
-	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -15,14 +12,12 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/microcosm-cc/bluemonday"
 	htmlparser "golang.org/x/net/html"
 	"golang.org/x/text/language"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
@@ -88,7 +83,7 @@ func (sender TemplateSender) Send(ctx context.Context, message notifier.Message)
 		return sender.Next.Send(ctx, message)
 	}
 	appearance := (&Handler{Appearance: sender.Appearance}).appearance(ctx, organizationID)
-	variables := map[string]string{"tenant_name": appearance.name}
+	variables := map[string]string{"organization_name": appearance.name}
 	for key, value := range message.TemplateVariables {
 		variables[key] = value
 	}
@@ -222,7 +217,7 @@ func normalizeContent(content *LocalizedContent, definition Definition) error {
 	content.Body = strings.TrimSpace(content.Body)
 	content.Preheader = strings.TrimSpace(content.Preheader)
 	if content.Subject == "" || content.Body == "" || utf8.RuneCountInString(content.Subject) > 200 || utf8.RuneCountInString(content.Preheader) > 200 || len(content.Body) > 150000 || len(content.HTML) > 200000 || strings.ContainsAny(content.Subject+content.Preheader, "\r\n") {
-		return errs.ErrEmailTemplateContentRequired
+		return ErrTemplateContentRequired
 	}
 	allowed := map[string]bool{}
 	for _, name := range definition.Variables {
@@ -310,27 +305,6 @@ func normalizeEditor(input *EditorInput, definition Definition) error {
 	return nil
 }
 
-func (h *Handler) appearance(ctx context.Context, organizationID uuid.UUID) emailAppearance {
-	appearance := emailAppearance{name: "Qeet ID", primary: "#f97316"}
-	if h.Appearance == nil {
-		return appearance
-	}
-	name, logo, primary, err := h.Appearance.EmailAppearance(ctx, organizationID)
-	if err != nil {
-		return appearance
-	}
-	if strings.TrimSpace(name) != "" {
-		appearance.name = name
-	}
-	if emailColor.MatchString(primary) {
-		appearance.primary = primary
-	}
-	if parsed, err := url.Parse(logo); err == nil && parsed.User == nil && (parsed.Scheme == "https" || parsed.Scheme == "http") {
-		appearance.logo = logo
-	}
-	return appearance
-}
-
 func renderEditor(key string, input EditorInput, variables map[string]string, locale string, appearance emailAppearance) (editorPreview, error) {
 	if len(variables) > 32 {
 		return editorPreview{}, errs.ErrBadRequest.WithDetail("too many preview variables")
@@ -342,7 +316,7 @@ func renderEditor(key string, input EditorInput, variables map[string]string, lo
 	}
 	definition, exists := defByKey(key)
 	if !exists {
-		return editorPreview{}, errs.ErrEmailTemplateNotFound
+		return editorPreview{}, ErrTemplateNotFound
 	}
 	if err := normalizeEditor(&input, definition); err != nil {
 		return editorPreview{}, err
@@ -416,69 +390,4 @@ func (limit *testEmailLimits) allow(key string, now time.Time) bool {
 	}
 	limit.entries[key] = now.Add(time.Minute)
 	return true
-}
-
-// testEmail sends a rendered draft to the caller's own verified address, once a
-// minute at most. It is forbidden unless TestEmailEnabled is set and a Sender
-// is configured.
-func (h *Handler) testEmail(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	principal := httpx.PrincipalFromCtx(r.Context())
-	if principal == nil || principal.UserID == nil || !h.TestEmailEnabled || h.Sender == nil {
-		httpx.WriteError(w, r, errs.ErrForbidden)
-		return
-	}
-	var input struct {
-		Draft  EditorInput `json:"draft"`
-		Locale string      `json:"locale"`
-	}
-	if err := httpx.DecodeJSON(r, &input); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	var recipient string
-	if err := h.Service.pool.QueryRow(r.Context(), `SELECT email FROM account.users WHERE id=$1 AND email_verified_at IS NOT NULL AND status='active' AND deleted_at IS NULL`, *principal.UserID).Scan(&recipient); err != nil {
-		httpx.WriteError(w, r, errs.ErrForbidden)
-		return
-	}
-	parsed, err := mail.ParseAddress(recipient)
-	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest)
-		return
-	}
-	appearance := h.appearance(r.Context(), organizationID)
-	variables := map[string]string{"code": "482913", "ttl": "10 minutes", "tenant_name": appearance.name, "reset_url": "https://example.invalid/test/reset", "magic_url": "https://example.invalid/test/sign-in", "invite_url": "https://example.invalid/test/invite"}
-	preview, err := renderEditor(chi.URLParam(r, "key"), input.Draft, variables, input.Locale, appearance)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if !h.testLimits.allow(organizationID.String()+":"+principal.UserID.String(), time.Now()) {
-		w.Header().Set("Retry-After", "60")
-		httpx.WriteJSON(w, http.StatusTooManyRequests, map[string]any{"error": map[string]any{"code": "rate_limited", "message": "Wait before sending another test email."}})
-		return
-	}
-	tx, err := h.Service.Pool().Begin(r.Context())
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	defer tx.Rollback(r.Context())
-	if err := h.audit(r.Context(), tx, r, organizationID, "email_template.test_requested", chi.URLParam(r, "key")); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := tx.Commit(r.Context()); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := h.Sender.Send(r.Context(), notifier.Message{OrganizationID: organizationID.String(), Channel: "email", To: parsed.Address, Subject: "[Test] " + preview.Subject, Body: preview.Body, HTML: preview.HTML}); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
 }

@@ -7,7 +7,7 @@ required:
   - reason
   - requested_by
   - status
-  - tenant_id
+  - organization_id
   - user_id
 properties:
   completed_at:
@@ -35,7 +35,7 @@ properties:
     format: uuid
   status:
     type: string
-  tenant_id:
+  organization_id:
     type: string
     format: uuid
   user_id:

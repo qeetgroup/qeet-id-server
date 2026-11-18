@@ -3,10 +3,10 @@ get:
   summary: Live activity stream (SSE)
   description: >-
     Opens a Server-Sent Events stream of ActivityEvent frames for the caller's
-    tenant: the audit records themselves, every kind (sign-ins and MFA
+    organization: the audit records themselves, every kind (sign-ins and MFA
     included), each with its own audit id, so a live event can be opened and
     related like one from the history. The server follows the audit log every
-    two seconds, or at once when the organisation acts. Each frame is `id:
+    two seconds, or at once when the organization acts. Each frame is `id:
     <cursor>\nevent: activity\ndata: <json>\n\n`; periodic `: keep-alive`
     comments prevent proxy timeouts.
 
@@ -35,7 +35,7 @@ get:
 
 
     Server-side filters (`?types`, `?severity`, `?category`) are applied to both
-    the replay and the live stream. The connection tenant is derived from the
+    the replay and the live stream. The connection organization is derived from the
     JWT principal only — never from the URL or body.
 
 

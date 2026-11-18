@@ -21,7 +21,7 @@ post:
     factor's earlier unused code stop working. A step-up code works only for a
     step-up, and a code sent for a sign-in or to confirm a new factor never
     counts here; its message says what it is for. An SMS code needs an
-    organisation whose plan includes SMS (403 upgrade_required). Each code sent
+    organization whose plan includes SMS (403 upgrade_required). Each code sent
     is audited as mfa.otp_sent.
   responses:
     '201':

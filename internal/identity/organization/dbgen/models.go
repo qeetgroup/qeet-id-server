@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type OrganizationOrganization struct {
@@ -21,7 +20,7 @@ type OrganizationOrganization struct {
 	Metadata      []byte
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
-	DeletedAt     pgtype.Timestamptz
+	DeletedAt     *time.Time
 	LogoUrl       string
-	DeletionDueAt pgtype.Timestamptz
+	DeletionDueAt *time.Time
 }

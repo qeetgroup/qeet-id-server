@@ -22,7 +22,7 @@ func TestBotSettingsChangesAreAudited(t *testing.T) {
 	organization := dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
 	as := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)
-	path := "/tenants/" + organization.String() + "/security/bots/settings"
+	path := "/organizations/" + organization.String() + "/security/bots/settings"
 	type record struct {
 		Changes  map[string]map[string]any `json:"changes"`
 		Settings map[string]any            `json:"settings"`

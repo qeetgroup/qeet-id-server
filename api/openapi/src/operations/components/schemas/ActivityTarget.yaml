@@ -3,7 +3,7 @@ description: The resource the event acted upon.
 properties:
   type:
     type: string
-    description: Resource type (e.g. "user", "group", "tenant").
+    description: Resource type (e.g. "user", "group", "organization").
   id:
     type: string
     format: uuid

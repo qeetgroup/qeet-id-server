@@ -30,7 +30,7 @@ info:
     3. Wire up **webhooks** and **auth hooks** to react to events and customize
     auth flows.
 
-    4. Store secrets in the **Secrets Vault** (tenant secrets) or connect
+    4. Store secrets in the **Secrets Vault** (organization secrets) or connect
     third-party accounts via the **Token Vault** (external OAuth credentials,
     refreshed for you).
 
@@ -39,18 +39,18 @@ info:
 
 
     Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization:
-    ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token),
+    ApiKey <key>` — legacy scheme), `scimBearer` (per-organization SCIM token),
     `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session).
     CSRF protection applies only to cookie sessions (`ssoCookie`): requests
     authorised by `bearerAuth` or `apiKeyAuth` bypass it, as do the
-    client-credentials token exchange (POST /v1/oauth/token) and the directory
+    token endpoint (POST /v1/oauth/token) and the directory
     sign-in (POST /ldap/{id}/authenticate), which carry their credentials in the
     request. Basic credentials do not bypass it. A request that fails the check
     is refused with 403 `csrf_failed`.
 
 
-    The responses of agent token minting and the token vault's access-token
-    read, and of the operations returning a new API key, agent or webhook
+    The responses of the token vault's access-token read, and of the
+    operations returning a new API key, agent or webhook
     secret, a revealed secret or an issued credential, are sent with
     `Cache-Control: no-store` and `Pragma: no-cache`.
 
@@ -66,7 +66,7 @@ info:
 
     - **Authentication & Access API** — login, passkeys, MFA, authorization
 
-    - **Identity Management API** — tenants, users, groups, invitations
+    - **Identity Management API** — organizations, users, groups, invitations
 
     - **Federation API** — OIDC/OAuth provider, SAML, SCIM, LDAP, social
 
@@ -91,9 +91,9 @@ tags:
     description: Long-lived API keys for machine access.
   - name: Agents
     description: >-
-      AI agent identities — register agents and mint short-lived scoped tokens
-      (re-minted, never refreshed); manage sponsorship, suspension and
-      decommissioning.
+      AI agent identities — register agents, which get short-lived scoped
+      tokens at the token endpoint by client_credentials (re-minted, never
+      refreshed); manage sponsorship, suspension and decommissioning.
   - name: Credentials
     description: >-
       Verifiable credentials — issue, list and revoke W3C / JWT-VC documents,
@@ -114,7 +114,7 @@ tags:
       receives, from the event catalogue; an event's name is its version, so an
       incompatible payload change comes as a new name, while new fields may be
       added to any payload. Each delivery is a POST whose JSON body is the
-      envelope {id, type, tenant_id, occurred_at, data}: id is the same in every
+      envelope {id, type, organization_id, occurred_at, data}: id is the same in every
       delivery of one event, retries included, so deduplicate on it, and data is
       the event's own payload. Deliveries are at least once and in no guaranteed
       order. Headers: X-Qeet-Event (the type), X-Qeet-Delivery-ID,
@@ -132,69 +132,67 @@ tags:
       webhook.write are alerted in-app; deliveries queued meanwhile are sent
       once it is enabled again.
   - name: Secrets
-    description: Per-tenant encrypted secrets vault.
+    description: Per-organization encrypted secrets vault.
   - name: Token Vault
     description: >-
       Third-party OAuth credential storage with transparent refresh, for calling
-      external services on a user's behalf — distinct from Secrets Vault (tenant
+      external services on a user's behalf — distinct from Secrets Vault (organization
       secrets).
 paths:
   /v1/api-keys:
     $ref: paths/api-keys/v1_api-keys.yaml
   /v1/api-keys/{id}:
     $ref: paths/api-keys/v1_api-keys_{id}.yaml
-  /v1/tenants/{tenantID}/api-keys:
-    $ref: paths/api-keys/v1_tenants_{tenantID}_api-keys.yaml
-  /v1/tenants/{tenantID}/api-keys/{id}/rotate:
-    $ref: paths/api-keys/v1_tenants_{tenantID}_api-keys_{id}_rotate.yaml
-  /v1/agents/token:
-    $ref: paths/agents/v1_agents_token.yaml
-  /v1/tenants/{tenantID}/agents:
-    $ref: paths/agents/v1_tenants_{tenantID}_agents.yaml
-  /v1/tenants/{tenantID}/agents/{id}:
-    $ref: paths/agents/v1_tenants_{tenantID}_agents_{id}.yaml
-  /v1/tenants/{tenantID}/agents/{id}/suspend:
-    $ref: paths/agents/v1_tenants_{tenantID}_agents_{id}_suspend.yaml
-  /v1/tenants/{tenantID}/agents/{id}/resume:
-    $ref: paths/agents/v1_tenants_{tenantID}_agents_{id}_resume.yaml
-  /v1/tenants/{tenantID}/agents/{id}/decommission:
-    $ref: paths/agents/v1_tenants_{tenantID}_agents_{id}_decommission.yaml
-  /v1/tenants/{tenantID}/agents/kill-all:
-    $ref: paths/agents/v1_tenants_{tenantID}_agents_kill-all.yaml
-  /v1/tenants/{tenantID}/agents/resume-all:
-    $ref: paths/agents/v1_tenants_{tenantID}_agents_resume-all.yaml
-  /v1/tenants/{tenantID}/agents/{id}/rotate-secret:
-    $ref: paths/agents/v1_tenants_{tenantID}_agents_{id}_rotate-secret.yaml
-  /v1/tenants/{tenantID}/agents/sponsored-by/{userID}:
-    $ref: paths/agents/v1_tenants_{tenantID}_agents_sponsored-by_{userID}.yaml
-  /v1/tenants/{tenantID}/agents/sponsored-by/{userID}/transfer:
-    $ref: paths/agents/v1_tenants_{tenantID}_agents_sponsored-by_{userID}_transfer.yaml
+  /v1/organizations/{organizationID}/api-keys:
+    $ref: paths/api-keys/v1_organizations_{organizationID}_api-keys.yaml
+  /v1/organizations/{organizationID}/api-keys/{id}/rotate:
+    $ref: paths/api-keys/v1_organizations_{organizationID}_api-keys_{id}_rotate.yaml
+  /v1/organizations/{organizationID}/agents:
+    $ref: paths/agents/v1_organizations_{organizationID}_agents.yaml
+  /v1/organizations/{organizationID}/agents/{id}:
+    $ref: paths/agents/v1_organizations_{organizationID}_agents_{id}.yaml
+  /v1/organizations/{organizationID}/agents/{id}/suspend:
+    $ref: paths/agents/v1_organizations_{organizationID}_agents_{id}_suspend.yaml
+  /v1/organizations/{organizationID}/agents/{id}/resume:
+    $ref: paths/agents/v1_organizations_{organizationID}_agents_{id}_resume.yaml
+  /v1/organizations/{organizationID}/agents/{id}/decommission:
+    $ref: paths/agents/v1_organizations_{organizationID}_agents_{id}_decommission.yaml
+  /v1/organizations/{organizationID}/agents/kill-all:
+    $ref: paths/agents/v1_organizations_{organizationID}_agents_kill-all.yaml
+  /v1/organizations/{organizationID}/agents/resume-all:
+    $ref: paths/agents/v1_organizations_{organizationID}_agents_resume-all.yaml
+  /v1/organizations/{organizationID}/agents/{id}/rotate-secret:
+    $ref: paths/agents/v1_organizations_{organizationID}_agents_{id}_rotate-secret.yaml
+  /v1/organizations/{organizationID}/agents/sponsored-by/{userID}:
+    $ref: paths/agents/v1_organizations_{organizationID}_agents_sponsored-by_{userID}.yaml
+  /v1/organizations/{organizationID}/agents/sponsored-by/{userID}/transfer:
+    $ref: paths/agents/v1_organizations_{organizationID}_agents_sponsored-by_{userID}_transfer.yaml
   /v1/credentials/verify:
     $ref: paths/credentials/v1_credentials_verify.yaml
-  /v1/tenants/{tenantID}/credentials:
-    $ref: paths/credentials/v1_tenants_{tenantID}_credentials.yaml
-  /v1/tenants/{tenantID}/credentials/{id}/revoke:
-    $ref: paths/credentials/v1_tenants_{tenantID}_credentials_{id}_revoke.yaml
-  /v1/tenants/{tenantID}/auth-hooks:
-    $ref: paths/auth-hooks/v1_tenants_{tenantID}_auth-hooks.yaml
-  /v1/tenants/{tenantID}/auth-hooks/{id}/test:
-    $ref: paths/auth-hooks/v1_tenants_{tenantID}_auth-hooks_{id}_test.yaml
-  /v1/tenants/{tenantID}/auth-hooks/{id}:
-    $ref: paths/auth-hooks/v1_tenants_{tenantID}_auth-hooks_{id}.yaml
-  /v1/tenants/{tenantID}/webhooks:
-    $ref: paths/webhooks/v1_tenants_{tenantID}_webhooks.yaml
-  /v1/tenants/{tenantID}/webhooks/events:
-    $ref: paths/webhooks/v1_tenants_{tenantID}_webhooks_events.yaml
-  /v1/tenants/{tenantID}/webhooks/{id}/enable:
-    $ref: paths/webhooks/v1_tenants_{tenantID}_webhooks_{id}_enable.yaml
-  /v1/tenants/{tenantID}/webhooks/{id}:
-    $ref: paths/webhooks/v1_tenants_{tenantID}_webhooks_{id}.yaml
-  /v1/tenants/{tenantID}/webhooks/{id}/deliveries/retry:
-    $ref: paths/webhooks/v1_tenants_{tenantID}_webhooks_{id}_deliveries_retry.yaml
-  /v1/tenants/{tenantID}/webhooks/{id}/deliveries/{deliveryID}/attempts:
-    $ref: paths/webhooks/v1_tenants_{tenantID}_webhooks_{id}_deliveries_{deliveryID}_attempts.yaml
-  /v1/tenants/{tenantID}/webhooks/{id}/rotate-secret:
-    $ref: paths/webhooks/v1_tenants_{tenantID}_webhooks_{id}_rotate-secret.yaml
+  /v1/organizations/{organizationID}/credentials:
+    $ref: paths/credentials/v1_organizations_{organizationID}_credentials.yaml
+  /v1/organizations/{organizationID}/credentials/{id}/revoke:
+    $ref: paths/credentials/v1_organizations_{organizationID}_credentials_{id}_revoke.yaml
+  /v1/organizations/{organizationID}/auth-hooks:
+    $ref: paths/auth-hooks/v1_organizations_{organizationID}_auth-hooks.yaml
+  /v1/organizations/{organizationID}/auth-hooks/{id}/test:
+    $ref: paths/auth-hooks/v1_organizations_{organizationID}_auth-hooks_{id}_test.yaml
+  /v1/organizations/{organizationID}/auth-hooks/{id}:
+    $ref: paths/auth-hooks/v1_organizations_{organizationID}_auth-hooks_{id}.yaml
+  /v1/organizations/{organizationID}/webhooks:
+    $ref: paths/webhooks/v1_organizations_{organizationID}_webhooks.yaml
+  /v1/organizations/{organizationID}/webhooks/events:
+    $ref: paths/webhooks/v1_organizations_{organizationID}_webhooks_events.yaml
+  /v1/organizations/{organizationID}/webhooks/{id}/enable:
+    $ref: paths/webhooks/v1_organizations_{organizationID}_webhooks_{id}_enable.yaml
+  /v1/organizations/{organizationID}/webhooks/{id}:
+    $ref: paths/webhooks/v1_organizations_{organizationID}_webhooks_{id}.yaml
+  /v1/organizations/{organizationID}/webhooks/{id}/deliveries/retry:
+    $ref: paths/webhooks/v1_organizations_{organizationID}_webhooks_{id}_deliveries_retry.yaml
+  /v1/organizations/{organizationID}/webhooks/{id}/deliveries/{deliveryID}/attempts:
+    $ref: paths/webhooks/v1_organizations_{organizationID}_webhooks_{id}_deliveries_{deliveryID}_attempts.yaml
+  /v1/organizations/{organizationID}/webhooks/{id}/rotate-secret:
+    $ref: paths/webhooks/v1_organizations_{organizationID}_webhooks_{id}_rotate-secret.yaml
   /v1/webhooks:
     $ref: paths/webhooks/v1_webhooks.yaml
   /v1/webhooks/{id}:
@@ -207,16 +205,16 @@ paths:
     $ref: paths/webhooks/v1_webhooks_{id}_test.yaml
   /v1/vault/{name}:
     $ref: paths/secrets/v1_vault_{name}.yaml
-  /v1/tenants/{tenantID}/secrets:
-    $ref: paths/secrets/v1_tenants_{tenantID}_secrets.yaml
-  /v1/tenants/{tenantID}/secrets/{id}:
-    $ref: paths/secrets/v1_tenants_{tenantID}_secrets_{id}.yaml
-  /v1/tenants/{tenantID}/secrets/{id}/reveal:
-    $ref: paths/secrets/v1_tenants_{tenantID}_secrets_{id}_reveal.yaml
-  /v1/tenants/{tenantID}/vault/tokens/providers:
-    $ref: paths/token-vault/v1_tenants_{tenantID}_vault_tokens_providers.yaml
-  /v1/tenants/{tenantID}/vault/tokens/providers/{provider}:
-    $ref: paths/token-vault/v1_tenants_{tenantID}_vault_tokens_providers_{provider}.yaml
+  /v1/organizations/{organizationID}/secrets:
+    $ref: paths/secrets/v1_organizations_{organizationID}_secrets.yaml
+  /v1/organizations/{organizationID}/secrets/{id}:
+    $ref: paths/secrets/v1_organizations_{organizationID}_secrets_{id}.yaml
+  /v1/organizations/{organizationID}/secrets/{id}/reveal:
+    $ref: paths/secrets/v1_organizations_{organizationID}_secrets_{id}_reveal.yaml
+  /v1/organizations/{organizationID}/vault/tokens/providers:
+    $ref: paths/token-vault/v1_organizations_{organizationID}_vault_tokens_providers.yaml
+  /v1/organizations/{organizationID}/vault/tokens/providers/{provider}:
+    $ref: paths/token-vault/v1_organizations_{organizationID}_vault_tokens_providers_{provider}.yaml
   /v1/vault/tokens:
     $ref: paths/token-vault/v1_vault_tokens.yaml
   /v1/vault/tokens/{provider}/connect:

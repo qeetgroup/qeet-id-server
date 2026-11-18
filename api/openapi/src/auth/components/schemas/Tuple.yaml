@@ -18,4 +18,4 @@ properties:
     type: string
     description: >-
       A user subject's person, by display name or address, when they belong to
-      the organisation.
+      the organization.

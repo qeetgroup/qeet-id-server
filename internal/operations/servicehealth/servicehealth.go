@@ -9,17 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/servicehealth/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 // Components, in the order they are reported.
@@ -131,10 +126,7 @@ func (s *Service) Report(ctx context.Context, organizationID uuid.UUID) (*Report
 	for _, row := range rows {
 		in := Incident{ID: row.ID, Component: row.Component, Impact: row.Impact, Title: row.Title,
 			Detail: row.Detail, StartedAt: row.StartedAt}
-		if row.ResolvedAt.Valid {
-			t := row.ResolvedAt.Time
-			in.ResolvedAt = &t
-		}
+		in.ResolvedAt = row.ResolvedAt
 		incidents = append(incidents, in)
 	}
 	return assemble([]Component{api, signIn, email, webhooks, directory}, incidents, time.Now().UTC()), nil
@@ -159,7 +151,7 @@ func assemble(components []Component, incidents []Incident, now time.Time) *Repo
 // email is degraded when the provider refused at least a quarter of the
 // organization's emails of the last hour.
 func (s *Service) email(ctx context.Context, organizationID uuid.UUID) (Component, error) {
-	row, err := s.q.EmailHealth(ctx, pgtype.UUID{Bytes: organizationID, Valid: true})
+	row, err := s.q.EmailHealth(ctx, &organizationID)
 	if err != nil {
 		return Component{}, fmt.Errorf("email health: %w", err)
 	}
@@ -236,28 +228,4 @@ func (s *Service) ResolveIncident(ctx context.Context, id uuid.UUID) error {
 		return fmt.Errorf("incident %s: none open", id)
 	}
 	return nil
-}
-
-// Handler serves the service-health endpoint.
-type Handler struct {
-	Service *Service
-}
-
-// Mount registers GET /tenants/{tenantID}/service-health.
-func (h *Handler) Mount(r chi.Router) {
-	r.Get("/tenants/{tenantID}/service-health", h.report)
-}
-
-func (h *Handler) report(w http.ResponseWriter, r *http.Request) {
-	tid, err := httpx.PathOrganizationOr(r, errs.ErrBadRequest.WithMessage("The organisation id is not valid."), errs.ErrForbidden)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	out, err := h.Service.Report(r.Context(), tid)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, out)
 }

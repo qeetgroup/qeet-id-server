@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -60,18 +59,12 @@ func (r *Repository) UploadedLogo(ctx context.Context, organizationID uuid.UUID)
 	return contentType, image, true
 }
 
-// MountPublic registers the route that needs no credential: an organization's
-// uploaded logo, which its emails and hosted pages link to.
-func (h *Handler) MountPublic(r chi.Router) {
-	r.Get("/branding/{tenantID}/logo", h.logo)
-}
-
-// logo serves GET /v1/branding/{tenantID}/logo. The image is only ever shown,
+// logo serves GET /v1/branding/{organizationID}/logo. The image is only ever shown,
 // never run: an SVG's scripts stay sandboxed on this origin.
 func (h *Handler) logo(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	organizationID, err := httpx.PathUUID(r, "organizationID", errs.ErrNotFound)
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrNotFound)
+		httpx.WriteError(w, r, err)
 		return
 	}
 	contentType, image, ok := h.Repo.UploadedLogo(r.Context(), organizationID)

@@ -1,0 +1,50 @@
+post:
+  operationId: testLogSink
+  summary: Send a test event to a log stream
+  description: >-
+    Sends one test audit event (action siem.test, metadata.test true; no
+    organization data) to one of the organization's saved destinations and
+    reports how it answered. It changes nothing on the destination: its cursor,
+    last_error and back-off are untouched. Audited as siem.sink_tested. Needs
+    audit.write and a recent step-up.
+  tags:
+    - Log Sinks
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: How the destination answered
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - delivered
+              - duration_ms
+            properties:
+              delivered:
+                type: boolean
+                description: Whether the destination accepted the event (a 2xx answer).
+              status:
+                type: integer
+                description: The destination's HTTP status; absent when it gave no answer.
+              error:
+                type: string
+                description: Why it wasn't delivered.
+              duration_ms:
+                type: integer
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml

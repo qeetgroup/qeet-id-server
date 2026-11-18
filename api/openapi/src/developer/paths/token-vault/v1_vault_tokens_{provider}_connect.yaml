@@ -14,7 +14,7 @@ get:
   description: >-
     Returns the authorize_url to redirect the user's browser to, starting a
     standard OAuth2 authorization-code ceremony (with PKCE, S256) against the
-    tenant's registered provider config. The answer also sets an HttpOnly cookie
+    organization's registered provider config. The answer also sets an HttpOnly cookie
     binding the ceremony to this browser, so call it with credentials included
     (fetch credentials: 'include') from the browser that will open the link: the
     callback connects the account only in that browser.

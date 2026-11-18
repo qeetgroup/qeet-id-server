@@ -14,7 +14,7 @@ post:
         format: uuid
   description: >-
     Same as accepting by token, but selects the invite by id (from GET
-    /v1/me/invites). Returns a tenant-scoped token pair, under the same
+    /v1/me/invites). Returns an organization-scoped token pair, under the same
     second-factor rule. Answers 403 invite.email_not_verified until the
     account's address is verified.
   responses:

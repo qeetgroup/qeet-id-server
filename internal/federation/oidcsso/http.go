@@ -1,18 +1,15 @@
 package oidcsso
 
 import (
-	"context"
 	"net/http"
 	"net/url"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
-	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/returnto"
@@ -33,11 +30,11 @@ type Handler struct {
 
 // Mount registers the administration routes on r.
 func (h *Handler) Mount(r chi.Router) {
-	r.Get("/tenants/{tenantID}/oidc-connections", h.list)
-	r.Post("/tenants/{tenantID}/oidc-connections", h.create)
-	r.Get("/tenants/{tenantID}/oidc-connections/{id}", h.get)
-	r.Patch("/tenants/{tenantID}/oidc-connections/{id}", h.update)
-	r.Delete("/tenants/{tenantID}/oidc-connections/{id}", h.del)
+	r.Get("/organizations/{organizationID}/oidc-connections", h.list)
+	r.Post("/organizations/{organizationID}/oidc-connections", h.create)
+	r.Get("/organizations/{organizationID}/oidc-connections/{id}", h.get)
+	r.Patch("/organizations/{organizationID}/oidc-connections/{id}", h.update)
+	r.Delete("/organizations/{organizationID}/oidc-connections/{id}", h.del)
 }
 
 // MountPublic registers the sign-in routes, which carry no user token.
@@ -68,29 +65,7 @@ func (h *Handler) withRedirectURI(r *http.Request, c *Connection) *Connection {
 }
 
 func connectionID(r *http.Request) (uuid.UUID, error) {
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		return uuid.Nil, errs.ErrOIDCSSOIDInvalid
-	}
-	return id, nil
-}
-
-func (h *Handler) recordAudit(ctx context.Context, tx pgx.Tx, r *http.Request, organizationID, resourceID uuid.UUID, action string, meta map[string]any) error {
-	actorID, actorType := audit.ActorOf(r).Identity()
-	tid := organizationID
-	rid := resourceID
-	return audit.Record(ctx, tx, audit.Event{
-		OrganizationID: &tid,
-		ActorUserID:    actorID,
-		ActorType:      actorType,
-		Action:         action,
-		ResourceType:   "oidc_connection",
-		ResourceID:     &rid,
-		IP:             httpx.ClientIP(r),
-		UserAgent:      r.UserAgent(),
-		RequestID:      httpx.RequestID(r),
-		Metadata:       meta,
-	})
+	return httpx.PathUUID(r, "id", ErrIDInvalid)
 }
 
 // --- administration ---
@@ -132,23 +107,8 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	tx, err := h.Service.Pool().Begin(ctx)
+	conn, err := h.Service.Create(ctx, organizationID, in, audit.ActorOf(r))
 	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	defer tx.Rollback(ctx)
-	conn, err := h.Service.Create(ctx, tx, organizationID, in)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	meta := map[string]any{"name": conn.Name, "issuer": conn.Issuer, "status": conn.Status}
-	if err := h.recordAudit(ctx, tx, r, organizationID, conn.ID, "oidc_connection.created", meta); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -204,23 +164,8 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	tx, err := h.Service.Pool().Begin(ctx)
+	conn, err := h.Service.Update(ctx, id, organizationID, in, audit.ActorOf(r))
 	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	defer tx.Rollback(ctx)
-	conn, err := h.Service.Update(ctx, tx, id, organizationID, in)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	meta := map[string]any{"fields": in.changed(), "status": conn.Status}
-	if err := h.recordAudit(ctx, tx, r, organizationID, conn.ID, "oidc_connection.updated", meta); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -238,22 +183,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	ctx := r.Context()
-	tx, err := h.Service.Pool().Begin(ctx)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	defer tx.Rollback(ctx)
-	if err := h.Service.Delete(ctx, tx, id, organizationID); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := h.recordAudit(ctx, tx, r, organizationID, id, "oidc_connection.deleted", nil); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := h.Service.Delete(r.Context(), id, organizationID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -279,7 +209,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.binding().Add(w, r, state)
-	http.Redirect(w, r, authURL, http.StatusFound) // #nosec G710 -- authorization_endpoint checked by validAuthorizationEndpoint
+	http.Redirect(w, r, authURL, http.StatusFound) // #nosec G710 -- authorization_endpoint checked by oidcrp.ValidAuthorizationEndpoint
 }
 
 // callback completes a sign-in the provider answered, then hands the console
@@ -300,8 +230,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		Code:          query.Get("code"),
 		ProviderError: query.Get("error"),
 		StartedHere:   startedHere,
-		IP:            httpx.ClientIP(r),
-		UserAgent:     r.UserAgent(),
+		Actor:         audit.Actor{Type: provider, IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)},
 	})
 	if startedHere {
 		h.binding().Remove(w, r, state)
@@ -334,18 +263,18 @@ func (h *Handler) session(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	userID, organizationID, err := h.Service.consumeLoginCode(r.Context(), body.Code)
+	code, err := h.Service.consumeLoginCode(r.Context(), body.Code)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	raw, err := h.Service.auth.BeginSSOLoginSession(r.Context(), userID, organizationID, provider, httpx.ClientIP(r), r.UserAgent())
+	raw, err := h.Service.auth.BeginSSOLoginSession(r.Context(), code.UserID, code.OrganizationID, provider, httpx.ClientIP(r), r.UserAgent())
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	auth.SetLoginSessionCookie(w, raw, h.CookieSecure)
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"user_id": userID})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"user_id": code.UserID})
 }
 
 func (h *Handler) exchange(w http.ResponseWriter, r *http.Request) {

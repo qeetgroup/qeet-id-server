@@ -62,7 +62,7 @@ jobs:
           make openapi-check
           go test ./internal/bootstrap -run 'OpenAPI|RouteContract'
 
-      # The free gitleaks CLI (the gitleaks Action needs a paid licence for an organisation), pinned and
+      # The free gitleaks CLI (the gitleaks Action needs a paid licence for an organization), pinned and
       # checksum-verified, over this pull request's commits.
       - name: Secret scan
         env:

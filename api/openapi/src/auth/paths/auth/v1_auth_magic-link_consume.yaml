@@ -5,7 +5,7 @@ post:
     delivered by the magic-link start call. On success it returns an access and
     refresh token pair; the token is invalidated once consumed and cannot be
     replayed. Tokens are short-lived, so an expired or already-used link must be
-    re-requested from the start call. A link to an account whose organisation
+    re-requested from the start call. A link to an account whose organization
     has since switched magic links off is refused with 403
     auth.method_disabled and stays unused. A link that proves the account's address for the first time marks it
     verified, ends every earlier session and removes everything set up on the

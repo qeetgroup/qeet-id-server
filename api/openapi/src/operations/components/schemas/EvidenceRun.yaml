@@ -1,12 +1,12 @@
 type: object
 description: >-
   Immutable snapshot of one compliance evidence generation pass for a
-  tenant+framework pair. Controls are populated on GetRun; omitted on ListRuns.
+  organization+framework pair. Controls are populated on GetRun; omitted on ListRuns.
 properties:
   id:
     type: string
     format: uuid
-  tenant_id:
+  organization_id:
     type: string
     format: uuid
   framework:

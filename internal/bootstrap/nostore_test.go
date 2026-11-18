@@ -26,10 +26,10 @@ func TestNoStoreRoutesAreMounted(t *testing.T) {
 }
 
 // TestRouterAnswersTheTokenEndpointUncacheable checks that NewRouter applies
-// the no-store list, including to a token endpoint's error.
+// the no-store list, including to the token endpoint's error.
 func TestRouterAnswersTheTokenEndpointUncacheable(t *testing.T) {
 	router := NewRouter(routeInventoryDeps(t))
-	req := httptest.NewRequest(http.MethodPost, "/v1/oauth/token-code", strings.NewReader("grant_type=unknown"))
+	req := httptest.NewRequest(http.MethodPost, "/v1/oauth/token", strings.NewReader("grant_type=unknown"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -42,14 +42,13 @@ func TestRouterAnswersTheTokenEndpointUncacheable(t *testing.T) {
 	}
 }
 
-// TestTokenAndSecretResponsesAreNotStored checks that the token endpoints,
+// TestTokenAndSecretResponsesAreNotStored checks that the token endpoint,
 // sign-in and secrets shown once are answered as uncacheable.
 func TestTokenAndSecretResponsesAreNotStored(t *testing.T) {
 	h := httpx.NoStore(NoStoreRoutes())(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	const organization, id = "/v1/tenants/0b8e2c7e-6a4f-4d8e-9a43-3f0c2b1d5e6a", "8c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f"
+	const organization, id = "/v1/organizations/0b8e2c7e-6a4f-4d8e-9a43-3f0c2b1d5e6a", "8c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f"
 	for _, tc := range []struct{ method, path string }{
 		{http.MethodPost, "/v1/oauth/token"},
-		{http.MethodPost, "/v1/oauth/token-code"},
 		{http.MethodPost, "/v1/oauth/device_authorization"},
 		{http.MethodPost, "/v1/oauth/bc-authorize"},
 		{http.MethodPost, "/v1/auth/login"},

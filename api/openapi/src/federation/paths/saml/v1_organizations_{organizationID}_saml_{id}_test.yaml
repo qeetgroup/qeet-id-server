@@ -1,0 +1,33 @@
+post:
+  operationId: testSamlConnection
+  summary: Test SAML connection
+  description: >-
+    Runs offline checks (entity ID present, https SSO URL, the signing
+    certificate parses and is in its validity window, email attribute mapped)
+    and returns per-check results. No network I/O.
+  tags:
+    - SAML
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: Per-check preflight results
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/TestResult.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml

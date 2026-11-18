@@ -46,7 +46,7 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM organization.organizations WHERE id = p_organization AND deleted_at IS NULL) THEN
         RETURN;
     END IF;
-    PERFORM pg_advisory_xact_lock(hashtextextended('tenant.last_owner:' || p_organization::text, 0));
+    PERFORM pg_advisory_xact_lock(hashtextextended('organization.last_owner:' || p_organization::text, 0));
     IF NOT EXISTS (
         SELECT 1
         FROM rbac.user_roles ur
@@ -55,7 +55,7 @@ BEGIN
         WHERE ur.organization_id = p_organization AND ur.user_id <> p_user
           AND u.status = 'active' AND u.deleted_at IS NULL
     ) THEN
-        RAISE EXCEPTION 'organisation % would have no active owner', p_organization
+        RAISE EXCEPTION 'organization % would have no active owner', p_organization
             USING ERRCODE = 'QI409', HINT = 'Make someone else an owner first.';
     END IF;
 END;

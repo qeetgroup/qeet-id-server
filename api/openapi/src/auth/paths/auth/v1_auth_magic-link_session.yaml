@@ -7,7 +7,7 @@ post:
     continues (return_to, empty for none). The link works once: used, expired or
     unknown links, and console links, are refused (recovery.link_used,
     recovery.link_expired, recovery.magic_link_invalid), and so are links to an
-    account whose organisation has since switched magic links off. A link that proves the account's address for the first time marks it
+    account whose organization has since switched magic links off. A link that proves the account's address for the first time marks it
     verified, ends every earlier session and removes everything set up on the
     account before it, its password included (recorded as email.verified and
     auth.credentials_removed), so whoever registered the address first keeps no
@@ -15,8 +15,8 @@ post:
     a second factor, or must have one, no cookie is set: the answer is an MFA
     challenge (with return_to) completed at POST /v1/auth/session/mfa — on the
     same terms as the hosted password sign-in, including a trusted device
-    (qe_td) skipping it where the organisation allows. The link is spent either
-    way. A link for an organisation whose address rules refuse the browser's
+    (qe_td) skipping it where the organization allows. The link is spent either
+    way. A link for an organization whose address rules refuse the browser's
     address answers 403 auth.address_not_allowed and opens no session. It is
     protected against cross-site requests as POST /v1/auth/session is (an
     allowed Origin, and the qe_csrf token echoed in X-CSRF-Token), and a body

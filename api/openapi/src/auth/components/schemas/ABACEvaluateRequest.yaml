@@ -55,5 +55,5 @@ properties:
               - 'null'
             format: uuid
             description: >-
-              The stored policy the draft stands in for; one the organisation
+              The stored policy the draft stands in for; one the organization
               doesn't have is 404.

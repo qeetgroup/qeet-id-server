@@ -13,7 +13,6 @@ func TestSchedulerHonoursTheLogSettings(t *testing.T) {
 	defer slog.SetDefault(slog.Default())
 	t.Setenv("SERVICE_ENV", "dev")
 	t.Setenv("DB_URL", "postgres://localhost/unused")
-	t.Setenv("JWT_SECRET", "unused-in-this-test")
 	t.Setenv("LOG_FORMAT", "json")
 	for level, debug := range map[string]bool{"debug": true, "warn": false} {
 		t.Setenv("LOG_LEVEL", level)

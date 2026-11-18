@@ -11,8 +11,6 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/service/sesv2"
-
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 type recordSender struct{ last *Message }
@@ -206,7 +204,7 @@ func TestLogSenderDoesNotLeakCredentialsOutsideDev(t *testing.T) {
 		if s.Reveal && err != nil {
 			t.Fatalf("Send in development: %v", err)
 		}
-		if !s.Reveal && !errors.Is(err, errs.ErrEmailProviderUnavailable) {
+		if !s.Reveal && !errors.Is(err, ErrEmailProviderUnavailable) {
 			t.Fatalf("Send outside development = %v, want email.provider_unavailable", err)
 		}
 		return buf.String()
@@ -267,5 +265,49 @@ func TestRouterConfigured(t *testing.T) {
 		if got := c.r.Configured(c.channel); got != c.want {
 			t.Errorf("%s: Configured(%q) = %v, want %v", c.name, c.channel, got, c.want)
 		}
+	}
+}
+
+// TestMaskDestination checks the one masking rule for a code's destination.
+func TestMaskDestination(t *testing.T) {
+	cases := []struct {
+		name    string
+		channel string
+		dest    string
+		want    string
+	}{
+		// Email: keep first char + domain, star out the local part's tail.
+		{"email typical", "email", "alice@example.com", "a****@example.com"},
+		{"email short local", "email", "ab@x.io", "a*@x.io"},
+		// at <= 1: a single-char local part (or leading '@') is returned as-is,
+		// since masking it would reveal nothing useful and risk index issues.
+		{"email single-char local", "email", "a@x.io", "a@x.io"},
+		{"email leading at", "email", "@nolocal.io", "@nolocal.io"},
+		{"email without at", "email", "no-at-sign", "no-at-sign"},
+		// Phone: keep the last three digits.
+		{"phone typical", "sms", "+15555550123", "*********123"},
+		{"phone short", "sms", "12", "12"},
+		{"phone exactly three", "sms", "123", "123"},
+		{"phone four", "sms", "1234", "*234"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := MaskDestination(c.channel, c.dest); got != c.want {
+				t.Errorf("MaskDestination(%q, %q) = %q, want %q", c.channel, c.dest, got, c.want)
+			}
+		})
+	}
+}
+
+func TestMaskDestination_EmailHidesLocalLength(t *testing.T) {
+	// The star count equals (at-1); the masked output's local part length must
+	// match the original so the UI hint stays stable, but the chars are hidden.
+	masked := MaskDestination("email", "verylongname@corp.example")
+	if !strings.HasPrefix(masked, "v") || !strings.HasSuffix(masked, "@corp.example") {
+		t.Fatalf("unexpected mask: %q", masked)
+	}
+	stars := strings.Count(masked, "*")
+	if stars != len("verylongname")-1 {
+		t.Errorf("masked %d chars, want %d", stars, len("verylongname")-1)
 	}
 }

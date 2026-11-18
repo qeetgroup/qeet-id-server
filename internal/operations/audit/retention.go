@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/audit/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 )
 
@@ -33,7 +33,7 @@ func PurgeExpired(ctx context.Context, pool *pgxpool.Pool, key CheckpointKey, da
 	for _, organizationID := range organizations {
 		keep, err := days(ctx, organizationID)
 		if err != nil {
-			failed = append(failed, fmt.Errorf("tenant %s: %w", organizationID, err))
+			failed = append(failed, fmt.Errorf("organization %s: %w", organizationID, err))
 			continue
 		}
 		if keep < 1 {
@@ -45,7 +45,7 @@ func PurgeExpired(ctx context.Context, pool *pgxpool.Pool, key CheckpointKey, da
 			err = recordPurge(ctx, pool, organizationID, n, keep)
 		}
 		if err != nil {
-			failed = append(failed, fmt.Errorf("tenant %s: %w", organizationID, err))
+			failed = append(failed, fmt.Errorf("organization %s: %w", organizationID, err))
 		}
 	}
 	return total, errors.Join(failed...)
@@ -105,14 +105,6 @@ func purgeBatchOf(ctx context.Context, pool *pgxpool.Pool, key CheckpointKey, or
 // recordPurge records on organizationID's chain that deleted of its events, older
 // than days, were removed.
 func recordPurge(ctx context.Context, pool *pgxpool.Pool, organizationID uuid.UUID, deleted int64, days int) error {
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-	if err := Record(ctx, tx, Actor{Type: "system"}.Event(organizationID, "audit.events_purged", "tenant", organizationID,
-		map[string]any{"deleted": deleted, "days": days})); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
+	return RecordAlone(ctx, pool, Actor{Type: "system"}.Event(organizationID, "audit.events_purged", "organization", organizationID,
+		map[string]any{"deleted": deleted, "days": days}))
 }

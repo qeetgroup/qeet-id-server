@@ -104,7 +104,7 @@ HTTP request
                ↓  API-key middleware
                ↓  LoginSessionAuth       qe_ls cookie, on LoginSessionRoutes() only (no Authorization header)
                ↓  RequireAuth            verify JWT: kid, signature, expiry; the session not ended → principal
-               ↓  EnforceOrganizationScope     {tenantID} must equal the caller's organization
+               ↓  EnforceOrganizationScope     {organizationID} must equal the caller's organization
                ↓  rate limiters          per organization · per user · per API key
                ↓  rbac.Enforce           route permission from permissions.go
                ↓
@@ -131,18 +131,20 @@ a caller can never reach a permission check for another organization's resource.
 | Global middleware | `RequestID` · `RealIP` · `Recoverer` · `InFlight` · `SecurityHeaders` · `AccessLog` · tracing · metrics · CORS · CSRF |
 | Root routes | `/healthz` · `/readyz` · `/metrics` |
 | Protocol mounts | `MountPublic` for OIDC, SCIM, SAML, LDAP — fixed spec locations at the root |
-| `/v1` public group | rate-limited, no session — invites, social, billing webhooks, agent token, passkey login, admin portal, OAuth authorize/token-code |
+| `/v1` public group | rate-limited, no session — invites, social, billing webhooks, passkey login, admin portal, OAuth authorize |
+| `/v1` token group | the one OAuth token endpoint, `POST /v1/oauth/token`, every grant by `grant_type`, in its own machine-traffic rate-limit bucket |
 | `/v1` authenticated group | API key → hosted-login session (only the few `LoginSessionRoutes()` the hosted login calls) → `RequireAuth` → `EnforceOrganizationScope` → rate limits → `rbac.Enforce` |
-| Error taxonomy | `internal/platform/http/errs/` — ~50 domain files, stable machine codes |
-| Status mapping | `internal/platform/http/httpx/error_status_*.go` — 1:1 mirror of `errs/` |
+| Errors | each package's `errors.go`: `errs.New(code, kind, message)`, the code stable; errors several packages return are in `internal/platform/http/errs/` |
+| Status mapping | `internal/platform/http/httpx/error_status.go`: one table from the 15 kinds of error to HTTP statuses |
 | Cursor pagination | `internal/platform/http/paging/` |
 | Request helpers, principal, guards | `internal/platform/http/httpx/` |
 
 **Adding a route means choosing a group.** The public group opts out of authentication, organization scope,
 rate limiting and RBAC entirely. Use it only for genuinely unauthenticated endpoints.
 
-**A new error domain needs a file in both** `errs/` and `httpx/error_status_*.go` — the pairing is
-1:1 by domain.
+**An error is declared once**, in the package that returns it (its `errors.go`), with its code and
+kind. `errs.New` panics on a code declared twice, and `TestEveryErrorIsDeclaredOnce` checks every
+declaration is a package-level var with a literal code.
 
 ## Package architecture
 
@@ -175,17 +177,17 @@ HTTP handlers usually live in **one file named after the package**; additional f
 packages have a dedicated `http.go` (the platform database-test helper is the eighteenth).
 
 ```text
-access/passkeys/     passkey.go                          ← everything in one file
-developer/agents/    agent.go                            ← everything in one file
-access/mfa/          mfa.go  totp.go  otp.go  push.go    ← split by FEATURE
-federation/oidc/     oidc.go  token.go  authorize.go  device.go  ciba.go
-identity/users/      domain.go  http.go  repository.go   ← one of the four layered packages
+access/passkey/     passkey.go  http.go  register.go  login.go  …   ← split by FEATURE
+developer/agent/    agent.go  http.go  lifecycle.go  sponsors.go  rotate.go   ← split by concern
+access/mfa/          mfa.go  http.go  totp.go  otp.go  push.go  …    ← split by FEATURE
+federation/oidc/     oidc.go  authorization_code.go  refresh.go  authorize.go  device.go
+identity/user/      user.go  http.go  repository.go  …    ← one of the four layered packages
 ```
 
 **Do not assume a `service.go` or `repository.go` exists** — check
 [subsystems.md](subsystems.md) first.
 
-Every leaf package additionally carries `queries.sql` + `sqlc.yaml` + a generated `dbgen/`
+Every leaf package additionally carries `queries.sql` (an entry in the root `sqlc.yaml`) + a generated `dbgen/`
 (`db.go`, `models.go`, `queries.sql.go`), which is sqlc output and is never hand-edited.
 
 ## Dependency rules
@@ -210,8 +212,8 @@ the import graph — **38 import statements across 8 pairs**:
 
 ```text
 operations/audit       ← access(9) · federation(8) · identity(5) · developer(5)
-access/authentication  ← federation(6) · identity(2)
-identity/users         ← federation(2) · access(1)
+access/auth  ← federation(6) · identity(2)
+identity/user         ← federation(2) · access(1)
 ```
 
 - **`operations/audit` is a de-facto shared kernel** — every other bounded context imports it, because
@@ -219,8 +221,9 @@ identity/users         ← federation(2) · access(1)
 - `access ↔ identity` is bidirectional at package granularity without forming a Go import cycle.
 - **Nothing imports `developer`.** It is a leaf.
 
-Treat this as an unguarded seam, not permission. Prefer interfaces declared by the consumer over
-importing another context's concrete types, so the extraction seam survives.
+Treat this as an unguarded seam, not permission. Depend on interfaces, not another context's concrete
+types, so the extraction seam survives: the shared ones are declared once beside their implementation
+(`entitlements.PlanGate`, `notification.Notifier`, `ipallow.AddressPolicy`, …).
 
 ### Platform dependencies per context
 
@@ -236,10 +239,11 @@ uses `pgxpool` directly rather than the `database` helpers · **`access` does no
 | File | Role |
 |---|---|
 | `app.go` | Application assembly |
-| `dependencies.go` | Constructs every service and repository |
-| `keys.go` · `mail.go` · `infra.go` · `sso.go` · `adapters.go` | Its building blocks: vault and signing keys; the message chain; outbound policy, NATS, rate limits and the validator; SAML and platform social sign-in; cross-context adapters |
+| `dependencies.go` | Builds the shared infrastructure, then each context's services in turn, and the workers |
+| `wire_access.go` · `wire_identity.go` · `wire_federation.go` · `wire_developer.go` · `wire_operations.go` | One per bounded context: its services (`new<Context>`), how they connect to the rest (`wire<Context>`, every `Set…` call), its handlers, its route permissions, user-only routes and step-ups, and its scheduled jobs |
+| `keys.go` · `mail.go` · `infra.go` · `sso.go` · `adapters.go` | Building blocks: vault and signing keys; the message chain; outbound policy, NATS, rate limits and the validator; SAML and platform social sign-in; cross-context adapters |
 | `router.go` | Builds the chi router, registers middleware, mounts every route |
-| `permissions.go` | Route → required-permission map consumed by `rbac.Enforce` |
+| `permissions.go` · `stepup.go` | The route → policy and step-up tables `rbac.Enforce` and the step-up gate read, joined from the contexts' |
 | `server.go` | HTTP server |
 | `lifecycle.go` | Startup and graceful shutdown |
 
@@ -250,17 +254,15 @@ violated the pattern and will usually break R1 or R2.
 
 | Binary | Purpose | Notes |
 |---|---|---|
-| `cmd/api` | HTTP API server | Body is `bootstrap.Run()`. Workers run embedded by default |
-| `cmd/worker` | Background workers standalone | Run to scale workers independently of API replicas |
+| `cmd/api` | HTTP API server | Body is `bootstrap.Run()`. It runs the continuous workers itself |
 | `cmd/scheduler` | Scheduled maintenance, standalone (the API also runs it embedded) | Each job claimed in `platform.scheduled_job_runs` — once per interval across instances |
-| `cmd/migrate` | golang-migrate wrapper | Reads a version, rolls a migration back or repairs a half-applied one; it does not apply migrations for the server |
-| `cmd/seed` | Demo data | **A workstation and the kit's DEV only** (`SERVICE_ENV=dev`, or `local` with profile `dev`). Drives real services, so hashes and audit chains are real |
+| `cmd/seed` | Demo data | **A workstation and the kit's DEV only** (`SERVICE_ENV=dev`, or `local` with profile `dev`). Writes only through the services and handlers (no SQL, nothing backdated), so hashes and audit chains are real |
 
 ---
 
 ## Configuration
 
-**Evidence:** `internal/platform/config/config.go` — a single struct with **138 `envconfig` tags**.
+**Evidence:** `internal/platform/config/config.go` — a single struct with **111 `envconfig` tags**.
 
 `DB_URL` is required to connect. Many fields have development defaults or gate optional
 capabilities, but a non-development process has additional mandatory combinations enforced by
@@ -294,7 +296,9 @@ One PostgreSQL database, **seven schemas**: `auth`, `organization`, `account`, `
 `qeetai`.
 
 - **Driver:** pgx v5. **Queries:** hand-written SQL in `queries.sql`, compiled by **sqlc** into
-  `dbgen/` packages. 53 `queries.sql`/`sqlc.yaml` pairs and 53 `dbgen` directories.
+  `dbgen/` packages: 56 `queries.sql` files, each an entry in the root `sqlc.yaml`, and 56 `dbgen`
+  directories. A NULL-able uuid, timestamptz or date column is a `*uuid.UUID` / `*time.Time` (nil is
+  NULL); `dbutil.NullIfZero` / `dbutil.ZeroIfNull` bridge fields that use the zero value for none.
 - **Generated `dbgen/` code is never hand-edited.** Change `queries.sql` and regenerate.
 - Transactions are opened at the service layer, so a domain write and its outbox row commit together.
 
@@ -330,7 +334,7 @@ authenticated principal        (JWT or API key)
         ↓
 httpx.RequireOrganization(r)         the ONLY trustworthy source of organization scope
         ↓
-httpx.EnforceOrganizationScope       {tenantID} path param must equal the caller's organization → else 403
+httpx.EnforceOrganizationScope       {organizationID} path param must equal the caller's organization → else 403
         ↓
 service
         ↓
@@ -366,7 +370,7 @@ machine scope (`scopeOrganizationRoutes`); a person's own routes act across thei
 | Organization-administration request, organization-owned table | nothing — the database hides the other organizations' rows |
 | A person's own route, background job, sign-in, public flow, account-level table | **cross-organization data exposure** |
 
-The account-level tables (`accountLevelTables` in `migrations/schema_db_test.go`: a person's
+The account-level tables (`accountLevelTables` in `migrations/runner_db_test.go`: a person's
 sessions, memberships, invitations inbox and such) have no policy. Requests that act across
 organizations by design — switching organization, creating one, a person's own invitations, export
 and account deletion — call `postgres.AcrossOrganizations`. The owner-guard trigger functions run as their
@@ -381,13 +385,13 @@ self-scope in-handler; other organization-scoped resources rely entirely on the 
 ## Authentication
 
 **Status:** verified
-**Evidence:** `internal/platform/crypto/password/hasher.go`, `internal/access/authentication/`
+**Evidence:** `internal/platform/crypto/password/hasher.go`, `internal/access/auth/`
 
-Password hashing is **Argon2id** (`m=19456,t=2,p=1`) with transparent upgrade of legacy bcrypt on
-successful login; MFA recovery codes use it too. Machine secrets — API keys and service-principal,
-agent and OAuth client secrets — are random (≥192 bits), so they are stored as their SHA-256
-(`sha256$…`, `password.HashSecret`): Argon2id adds nothing to such a secret and would cost a
-sign-in's CPU on every call. An older Argon2id hash verifies once and is replaced.
+Password hashing is **Argon2id** (`m=19456,t=2,p=1`), re-hashed on a successful login when made
+with weaker parameters; MFA recovery codes use it too. Machine secrets — API keys and
+service-principal, agent and OAuth client secrets — are random (≥192 bits), so they are stored as
+their SHA-256 (`sha256$…`, `password.HashSecret`): Argon2id adds nothing to such a secret and would
+cost a sign-in's CPU on every call. Any other stored hash matches nothing.
 
 Implemented mechanisms: password · passkeys (WebAuthn) · magic link · email and SMS OTP · TOTP ·
 push approval · social login · adaptive risk (**off by default**) · sign-in lockout ·
@@ -395,7 +399,7 @@ breached-password check (env-gated).
 
 Password sign-in lockout (`authentication/lockout.go`) counts failures per account + source network
 (the client IP from `httpx.ClientIP`; IPv4 address or IPv6 /64) — the lock an organization configures in its
-authentication policy within the `LOGIN_LOCKOUT_*` bounds — plus a looser per-account cap and a
+authentication policy within the platform's bounds (`authpolicy.DefaultLockoutLimits`) — plus a looser per-account cap and a
 per-source counter across accounts (spraying). Unknown addresses are counted and timed like real
 ones. Whose settings apply: the organization of the OAuth client a hosted sign-in names
 (`auth.Service.SignInOrganization`), else the platform defaults — never the account's own organization before the
@@ -408,8 +412,8 @@ reset, invite accept, admin create / set-password, bulk import) runs one check,
 `authpolicy.Service.ValidateForOrganization`: the rules of the organization the account belongs to (the
 platform baseline `DefaultPolicy`, 8 characters, for an organization-less account), the offline strength
 baseline, then the breach check — fail-open, each allowed-on-error counted in
-`breached_password_check_allowed_on_error_total`. Services reach it through consumer-declared
-interfaces and refuse (501) to set a password when it is not wired.
+`breached_password_check_allowed_on_error_total`. Services reach it through
+interfaces such as `authpolicy.PasswordRules` and refuse (501) to set a password when it is not wired.
 
 **Per-package file pointers: [subsystems.md](subsystems.md#access--authentication).**
 For the product-level flow narrative, read `qeet-id-context/FLOWS/`.
@@ -423,10 +427,11 @@ For the product-level flow narrative, read `qeet-id-context/FLOWS/`.
 | ReBAC — Zanzibar relation tuples | `internal/access/authorization/rebac/` |
 | AuthZEN PDP/PEP | `internal/access/authorization/authzen/` |
 | Composed decision — every check and the route guard ask it | `internal/access/authorization/decide/` |
-| Organization policy / password rules | `internal/access/authorization/{policy,authpolicy}/` |
+| Organization policy / password rules | `internal/access/authpolicy/` |
 
-The **route → permission map** lives in `internal/bootstrap/permissions.go` and is consumed by
-`rbac.Enforce` as router middleware.
+The **route → permission map** is `RoutePolicies` in `internal/bootstrap/permissions.go`, joined
+from each context's table in `wire_<context>.go`, and is consumed by `rbac.Enforce` as router
+middleware.
 
 Every authenticated route has a `RoutePolicy` and an unlisted route is denied. A user needs the
 policy's role permission. API keys, service principals and agents are checked by actor type and need
@@ -478,7 +483,9 @@ discovery.
 Three non-human identity forms: **API keys** (`qk_`, `<prefix>.<secret>`, the secret stored as its
 SHA-256), **service principals** (`client_credentials`, short-lived service JWT scoped to one organization),
 and **AI agents** (`actor_type="agent"`, tokens **re-minted rather than refreshed**, with a sponsor
-and a kill switch).
+and a kill switch). Both machine identities get their tokens by `client_credentials` at the one token
+endpoint, `POST /v1/oauth/token` (`oidc.Service.ClientCredentials` asks each `MachineClient` in turn),
+minted by `tokens.Issuer.IssueMachineAccess`.
 
 Also here: auth hooks (**default fail-open**, ADR-0011), webhooks with dead-letter, the AES-256-GCM
 secrets vault with per-organization HKDF keys, the third-party token vault, and W3C JWT-VCs.
@@ -500,27 +507,26 @@ dead-letter
 ```
 
 The dispatcher hands every committed event to `webhook.Relay`, which queues the events named in
-the catalogue (`webhook.Events`, `internal/developer/webhooks/events.go`) for the subscriptions of
-the organization the payload's `tenant_id` names, then publishes it to NATS. A subscription may name
+the catalogue (`webhook.Events`, `internal/developer/webhook/events.go`) for the subscriptions of
+the organization the payload's `organization_id` names, then publishes it to NATS. A subscription may name
 only catalogue events, so an outbox event a customer should receive needs a catalogue entry and an
-`tenant_id` in its payload. An event's name is its version: change a payload incompatibly under a new name.
+`organization_id` in its payload. An event's name is its version: change a payload incompatibly under a new name.
 
 **Evidence:** `internal/platform/events/outbox/`, `internal/platform/worker/worker.go`
 
-Workers run **embedded in `cmd/api` by default**; set `EMBEDDED_WORKERS=false` when `cmd/worker`
-runs them standalone. Webhook, outbox, and GDPR queues use durable PostgreSQL leases with
+Workers run **inside `cmd/api`**. Webhook, outbox, and GDPR queues use durable PostgreSQL leases with
 owner-conditional finalization; retries retain stable event/delivery IDs. Registered workers, one
-list in `bootstrap/dependencies.go` that both binaries run: signing-key refresh, outbox dispatch,
+list in `bootstrap/dependencies.go`: signing-key refresh, outbox dispatch,
 OIDC back-channel logout, webhooks, GDPR, retention, SIEM, audit anomaly, scheduler.
 
 Scheduled maintenance (audit-chain verification of every organization, session, MFA, sign-in
-history, published-outbox and dead-letter cleanup) is `bootstrap.MaintenanceJobs`, run by `worker.RunScheduled`: the
-API runs it as its embedded `scheduler` worker, and `cmd/scheduler` or `cmd/worker` can run it
-standalone. Each job is claimed in `platform.scheduled_job_runs` before it runs, so it runs once per
-interval however many instances run it, each in its own goroutine (at most four at once); each
-verification is stored in `platform.audit_verification_runs`. Verification goes on from each chain's
-checkpoint (`platform.audit_chain_checkpoints`) and walks every chain from its first row once a week;
-deleting a chain's checkpoint makes the next run walk it from the start.
+history, published-outbox and dead-letter cleanup) is `bootstrap.MaintenanceJobs`, run by
+`worker.RunScheduled`: the API runs it as its embedded `scheduler` worker, and `cmd/scheduler` can
+run it standalone. Each job is claimed in `platform.scheduled_job_runs` before it runs, so it runs
+once per interval however many instances run it, each in its own goroutine (at most four at once);
+each verification is stored in `platform.audit_verification_runs`. Verification goes on from each
+chain's checkpoint (`platform.audit_chain_checkpoints`) and walks every chain from its first row
+once a week; deleting a chain's checkpoint makes the next run walk it from the start.
 
 **Choose async when** the work is retryable, slow, or must survive a request; **sync when** the
 caller needs the result or the operation must be atomic with the response.
@@ -570,7 +576,7 @@ Counts are orientation only—package and behavior coverage matter more than tot
 
 | Package | Unit tests |
 |---|---|
-| `operations/notifications` | no direct package test; exercised through wider flows |
+| `operations/notification` | no direct package test; exercised through wider flows |
 | Protocol and lifecycle paths | several depend on integration-tagged database tests in addition to direct unit tests |
 
 `internal/bootstrap/permissions_test.go` walks the exact authenticated production mounts and
@@ -634,15 +640,15 @@ Then `make test`, `make lint`, `make build`.
 | **Route tree / middleware order** | `internal/bootstrap/router.go` | **Critical** | Security review — the organization guard depends on nesting |
 | **Route permissions** | `internal/bootstrap/permissions.go` | **Critical** | Security review · executable route-policy coverage |
 | **Authorization** | `internal/access/authorization/` | **Critical** | Security review |
-| **Authentication, sessions** | `internal/access/authentication/` | **Critical** | Security review |
-| **Tokens, signing, rotation** | `internal/platform/crypto/tokens/jwt.go` | **Critical** | Security review · cross-repo |
+| **Authentication, sessions** | `internal/access/auth/` | **Critical** | Security review |
+| **Tokens, signing, rotation** | `internal/platform/crypto/tokens/` (`issue.go`, `verify.go`, `keys.go`) | **Critical** | Security review · cross-repo |
 | **Hashing, vault crypto** | `internal/platform/crypto/{password,envelope}/` | **Critical** | Security review |
 | **CSRF** | `internal/platform/http/httpx/csrf.go` | **Critical** | Security review |
-| **Boot gate** | `internal/platform/config/config.go` | **Critical** | Security review |
+| **Boot gate** | `internal/platform/config/validate.go` | **Critical** | Security review |
 | MFA, passkeys, recovery | `internal/access/{mfa,passkeys,recovery}/` | High | Security review |
 | Federation parsers | `internal/federation/{saml,scim,ldap}/` | High | Security review — untrusted external input |
 | Machine & agent identity | `internal/developer/{api-keys,principal,agents,credentials}/` | High | Security review |
-| Webhooks | `internal/developer/webhooks/` | High | Security review — external consumers |
+| Webhooks | `internal/developer/webhook/` | High | Security review — external consumers |
 | Audit hash chain | `internal/operations/audit/` | High | Security review |
 | Migrations | `internal/platform/database/migrations/` | High | Data review |
 | Risk & threat | `internal/access/{threat,risk}/` | Medium | Review |

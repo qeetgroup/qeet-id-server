@@ -76,7 +76,7 @@ func (s *Store) Middleware(routes []string) func(http.Handler) http.Handler {
 				return
 			}
 			if !validKey(key) {
-				httpx.WriteError(w, r, errs.ErrIdempotencyKeyInvalid)
+				httpx.WriteError(w, r, ErrKeyInvalid)
 				return
 			}
 			s.serve(w, r, next, key)
@@ -201,20 +201,20 @@ func (s *Store) replay(w http.ResponseWriter, r *http.Request, scope, key, hash 
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		// Released by a server error since the claim failed: retry now.
-		httpx.WriteError(w, r, errs.ErrIdempotencyKeyInProgress)
+		httpx.WriteError(w, r, ErrKeyInProgress)
 		return
 	case err != nil:
 		httpx.WriteError(w, r, err)
 		return
 	case storedHash != hash:
-		httpx.WriteError(w, r, errs.ErrIdempotencyKeyReused)
+		httpx.WriteError(w, r, ErrKeyReused)
 		return
 	case status == nil && abandoned:
 		// The first request stopped unanswered and may have taken effect.
-		httpx.WriteError(w, r, errs.ErrIdempotencyOutcomeUnknown)
+		httpx.WriteError(w, r, ErrOutcomeUnknown)
 		return
 	case status == nil:
-		httpx.WriteError(w, r, errs.ErrIdempotencyKeyInProgress)
+		httpx.WriteError(w, r, ErrKeyInProgress)
 		return
 	}
 	body, err := s.cipher.Open(sealAs, purpose, scope+"|"+key, enc, nonce)

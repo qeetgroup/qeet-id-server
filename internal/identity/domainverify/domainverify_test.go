@@ -80,7 +80,7 @@ func TestLoginRecordsAreDeterministic(t *testing.T) {
 	if len(a) != 2 || a[0].Type != "CNAME" || a[1].Type != "TXT" {
 		t.Fatalf("unexpected records: %+v", a)
 	}
-	if a[0].Name != "auth.acme.com" || a[0].Value != "fa139717.tenants.id.qeet.in" {
+	if a[0].Name != "auth.acme.com" || a[0].Value != "fa139717.organizations.id.qeet.in" {
 		t.Errorf("CNAME = %s -> %s", a[0].Name, a[0].Value)
 	}
 	if a[1].Name != "_qeetid-verify.auth.acme.com" || a[1].Value != "qeetid-verify=fa139717" {

@@ -161,7 +161,7 @@ func TestRouteGuardIgnoresAttributeAllow(t *testing.T) {
 		t.Fatalf("route guard with only an abac allow = %v, %v; want refused", ok, err)
 	}
 	if attrs.evals != 0 {
-		t.Fatalf("abac evaluated %d times for a tenant with no deny policy at the route guard, want 0", attrs.evals)
+		t.Fatalf("abac evaluated %d times for an organization with no deny policy at the route guard, want 0", attrs.evals)
 	}
 }
 
@@ -188,10 +188,10 @@ func TestNoOrganizationRefusesBeforeAnyEngine(t *testing.T) {
 	d := New(roles, rels, attrs)
 	dec, err := d.Relation(ctx, uuid.Nil, uma.String(), "doc:42", "write")
 	if err != nil || dec.Allow || dec.Model != ModelOrganization {
-		t.Fatalf("no tenant = %+v, %v; want refused by tenant scope", dec, err)
+		t.Fatalf("no organization = %+v, %v; want refused by organization scope", dec, err)
 	}
 	if roles.calls+rels.calls+attrs.evals != 0 {
-		t.Fatalf("an engine ran without a tenant")
+		t.Fatalf("an engine ran without an organization")
 	}
 }
 
@@ -222,7 +222,7 @@ func TestEngineErrorRefuses(t *testing.T) {
 func TestTraceNamesEachModel(t *testing.T) {
 	d := New(&fakeRoles{}, &fakeRelations{allow: true}, &fakeAttributes{allow: map[string]bool{"x/y": true}})
 	dec, _ := d.Relation(ctx, organization, uma.String(), "doc:42", "write")
-	want := []string{"tenant: ", "abac: ", "rbac: no role grants doc:write", "rbac: no role grants doc.write", "rebac: write on doc:42, allowed"}
+	want := []string{"organization: ", "abac: ", "rbac: no role grants doc:write", "rbac: no role grants doc.write", "rebac: write on doc:42, allowed"}
 	if len(dec.Trace) != len(want) {
 		t.Fatalf("trace = %q, want %d steps", dec.Trace, len(want))
 	}
@@ -239,7 +239,7 @@ func TestSubjectIsWhoTheServerKnows(t *testing.T) {
 	attrs := &fakeAttributes{deny: map[string]bool{"doc/write": true}}
 	d := New(&fakeRoles{}, &fakeRelations{}, attrs)
 	_, _ = d.Permission(ctx, organization, uma, "doc:write")
-	if attrs.lastSubject["id"] != uma.String() || attrs.lastSubject["type"] != "user" || attrs.lastSubject["tenant_id"] != organization.String() {
+	if attrs.lastSubject["id"] != uma.String() || attrs.lastSubject["type"] != "user" || attrs.lastSubject["organization_id"] != organization.String() {
 		t.Fatalf("subject = %v", attrs.lastSubject)
 	}
 }
@@ -307,7 +307,7 @@ func TestRouteGuardSeesTheCall(t *testing.T) {
 // that what the platform knows of the user wins over a property of its name.
 func TestPropertiesReachABAC(t *testing.T) {
 	props := Properties{
-		Subject:  map[string]any{"id": "someone-else", "tenant_id": "elsewhere", "department": "sales"},
+		Subject:  map[string]any{"id": "someone-else", "organization_id": "elsewhere", "department": "sales"},
 		Resource: map[string]any{"classification": "secret"},
 		Action:   map[string]any{"channel": "api"},
 		Context:  map[string]any{"ip": "198.51.100.4", "mfa": true},
@@ -320,7 +320,7 @@ func TestPropertiesReachABAC(t *testing.T) {
 	} {
 		ask()
 		in := attrs.lastInput
-		if in.Subject["id"] != uma.String() || in.Subject["tenant_id"] != organization.String() || in.Subject["department"] != "sales" {
+		if in.Subject["id"] != uma.String() || in.Subject["organization_id"] != organization.String() || in.Subject["department"] != "sales" {
 			t.Errorf("%s: subject %v, want the user as the platform knows them, with the department", name, in.Subject)
 		}
 		if in.Resource.Attrs["classification"] != "secret" || in.ActionAttrs["channel"] != "api" {
@@ -386,7 +386,7 @@ func TestDecisionsCarryReasonCodes(t *testing.T) {
 		code   string
 		params map[string]any
 	}{
-		{"no organisation", permission(New(&fakeRoles{}, &fakeRelations{}, &fakeAttributes{}), uuid.Nil), ReasonNoOrganization, nil},
+		{"no organization", permission(New(&fakeRoles{}, &fakeRelations{}, &fakeAttributes{}), uuid.Nil), ReasonNoOrganization, nil},
 		{"a role grants it", permission(New(&fakeRoles{grants: map[string]bool{"doc:write": true}}, &fakeRelations{}, &fakeAttributes{}), organization),
 			ReasonRoleGrant, map[string]any{"permission": "doc:write"}},
 		{"an attribute policy refuses it", permission(New(&fakeRoles{}, &fakeRelations{}, &fakeAttributes{deny: map[string]bool{"doc/write": true}}), organization),

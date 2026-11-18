@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -33,6 +34,53 @@ type AuthVerifier struct {
 	// PrincipalLive, when set, reports whether a service principal exists and
 	// isn't disabled, so disabling or deleting one refuses its tokens at once.
 	PrincipalLive func(ctx context.Context, principalID uuid.UUID) (bool, error)
+	// APIKeyLive reports whether an organization's API key would still
+	// authenticate a request, for Live. Without it no API key is live.
+	APIKeyLive func(ctx context.Context, organizationID, keyID uuid.UUID) (bool, error)
+}
+
+// Live reports whether p, admitted earlier, would still be admitted, for a
+// long-lived request such as an event stream: its token unexpired, its API key
+// still live, and as RequireAuth checks each request, its service principal
+// enabled, its agent active and its own session not ended.
+func (v *AuthVerifier) Live(ctx context.Context, p *Principal) (bool, error) {
+	if p == nil || (p.ExpiresAt != nil && !time.Now().Before(*p.ExpiresAt)) {
+		return false, nil
+	}
+	switch {
+	case p.ActorType == "api_key":
+		id, ok := subjectID(p)
+		if !ok || p.OrganizationID == nil || v.APIKeyLive == nil {
+			return false, nil
+		}
+		if live, err := v.APIKeyLive(ctx, *p.OrganizationID, id); err != nil || !live {
+			return false, err
+		}
+	case p.ActorType == "service" && v.PrincipalLive != nil:
+		id, ok := subjectID(p)
+		if !ok {
+			return false, nil
+		}
+		if live, err := v.PrincipalLive(ctx, id); err != nil || !live {
+			return false, err
+		}
+	case p.AgentID != nil && v.AgentStatus != nil:
+		if status, err := v.AgentStatus(ctx, *p.AgentID); err != nil || status != "active" {
+			return false, err
+		}
+	case p.SessionID != nil && p.UserID != nil && p.ClientID == "" && v.SessionLive != nil:
+		if live, err := v.SessionLive(ctx, *p.SessionID, *p.UserID); err != nil || !live {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+// subjectID is the id a machine credential's principal names as its subject;
+// ok is false for one that isn't an id, which no credential of it can be.
+func subjectID(p *Principal) (id uuid.UUID, ok bool) {
+	id, err := uuid.Parse(p.Subject)
+	return id, err == nil
 }
 
 // RequireAuth wraps a handler so it only sees authenticated requests.
@@ -47,16 +95,7 @@ func RequireAuth(v *AuthVerifier) func(http.Handler) http.Handler {
 				return
 			}
 			if v.DevTrustHeaders {
-				if devUser := r.Header.Get("X-Dev-User"); devUser != "" {
-					p := &Principal{ActorType: "user", Subject: devUser}
-					if uid, err := uuid.Parse(devUser); err == nil {
-						p.UserID = &uid
-					}
-					if devOrganization := r.Header.Get("X-Dev-Tenant"); devOrganization != "" {
-						if tid, err := uuid.Parse(devOrganization); err == nil {
-							p.OrganizationID = &tid
-						}
-					}
+				if p := devPrincipal(r); p != nil {
 					next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), p)))
 					return
 				}
@@ -77,95 +116,147 @@ func RequireAuth(v *AuthVerifier) func(http.Handler) http.Handler {
 				WriteError(w, r, errs.ErrUnauthorized.Wrap(err))
 				return
 			}
-			p := &Principal{
-				ActorType: "user",
-				Subject:   claims.Subject,
-				Scopes:    strings.Fields(claims.Scope),
-			}
-			if claims.ActorType != "" {
-				p.ActorType = claims.ActorType
-			}
-			if claims.UserID != uuid.Nil {
-				uid := claims.UserID
-				p.UserID = &uid
-			}
-			if claims.OrganizationID != uuid.Nil {
-				tid := claims.OrganizationID
-				p.OrganizationID = &tid
-			}
-			if claims.SessionID != uuid.Nil {
-				sid := claims.SessionID
-				p.SessionID = &sid
-			}
-			p.ClientID = claims.ClientID
-			if claims.ExpiresAt != nil {
-				exp := claims.ExpiresAt.Time
-				p.ExpiresAt = &exp
-			}
-			if p.SessionID != nil && p.UserID != nil && p.ClientID == "" && p.ActorType == "user" {
-				if v.SessionLive != nil {
-					live, err := v.SessionLive(r.Context(), *p.SessionID, *p.UserID)
-					if err != nil {
-						WriteError(w, r, errs.ErrInternalServer.Wrap(err))
-						return
-					}
-					if !live {
-						w.Header().Set("WWW-Authenticate", `Bearer realm="qeet", error="invalid_token"`)
-						WriteError(w, r, errs.ErrAuthSessionRevoked)
-						return
-					}
-				}
-				if v.SessionUsed != nil {
-					v.SessionUsed(r.Context(), *p.SessionID)
-				}
-			}
-			if p.ActorType == "service" && v.PrincipalLive != nil {
-				id, perr := uuid.Parse(claims.Subject)
-				live := false
-				if perr == nil {
-					var err error
-					if live, err = v.PrincipalLive(r.Context(), id); err != nil {
-						WriteError(w, r, errs.ErrInternalServer.Wrap(err))
-						return
-					}
-				}
-				if !live {
-					w.Header().Set("WWW-Authenticate", `Bearer realm="qeet", error="invalid_token"`)
-					WriteError(w, r, errs.ErrUnauthorized.WithDetail("service principal disabled"))
-					return
-				}
-			}
-			// AI-agent token: capture the agent id and enforce the agent's
-			// current lifecycle status, so a suspended/decommissioned agent's
-			// still-valid tokens are denied immediately (within one request).
-			if claims.AgentID != "" {
-				if aid, perr := uuid.Parse(claims.AgentID); perr == nil {
-					p.AgentID = &aid
-					if v.AgentStatus != nil {
-						status, serr := v.AgentStatus(r.Context(), aid)
-						if serr != nil || status != "active" {
-							detail := "revoked"
-							if serr == nil {
-								detail = status
-							}
-							WriteError(w, r, errs.ErrUnauthorized.WithDetail("agent "+detail))
-							return
-						}
-					}
-				}
+			p := principalOf(claims)
+			if !v.sessionLive(w, r, p) || !v.servicePrincipalLive(w, r, p, claims) || !v.agentActive(w, r, p, claims) {
+				return
 			}
 			next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), p)))
 		})
 	}
 }
 
-// EnforceOrganizationScope rejects a request whose route has a {tenantID} path param
+// devPrincipal is the user the trusted development header X-Dev-User names, in
+// the organization of X-Dev-Organization when it is one's id, or nil without
+// the header.
+func devPrincipal(r *http.Request) *Principal {
+	devUser := r.Header.Get("X-Dev-User")
+	if devUser == "" {
+		return nil
+	}
+	p := &Principal{ActorType: "user", Subject: devUser}
+	if uid, err := uuid.Parse(devUser); err == nil {
+		p.UserID = &uid
+	}
+	if devOrganization := r.Header.Get("X-Dev-Organization"); devOrganization != "" {
+		if tid, err := uuid.Parse(devOrganization); err == nil {
+			p.OrganizationID = &tid
+		}
+	}
+	return p
+}
+
+// principalOf is the principal a verified access token's claims name: a user
+// unless the token says another actor type.
+func principalOf(claims *tokens.Claims) *Principal {
+	p := &Principal{
+		ActorType: "user",
+		Subject:   claims.Subject,
+		Scopes:    strings.Fields(claims.Scope),
+	}
+	if claims.ActorType != "" {
+		p.ActorType = claims.ActorType
+	}
+	if claims.UserID != uuid.Nil {
+		uid := claims.UserID
+		p.UserID = &uid
+	}
+	if claims.OrganizationID != uuid.Nil {
+		tid := claims.OrganizationID
+		p.OrganizationID = &tid
+	}
+	if claims.SessionID != uuid.Nil {
+		sid := claims.SessionID
+		p.SessionID = &sid
+	}
+	p.ClientID = claims.ClientID
+	if claims.ExpiresAt != nil {
+		exp := claims.ExpiresAt.Time
+		p.ExpiresAt = &exp
+	}
+	return p
+}
+
+// sessionLive refuses the token of a user's own session that has ended, and
+// reports a live one used. Other tokens pass. A refused request is answered
+// here, and false returned.
+func (v *AuthVerifier) sessionLive(w http.ResponseWriter, r *http.Request, p *Principal) bool {
+	if p.SessionID == nil || p.UserID == nil || p.ClientID != "" || p.ActorType != "user" {
+		return true
+	}
+	if v.SessionLive != nil {
+		live, err := v.SessionLive(r.Context(), *p.SessionID, *p.UserID)
+		if err != nil {
+			WriteError(w, r, errs.ErrInternalServer.Wrap(err))
+			return false
+		}
+		if !live {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="qeet", error="invalid_token"`)
+			WriteError(w, r, errs.ErrAuthSessionRevoked)
+			return false
+		}
+	}
+	if v.SessionUsed != nil {
+		v.SessionUsed(r.Context(), *p.SessionID)
+	}
+	return true
+}
+
+// servicePrincipalLive refuses a service principal's token once the principal
+// is disabled or gone. Other tokens pass. A refused request is answered here,
+// and false returned.
+func (v *AuthVerifier) servicePrincipalLive(w http.ResponseWriter, r *http.Request, p *Principal, claims *tokens.Claims) bool {
+	if p.ActorType != "service" || v.PrincipalLive == nil {
+		return true
+	}
+	id, perr := uuid.Parse(claims.Subject)
+	live := false
+	if perr == nil {
+		var err error
+		if live, err = v.PrincipalLive(r.Context(), id); err != nil {
+			WriteError(w, r, errs.ErrInternalServer.Wrap(err))
+			return false
+		}
+	}
+	if !live {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="qeet", error="invalid_token"`)
+		WriteError(w, r, errs.ErrUnauthorized.WithDetail("service principal disabled"))
+		return false
+	}
+	return true
+}
+
+// agentActive names an AI agent's token's agent on p and refuses the token
+// unless the agent is active now, so a suspended or decommissioned agent's
+// still-valid tokens are denied within one request. Other tokens pass. A
+// refused request is answered here, and false returned.
+func (v *AuthVerifier) agentActive(w http.ResponseWriter, r *http.Request, p *Principal, claims *tokens.Claims) bool {
+	if claims.AgentID == "" {
+		return true
+	}
+	if aid, perr := uuid.Parse(claims.AgentID); perr == nil {
+		p.AgentID = &aid
+		if v.AgentStatus != nil {
+			status, serr := v.AgentStatus(r.Context(), aid)
+			if serr != nil || status != "active" {
+				detail := "revoked"
+				if serr == nil {
+					detail = status
+				}
+				WriteError(w, r, errs.ErrUnauthorized.WithDetail("agent "+detail))
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// EnforceOrganizationScope rejects a request whose route has a {organizationID} path param
 // other than the caller's own organization, so a handler can't serve another organization's
 // data even if it forgets to check. Routes without the param pass through;
 // their handlers scope themselves.
 func EnforceOrganizationScope(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if pathOrganization := chi.URLParam(r, "tenantID"); pathOrganization != "" {
+		if pathOrganization := chi.URLParam(r, "organizationID"); pathOrganization != "" {
 			want, err := RequireOrganization(r)
 			if err != nil {
 				WriteError(w, r, err)
@@ -173,11 +264,11 @@ func EnforceOrganizationScope(next http.Handler) http.Handler {
 			}
 			got, perr := uuid.Parse(pathOrganization)
 			if perr != nil {
-				WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
+				WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid organizationID"))
 				return
 			}
 			if got != want {
-				WriteError(w, r, errs.ErrForbidden.WithDetail("tenant mismatch"))
+				WriteError(w, r, errs.ErrForbidden.WithDetail("organization mismatch"))
 				return
 			}
 		}
@@ -197,36 +288,12 @@ func ScopeDatabase(next http.Handler) http.Handler {
 	})
 }
 
-// PathOrganization returns the caller's organization once the {tenantID} path parameter
-// names it: bad_request for a malformed parameter, forbidden for another
-// organization's. It repeats EnforceOrganizationScope's check inside a handler.
-func PathOrganization(r *http.Request) (uuid.UUID, error) {
-	return PathOrganizationOr(r, errs.ErrBadRequest.WithDetail("invalid tenantID"), errs.ErrForbidden.WithDetail("tenant mismatch"))
-}
-
-// PathOrganizationOr is PathOrganization answering a malformed parameter with invalid and
-// another organization's with mismatch, for a domain with its own error codes.
-func PathOrganizationOr(r *http.Request, invalid, mismatch error) (uuid.UUID, error) {
-	pathOrganization, err := uuid.Parse(chi.URLParam(r, "tenantID"))
-	if err != nil {
-		return uuid.Nil, invalid
-	}
-	scope, err := RequireOrganization(r)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	if pathOrganization != scope {
-		return uuid.Nil, mismatch
-	}
-	return scope, nil
-}
-
 // RequireOrganization returns the principal's organization id — the only trustworthy
 // source of organization scope. Handlers must never take organization id from URL/body.
 func RequireOrganization(r *http.Request) (uuid.UUID, error) {
 	p := PrincipalFromCtx(r.Context())
 	if p == nil || p.OrganizationID == nil {
-		return uuid.Nil, errs.ErrUnauthorized.WithDetail("tenant scope required")
+		return uuid.Nil, errs.ErrUnauthorized.WithDetail("organization scope required")
 	}
 	return *p.OrganizationID, nil
 }

@@ -10,14 +10,14 @@ post:
     here; any other is refused with 403 passkey.browser_mismatch and the
     ceremony is left untouched. It is protected against cross-site requests as
     POST /v1/auth/session is, and a body not sent as JSON is refused (415
-    unsupported_media_type). When the account's organisation has switched
+    unsupported_media_type). When the account's organization has switched
     passkeys off, the sign-in is refused with 403 passkey.disabled before the
     assertion is verified. A refused ceremony or assertion is recorded in the
-    organisation's audit trail as auth.sign_in_failed (method passkey, reason
+    organization's audit trail as auth.sign_in_failed (method passkey, reason
     the error code), naming the account when it was identified. A passkey of an
-    account on a domain whose organisation requires single sign-on is refused
+    account on a domain whose organization requires single sign-on is refused
     with 403 auth.sso_required, and no cookie is set (see the SSORequired
-    response). While the account's own organisation's address rules are on, an
+    response). While the account's own organization's address rules are on, an
     address they refuse is answered 403 auth.address_not_allowed (recorded as
     auth.address_refused), and no cookie is set.
   tags:

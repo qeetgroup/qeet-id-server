@@ -6,7 +6,7 @@ required:
   - member_count
   - name
   - parent_id
-  - tenant_id
+  - organization_id
 properties:
   created_at:
     type: string
@@ -25,7 +25,7 @@ properties:
       - string
       - 'null'
     format: uuid
-  tenant_id:
+  organization_id:
     type: string
     format: uuid
   roles:

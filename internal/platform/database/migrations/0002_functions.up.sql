@@ -50,7 +50,7 @@ CREATE FUNCTION audit.activity_category(action text) RETURNS text
         WHEN starts_with(action, 'user.') THEN 'directory'
         WHEN starts_with(action, 'group.') THEN 'directory'
         WHEN starts_with(action, 'group_template.') THEN 'directory'
-        WHEN starts_with(action, 'tenant.') THEN 'directory'
+        WHEN starts_with(action, 'organization.') THEN 'directory'
         WHEN starts_with(action, 'invite.') THEN 'directory'
         WHEN starts_with(action, 'scim.') THEN 'directory'
         WHEN starts_with(action, 'directory.') THEN 'directory'

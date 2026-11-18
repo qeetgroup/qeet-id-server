@@ -23,7 +23,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 // asserted is what the assertion of a successful SSO response says.
@@ -73,7 +72,7 @@ func spWith(t *testing.T, ctx context.Context, idp *IdP, organization uuid.UUID,
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	sp, err := idp.CreateSP(ctx, tx, organization, in)
+	sp, err := idp.createSP(ctx, tx, organization, in)
 	if err != nil {
 		t.Fatalf("CreateSP: %v", err)
 	}
@@ -183,8 +182,8 @@ func TestIdPNameIDFollowsTheSPFormat(t *testing.T) {
 
 	byMetadata := spWith(t, ctx, s.idp, organization, CreateSPInput{NameIDFormat: nameIDUnspecified, NameIDAttribute: "metadata.employee_id"})
 	rec := sso(byMetadata)
-	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeSAMLNameIDUnavailable) || strings.Contains(rec.Body.String(), "SAMLResponse") {
-		t.Errorf("metadata NameID without the key: %d %s, want 403 %s", rec.Code, rec.Body.String(), errs.CodeSAMLNameIDUnavailable)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), CodeNameIDUnavailable) || strings.Contains(rec.Body.String(), "SAMLResponse") {
+		t.Errorf("metadata NameID without the key: %d %s, want 403 %s", rec.Code, rec.Body.String(), CodeNameIDUnavailable)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'saml.idp_assertion_refused'
 		AND resource_id = $2 AND actor_user_id = $3 AND metadata->>'reason' = 'name_id_unavailable'`, organization, byMetadata.ID, member.ID); n != 1 {
@@ -254,7 +253,7 @@ func TestSPSettingsAreCheckedAndAudited(t *testing.T) {
 	admin := dbtest.User(t, organization, organization)
 	idp, _ := newIdPRouter(t, sessionsByCookie{})
 	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: &Service{}, IdP: idp}).Mount)
-	base := "/tenants/" + organization.String() + "/saml-providers"
+	base := "/organizations/" + organization.String() + "/saml-providers"
 	register := func(extra map[string]any) map[string]any {
 		body := map[string]any{"name": "App", "entity_id": "https://" + dbtest.Unique("sp") + ".example.test", "acs_url": "https://sp.example.test/acs"}
 		for k, v := range extra {
@@ -268,10 +267,10 @@ func TestSPSettingsAreCheckedAndAudited(t *testing.T) {
 		extra map[string]any
 		code  string
 	}{
-		{"a transient NameID", map[string]any{"name_id_format": "urn:oasis:names:tc:SAML:2.0:nameid-format:transient"}, errs.CodeSAMLNameIDFormatInvalid},
-		{"an emailAddress NameID of the user id", map[string]any{"name_id_attribute": "user_id"}, errs.CodeSAMLNameIDAttributeInvalid},
-		{"a persistent NameID of the email", map[string]any{"name_id_format": nameIDPersistent, "name_id_attribute": "email"}, errs.CodeSAMLNameIDAttributeInvalid},
-		{"an attribute of a secret", map[string]any{"attributes": []map[string]any{{"name": "pw", "source": "password_hash"}}}, errs.CodeSAMLAttributesInvalid},
+		{"a transient NameID", map[string]any{"name_id_format": "urn:oasis:names:tc:SAML:2.0:nameid-format:transient"}, CodeNameIDFormatInvalid},
+		{"an emailAddress NameID of the user id", map[string]any{"name_id_attribute": "user_id"}, CodeNameIDAttributeInvalid},
+		{"a persistent NameID of the email", map[string]any{"name_id_format": nameIDPersistent, "name_id_attribute": "email"}, CodeNameIDAttributeInvalid},
+		{"an attribute of a secret", map[string]any{"attributes": []map[string]any{{"name": "pw", "source": "password_hash"}}}, CodeAttributesInvalid},
 	} {
 		if rec := dbtest.Do(t, h, http.MethodPost, base, register(c.extra)); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), c.code) {
 			t.Errorf("registering %s: %d %s, want 422 %s", c.name, rec.Code, rec.Body.String(), c.code)
@@ -301,7 +300,7 @@ func TestSPSettingsAreCheckedAndAudited(t *testing.T) {
 	if rec, out := patch(map[string]any{"name_id_format": nameIDEmail}); rec.Code != http.StatusOK || out.NameIDAttribute != sourceEmail {
 		t.Errorf("switching to an emailAddress NameID: %d %s, want its source moved to the email", rec.Code, rec.Body.String())
 	}
-	if rec, _ := patch(map[string]any{"name_id_attribute": "user_id"}); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), errs.CodeSAMLNameIDAttributeInvalid) {
+	if rec, _ := patch(map[string]any{"name_id_attribute": "user_id"}); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), CodeNameIDAttributeInvalid) {
 		t.Errorf("an emailAddress NameID of the user id: %d %s, want 422", rec.Code, rec.Body.String())
 	}
 	rec, out := patch(map[string]any{"attributes": []any{}, "assignment_required": false})

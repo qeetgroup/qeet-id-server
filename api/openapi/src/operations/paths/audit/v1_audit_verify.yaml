@@ -2,13 +2,13 @@ get:
   operationId: verifyPlatformAuditChain
   summary: Verify platform audit chain (public)
   description: >-
-    Verifies the platform-level audit hash chains (the rows with no tenant,
+    Verifies the platform-level audit hash chains (the rows with no organization,
     spread over 16 chains so their writers don't queue on one) and returns only
     whether they are all intact and how many rows were checked. Each chain must
     have a row, and every platform row must be on one of them. Unauthenticated
     by design so any external party can independently confirm the platform has
-    not tampered with its audit log; per-tenant verification is at
-    /v1/tenants/{tenantID}/audit/verify and requires auth.
+    not tampered with its audit log; per-organization verification is at
+    /v1/organizations/{organizationID}/audit/verify and requires auth.
   tags:
     - Audit
   security: []

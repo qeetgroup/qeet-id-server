@@ -33,7 +33,7 @@ post:
     content:
       application/json:
         example:
-          tenant_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
+          organization_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
           name: CI deploy bot
           scopes:
             - users:read
@@ -58,7 +58,7 @@ post:
           example:
             api_key:
               id: 018f2a70-1a2b-7c3d-9e4f-5a6b7c8d9e0f
-              tenant_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
+              organization_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
               name: CI deploy bot
               prefix: qk_7Qx8t
               scopes:

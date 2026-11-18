@@ -1,0 +1,80 @@
+get:
+  operationId: getRateLimits
+  summary: Get rate limits
+  description: >-
+    Returns the effective per-bucket limits (organization, user, api_key) — the
+    platform defaults merged with any organization-specific overrides.
+  tags:
+    - Rate Limits
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: Effective limits
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/OrganizationRateLimits.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+put:
+  operationId: setRateLimits
+  description: >-
+    Stores per-organization overrides for the request rate limits applied to the
+    organization, its users, and its API keys, replacing any previous override. Values
+    are validated before being persisted. Overrides take precedence over the
+    platform defaults; remove them with the reset operation to fall back to
+    those defaults.
+  summary: Set rate limits
+  tags:
+    - Rate Limits
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/OrganizationRateLimits.yaml
+  responses:
+    '200':
+      description: Updated effective limits
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/OrganizationRateLimits.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+delete:
+  operationId: resetRateLimits
+  description: >-
+    Removes the organization's rate-limit overrides so the platform default limits
+    apply again. Succeeds even when no override is currently set. The change is
+    written to the audit log and propagated to the limiter.
+  summary: Reset rate limits
+  tags:
+    - Rate Limits
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '204':
+      description: Overrides cleared
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml

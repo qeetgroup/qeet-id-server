@@ -10,7 +10,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -50,7 +51,7 @@ func (h *Handler) Mount(r chi.Router) {
 // ReturnTo if authorizeReturnTo keeps it.
 type forgotInput struct {
 	Email          string `json:"email"`
-	OrganizationID string `json:"tenant_id,omitempty"`
+	OrganizationID string `json:"organization_id,omitempty"`
 	App            string `json:"app,omitempty"`
 	ReturnTo       string `json:"return_to,omitempty"`
 }
@@ -80,7 +81,7 @@ func (h *Handler) forgot(w http.ResponseWriter, r *http.Request) {
 	raw, err := h.Service.StartPasswordReset(r.Context(), in.Email, ResetOrigin{
 		App:      in.App,
 		ReturnTo: h.authorizeReturnTo(r, in.ReturnTo),
-		Audit:    AuditCtx{IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)},
+		Actor:    audit.ActorOf(r),
 	})
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -109,8 +110,7 @@ func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	ac := AuditCtx{IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
-	if err := h.Service.ConfirmPasswordReset(r.Context(), in.Token, in.NewPassword, ac); err != nil {
+	if err := h.Service.ConfirmPasswordReset(r.Context(), in.Token, in.NewPassword, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -123,7 +123,7 @@ func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
 // whose sign-in page asks, omitted from the console's. App "hosted_login" opens
 // the link in hosted login, continuing at ReturnTo if authorizeReturnTo keeps it.
 type magicStartInput struct {
-	OrganizationID uuid.UUID `json:"tenant_id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
 	Email          string    `json:"email"`
 	App            string    `json:"app,omitempty"`
 	ReturnTo       string    `json:"return_to,omitempty"`
@@ -145,8 +145,7 @@ func (h *Handler) magicStart(w http.ResponseWriter, r *http.Request) {
 		OrganizationID: in.OrganizationID,
 		App:            in.App,
 		ReturnTo:       h.authorizeReturnTo(r, in.ReturnTo),
-		Caller:         httpx.ClientIP(r),
-		UserAgent:      r.UserAgent(),
+		Actor:          audit.ActorOf(r),
 	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -167,8 +166,7 @@ func (h *Handler) magicConsume(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	ac := AuditCtx{IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
-	res, err := h.Service.ConsumeMagicLink(r.Context(), in.Token, ac)
+	res, err := h.Service.ConsumeMagicLink(r.Context(), in.Token, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -200,8 +198,7 @@ func (h *Handler) magicSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	ac := AuditCtx{IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
-	res, err := h.Service.ConsumeHostedMagicLink(r.Context(), in.Token, ac)
+	res, err := h.Service.ConsumeHostedMagicLink(r.Context(), in.Token, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -235,7 +232,7 @@ func (h *Handler) magicResend(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.ResendMagicLink(r.Context(), in.Token, httpx.ClientIP(r)); err != nil {
+	if err := h.Service.ResendMagicLink(r.Context(), in.Token, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

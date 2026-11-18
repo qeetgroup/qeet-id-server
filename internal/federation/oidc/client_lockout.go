@@ -11,15 +11,16 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 // ClientLockout is how many wrong secrets a confidential application may
 // present from one source network within Window, on every endpoint that takes
-// one together, before that network is refused for Duration (config
-// CLIENT_AUTH_LOCKOUT_*). A client_id is public, so a lockout of the
-// application everywhere would let anyone shut it off for all its users.
+// one together, before that network is refused for Duration. A client_id is
+// public, so a lockout of the application everywhere would let anyone shut it
+// off for all its users.
 type ClientLockout struct {
 	Threshold int
 	Window    time.Duration
@@ -80,20 +81,14 @@ func (s *Service) clientAuthFailed(ctx context.Context, c authedClient) {
 	if err != nil { // pgx.ErrNoRows: another attempt started this lockout
 		return
 	}
-	organizationID, id := c.OrganizationID, c.ID
-	if err := audit.Record(ctx, tx, audit.Event{
-		OrganizationID: &organizationID, ActorType: "system", Action: "oidc.client_locked_out",
-		ResourceType: "oidc_client", ResourceID: &id, IP: httpx.ClientIPFromContext(ctx),
-		Metadata: map[string]any{
-			"client_id": c.ClientID, "failures": failures, "locked_until": until.Time, "source_network": network,
-		},
-	}); err != nil {
+	if err := audit.Record(ctx, tx, audit.Actor{Type: "system", IP: httpx.ClientIPFromContext(ctx)}.Event(c.OrganizationID, "oidc.client_locked_out", "oidc_client", c.ID,
+		map[string]any{"client_id": c.ClientID, "failures": failures, "locked_until": postgres.ZeroIfNull(until), "source_network": network})); err != nil {
 		return
 	}
 	if err := outbox.Enqueue(ctx, tx, outbox.Event{
 		AggregateID: c.ID, Topic: "oidc", EventType: "oidc.client_locked_out",
 		Payload: map[string]any{
-			"tenant_id": c.OrganizationID, "client_id": c.ClientID, "failures": failures, "locked_until": until.Time,
+			"organization_id": c.OrganizationID, "client_id": c.ClientID, "failures": failures, "locked_until": postgres.ZeroIfNull(until),
 			"source_network": network,
 		},
 	}); err != nil {
@@ -131,7 +126,7 @@ func (s *Service) RecentClientAuthFailures(ctx context.Context, organizationID, 
 		return nil, err
 	}
 	rows, err := s.q.ListClientAuthFailures(ctx, dbgen.ListClientAuthFailuresParams{
-		OrganizationID: optionalUUID(organizationID), ClientRowID: optionalUUID(id), MaxRows: 20,
+		OrganizationID: postgres.NullIfZero(organizationID), ClientRowID: postgres.NullIfZero(id), MaxRows: 20,
 	})
 	if err != nil {
 		return nil, err

@@ -8,7 +8,7 @@ get:
     /saml/acs/{id}. Only an active connection signs anyone in: a disabled one
     answers 403 saml.connection_disabled, and a draft one, still being set up,
     403 saml.connection_draft, here and at the ACS. Mounted at the root, not
-    under /v1, and unauthenticated. The organisation's plan must include
+    under /v1, and unauthenticated. The organization's plan must include
     enterprise SSO (402 billing.upgrade_required).
   summary: Login redirect (public)
   tags:
@@ -37,7 +37,7 @@ get:
       description: Redirect to the external IdP with an AuthnRequest
     '402':
       description: >-
-        The organisation's plan does not include enterprise SSO
+        The organization's plan does not include enterprise SSO
         (billing.upgrade_required).
     '404':
       $ref: ../../../shared/responses/NotFound.yaml

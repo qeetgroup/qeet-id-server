@@ -3,7 +3,6 @@ package organization
 import (
 	"context"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,6 +11,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 // EligibleOrganization is an organization a person may switch to.
@@ -27,37 +27,35 @@ type EligibleOrganization struct {
 	LastUsedAt *time.Time `json:"last_used_at"`
 }
 
-// OrganizationSelectionPage is one page of eligible organizations.
-type OrganizationSelectionPage struct {
-	Items      []EligibleOrganization `json:"items"`
-	NextCursor string                 `json:"next_cursor"`
-}
+// eligibleLimit is the page size of the organization picker, by default and
+// at most: a person belongs to few organizations, so one page usually shows all.
+const eligibleLimit = 200
 
 // EligibleOrganizations returns one page of the organizations the user may
-// switch to from the current session.
-func (r *Repository) EligibleOrganizations(ctx context.Context, userID, currentSessionID uuid.UUID, limit int, cursor string) (OrganizationSelectionPage, error) {
-	page := OrganizationSelectionPage{Items: []EligibleOrganization{}}
-	if limit < 1 || limit > 200 {
-		return page, errs.ErrBadRequest.WithDetail("limit must be between 1 and 200")
-	}
+// switch to from the current session, in id order after the cursor (an
+// organization id, "" for the first page), and the next page's cursor.
+func (r *Repository) EligibleOrganizations(ctx context.Context, userID, currentSessionID uuid.UUID, limit int, cursor string) (paging.Result[EligibleOrganization], error) {
+	limit = paging.Clamp(limit, eligibleLimit, eligibleLimit)
 	after := uuid.Nil
 	if cursor != "" {
 		var err error
 		after, err = uuid.Parse(cursor)
 		if err != nil {
-			return page, errs.ErrBadRequest.WithDetail("invalid organization cursor")
+			return paging.Result[EligibleOrganization]{}, errs.ErrBadRequest.WithDetail("invalid organization cursor")
 		}
 	}
 	rows, err := r.q.ListEligibleOrganizations(ctx, dbgen.ListEligibleOrganizationsParams{
-		UserID: userID, CurrentSessionID: currentSessionID, AfterID: after, RowLimit: int32(limit + 1),
+		UserID: userID, CurrentSessionID: currentSessionID, AfterID: after, RowLimit: int32(limit + 1), // #nosec G115 -- clamped to at most eligibleLimit
 	})
 	if err != nil {
-		return page, err
+		return paging.Result[EligibleOrganization]{}, err
 	}
+	var next string
 	if len(rows) > limit {
-		page.NextCursor = rows[limit-1].ID.String()
+		next = rows[limit-1].ID.String()
 		rows = rows[:limit]
 	}
+	items := make([]EligibleOrganization, 0, len(rows))
 	for _, row := range rows {
 		roles := row.Roles
 		if roles == nil {
@@ -71,9 +69,9 @@ func (r *Repository) EligibleOrganizations(ctx context.Context, userID, currentS
 			lastUsed := row.LastUsedAt
 			organization.LastUsedAt = &lastUsed
 		}
-		page.Items = append(page.Items, organization)
+		items = append(items, organization)
 	}
-	return page, nil
+	return paging.Page(items, next), nil
 }
 
 func (h *Handler) eligibleOrganizations(w http.ResponseWriter, r *http.Request) {
@@ -82,15 +80,7 @@ func (h *Handler) eligibleOrganizations(w http.ResponseWriter, r *http.Request) 
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
 		return
 	}
-	limit := 200
-	if raw := r.URL.Query().Get("limit"); raw != "" {
-		var err error
-		limit, err = strconv.Atoi(raw)
-		if err != nil {
-			httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid limit"))
-			return
-		}
-	}
+	limit := paging.Limit(r.URL.Query(), eligibleLimit, eligibleLimit)
 	currentSession := uuid.Nil
 	if principal.SessionID != nil {
 		currentSession = *principal.SessionID

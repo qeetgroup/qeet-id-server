@@ -83,7 +83,7 @@ type identityFixture struct {
 
 func (source *identityFixture) EmailIdentity(_ context.Context, organization uuid.UUID) (string, string, error) {
 	source.organization = organization
-	return "Tenant name", "support@example.test", source.err
+	return "Organization name", "support@example.test", source.err
 }
 
 type notificationFixture struct{ message notifier.Message }
@@ -101,8 +101,8 @@ func TestSenderUsesOnlyExplicitOrganization(t *testing.T) {
 	if err := sender.Send(context.Background(), notifier.Message{OrganizationID: organization.String(), Channel: "email"}); err != nil {
 		t.Fatal(err)
 	}
-	if source.organization != organization || sink.message.FromName != "Tenant name" || sink.message.ReplyTo != "support@example.test" {
-		t.Fatal("tenant identity not applied")
+	if source.organization != organization || sink.message.FromName != "Organization name" || sink.message.ReplyTo != "support@example.test" {
+		t.Fatal("organization identity not applied")
 	}
 	for _, message := range []notifier.Message{{Channel: "email"}, {OrganizationID: "invalid", Channel: "email"}, {OrganizationID: organization.String(), Channel: "sms"}} {
 		source.organization = uuid.Nil
@@ -110,7 +110,7 @@ func TestSenderUsesOnlyExplicitOrganization(t *testing.T) {
 			t.Fatal(err)
 		}
 		if source.organization != uuid.Nil || sink.message.FromName != "" || sink.message.ReplyTo != "" {
-			t.Fatal("branding applied outside tenant email")
+			t.Fatal("branding applied outside organization email")
 		}
 	}
 	source.err = errors.New("unavailable")

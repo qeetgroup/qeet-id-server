@@ -6,7 +6,7 @@ required:
   - id
   - name
   - nodes
-  - tenant_id
+  - organization_id
   - updated_at
 properties:
   created_at:
@@ -25,7 +25,7 @@ properties:
     type: array
     items:
       $ref: ./TemplateNode.yaml
-  tenant_id:
+  organization_id:
     type: string
     format: uuid
   updated_at:

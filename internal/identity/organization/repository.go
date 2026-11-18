@@ -10,46 +10,14 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/organization/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/dbutil"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
-
-// Repository reads and writes organizations.
-type Repository struct {
-	pool *pgxpool.Pool
-	q    *dbgen.Queries
-	// hostingRegion is the region every organization is created in.
-	hostingRegion string
-}
-
-// defaultRegion is the hosting region when none is configured.
-const defaultRegion = "us-east-1"
-
-// SetHostingRegion sets the region organizations are created in; empty keeps
-// defaultRegion.
-func (r *Repository) SetHostingRegion(region string) { r.hostingRegion = region }
-
-// HostingRegion is the region every organization is created in.
-func (r *Repository) HostingRegion() string {
-	if r.hostingRegion == "" {
-		return defaultRegion
-	}
-	return r.hostingRegion
-}
-
-// NewRepository returns a Repository over pool.
-func NewRepository(pool *pgxpool.Pool) *Repository {
-	return &Repository{pool: pool, q: dbgen.New(pool)}
-}
-
-// Pool returns the connection pool, for handlers that run their own transaction.
-func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
 // toDomain maps a persistence row to the domain Organization, decoding JSONB metadata
 // ([]byte) via the dbutil helper.
@@ -62,26 +30,17 @@ func toDomain(row dbgen.OrganizationOrganization) *Organization {
 		Plan:          row.Plan,
 		Region:        row.Region,
 		LogoURL:       row.LogoUrl,
-		Metadata:      dbutil.Metadata(row.Metadata),
+		Metadata:      postgres.Metadata(row.Metadata),
 		CreatedAt:     row.CreatedAt,
 		UpdatedAt:     row.UpdatedAt,
-		DeletionDueAt: timeOrNil(row.DeletionDueAt),
+		DeletionDueAt: row.DeletionDueAt,
 	}
-}
-
-// timeOrNil is t's time, or nil when t is NULL.
-func timeOrNil(t pgtype.Timestamptz) *time.Time {
-	if !t.Valid {
-		return nil
-	}
-	v := t.Time
-	return &v
 }
 
 // listRowToOrganization maps an enriched list row (organization columns + the two per-org
 // counts) to the domain Organization. The two ListOrganizationsForUser* variants generate
 // distinct-but-identical row structs, so callers pass the fields positionally.
-func listRowToOrganization(id uuid.UUID, slug, name, status, plan, region, logoURL string, metadata []byte, createdAt, updatedAt time.Time, deletionDueAt pgtype.Timestamptz, memberCount, mfaCount int64) Organization {
+func listRowToOrganization(id uuid.UUID, slug, name, status, plan, region, logoURL string, metadata []byte, createdAt, updatedAt time.Time, deletionDueAt *time.Time, memberCount, mfaCount int64) Organization {
 	mc, mfa := memberCount, mfaCount
 	return Organization{
 		ID:              id,
@@ -91,10 +50,10 @@ func listRowToOrganization(id uuid.UUID, slug, name, status, plan, region, logoU
 		Plan:            plan,
 		Region:          region,
 		LogoURL:         logoURL,
-		Metadata:        dbutil.Metadata(metadata),
+		Metadata:        postgres.Metadata(metadata),
 		CreatedAt:       createdAt,
 		UpdatedAt:       updatedAt,
-		DeletionDueAt:   timeOrNil(deletionDueAt),
+		DeletionDueAt:   deletionDueAt,
 		MemberCount:     &mc,
 		MFAEnabledCount: &mfa,
 	}
@@ -107,7 +66,7 @@ func (r *Repository) CreateWithOwner(ctx context.Context, in CreateInput, ownerI
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	organization, err := r.CreateWithOwnerTx(ctx, tx, in, ownerID)
+	organization, err := r.createWithOwner(ctx, tx, in, ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -117,9 +76,36 @@ func (r *Repository) CreateWithOwner(ctx context.Context, in CreateInput, ownerI
 	return organization, nil
 }
 
-// CreateWithOwnerTx creates the organization, owner role, permission grants,
-// membership, and home-organization assignment in the caller's transaction.
-func (r *Repository) CreateWithOwnerTx(ctx context.Context, tx pgx.Tx, in CreateInput, ownerID uuid.UUID) (*Organization, error) {
+// Create is CreateWithOwner for an organization actor creates: the
+// organization.created audit row and event commit with it.
+func (r *Repository) Create(ctx context.Context, in CreateInput, ownerID uuid.UUID, actor audit.Actor) (*Organization, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	t, err := r.createWithOwner(ctx, tx, in, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	if err := audit.Record(ctx, tx, actor.Event(t.ID, "organization.created", "organization", t.ID,
+		map[string]any{"slug": t.Slug, "name": t.Name})); err != nil {
+		return nil, err
+	}
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{
+		AggregateID: t.ID, Topic: "organization.events", EventType: "organization.created", Payload: t,
+	}); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
+// createWithOwner creates the organization, owner role, permission grants,
+// membership, and home-organization assignment in tx.
+func (r *Repository) createWithOwner(ctx context.Context, tx pgx.Tx, in CreateInput, ownerID uuid.UUID) (*Organization, error) {
 	plan := in.Plan
 	if plan == "" {
 		plan = "free"
@@ -149,7 +135,7 @@ func (r *Repository) CreateWithOwnerTx(ctx context.Context, tx pgx.Tx, in Create
 		Metadata: metaJSON,
 	})
 	if err != nil {
-		if pgxerr.IsUnique(err) {
+		if postgres.IsUnique(err) {
 			return nil, errs.ErrOrgSlugTaken
 		}
 		return nil, err
@@ -210,16 +196,22 @@ func (r *Repository) GetBySlug(ctx context.Context, slug string) (*Organization,
 	return toDomain(row), nil
 }
 
-// List returns the organizations the user is a member of (scoped to the caller), newest first.
-func (r *Repository) List(ctx context.Context, userID uuid.UUID, limit int, cursor string) ([]Organization, string, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 50
-	}
+// The page sizes of List: by default, and at most.
+const (
+	listLimit    = 50
+	listMaxLimit = 200
+)
+
+// List returns a page of the organizations the user is a member of (scoped to
+// the caller), newest first, after the cursor when one is set, and the next
+// page's cursor: empty on the last page.
+func (r *Repository) List(ctx context.Context, userID uuid.UUID, limit int, after paging.Cursor) ([]Organization, string, error) {
+	limit = paging.Clamp(limit, listLimit, listMaxLimit)
 	out := make([]Organization, 0, limit+1)
-	if cursor == "" {
+	if !after.Set {
 		rows, err := r.q.ListOrganizationsForUser(ctx, dbgen.ListOrganizationsForUserParams{
 			UserID: userID,
-			Limit:  int32(limit + 1),
+			Limit:  int32(limit + 1), // #nosec G115 -- clamped to at most listMaxLimit
 		})
 		if err != nil {
 			return nil, "", err
@@ -230,15 +222,11 @@ func (r *Repository) List(ctx context.Context, userID uuid.UUID, limit int, curs
 				row.DeletionDueAt, row.MemberCount, row.MfaEnabledCount))
 		}
 	} else {
-		curT, curID, perr := paging.DecodeTimeUUID(cursor)
-		if perr != nil {
-			return nil, "", errs.ErrBadRequest.WithDetail("invalid cursor")
-		}
 		rows, err := r.q.ListOrganizationsForUserAfter(ctx, dbgen.ListOrganizationsForUserAfterParams{
 			UserID:          userID,
-			BeforeCreatedAt: curT,
-			BeforeID:        curID,
-			RowLimit:        int32(limit + 1),
+			BeforeCreatedAt: after.Time,
+			BeforeID:        after.ID,
+			RowLimit:        int32(limit + 1), // #nosec G115 -- clamped to at most listMaxLimit
 		})
 		if err != nil {
 			return nil, "", err
@@ -249,12 +237,7 @@ func (r *Repository) List(ctx context.Context, userID uuid.UUID, limit int, curs
 				row.DeletionDueAt, row.MemberCount, row.MfaEnabledCount))
 		}
 	}
-	var next string
-	if len(out) > limit {
-		last := out[limit-1]
-		next = paging.EncodeTimeUUID(last.CreatedAt, last.ID)
-		out = out[:limit]
-	}
+	out, next := paging.Next(out, limit, func(o Organization) (time.Time, uuid.UUID) { return o.CreatedAt, o.ID })
 	return out, next, nil
 }
 
@@ -278,7 +261,7 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, in UpdateInput, o
 	}
 	defer tx.Rollback(ctx)
 
-	ub := dbutil.NewUpdate()
+	ub := postgres.NewUpdate()
 	if in.Name != nil {
 		ub.Set("name", *in.Name)
 	}
@@ -288,13 +271,14 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, in UpdateInput, o
 	// plan is deliberately not settable here — it's owned by billing (see UpdateInput).
 	// Nor is the region, the deployment's: the same one again is accepted, as a
 	// form sends every field back.
+	q := r.q.WithTx(tx)
 	if in.Region != nil {
-		var current string
-		if err := tx.QueryRow(ctx, `SELECT region FROM organization.organizations WHERE id = $1 AND deleted_at IS NULL`, id).Scan(&current); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		current, err := q.GetOrganizationRegion(ctx, id)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return nil, err
 		}
 		if *in.Region != current {
-			return nil, errs.ErrOrganizationRegionReadOnly
+			return nil, ErrRegionReadOnly
 		}
 	}
 	if in.LogoURL != nil {
@@ -313,16 +297,19 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, in UpdateInput, o
 		}
 		return r.Get(ctx, id)
 	}
-	old, err := scanOrganization(tx.QueryRow(ctx, `SELECT `+organizationCols+` FROM organization.organizations WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, id))
+	old, err := q.LockOrganization(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrNotFound
+	}
 	if err != nil {
 		return nil, err
 	}
 	ub.SetRaw("updated_at = NOW()")
 	idAt := ub.NextPlaceholder()
 	args := append(ub.Args(), id)
-	q := `UPDATE organization.organizations SET ` + ub.Assignments() +
+	update := `UPDATE organization.organizations SET ` + ub.Assignments() +
 		` WHERE id = $` + strconv.Itoa(idAt) + ` AND deleted_at IS NULL RETURNING ` + organizationCols
-	rec, err := scanOrganization(tx.QueryRow(ctx, q, args...))
+	rec, err := scanOrganization(tx.QueryRow(ctx, update, args...))
 	if err != nil {
 		return nil, err
 	}
@@ -343,7 +330,7 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, in UpdateInput, o
 	return after, nil
 }
 
-// organizationCols is the column list of the hand-written queries Update runs, in
+// organizationCols is the column list Update's hand-written UPDATE returns, in
 // the order scanOrganization reads it (dbgen.OrganizationOrganization without deleted_at).
 const organizationCols = `id, slug, name, status, plan, region, logo_url, metadata, created_at, updated_at, deletion_due_at`
 
@@ -366,12 +353,11 @@ func (r *Repository) SoftDelete(ctx context.Context, id uuid.UUID, onDeleted Sta
 		return err
 	}
 	defer tx.Rollback(ctx)
-	var from string
-	if err := tx.QueryRow(ctx, `SELECT status FROM organization.organizations WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, id).
-		Scan(&from); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return errs.ErrNotFound
-		}
+	from, err := r.q.WithTx(tx).LockOrganizationStatus(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errs.ErrNotFound
+	}
+	if err != nil {
 		return err
 	}
 	if _, err := r.q.WithTx(tx).SoftDeleteOrganization(ctx, id); err != nil {
@@ -404,17 +390,17 @@ func (r *Repository) ScheduleDeletion(ctx context.Context, id uuid.UUID, onSched
 		if _, gerr := r.q.WithTx(tx).GetOrganization(ctx, id); errors.Is(gerr, pgx.ErrNoRows) {
 			return time.Time{}, errs.ErrNotFound
 		}
-		return time.Time{}, errs.ErrOrganizationDeletionScheduled
+		return time.Time{}, ErrDeletionScheduled
 	}
 	if err != nil {
 		return time.Time{}, err
 	}
 	if onScheduled != nil {
-		if err := onScheduled(ctx, tx, due.Time); err != nil {
+		if err := onScheduled(ctx, tx, postgres.ZeroIfNull(due)); err != nil {
 			return time.Time{}, err
 		}
 	}
-	return due.Time, tx.Commit(ctx)
+	return postgres.ZeroIfNull(due), tx.Commit(ctx)
 }
 
 // CancelDeletion calls off organization id's scheduled deletion and runs
@@ -431,7 +417,7 @@ func (r *Repository) CancelDeletion(ctx context.Context, id uuid.UUID, onCancell
 		return err
 	}
 	if n == 0 {
-		return errs.ErrOrganizationDeletionNotScheduled
+		return ErrDeletionNotScheduled
 	}
 	if onCancelled != nil {
 		if err := onCancelled(ctx, tx); err != nil {

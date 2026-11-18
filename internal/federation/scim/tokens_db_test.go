@@ -13,9 +13,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 )
 
 // tokenOrg is an organization with an administrator managing its SCIM tokens
@@ -40,7 +40,7 @@ func newTokenOrg(t *testing.T) *tokenOrg {
 		adminID: admin.ID,
 		admin:   dbtest.Serve(dbtest.Principal(admin.ID, id), h.Mount),
 		scim:    r,
-		tokens:  "/tenants/" + id.String() + "/scim/tokens",
+		tokens:  "/organizations/" + id.String() + "/scim/tokens",
 	}
 }
 
@@ -242,13 +242,13 @@ func TestSCIMTokenStopsWithItsExpiryAndOrganization(t *testing.T) {
 			t.Fatal(err)
 		}
 		if o.works(t, lasting.Token) {
-			t.Errorf("a token of an organisation %s works", tc.name)
+			t.Errorf("a token of an organization %s works", tc.name)
 		}
 		if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), tc.resume, o.id); err != nil {
 			t.Fatal(err)
 		}
 		if !o.works(t, lasting.Token) {
-			t.Errorf("a token of an organisation no longer %s is refused", tc.name)
+			t.Errorf("a token of an organization no longer %s is refused", tc.name)
 		}
 	}
 }
@@ -345,7 +345,7 @@ func TestSCIMTokensStayInTheirOrganization(t *testing.T) {
 // rotation replaces every token at once, and a revocation stops them all.
 func TestSCIMSingleTokenRoutesMapOntoTokens(t *testing.T) {
 	o := newTokenOrg(t)
-	legacy := "/tenants/" + o.id.String() + "/scim/token"
+	legacy := "/organizations/" + o.id.String() + "/scim/token"
 	// A token from before several were possible, as the migration leaves it.
 	before := tokenPrefix + uuid.NewString()
 	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `
@@ -395,7 +395,7 @@ func TestSCIMSingleTokenRoutesMapOntoTokens(t *testing.T) {
 	if rec := dbtest.Do(t, o.admin, http.MethodDelete, legacy, nil); rec.Code != http.StatusNotFound {
 		t.Errorf("revoking with none left: %d, want 404", rec.Code)
 	}
-	rec := dbtest.Do(t, o.admin, http.MethodGet, "/tenants/"+o.id.String()+"/scim", nil)
+	rec := dbtest.Do(t, o.admin, http.MethodGet, "/organizations/"+o.id.String()+"/scim", nil)
 	var cfg ConfigView
 	dbtest.Decode(t, rec, &cfg)
 	if cfg.TokenSet || cfg.TokenCount != 0 {

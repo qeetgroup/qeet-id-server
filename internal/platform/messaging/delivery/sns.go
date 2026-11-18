@@ -25,6 +25,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/strutil"
 )
 
 // Webhook receives SES events through SNS (POST /v1/webhooks/ses). Anyone can
@@ -72,7 +73,7 @@ func (h *Webhook) Mount(r chi.Router) {
 
 func (h *Webhook) receive(w http.ResponseWriter, r *http.Request) {
 	if len(h.TopicARNs) == 0 {
-		httpx.WriteError(w, r, errs.ErrEmailWebhookDisabled)
+		httpx.WriteError(w, r, ErrEmailWebhookDisabled)
 		return
 	}
 	var m snsMessage
@@ -81,12 +82,12 @@ func (h *Webhook) receive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !slices.Contains(h.TopicARNs, m.TopicArn) {
-		httpx.WriteError(w, r, errs.ErrEmailWebhookSignature.WithDetail("unexpected topic"))
+		httpx.WriteError(w, r, ErrEmailWebhookSignature.WithDetail("unexpected topic"))
 		return
 	}
 	if err := h.verify(r.Context(), m); err != nil {
 		slog.Warn("ses webhook: message refused", "err", err, "topic", m.TopicArn, "type", m.Type)
-		httpx.WriteError(w, r, errs.ErrEmailWebhookSignature)
+		httpx.WriteError(w, r, ErrEmailWebhookSignature)
 		return
 	}
 
@@ -344,7 +345,7 @@ func parseSESEvent(raw string) (Event, bool, error) {
 		ev.Status = StatusBounced
 		ev.Reason = strings.TrimSuffix(e.Bounce.BounceType+"/"+e.Bounce.BounceSubType, "/")
 		if len(e.Bounce.BouncedRecipients) > 0 && e.Bounce.BouncedRecipients[0].DiagnosticCode != "" {
-			ev.Reason += ": " + truncate(e.Bounce.BouncedRecipients[0].DiagnosticCode, 200)
+			ev.Reason += ": " + strutil.Truncate(e.Bounce.BouncedRecipients[0].DiagnosticCode, 200)
 		}
 		// Only a hard bounce suppresses: the address doesn't exist. A soft one
 		// (mailbox full, a transient failure) is recorded only.
@@ -370,11 +371,4 @@ func parseSESEvent(raw string) (Event, bool, error) {
 		return Event{}, false, nil
 	}
 	return ev, true, nil
-}
-
-func truncate(s string, n int) string {
-	if len(s) > n {
-		return s[:n]
-	}
-	return s
 }

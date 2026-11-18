@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const searchAuditEvents = `-- name: SearchAuditEvents :many
@@ -23,7 +22,7 @@ LIMIT $3
 `
 
 type SearchAuditEventsParams struct {
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 	Q              string
 	RowLimit       int32
 }
@@ -32,7 +31,7 @@ type SearchAuditEventsRow struct {
 	ID           uuid.UUID
 	Action       string
 	ResourceType string
-	ResourceID   pgtype.UUID
+	ResourceID   *uuid.UUID
 	CreatedAt    time.Time
 }
 

@@ -1,0 +1,62 @@
+post:
+  operationId: switchOrganization
+  description: >-
+    Replaces the caller's session with one scoped to another organization they belong
+    to (their own, or one where they hold a role) and returns its token pair.
+    The new access token carries the claims the target organization's authentication
+    hook adds, and renewals keep them; the hook may also refuse the switch. The
+    session the presented access token belongs to ends: its refresh and access
+    tokens are refused from now on, and the organization's session.revoked subscribers
+    are notified with reason organization_switch. Use the returned pair from now on.
+    The caller's session list shows the one sign-in, not one entry per switch.
+    Refused, with nothing changed: an organization the caller does not belong to (403),
+    a refusal by the organization's hook, an address the organization's address rules refuse
+    (403 auth.address_not_allowed), an organization that requires single
+    sign-on on the caller's domain (403 auth.sso_required: its identity
+    provider signs its people in there directly, so no other session is
+    switched into it; break-glass members are exempt), or an access token
+    whose session has already ended (401). An organization that requires a second factor of the caller
+    (its security policy, or administrators-only for its administrators) is
+    entered only by a session whose sign-in met one, or that holds a fresh
+    step-up; otherwise 403 step_up_required (step up, then try again) or 403
+    mfa.enrollment_required (set a factor up first), unless the organization's
+    grace period still lets the caller put the setup off. The new session
+    carries the factor on. Confirm the active scope afterward with the
+    current-principal call.
+  summary: Switch organization
+  tags:
+    - Auth
+  security:
+    - bearerAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - organization_id
+          properties:
+            organization_id:
+              type: string
+              format: uuid
+  responses:
+    '200':
+      description: Token pair scoped to the target organization
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+      content:
+        application/json:
+          schema:
+            $ref: ../../../shared/schemas/TokenPair.yaml
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml

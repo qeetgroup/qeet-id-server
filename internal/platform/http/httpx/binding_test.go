@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 // carry returns a request holding the cookies a response set.
@@ -69,11 +67,11 @@ func TestDecodeStrictJSONRefusesBodiesNotSentAsJSON(t *testing.T) {
 		"application/json":                  nil,
 		"application/json; charset=utf-8":   nil,
 		"application/merge-patch+json":      nil,
-		"text/plain":                        errs.ErrUnsupportedMediaType,
-		"text/plain; charset=UTF-8":         errs.ErrUnsupportedMediaType,
-		"application/x-www-form-urlencoded": errs.ErrUnsupportedMediaType,
-		"multipart/form-data; boundary=x":   errs.ErrUnsupportedMediaType,
-		"":                                  errs.ErrUnsupportedMediaType,
+		"text/plain":                        ErrUnsupportedMediaType,
+		"text/plain; charset=UTF-8":         ErrUnsupportedMediaType,
+		"application/x-www-form-urlencoded": ErrUnsupportedMediaType,
+		"multipart/form-data; boundary=x":   ErrUnsupportedMediaType,
+		"":                                  ErrUnsupportedMediaType,
 	} {
 		r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"a":"b"}`))
 		if contentType != "" {

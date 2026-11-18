@@ -2,11 +2,11 @@ patch:
   operationId: updatePortalDomain
   summary: Turn single sign-on on or off for a domain (portal)
   description: >-
-    Sets whether the organisation's people at this domain are sent to its
-    identity provider when they sign in (sso_enabled), as the tenant-admin
+    Sets whether the organization's people at this domain are sent to its
+    identity provider when they sign in (sso_enabled), as the organization-admin
     domain settings do; no other setting changes. Requires the link's
     capabilities to include domain_verification and saml; the domain must belong
-    to the tenant bound to the portal session. Audited as
+    to the organization bound to the portal session. Audited as
     domain.settings_updated by the admin portal.
   tags:
     - Admin Portal

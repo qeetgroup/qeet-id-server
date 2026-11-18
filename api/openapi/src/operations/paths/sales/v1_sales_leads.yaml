@@ -5,7 +5,7 @@ post:
     notifies the configured sales inbox; a delivery failure does not fail the
     request because the lead is already persisted. Available to any
     authenticated user, including during onboarding before an organization
-    exists, with tenant and user recorded when known. Returns 202 to acknowledge
+    exists, with organization and user recorded when known. Returns 202 to acknowledge
     the lead was accepted for processing.
   summary: Submit a contact-sales lead
   tags:

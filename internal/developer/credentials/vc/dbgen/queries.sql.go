@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createCredential = `-- name: CreateCredential :one
@@ -25,8 +24,8 @@ type CreateCredentialParams struct {
 	Subject        string
 	Type           string
 	Claims         []byte
-	ExpiresAt      pgtype.Timestamptz
-	UserID         pgtype.UUID
+	ExpiresAt      *time.Time
+	UserID         *uuid.UUID
 }
 
 type CreateCredentialRow struct {
@@ -56,9 +55,9 @@ SELECT revoked_at FROM auth.credentials WHERE id = $1
 
 // GetCredentialRevocation checks the revocation registry for a presented
 // JWT-VC (jti = credential id). The caller refuses a credential with no record.
-func (q *Queries) GetCredentialRevocation(ctx context.Context, id uuid.UUID) (pgtype.Timestamptz, error) {
+func (q *Queries) GetCredentialRevocation(ctx context.Context, id uuid.UUID) (*time.Time, error) {
 	row := q.db.QueryRow(ctx, getCredentialRevocation, id)
-	var revoked_at pgtype.Timestamptz
+	var revoked_at *time.Time
 	err := row.Scan(&revoked_at)
 	return revoked_at, err
 }
@@ -95,9 +94,9 @@ type ListCredentialsRow struct {
 	Subject         string
 	Type            string
 	IssuedAt        time.Time
-	ExpiresAt       pgtype.Timestamptz
-	RevokedAt       pgtype.Timestamptz
-	UserID          pgtype.UUID
+	ExpiresAt       *time.Time
+	RevokedAt       *time.Time
+	UserID          *uuid.UUID
 	UserEmail       *string
 	UserDisplayName *string
 }

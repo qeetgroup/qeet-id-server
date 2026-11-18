@@ -68,7 +68,7 @@ func TestGroupMappings(t *testing.T) {
 		return dbtest.Serve(dbtest.Principal(userID, organization), (&Handler{Service: NewService(pool), GrantCheck: grants}).Mount)
 	}
 	h := as(editor.ID)
-	base := "/tenants/" + organization.String() + "/saml/" + conn.String() + "/group-mappings"
+	base := "/organizations/" + organization.String() + "/saml/" + conn.String() + "/group-mappings"
 	post := func(h http.Handler, path, idpGroup string, g uuid.UUID) *httptest.ResponseRecorder {
 		return dbtest.Do(t, h, http.MethodPost, path, map[string]any{"idp_group": idpGroup, "group_id": g})
 	}
@@ -89,7 +89,7 @@ func TestGroupMappings(t *testing.T) {
 	mapped(post(h, base, "Auditors", auditors))
 	ownerAccount := dbtest.User(t, organization)
 	dbtest.Assign(t, ownerAccount.ID, organization, owner)
-	asLDAP := "/tenants/" + organization.String() + "/ldap/" + conn.String() + "/group-mappings"
+	asLDAP := "/organizations/" + organization.String() + "/ldap/" + conn.String() + "/group-mappings"
 	for name, c := range map[string]struct {
 		h              http.Handler
 		path, idpGroup string
@@ -97,12 +97,12 @@ func TestGroupMappings(t *testing.T) {
 		status         int
 		code           string
 	}{
-		"the same pair in another case":     {h, base, "PAYMENTS", payments, http.StatusConflict, errs.CodeGroupMappingExists},
+		"the same pair in another case":     {h, base, "PAYMENTS", payments, http.StatusConflict, CodeGroupMappingExists},
 		"a group with authority not held":   {h, base, "Analysts", analysts, http.StatusForbidden, errs.CodeRBACGrantExceedsCaller},
-		"a group granting user.write":       {h, base, "Admins", admins, http.StatusUnprocessableEntity, errs.CodeGroupMappingPrivileged},
-		"a group granting gdpr.write":       {h, base, "Privacy", privacy, http.StatusUnprocessableEntity, errs.CodeGroupMappingPrivileged},
-		"the owners' group":                 {h, base, "Owners", owners, http.StatusUnprocessableEntity, errs.CodeGroupMappingPrivileged},
-		"the owners' group, as an owner":    {as(ownerAccount.ID), base, "Owners", owners, http.StatusUnprocessableEntity, errs.CodeGroupMappingPrivileged},
+		"a group granting user.write":       {h, base, "Admins", admins, http.StatusUnprocessableEntity, CodeGroupMappingPrivileged},
+		"a group granting gdpr.write":       {h, base, "Privacy", privacy, http.StatusUnprocessableEntity, CodeGroupMappingPrivileged},
+		"the owners' group":                 {h, base, "Owners", owners, http.StatusUnprocessableEntity, CodeGroupMappingPrivileged},
+		"the owners' group, as an owner":    {as(ownerAccount.ID), base, "Owners", owners, http.StatusUnprocessableEntity, CodeGroupMappingPrivileged},
 		"an empty identity provider group":  {h, base, "   ", payments, http.StatusUnprocessableEntity, errs.CodeValidation},
 		"a group that doesn't exist":        {h, base, "Ghosts", uuid.New(), http.StatusNotFound, errs.CodeGroupNotFound},
 		"the SAML connection as LDAP's one": {h, asLDAP, "Payments", payments, http.StatusNotFound, ""},
@@ -112,7 +112,7 @@ func TestGroupMappings(t *testing.T) {
 			t.Errorf("%s: %d %s, want %d %s", name, rec.Code, rec.Body.String(), c.status, c.code)
 		}
 	}
-	mapped(post(h, "/tenants/"+organization.String()+"/ldap/"+ldapConn.String()+"/group-mappings", "CN=Payments,OU=Groups,DC=corp", payments))
+	mapped(post(h, "/organizations/"+organization.String()+"/ldap/"+ldapConn.String()+"/group-mappings", "CN=Payments,OU=Groups,DC=corp", payments))
 	if ids := dbtest.IDs(t, dbtest.Do(t, h, http.MethodGet, base, nil)); len(ids) != 2 {
 		t.Errorf("the SAML connection lists %d mappings, want 2", len(ids))
 	}
@@ -129,21 +129,21 @@ func TestGroupMappings(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT id FROM organization.sso_group_mappings WHERE organization_id = $1`, theirs).Scan(&theirMapping); err != nil {
 		t.Fatal(err)
 	}
-	ourPathTheirConn := "/tenants/" + organization.String() + "/saml/" + theirConn.String() + "/group-mappings"
+	ourPathTheirConn := "/organizations/" + organization.String() + "/saml/" + theirConn.String() + "/group-mappings"
 	for name, rec := range map[string]*httptest.ResponseRecorder{
 		"list their connection's":       dbtest.Do(t, h, http.MethodGet, ourPathTheirConn, nil),
 		"map on their connection":       post(h, ourPathTheirConn, "Payments", payments),
 		"delete on their connection":    dbtest.Do(t, h, http.MethodDelete, ourPathTheirConn+"/"+theirMapping.String(), nil),
 		"delete their mapping as ours":  dbtest.Do(t, h, http.MethodDelete, base+"/"+theirMapping.String(), nil),
 		"map our connection to theirs":  post(h, base, "Theirs", theirGroup),
-		"their organisation in the URL": post(h, "/tenants/"+theirs.String()+"/saml/"+theirConn.String()+"/group-mappings", "Payments", payments),
+		"their organization in the URL": post(h, "/organizations/"+theirs.String()+"/saml/"+theirConn.String()+"/group-mappings", "Payments", payments),
 	} {
 		if rec.Code != http.StatusNotFound && rec.Code != http.StatusForbidden {
 			t.Errorf("%s: %d %s, want 404 or 403", name, rec.Code, rec.Body.String())
 		}
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM organization.sso_group_mappings WHERE organization_id = $1`, theirs); n != 1 {
-		t.Errorf("their organisation has %d mappings, want its one", n)
+		t.Errorf("their organization has %d mappings, want its one", n)
 	}
 
 	// Removing a mapping ends the sign-ins' memberships of its group only once

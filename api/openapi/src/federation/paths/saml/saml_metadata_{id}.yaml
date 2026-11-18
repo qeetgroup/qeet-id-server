@@ -8,7 +8,7 @@ get:
     metadata is fetched; its private key is stored envelope-encrypted), for an
     external IdP administrator to configure the trust. Mounted at the root, not
     under /v1, and unauthenticated. Qeet acts as the Service Provider here; this
-    is distinct from the IdP-side metadata at /saml/idp/{tenantID}/metadata.
+    is distinct from the IdP-side metadata at /saml/idp/{organizationID}/metadata.
   summary: SP metadata (public)
   tags:
     - SAML

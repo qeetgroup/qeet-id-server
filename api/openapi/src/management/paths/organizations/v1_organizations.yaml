@@ -1,0 +1,93 @@
+get:
+  operationId: listOrganizations
+  description: >-
+    Returns a page of the organizations the authenticated principal belongs to. Scope
+    is taken from the caller's identity, never from a query parameter. Use the
+    returned cursor to page through large result sets. A newly registered user
+    with no organization sees an empty page until an organization is created.
+  summary: List organizations
+  tags:
+    - Organizations
+  parameters:
+    - $ref: ../../components/parameters/Limit.yaml
+    - $ref: ../../../shared/parameters/Cursor.yaml
+  security:
+    - bearerAuth: []
+  responses:
+    '200':
+      description: Organization page
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/OrganizationPage.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+post:
+  operationId: createOrganization
+  description: >-
+    Creates an organization and makes the calling user its owner. A newly registered
+    user has no organization until this succeeds; every organization-scoped endpoint
+    requires one. A verified email is required before an organization can be
+    provisioned. Every organization is created in the region this service is
+    hosted in; asking for another is refused with 422 organization.region_unavailable
+    (metadata.available names the one there is). The response includes a
+    organization-scoped token pair so the client can immediately switch into the new
+    organization; it continues the caller's session (its sign-in, second factor and
+    end), and is left out for a caller without one.
+  summary: Create organization
+  tags:
+    - Organizations
+  security:
+    - bearerAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        example:
+          slug: acme
+          name: Acme, Inc.
+          plan: pro
+          metadata:
+            industry: fintech
+        schema:
+          $ref: ../../components/schemas/OrganizationCreate.yaml
+  responses:
+    '201':
+      description: Created; caller becomes owner (token pair included)
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+      content:
+        application/json:
+          example:
+            organization:
+              id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
+              slug: acme
+              name: Acme, Inc.
+              plan: pro
+              region: ap-south-1
+              created_at: '2026-09-24T10:15:00Z'
+              updated_at: '2026-09-24T10:15:00Z'
+              member_count: 1
+              mfa_enabled_count: 0
+            organization_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
+            roles:
+              - owner
+            access_token: eyJhbGciOiJFUzI1NiIsImtpZCI6ImsxIn0.eyJ0ZW5hbnQiOiJhY21lIn0.FAKE-signature
+            token_type: Bearer
+            expires_at: '2026-09-24T11:15:00Z'
+            refresh_token: rt_1a2b3c4d5e6f70819a2b3c4d5e6f7081
+            session_id: 018f2a72-7d8e-7f90-b123-4c5d6e7f8091
+            user_id: 018f2a70-1a2b-7c3d-9e4f-5a6b7c8d9e0f
+          schema:
+            $ref: ../../components/schemas/OrganizationCreateResponse.yaml
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '409':
+      $ref: ../../../shared/responses/Conflict.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml

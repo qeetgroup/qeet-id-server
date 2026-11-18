@@ -26,7 +26,7 @@ func TestUsageIsCountedByMonth(t *testing.T) {
 	}
 	h := dbtest.Serve(dbtest.Principal(user, organization), (&Handler{Service: svc, Admin: svc}).Mount)
 	var got Usage
-	dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, "/tenants/"+organization.String()+"/qeetai/usage", nil), &got)
+	dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, "/organizations/"+organization.String()+"/qeetai/usage", nil), &got)
 	m := got.ThisMonth
 	if m.Messages != 2 || m.InputTokens != 150 || m.OutputTokens != 25 || got.LastUsedAt == nil || len(got.Months) != 1 {
 		t.Errorf("usage %+v, want 2 messages, 150 in and 25 out this month", got)
@@ -52,7 +52,7 @@ func TestConversationsAreKeptForTheSetTime(t *testing.T) {
 		}
 	}
 	h := dbtest.Serve(dbtest.Principal(user, organization), (&Handler{Service: svc, Admin: svc}).Mount)
-	path := "/tenants/" + organization.String() + "/qeetai/settings"
+	path := "/organizations/" + organization.String() + "/qeetai/settings"
 	if rec := dbtest.Do(t, h, http.MethodPut, path, map[string]any{"conversation_retention_days": 0}); rec.Code != http.StatusUnprocessableEntity {
 		t.Errorf("keep for 0 days: %d, want 422", rec.Code)
 	}

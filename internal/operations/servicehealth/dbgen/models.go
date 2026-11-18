@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type PlatformIncident struct {
@@ -18,5 +17,5 @@ type PlatformIncident struct {
 	Title      string
 	Detail     string
 	StartedAt  time.Time
-	ResolvedAt pgtype.Timestamptz
+	ResolvedAt *time.Time
 }

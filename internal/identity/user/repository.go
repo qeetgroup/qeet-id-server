@@ -1,0 +1,483 @@
+package user
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
+	"github.com/qeetgroup/qeet-id-server/internal/identity/user/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
+)
+
+// parseUserMetadata decodes the JSONB metadata column. JSONB is guaranteed
+// valid JSON by Postgres, so a decode failure means data corruption or a
+// codec mismatch; we log it and fall back to an empty map so the user
+// remains usable for everything other than metadata.
+func parseUserMetadata(raw []byte, userID uuid.UUID) map[string]any {
+	if len(raw) == 0 {
+		return map[string]any{}
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		slog.Warn("user metadata unmarshal failed",
+			"user_id", userID,
+			"err", err,
+			"meta_bytes", len(raw),
+		)
+		return map[string]any{}
+	}
+	if m == nil {
+		return map[string]any{}
+	}
+	return m
+}
+
+func userFromInsertRow(row dbgen.InsertUserRow) *User {
+	u := &User{
+		ID:              row.ID,
+		Email:           row.Email,
+		Phone:           row.Phone,
+		EmailVerifiedAt: row.EmailVerifiedAt,
+		PhoneVerifiedAt: row.PhoneVerifiedAt,
+		DisplayName:     row.DisplayName,
+		Status:          row.Status,
+		Metadata:        parseUserMetadata(row.Metadata, row.ID),
+		CreatedAt:       row.CreatedAt,
+		UpdatedAt:       row.UpdatedAt,
+	}
+	if tid := row.OrganizationID; tid != nil {
+		u.OrganizationID = *tid
+	}
+	return u
+}
+
+func userFromGetRow(row dbgen.GetUserByIDRow) *User {
+	u := &User{
+		ID:              row.ID,
+		Email:           row.Email,
+		Phone:           row.Phone,
+		EmailVerifiedAt: row.EmailVerifiedAt,
+		PhoneVerifiedAt: row.PhoneVerifiedAt,
+		DisplayName:     row.DisplayName,
+		AvatarURL:       row.AvatarUrl,
+		Status:          row.Status,
+		Metadata:        parseUserMetadata(row.Metadata, row.ID),
+		CreatedAt:       row.CreatedAt,
+		UpdatedAt:       row.UpdatedAt,
+	}
+	if tid := row.OrganizationID; tid != nil {
+		u.OrganizationID = *tid
+	}
+	return u
+}
+
+// userFromEmailRow maps a GetUserByEmailRow, or the identically-shaped
+// GetUserByEmailGlobalRow, to the domain User (avatar_url intentionally excluded).
+func userFromEmailRow(
+	id uuid.UUID,
+	organizationID *uuid.UUID,
+	email string,
+	emailVerifiedAt *time.Time,
+	phone *string,
+	phoneVerifiedAt *time.Time,
+	displayName *string,
+	status string,
+	metadata []byte,
+	createdAt, updatedAt time.Time,
+) *User {
+	u := &User{
+		ID:              id,
+		Email:           email,
+		Phone:           phone,
+		EmailVerifiedAt: emailVerifiedAt,
+		PhoneVerifiedAt: phoneVerifiedAt,
+		DisplayName:     displayName,
+		Status:          status,
+		Metadata:        parseUserMetadata(metadata, id),
+		CreatedAt:       createdAt,
+		UpdatedAt:       updatedAt,
+	}
+	if tid := organizationID; tid != nil {
+		u.OrganizationID = *tid
+	}
+	return u
+}
+
+// userCols is the column list Update returns, in scanUser's order.
+const userCols = `id, organization_id, email, email_verified_at, phone, phone_verified_at,
+                  display_name, status, metadata, created_at, updated_at`
+
+// lastSeenCols are when and from where the person last used the organization:
+// their newest live session there, else their last sign-in to it in the audit
+// log, which outlasts the sessions the cleanup deletes.
+const lastSeenCols = `GREATEST(
+			    (SELECT s.last_seen_at FROM auth.sessions s
+			     WHERE s.user_id = account.users.id AND s.revoked_at IS NULL
+			       AND (s.organization_id = $1 OR (s.organization_id IS NULL AND account.users.organization_id = $1))
+			     ORDER BY s.last_seen_at DESC LIMIT 1),
+			    (SELECT e.created_at FROM audit.events e
+			     WHERE e.actor_user_id = account.users.id AND e.organization_id = $1 AND e.action = 'auth.login_succeeded'
+			     ORDER BY e.created_at DESC LIMIT 1)) AS last_seen_at,
+			  COALESCE(
+			    (SELECT host(s.ip) FROM auth.sessions s
+			     WHERE s.user_id = account.users.id AND s.revoked_at IS NULL
+			       AND (s.organization_id = $1 OR (s.organization_id IS NULL AND account.users.organization_id = $1))
+			     ORDER BY s.last_seen_at DESC LIMIT 1),
+			    (SELECT host(e.ip) FROM audit.events e
+			     WHERE e.actor_user_id = account.users.id AND e.organization_id = $1 AND e.action = 'auth.login_succeeded'
+			     ORDER BY e.created_at DESC LIMIT 1))::text AS last_seen_ip`
+
+// scanUser scans a userCols row (no avatar_url) into a User.
+func scanUser(row pgx.Row) (*User, error) {
+	var u User
+	var meta []byte
+	var tid *uuid.UUID
+	if err := row.Scan(&u.ID, &tid, &u.Email, &u.EmailVerifiedAt,
+		&u.Phone, &u.PhoneVerifiedAt, &u.DisplayName, &u.Status, &meta,
+		&u.CreatedAt, &u.UpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errs.ErrNotFound
+		}
+		return nil, err
+	}
+	if tid != nil {
+		u.OrganizationID = *tid
+	}
+	u.Metadata = parseUserMetadata(meta, u.ID)
+	return &u, nil
+}
+
+// CreateWithCredential inserts the user and (optionally, when passwordHash is
+// non-empty) their password credential inside one tx.
+func (r *Repository) CreateWithCredential(ctx context.Context, in CreateInput, passwordHash string) (*User, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	u, err := r.CreateWithCredentialTx(ctx, tx, in, passwordHash)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return u, nil
+}
+
+// CreateWithCredentialTx inserts the user and optional password credential in
+// the caller's transaction so audit and outbox evidence can commit atomically.
+func (r *Repository) CreateWithCredentialTx(ctx context.Context, tx pgx.Tx, in CreateInput, passwordHash string) (*User, error) {
+	meta := in.Metadata
+	if meta == nil {
+		meta = map[string]any{}
+	}
+	metaJSON, err := json.Marshal(meta)
+	if err != nil {
+		return nil, err
+	}
+	var phone *string
+	if in.Phone != "" {
+		p := in.Phone
+		phone = &p
+	}
+	var displayName *string
+	if in.DisplayName != "" {
+		d := in.DisplayName
+		displayName = &d
+	}
+
+	// InsertUser and the cross-context password credential are both static SQL, so
+	// they run as sqlc queries on the same pgx.Tx via WithTx — one transaction across
+	// the user and auth bounded contexts.
+	q := r.q.WithTx(tx)
+	row, err := q.InsertUser(ctx, dbgen.InsertUserParams{
+		OrganizationID: &in.OrganizationID,
+		Email:          strings.TrimSpace(in.Email),
+		Phone:          phone,
+		DisplayName:    displayName,
+		Metadata:       metaJSON,
+	})
+	if err != nil {
+		if postgres.IsUnique(err) {
+			return nil, errs.ErrAuthEmailExists
+		}
+		if postgres.IsForeignKey(err) {
+			return nil, errs.ErrBadRequest.WithDetail("organization does not exist")
+		}
+		return nil, err
+	}
+	u := userFromInsertRow(row)
+	if passwordHash != "" {
+		if err := q.InsertPasswordCredential(ctx, dbgen.InsertPasswordCredentialParams{
+			UserID:       u.ID,
+			PasswordHash: passwordHash,
+		}); err != nil {
+			return nil, err
+		}
+	}
+	return u, nil
+}
+
+// Get returns the user with id, including avatar_url, which the list queries
+// leave out. ErrNotFound if it is missing or soft-deleted.
+func (r *Repository) Get(ctx context.Context, id uuid.UUID) (*User, error) {
+	return getUser(ctx, r.q, id)
+}
+
+// GetTx is Get read through tx.
+func (r *Repository) GetTx(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*User, error) {
+	return getUser(ctx, r.q.WithTx(tx), id)
+}
+
+func getUser(ctx context.Context, q *dbgen.Queries, id uuid.UUID) (*User, error) {
+	row, err := q.GetUserByID(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return userFromGetRow(row), nil
+}
+
+// StandingIn reports how a user relates to an organization: home (the organization manages
+// the account) and member (they hold one of its roles). ErrNotFound for a
+// user that doesn't exist.
+func (r *Repository) StandingIn(ctx context.Context, id, organizationID uuid.UUID) (home, member bool, err error) {
+	row, err := r.q.GetUserStandingIn(ctx, dbgen.GetUserStandingInParams{ID: id, OrganizationID: organizationID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, false, errs.ErrNotFound
+	}
+	if err != nil {
+		return false, false, err
+	}
+	return row.Home, row.Member, nil
+}
+
+// RemoveFromOrganizationTx removes a user from one organization in tx: their roles and
+// groups there, and the application grants and API keys they hold there. It
+// returns how many roles were removed. Their account and other organizations are
+// untouched; OffboardTx withdraws what they issued there.
+func (r *Repository) RemoveFromOrganizationTx(ctx context.Context, tx pgx.Tx, userID, organizationID uuid.UUID) (int64, error) {
+	q := r.q.WithTx(tx)
+	roles, err := q.RemoveUserRolesInOrganization(ctx, dbgen.RemoveUserRolesInOrganizationParams{UserID: userID, OrganizationID: organizationID})
+	if err != nil {
+		return 0, err
+	}
+	if err := q.RemoveUserGroupsInOrganization(ctx, dbgen.RemoveUserGroupsInOrganizationParams{UserID: userID, OrganizationID: organizationID}); err != nil {
+		return 0, err
+	}
+	if err := q.RevokeUserAppGrantsInOrganization(ctx, dbgen.RevokeUserAppGrantsInOrganizationParams{UserID: userID, OrganizationID: organizationID}); err != nil {
+		return 0, err
+	}
+	if err := q.RevokeUserAPIKeysInOrganization(ctx, dbgen.RevokeUserAPIKeysInOrganizationParams{UserID: &userID, OrganizationID: organizationID}); err != nil {
+		return 0, err
+	}
+	return roles, nil
+}
+
+// GetByEmail returns the organization's user with this email.
+func (r *Repository) GetByEmail(ctx context.Context, organizationID uuid.UUID, email string) (*User, error) {
+	row, err := r.q.GetUserByEmail(ctx, dbgen.GetUserByEmailParams{
+		OrganizationID: &organizationID,
+		Lower:          email,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return userFromEmailRow(row.ID, row.OrganizationID, row.Email, row.EmailVerifiedAt, row.Phone,
+		row.PhoneVerifiedAt, row.DisplayName, row.Status, row.Metadata, row.CreatedAt, row.UpdatedAt), nil
+}
+
+// GetByEmailGlobal looks up a user by email across all organizations. Email is
+// globally unique (migration 0022), so there is at most one match.
+func (r *Repository) GetByEmailGlobal(ctx context.Context, email string) (*User, error) {
+	row, err := r.q.GetUserByEmailGlobal(ctx, email)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return userFromEmailRow(row.ID, row.OrganizationID, row.Email, row.EmailVerifiedAt, row.Phone,
+		row.PhoneVerifiedAt, row.DisplayName, row.Status, row.Metadata, row.CreatedAt, row.UpdatedAt), nil
+}
+
+// Update applies the non-nil fields of in to user id and returns the result.
+// The SET clause is built at run time, so this is hand-written rather than sqlc.
+func (r *Repository) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (*User, error) {
+	return r.update(ctx, r.pool, id, in)
+}
+
+// UpdateTx applies the same update inside the caller's transaction, so a
+// mutation and its audit/outbox evidence commit or roll back together.
+func (r *Repository) UpdateTx(ctx context.Context, tx pgx.Tx, id uuid.UUID, in UpdateInput) (*User, error) {
+	return r.update(ctx, tx, id, in)
+}
+
+// SoftDeleteTx soft-deletes user id in tx. ErrNotFound if the user is missing
+// or already deleted.
+func (r *Repository) SoftDeleteTx(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
+	n, err := r.q.WithTx(tx).SoftDeleteUser(ctx, id)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return errs.ErrNotFound
+	}
+	return nil
+}
+
+// update applies in through db, a *pgxpool.Pool or a pgx.Tx; an empty update
+// reads the user through db too.
+func (r *Repository) update(ctx context.Context, db dbgen.DBTX, id uuid.UUID, in UpdateInput) (*User, error) {
+	ub := postgres.NewUpdate()
+	if in.DisplayName != nil {
+		ub.Set("display_name", *in.DisplayName)
+	}
+	if in.AvatarURL != nil {
+		ub.Set("avatar_url", *in.AvatarURL)
+	}
+	if in.Phone != nil {
+		ub.Set("phone", *in.Phone)
+		// A number that changed hasn't been verified.
+		ub.SetRaw("phone_verified_at = CASE WHEN phone IS NOT DISTINCT FROM $" + strconv.Itoa(len(ub.Args())) + " THEN phone_verified_at END")
+	}
+	if in.Status != nil {
+		ub.Set("status", *in.Status)
+	}
+	if in.Metadata != nil {
+		meta, err := json.Marshal(in.Metadata)
+		if err != nil {
+			return nil, err
+		}
+		ub.Set("metadata", meta)
+	}
+	if ub.Empty() {
+		return getUser(ctx, dbgen.New(db), id)
+	}
+	ub.SetRaw("updated_at = NOW()")
+	idAt := ub.NextPlaceholder()
+	args := append(ub.Args(), id)
+	q := `UPDATE account.users SET ` + ub.Assignments() +
+		` WHERE id = $` + strconv.Itoa(idAt) + ` AND deleted_at IS NULL RETURNING ` + userCols
+	row := db.QueryRow(ctx, q, args...)
+	return scanUser(row)
+}
+
+// SoftDeleteByTx soft-deletes a user in tx, recording deletedBy, and returns
+// the deletion. ErrNotFound if the user is missing or already deleted.
+func (r *Repository) SoftDeleteByTx(ctx context.Context, tx pgx.Tx, id uuid.UUID, deletedBy *uuid.UUID) (*Deletion, error) {
+	row, err := r.q.WithTx(tx).SoftDeleteUserBy(ctx, dbgen.SoftDeleteUserByParams{ID: id, DeletedBy: deletedBy})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	d := &Deletion{ID: row.ID, DeletedBy: row.DeletedBy}
+	if row.DeletedAt != nil {
+		d.DeletedAt = *row.DeletedAt
+	}
+	return d, nil
+}
+
+// The recycle bin's page sizes: by default, and at most.
+const (
+	deletedLimit    = 100
+	deletedMaxLimit = 200
+)
+
+// ListDeleted returns a page of an organization's soft-deleted users, most recent
+// first, after the cursor when one is set, and the next page's cursor: empty
+// on the last page.
+func (r *Repository) ListDeleted(ctx context.Context, organizationID uuid.UUID, limit int, after paging.Cursor) ([]DeletedUser, string, error) {
+	limit = paging.Clamp(limit, deletedLimit, deletedMaxLimit)
+	params := dbgen.ListDeletedUsersParams{OrganizationID: &organizationID, RowLimit: int32(limit + 1)} // #nosec G115 -- clamped to at most deletedMaxLimit
+	params.BeforeTs, params.BeforeID = after.Before()
+	rows, err := r.q.ListDeletedUsers(ctx, params)
+	if err != nil {
+		return nil, "", err
+	}
+	out := []DeletedUser{}
+	for _, row := range rows {
+		d := DeletedUser{
+			ID:          row.ID,
+			Email:       row.Email,
+			DisplayName: row.DisplayName,
+			DeletedBy:   row.DeletedBy,
+			CreatedAt:   row.CreatedAt,
+		}
+		// The query filters WHERE deleted_at IS NOT NULL, so the value is always valid.
+		if row.DeletedAt != nil {
+			d.DeletedAt = *row.DeletedAt
+		}
+		out = append(out, d)
+	}
+	out, next := paging.Next(out, limit, func(d DeletedUser) (time.Time, uuid.UUID) { return d.DeletedAt, d.ID })
+	return out, next, nil
+}
+
+// RestoreTx reverses a soft delete in tx. Returns ErrNotFound if the user
+// isn't currently soft-deleted, and ErrAuthEmailExists if their address has
+// since been taken by another account.
+func (r *Repository) RestoreTx(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
+	n, err := r.q.WithTx(tx).RestoreUser(ctx, id)
+	if postgres.IsUnique(err) {
+		return errs.ErrAuthEmailExists
+	}
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return errs.ErrNotFound
+	}
+	return nil
+}
+
+// PurgeTx permanently removes a soft-deleted user in tx (and, via ON DELETE
+// CASCADE, its sessions/credentials/identities). Only acts on
+// already-soft-deleted rows.
+func (r *Repository) PurgeTx(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
+	n, err := r.q.WithTx(tx).PurgeUser(ctx, id)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return errs.ErrNotFound
+	}
+	return nil
+}
+
+// MarkEmailVerified records that the user has verified their email address.
+func (r *Repository) MarkEmailVerified(ctx context.Context, id uuid.UUID) error {
+	return r.q.MarkEmailVerified(ctx, id)
+}
+
+// PasswordHash returns the user's stored password hash, or "" if they have no
+// password.
+func (r *Repository) PasswordHash(ctx context.Context, id uuid.UUID) (string, error) {
+	h, err := r.q.GetPasswordHash(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return h, err
+}
+
+// SetPassword stores the user's password hash.
+func (r *Repository) SetPassword(ctx context.Context, id uuid.UUID, hash string) error {
+	return r.q.SetPassword(ctx, dbgen.SetPasswordParams{UserID: id, PasswordHash: hash})
+}

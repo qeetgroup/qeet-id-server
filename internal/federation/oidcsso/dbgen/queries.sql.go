@@ -10,73 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
-
-const consumeOidcConnectionLoginCode = `-- name: ConsumeOidcConnectionLoginCode :one
-SELECT lc.user_id, lc.expires_at, lc.used_at, c.organization_id, c.status
-FROM auth.login_codes lc
-JOIN organization.oidc_connections c ON c.organization_id = lc.organization_id AND c.id = lc.connection_id
-WHERE lc.code_hash = $1 AND lc.kind = 'oidc_connection'
-FOR UPDATE OF lc
-`
-
-type ConsumeOidcConnectionLoginCodeRow struct {
-	UserID         uuid.UUID
-	ExpiresAt      time.Time
-	UsedAt         pgtype.Timestamptz
-	OrganizationID uuid.UUID
-	Status         string
-}
-
-func (q *Queries) ConsumeOidcConnectionLoginCode(ctx context.Context, codeHash string) (ConsumeOidcConnectionLoginCodeRow, error) {
-	row := q.db.QueryRow(ctx, consumeOidcConnectionLoginCode, codeHash)
-	var i ConsumeOidcConnectionLoginCodeRow
-	err := row.Scan(
-		&i.UserID,
-		&i.ExpiresAt,
-		&i.UsedAt,
-		&i.OrganizationID,
-		&i.Status,
-	)
-	return i, err
-}
-
-const consumeOidcConnectionState = `-- name: ConsumeOidcConnectionState :one
-DELETE FROM auth.oauth_states
-WHERE state_hash = $1 AND kind = 'oidc_connection'
-  AND organization_id = $2::uuid AND connection_id = $3::uuid
-RETURNING code_verifier, nonce_hash::text AS nonce_hash, redirect_uri, expires_at, return_to
-`
-
-type ConsumeOidcConnectionStateParams struct {
-	StateHash      string
-	OrganizationID uuid.UUID
-	ConnectionID   uuid.UUID
-}
-
-type ConsumeOidcConnectionStateRow struct {
-	CodeVerifier string
-	NonceHash    string
-	RedirectUri  string
-	ExpiresAt    time.Time
-	ReturnTo     *string
-}
-
-// ConsumeOidcConnectionState spends a state the connection issued as it reads
-// it, so a callback carrying it succeeds at most once.
-func (q *Queries) ConsumeOidcConnectionState(ctx context.Context, arg ConsumeOidcConnectionStateParams) (ConsumeOidcConnectionStateRow, error) {
-	row := q.db.QueryRow(ctx, consumeOidcConnectionState, arg.StateHash, arg.OrganizationID, arg.ConnectionID)
-	var i ConsumeOidcConnectionStateRow
-	err := row.Scan(
-		&i.CodeVerifier,
-		&i.NonceHash,
-		&i.RedirectUri,
-		&i.ExpiresAt,
-		&i.ReturnTo,
-	)
-	return i, err
-}
 
 const deleteOidcConnection = `-- name: DeleteOidcConnection :execrows
 DELETE FROM organization.oidc_connections WHERE id = $1 AND organization_id = $2
@@ -93,35 +27,6 @@ func (q *Queries) DeleteOidcConnection(ctx context.Context, arg DeleteOidcConnec
 		return 0, err
 	}
 	return result.RowsAffected(), nil
-}
-
-const getExternalIdentityUser = `-- name: GetExternalIdentityUser :one
-
-SELECT user_id FROM account.external_identities
-WHERE organization_id = $1 AND provider = $2 AND connection_id = $3::uuid
-  AND subject = $4
-`
-
-type GetExternalIdentityUserParams struct {
-	OrganizationID uuid.UUID
-	Provider       string
-	ConnectionID   uuid.UUID
-	Subject        string
-}
-
-// ==========================================================================
-// findOrCreateUser — the same rules as saml and ldap
-// ==========================================================================
-func (q *Queries) GetExternalIdentityUser(ctx context.Context, arg GetExternalIdentityUserParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, getExternalIdentityUser,
-		arg.OrganizationID,
-		arg.Provider,
-		arg.ConnectionID,
-		arg.Subject,
-	)
-	var user_id uuid.UUID
-	err := row.Scan(&user_id)
-	return user_id, err
 }
 
 const getOidcConnection = `-- name: GetOidcConnection :one
@@ -153,7 +58,7 @@ type GetOidcConnectionRow struct {
 	Status              string
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
-	LastLoginAt         pgtype.Timestamptz
+	LastLoginAt         *time.Time
 }
 
 func (q *Queries) GetOidcConnection(ctx context.Context, arg GetOidcConnectionParams) (GetOidcConnectionRow, error) {
@@ -205,7 +110,7 @@ type GetOidcConnectionForSignInRow struct {
 	Status              string
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
-	LastLoginAt         pgtype.Timestamptz
+	LastLoginAt         *time.Time
 	ClientSecretCt      []byte
 	ClientSecretNonce   []byte
 }
@@ -238,17 +143,6 @@ func (q *Queries) GetOidcConnectionForSignIn(ctx context.Context, id uuid.UUID) 
 		&i.ClientSecretNonce,
 	)
 	return i, err
-}
-
-const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id FROM account.users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL
-`
-
-func (q *Queries) GetUserByEmail(ctx context.Context, email string) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, getUserByEmail, email)
-	var id uuid.UUID
-	err := row.Scan(&id)
-	return id, err
 }
 
 const insertOidcConnection = `-- name: InsertOidcConnection :one
@@ -302,12 +196,11 @@ type InsertOidcConnectionRow struct {
 	Status              string
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
-	LastLoginAt         pgtype.Timestamptz
+	LastLoginAt         *time.Time
 }
 
 // Queries for the oidcsso domain: an organization's own OpenID Connect
-// identity providers, their sign-in states and one-time login codes, and the
-// identities they link. All queries are STATIC.
+// identity providers. All queries are STATIC.
 // ==========================================================================
 // Connections (oidcsso.go)
 // ==========================================================================
@@ -353,117 +246,6 @@ func (q *Queries) InsertOidcConnection(ctx context.Context, arg InsertOidcConnec
 	return i, err
 }
 
-const insertOidcConnectionLoginCode = `-- name: InsertOidcConnectionLoginCode :exec
-INSERT INTO auth.login_codes (code_hash, kind, user_id, organization_id, connection_id, expires_at)
-VALUES ($1, 'oidc_connection', $2, $3::uuid, $4::uuid, $5)
-`
-
-type InsertOidcConnectionLoginCodeParams struct {
-	CodeHash       string
-	UserID         uuid.UUID
-	OrganizationID uuid.UUID
-	ConnectionID   uuid.UUID
-	ExpiresAt      time.Time
-}
-
-func (q *Queries) InsertOidcConnectionLoginCode(ctx context.Context, arg InsertOidcConnectionLoginCodeParams) error {
-	_, err := q.db.Exec(ctx, insertOidcConnectionLoginCode,
-		arg.CodeHash,
-		arg.UserID,
-		arg.OrganizationID,
-		arg.ConnectionID,
-		arg.ExpiresAt,
-	)
-	return err
-}
-
-const insertOidcConnectionState = `-- name: InsertOidcConnectionState :exec
-
-INSERT INTO auth.oauth_states
-    (state_hash, kind, organization_id, connection_id, code_verifier, nonce_hash, redirect_uri, expires_at, return_to)
-VALUES ($1, 'oidc_connection', $2::uuid, $3::uuid, $4, $5::text,
-        $6, $7, $8)
-`
-
-type InsertOidcConnectionStateParams struct {
-	StateHash      string
-	OrganizationID uuid.UUID
-	ConnectionID   uuid.UUID
-	CodeVerifier   string
-	NonceHash      string
-	RedirectUri    string
-	ExpiresAt      time.Time
-	ReturnTo       *string
-}
-
-// ==========================================================================
-// Sign-in states and login codes (signin.go)
-// ==========================================================================
-func (q *Queries) InsertOidcConnectionState(ctx context.Context, arg InsertOidcConnectionStateParams) error {
-	_, err := q.db.Exec(ctx, insertOidcConnectionState,
-		arg.StateHash,
-		arg.OrganizationID,
-		arg.ConnectionID,
-		arg.CodeVerifier,
-		arg.NonceHash,
-		arg.RedirectUri,
-		arg.ExpiresAt,
-		arg.ReturnTo,
-	)
-	return err
-}
-
-const insertUserWithEmail = `-- name: InsertUserWithEmail :one
-INSERT INTO account.users (organization_id, email, email_verified_at, display_name, status)
-VALUES ($1, $2, NOW(), $3, 'active')
-RETURNING id
-`
-
-type InsertUserWithEmailParams struct {
-	OrganizationID pgtype.UUID
-	Email          string
-	DisplayName    *string
-}
-
-func (q *Queries) InsertUserWithEmail(ctx context.Context, arg InsertUserWithEmailParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, insertUserWithEmail, arg.OrganizationID, arg.Email, arg.DisplayName)
-	var id uuid.UUID
-	err := row.Scan(&id)
-	return id, err
-}
-
-const linkExternalIdentity = `-- name: LinkExternalIdentity :exec
-INSERT INTO account.external_identities (user_id, organization_id, provider, connection_id, subject, email, metadata)
-VALUES ($1, $2, $3, $4::uuid, $5, $6, $7)
-ON CONFLICT (organization_id, provider, connection_id, subject)
-DO UPDATE SET email = EXCLUDED.email, metadata = EXCLUDED.metadata
-`
-
-type LinkExternalIdentityParams struct {
-	UserID         uuid.UUID
-	OrganizationID uuid.UUID
-	Provider       string
-	ConnectionID   uuid.UUID
-	Subject        string
-	Email          *string
-	Metadata       []byte
-}
-
-// LinkExternalIdentity links the subject to the connection, or refreshes the
-// profile an existing link holds.
-func (q *Queries) LinkExternalIdentity(ctx context.Context, arg LinkExternalIdentityParams) error {
-	_, err := q.db.Exec(ctx, linkExternalIdentity,
-		arg.UserID,
-		arg.OrganizationID,
-		arg.Provider,
-		arg.ConnectionID,
-		arg.Subject,
-		arg.Email,
-		arg.Metadata,
-	)
-	return err
-}
-
 const listOidcConnections = `-- name: ListOidcConnections :many
 SELECT id, organization_id, name, issuer, discovery_url, client_id, scopes, allowed_idp_tenant_ids,
        email_claim, name_claim, given_name_claim, family_name_claim, groups_claim, status,
@@ -489,7 +271,7 @@ type ListOidcConnectionsRow struct {
 	Status              string
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
-	LastLoginAt         pgtype.Timestamptz
+	LastLoginAt         *time.Time
 }
 
 // At most paging.MaxListItems+1 rows: the API truncates the rest.
@@ -529,20 +311,6 @@ func (q *Queries) ListOidcConnections(ctx context.Context, organizationID uuid.U
 		return nil, err
 	}
 	return items, nil
-}
-
-const markOidcConnectionLoginCodeUsed = `-- name: MarkOidcConnectionLoginCodeUsed :exec
-UPDATE auth.login_codes SET used_at = NOW() WHERE code_hash = $1 AND organization_id = $2::uuid
-`
-
-type MarkOidcConnectionLoginCodeUsedParams struct {
-	CodeHash       string
-	OrganizationID uuid.UUID
-}
-
-func (q *Queries) MarkOidcConnectionLoginCodeUsed(ctx context.Context, arg MarkOidcConnectionLoginCodeUsedParams) error {
-	_, err := q.db.Exec(ctx, markOidcConnectionLoginCodeUsed, arg.CodeHash, arg.OrganizationID)
-	return err
 }
 
 const touchOidcConnectionLastLogin = `-- name: TouchOidcConnectionLastLogin :exec
@@ -618,7 +386,7 @@ type UpdateOidcConnectionRow struct {
 	Status              string
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
-	LastLoginAt         pgtype.Timestamptz
+	LastLoginAt         *time.Time
 }
 
 func (q *Queries) UpdateOidcConnection(ctx context.Context, arg UpdateOidcConnectionParams) (UpdateOidcConnectionRow, error) {

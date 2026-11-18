@@ -1,6 +1,6 @@
 type: object
 properties:
-  tenant_id:
+  organization_id:
     type: string
     format: uuid
   enabled:

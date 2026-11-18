@@ -101,7 +101,7 @@ func TestRefuseCaptured(t *testing.T) {
 	samlConnection(t, organization, "draft")
 	samlConnection(t, organization, "disabled")
 	if got, _ := captured(t, svc, member.Email); got {
-		t.Error("an address is captured while the organisation has only a draft and a disabled connection")
+		t.Error("an address is captured while the organization has only a draft and a disabled connection")
 	}
 	active := samlConnection(t, organization, "active")
 
@@ -114,7 +114,7 @@ func TestRefuseCaptured(t *testing.T) {
 	// A closer domain another organization verified decides for itself, and an
 	// address on no managed domain is nobody's.
 	if got, conns := captured(t, svc, dbtest.Unique("x")+"@eu."+team); !got || len(conns) != 2 {
-		t.Errorf("below the other organisation's closer domain: captured %v naming %v; want its two connections", got, conns)
+		t.Errorf("below the other organization's closer domain: captured %v naming %v; want its two connections", got, conns)
 	}
 	if got, _ := captured(t, svc, dbtest.Unique("x")+"@example.test"); got {
 		t.Error("an address on no managed domain is captured")
@@ -124,7 +124,7 @@ func TestRefuseCaptured(t *testing.T) {
 	// organization's mark doesn't count.
 	exec(t, `INSERT INTO organization.break_glass_members (organization_id, user_id) VALUES ($1, $2)`, other, member.ID)
 	if got, _ := captured(t, svc, member.Email); !got {
-		t.Error("another organisation's break-glass mark exempted the member")
+		t.Error("another organization's break-glass mark exempted the member")
 	}
 	exec(t, `INSERT INTO organization.break_glass_members (organization_id, user_id) VALUES ($1, $2)`, organization, member.ID)
 	if got, _ := captured(t, svc, strings.ToUpper(member.Email)); got {
@@ -137,7 +137,7 @@ func TestRefuseCaptured(t *testing.T) {
 	}
 	exec(t, `DELETE FROM rbac.user_roles WHERE user_id = $1 AND organization_id = $2`, guest.ID, organization)
 	if got, _ := captured(t, svc, guest.Email); !got {
-		t.Error("a break-glass mark still exempts someone who has left the organisation")
+		t.Error("a break-glass mark still exempts someone who has left the organization")
 	}
 
 	// An administrator single sign-on can't sign in keeps their methods until
@@ -158,7 +158,7 @@ func TestRefuseCaptured(t *testing.T) {
 	}
 	exec(t, `UPDATE organization.saml_connections SET status = 'disabled' WHERE id = $1`, active)
 	if got, _ := captured(t, svc, nobody); got {
-		t.Error("an address is captured once the organisation's last active connection is off")
+		t.Error("an address is captured once the organization's last active connection is off")
 	}
 }
 
@@ -178,7 +178,7 @@ func TestBreakGlassMembers(t *testing.T) {
 	dbtest.Assign(t, otherOwner.ID, other, ownerRole(t, other))
 	mount := (&Handler{Service: svc}).Mount
 	asOwner := dbtest.Serve(dbtest.Principal(owner.ID, organization), mount)
-	base := "/tenants/" + organization.String() + "/break-glass-members"
+	base := "/organizations/" + organization.String() + "/break-glass-members"
 	audited := func(action string) int {
 		return dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = $2 AND resource_id = $3`, organization, action, member.ID)
 	}
@@ -213,8 +213,8 @@ func TestBreakGlassMembers(t *testing.T) {
 		list.Items[0].UserID != member.ID || list.Items[0].Email != member.Email || list.Items[0].CreatedBy == nil || *list.Items[0].CreatedBy != owner.ID {
 		t.Errorf("list: %d %s; want the member, added by the owner", rec.Code, rec.Body.String())
 	}
-	if rec := dbtest.Do(t, asOwner, http.MethodPut, base+"/"+outsider.ID.String(), nil); rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), errs.CodeDomainVerifyNotMember) {
-		t.Errorf("another organisation's member: %d %s, want 404 %s", rec.Code, rec.Body.String(), errs.CodeDomainVerifyNotMember)
+	if rec := dbtest.Do(t, asOwner, http.MethodPut, base+"/"+outsider.ID.String(), nil); rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), CodeNotMember) {
+		t.Errorf("another organization's member: %d %s, want 404 %s", rec.Code, rec.Body.String(), CodeNotMember)
 	}
 	if rec := dbtest.Do(t, asOwner, http.MethodPut, base+"/not-a-uuid", nil); rec.Code != http.StatusBadRequest {
 		t.Errorf("a malformed user id: %d, want 400", rec.Code)
@@ -229,19 +229,19 @@ func TestBreakGlassMembers(t *testing.T) {
 			path += "/" + member.ID.String()
 		}
 		if rec := dbtest.Do(t, asOther, method, path, nil); rec.Code != http.StatusForbidden {
-			t.Errorf("another organisation's owner %s %s: %d, want 403", method, path, rec.Code)
+			t.Errorf("another organization's owner %s %s: %d, want 403", method, path, rec.Code)
 		}
 	}
-	otherBase := "/tenants/" + other.String() + "/break-glass-members"
+	otherBase := "/organizations/" + other.String() + "/break-glass-members"
 	if rec := dbtest.Do(t, asOther, http.MethodPut, otherBase+"/"+member.ID.String(), nil); rec.Code != http.StatusNotFound {
-		t.Errorf("another organisation's owner naming this organisation's member: %d %s, want 404", rec.Code, rec.Body.String())
+		t.Errorf("another organization's owner naming this organization's member: %d %s, want 404", rec.Code, rec.Body.String())
 	}
 	if ids := breakGlassIDs(t, dbtest.Do(t, asOther, http.MethodGet, otherBase, nil)); slices.Contains(ids, member.ID) {
-		t.Error("another organisation's list shows this organisation's break-glass member")
+		t.Error("another organization's list shows this organization's break-glass member")
 	}
 	if rec := dbtest.Do(t, asOther, http.MethodDelete, otherBase+"/"+member.ID.String(), nil); rec.Code != http.StatusNoContent ||
 		dbtest.Count(t, `SELECT count(*) FROM organization.break_glass_members WHERE organization_id = $1 AND user_id = $2`, organization, member.ID) != 1 {
-		t.Errorf("another organisation's owner removing in their own organisation: %d; want 204 and this organisation's mark kept", rec.Code)
+		t.Errorf("another organization's owner removing in their own organization: %d; want 204 and this organization's mark kept", rec.Code)
 	}
 
 	for i := 0; i < 2; i++ {
@@ -294,7 +294,7 @@ func TestOIDCConnectionsCapture(t *testing.T) {
 	exec(t, `UPDATE organization.domains SET sso_enabled = TRUE WHERE organization_id = $1`, organization)
 	oidcConnection(t, organization, "draft")
 	if got, _ := captured(t, svc, dbtest.Unique("x")+"@"+domain); got {
-		t.Error("an address is captured while the organisation's only OpenID Connect connection is a draft")
+		t.Error("an address is captured while the organization's only OpenID Connect connection is a draft")
 	}
 	active := oidcConnection(t, organization, "active")
 	if got, conns := captured(t, svc, dbtest.Unique("x")+"@"+domain); !got || len(conns) != 1 || conns[0]["id"] != active || conns[0]["protocol"] != "oidc" {

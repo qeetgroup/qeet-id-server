@@ -13,20 +13,14 @@ func Truncate[T any](items []T) ([]T, bool) {
 	return items, false
 }
 
-// List is the body of such a list: its items, and "truncated" only when some
-// were left out.
-func List[T any](items []T) map[string]any {
-	items, truncated := Truncate(items)
-	body := map[string]any{"items": items}
-	if truncated {
+// ListWith is List's body as a map, with the body's other fields beside its
+// items. A body with fixed other fields is better a struct embedding Result.
+func ListWith[T any](items []T, fields map[string]any) map[string]any {
+	list := List(items)
+	body := map[string]any{"items": list.Items}
+	if list.Truncated {
 		body["truncated"] = true
 	}
-	return body
-}
-
-// ListWith is List with the body's other fields beside its items.
-func ListWith[T any](items []T, fields map[string]any) map[string]any {
-	body := List(items)
 	for k, v := range fields {
 		body[k] = v
 	}

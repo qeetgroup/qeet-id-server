@@ -2,9 +2,9 @@ get:
   operationId: getUserAccess
   summary: User access summary
   description: >-
-    Per-user access within the caller's tenant (User 360): the organization
-    (tenant), directly-assigned roles, group memberships, and counts of
-    consented applications and enabled tenant policies. Requires `user.read`.
+    Per-user access within the caller's organization (User 360): the organization
+    (organization), directly-assigned roles, group memberships, and counts of
+    consented applications and enabled organization policies. Requires `user.read`.
   tags:
     - Users
   parameters:

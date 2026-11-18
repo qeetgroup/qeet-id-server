@@ -11,11 +11,11 @@ post:
     answer is the same whether or not the address is already in use by another
     account. An address in use is sent a notice that it already has an account
     instead of a code, and is never assigned to the caller.
-    An organisation decides some changes, refused with 403
+    An organization decides some changes, refused with 403
     verification.email_managed saying which: an address its directory (SCIM)
     or single sign-on provides changes there; an address on a domain the
-    account's organisation manages moves only to another of its domains; and no
-    address moves onto a domain another organisation manages.
+    account's organization manages moves only to another of its domains; and no
+    address moves onto a domain another organization manages.
   tags:
     - Verification
   security:

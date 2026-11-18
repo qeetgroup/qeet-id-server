@@ -102,7 +102,7 @@ func TestFactorsOverHTTP(t *testing.T) {
 	c.call(http.MethodDelete, "/mfa/otp/factors/"+factor, nil, http.StatusNoContent)
 
 	// A phone: linked directly, listed, revoked; a pairing code made and withdrawn.
-	device := c.call(http.MethodPost, "/mfa/push/devices", map[string]string{"name": "Phone", "push_token": "ExponentPushToken[x]", "platform": "ios"}, http.StatusCreated)
+	device := c.call(http.MethodPost, "/mfa/push/devices", map[string]string{"name": "Phone", "push_token": "a1b2c3d4e5f6", "platform": "ios"}, http.StatusCreated)
 	if device["device_token"] == "" {
 		t.Errorf("register device: %v", device)
 	}

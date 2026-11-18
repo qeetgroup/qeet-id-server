@@ -1,6 +1,7 @@
 // Package oidc implements Qeet's OpenID Connect provider role: the OAuth2/OIDC
 // grants (authorization_code+PKCE, refresh, client_credentials, token-exchange,
-// device, CIBA) plus discovery, JWKS, and userinfo endpoints.
+// device, CIBA) at one token endpoint, plus discovery, JWKS, and userinfo
+// endpoints.
 package oidc
 
 import (
@@ -9,10 +10,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/ipallow"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/notification"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
@@ -24,15 +27,15 @@ type Service struct {
 	issuer *tokens.Issuer
 	// notifier delivers the CIBA async consent prompt (nil = no notification;
 	// the user must know to check pending requests themselves). See ciba.go.
-	notifier Notifier
+	notifier notification.Notifier
 	// limits gates application (relying-party) registration by plan (nil = off).
-	limits PlanLimiter
+	limits entitlements.PlanLimiter
 	// grantMaxAge ends a grant that long after it starts however often it is
 	// renewed, where its organization sets no maximum session age of its own.
 	grantMaxAge time.Duration
 	// addresses is the organizations' address rules (nil = no rules). See
 	// address.go.
-	addresses AddressPolicy
+	addresses ipallow.AddressPolicy
 	// sessionFactors is the second factor an organization still requires of a
 	// person's session (nil: none checked).
 	sessionFactors func(ctx context.Context, sessionID, userID, organizationID uuid.UUID) error
@@ -42,9 +45,6 @@ type Service struct {
 	// (the SSRF guard); nil sends none. See logout.go.
 	logoutClient *http.Client
 	logoutEgress *egress.Policy
-	// exchangeMaxDepth bounds a chain of token exchanges (config
-	// TOKEN_EXCHANGE_MAX_DEPTH).
-	exchangeMaxDepth int
 	// agentStatus returns an AI agent's lifecycle status, so introspection
 	// reports a suspended agent's tokens inactive (nil: not checked).
 	agentStatus func(ctx context.Context, agentID uuid.UUID) (string, error)
@@ -55,6 +55,9 @@ type Service struct {
 	// principalLive reports whether a service principal exists and isn't
 	// disabled, so its tokens introspect inactive once it is (nil: not checked).
 	principalLive func(ctx context.Context, principalID uuid.UUID) (bool, error)
+	// machineClients are the machine identities the client_credentials grant
+	// serves. See ClientCredentials.
+	machineClients []MachineClient
 	// webOrigins caches every application's web origins for the CORS check
 	// (see weborigins.go).
 	webOrigins originCache
@@ -78,51 +81,17 @@ func (s *Service) SetPrincipalLive(f func(ctx context.Context, principalID uuid.
 
 // NewService returns the OIDC provider service.
 func NewService(pool *pgxpool.Pool, issuer *tokens.Issuer) *Service {
-	return &Service{pool: pool, q: dbgen.New(pool), issuer: issuer, grantMaxAge: 30 * 24 * time.Hour, lockout: DefaultClientLockout(), exchangeMaxDepth: 2}
+	return &Service{pool: pool, q: dbgen.New(pool), issuer: issuer, grantMaxAge: 30 * 24 * time.Hour, lockout: DefaultClientLockout()}
 }
 
-// SetTokenExchangeMaxDepth sets how many exchanges deep a token may be
-// exchanged again (at least 1).
-func (s *Service) SetTokenExchangeMaxDepth(n int) {
-	if n < 1 {
-		n = 1
-	}
-	s.exchangeMaxDepth = n
-}
+// tokenExchangeMaxDepth is how many exchanges deep a token may be exchanged
+// again: an exchanged token's own exchange is the last.
+const tokenExchangeMaxDepth = 2
 
 // SetGrantMaxAge sets how long an application's grant lasts however often it is
 // renewed, where its organization sets no maximum session age (config
 // SESSION_MAX_AGE).
 func (s *Service) SetGrantMaxAge(d time.Duration) { s.grantMaxAge = d }
-
-// optionalUUID stores uuid.Nil as SQL NULL.
-func optionalUUID(id uuid.UUID) pgtype.UUID {
-	return pgtype.UUID{Bytes: id, Valid: id != uuid.Nil}
-}
-
-// optionalString is s for a nullable column, nil for "".
-func optionalString(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
-}
-
-func contains(haystack []string, needle string) bool {
-	for _, h := range haystack {
-		if h == needle {
-			return true
-		}
-	}
-	return false
-}
-
-func derefStr(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
-}
 
 // =====================================================================
 // OAuth 2.0 token revocation (RFC 7009) & introspection (RFC 7662)

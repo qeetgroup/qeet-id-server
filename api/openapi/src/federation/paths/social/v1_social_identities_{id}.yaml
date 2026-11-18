@@ -15,7 +15,7 @@ delete:
     - apiKeyAuth: []
   description: >-
     Unlinks a social sign-in from the account of a member of the caller's
-    organisation. Requires user.write. Refused with 403 rbac.target_is_owner
+    organization. Requires user.write. Refused with 403 rbac.target_is_owner
     when the account is an owner's and the caller isn't one, and 403
     rbac.target_outranks_caller when it holds a permission the caller doesn't.
   responses:

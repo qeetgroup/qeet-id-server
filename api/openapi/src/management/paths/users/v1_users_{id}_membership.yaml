@@ -12,7 +12,7 @@ delete:
     user.integrations_left event, as on deleting an account. The
     organization's own accounts are suspended or deleted instead (409
     user.managed_here); someone who doesn't belong here is 404. Removing an
-    owner is refused with 409 tenant.last_owner, and nothing changes, when it
+    owner is refused with 409 organization.last_owner, and nothing changes, when it
     would leave the organization with no active owner. The person must not
     outrank the caller: only an owner changes an owner (403
     rbac.target_is_owner), and the caller must hold every permission the person

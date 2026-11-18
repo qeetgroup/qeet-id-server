@@ -4,7 +4,7 @@ post:
   description: >-
     Create many users in one call. Each row is attempted independently — a bad
     or duplicate row, one on a domain another organization has verified, or one
-    whose password the tenant's password rules refuse, is reported in the
+    whose password the organization's password rules refuse, is reported in the
     response with its reason rather than failing the whole batch (partial
     success).
   tags:

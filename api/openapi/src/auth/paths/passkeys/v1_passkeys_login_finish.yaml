@@ -27,12 +27,12 @@ post:
     tokens on a server (such as the console's). A browser signs in to the hosted
     login with POST /v1/passkeys/login/session instead, so no token pair reaches
     its script. A body not sent as JSON is refused (415 unsupported_media_type).
-    When the account's organisation has switched passkeys off, the sign-in is
+    When the account's organization has switched passkeys off, the sign-in is
     refused with 403 passkey.disabled before the assertion is verified. A
-    refused ceremony or assertion is recorded in the organisation's audit trail
+    refused ceremony or assertion is recorded in the organization's audit trail
     as auth.sign_in_failed (method passkey, reason the error code), naming the
     account when it was identified. A passkey of an account on a domain whose
-    organisation requires single sign-on is refused with 403 auth.sso_required
+    organization requires single sign-on is refused with 403 auth.sso_required
     (see the SSORequired response).
   responses:
     '201':
@@ -53,7 +53,7 @@ post:
             idle_expires_at: '2026-10-01T10:15:00Z'
             session_id: '018f2a70-5b6c-7d8e-9f01-2a3b4c5d6e7f'
             user_id: '018f2a70-1a2b-7c3d-9e4f-5a6b7c8d9e0f'
-            tenant_id: '018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00'
+            organization_id: '018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00'
           schema:
             $ref: ../../../shared/schemas/TokenPair.yaml
     '403':

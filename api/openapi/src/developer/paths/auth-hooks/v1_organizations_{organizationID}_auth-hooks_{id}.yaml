@@ -1,0 +1,97 @@
+patch:
+  operationId: updateAuthHook
+  description: >-
+    Turns an authentication hook on or off, sets whether it fails open, and
+    changes its URL (checked as on creation, 422 auth_hook.url_invalid) or its
+    signing secret (encrypted at rest; the next call is signed with it, and for
+    24 hours with the secret it replaced too, shown as
+    previous_secret_expires_at, so the hook's endpoint can move over). Only
+    the fields sent change; the answer is both switches as stored. Audited as
+    auth_hook.updated, saying whether the secret changed.
+  summary: Update auth hook
+  tags:
+    - Auth Hooks
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          properties:
+            url:
+              type: string
+              format: uri
+            secret:
+              type: string
+              description: A new signing secret; write-only.
+            enabled:
+              type: boolean
+            fail_open:
+              type: boolean
+              description: >-
+                What a sign-in does when the hook gives no answer: it can't be
+                read, its signing secret can't be opened, the call fails or
+                times out, or its answer can't be read. True (the default on
+                create) lets the sign-in proceed; false refuses it as
+                temporarily unavailable. Where the hook can't be read, the
+                setting last read for the organization is followed. Every such
+                skip is recorded (audit auth_hook.skipped with the reason and
+                outcome; metric auth_hook_skipped_total).
+  responses:
+    '200':
+      description: The hook's settings as stored
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - enabled
+              - fail_open
+            properties:
+              enabled:
+                type: boolean
+              fail_open:
+                type: boolean
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+delete:
+  operationId: deleteAuthHook
+  description: Deletes an authentication hook so it no longer runs during auth flows.
+  summary: Delete auth hook
+  tags:
+    - Auth Hooks
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '204':
+      description: Removed
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml

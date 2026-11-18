@@ -27,7 +27,7 @@ func TestTellEmailsTheAccountHolder(t *testing.T) {
 	m := mail.Last(t)
 	if m.To != a.Email || m.Channel != "email" || m.OrganizationID != organization.String() || m.Subject != "Your password was changed" ||
 		!strings.Contains(m.Body, wasntYou) || !strings.Contains(m.HTML, "reset your password") {
-		t.Errorf("notice %+v; want it to the person, in their organisation, saying what to do", m)
+		t.Errorf("notice %+v; want it to the person, in their organization, saying what to do", m)
 	}
 	Tell(ctx, pool, mail, gone.ID, "Your password was changed", "A new password was set.")
 	Tell(ctx, pool, nil, a.ID, "Your password was changed", "A new password was set.")

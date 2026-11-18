@@ -3,8 +3,8 @@ post:
   summary: Look up an invitation (public)
   description: >-
     Previews the invitation an emailed link names, so the acceptance screen can
-    show the organisation and address and offer the ways of accepting it. A
-    password is offered where the organisation allows password sign-in, and a
+    show the organization and address and offer the ways of accepting it. A
+    password is offered where the organization allows password sign-in, and a
     passkey where it allows passkeys. account_exists means an account already
     holds the address, so the invitee signs in and accepts as themselves.
     Refused like acceptance: invite.link_invalid, invite.invalid (no longer

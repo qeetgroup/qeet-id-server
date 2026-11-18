@@ -7,7 +7,7 @@ required:
   - id
   - role_id
   - status
-  - tenant_id
+  - organization_id
 properties:
   accepted_at:
     type:
@@ -34,6 +34,6 @@ properties:
     format: uuid
   status:
     type: string
-  tenant_id:
+  organization_id:
     type: string
     format: uuid

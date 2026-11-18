@@ -2,40 +2,36 @@ package bootstrap
 
 import (
 	"context"
-	"crypto/subtle"
 	"net/http"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
-	"github.com/go-chi/cors"
 
-	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/abac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/accessrequest"
-	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authpolicy"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authzen"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/decisionlog"
-	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/policy"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rebac"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authpolicy"
+	"github.com/qeetgroup/qeet-id-server/internal/access/ipallow"
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
-	passkey "github.com/qeetgroup/qeet-id-server/internal/access/passkeys"
+	"github.com/qeetgroup/qeet-id-server/internal/access/passkey"
 	"github.com/qeetgroup/qeet-id-server/internal/access/recovery"
-	"github.com/qeetgroup/qeet-id-server/internal/access/risk/ipallow"
+	"github.com/qeetgroup/qeet-id-server/internal/access/threat"
 	"github.com/qeetgroup/qeet-id-server/internal/access/threat/bot"
 	"github.com/qeetgroup/qeet-id-server/internal/access/threat/risk"
-	"github.com/qeetgroup/qeet-id-server/internal/access/threat/threat"
-	agent "github.com/qeetgroup/qeet-id-server/internal/developer/agents"
-	apikey "github.com/qeetgroup/qeet-id-server/internal/developer/api-keys"
-	authhook "github.com/qeetgroup/qeet-id-server/internal/developer/auth-hooks"
-	secret "github.com/qeetgroup/qeet-id-server/internal/developer/credentials/secrets"
+	"github.com/qeetgroup/qeet-id-server/internal/developer/agent"
+	"github.com/qeetgroup/qeet-id-server/internal/developer/apikey"
+	"github.com/qeetgroup/qeet-id-server/internal/developer/authhook"
+	"github.com/qeetgroup/qeet-id-server/internal/developer/credentials/secret"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/credentials/tokenvault"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/credentials/vc"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/principal"
-	webhook "github.com/qeetgroup/qeet-id-server/internal/developer/webhooks"
+	"github.com/qeetgroup/qeet-id-server/internal/developer/webhook"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/adminportal"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/directory"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ldap"
@@ -46,11 +42,11 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/federation/social"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ssosync"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
-	group "github.com/qeetgroup/qeet-id-server/internal/identity/groups"
-	invite "github.com/qeetgroup/qeet-id-server/internal/identity/invitations"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/group"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/invite"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/organization"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/organization/branding"
-	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/verification"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/activity"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/analytics"
@@ -58,10 +54,11 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit/anomaly"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit/critical"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/billing"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/compliance"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/email"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/gdpr"
-	notification "github.com/qeetgroup/qeet-id-server/internal/operations/notifications"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/notification"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/qeetai"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/ratelimits"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/retention"
@@ -92,7 +89,7 @@ type Deps struct {
 	// CriticalEvents is the short list of what an on-call administrator triages.
 	CriticalEvents *critical.Handler
 	// RBACChecker enforces per-route permissions for end-user principals
-	// (the authz policy table lives in permissionMap()). Satisfied by the
+	// (the authz policy table is RoutePolicies()). Satisfied by the
 	// rbac repository.
 	RBACChecker   rbac.Checker
 	Verification  *verification.Handler
@@ -108,8 +105,9 @@ type Deps struct {
 	Principal     *principal.Handler
 	MFA           *mfa.Handler
 	Webhook       *webhook.Handler
-	Policy        *policy.Handler
+	Policy        *authpolicy.SecurityPolicyHandler
 	GDPR          *gdpr.Handler
+	Compliance    *compliance.Handler
 	Audit         *audit.Handler
 	AuditAnomaly  *anomaly.Handler
 	Billing       *billing.Handler
@@ -209,7 +207,10 @@ func NewRouter(d Deps) http.Handler {
 	if d.OIDC != nil && d.OIDC.Service != nil {
 		appOrigin = d.OIDC.Service.AllowsWebOrigin
 	}
-	r.Use(corsPolicy(d.AllowedOrigins, appOrigin))
+	r.Use(httpx.CORS(httpx.CORSConfig{
+		Operator: d.AllowedOrigins, Headers: []string{idempotency.Header}, Exposed: []string{"Idempotent-Replayed"},
+		PublicPaths: publicMetadataPaths, AppPaths: browserAppPaths, AppOrigin: appOrigin,
+	}))
 	// CSRF applies to cookie-bearing browser requests; bearer tokens and API keys
 	// bypass it. CSRFDisabled is for dev only, and startup refuses it elsewhere.
 	if !d.CSRFDisabled {
@@ -227,9 +228,9 @@ func NewRouter(d Deps) http.Handler {
 	}
 	// Per-IP throttle on auth-burning endpoints.
 	loginLimiter := newLimiter(loginLimit)
-	// The token endpoints serve an application's code exchanges and refreshes
-	// for all its users from one address, and every credential they take is
-	// long and random, so they get a machine-traffic bucket.
+	// The token endpoint serves an application's code exchanges and refreshes
+	// for all its users from one address, and every credential it takes is
+	// long and random, so it gets a machine-traffic bucket.
 	tokenLimiter := newLimiter(tokenLimit)
 
 	// Rate limits for root-mounted protocol routes. credentialLimiter matches the /v1
@@ -274,7 +275,7 @@ func NewRouter(d Deps) http.Handler {
 			// applications (ApplicationTokenRoutes); everything else here is account
 			// and organization management, which only the user's own tokens may do.
 			r.Use(httpx.RefuseApplicationTokens(ApplicationTokenRoutes()))
-			// Cross-organization guard: a {tenantID} path parameter must match the caller's
+			// Cross-organization guard: a {organizationID} path parameter must match the caller's
 			// organization. It needs the nested Route("/v1") + Group structure to see the
 			// parameter; flattening these routes onto the top mux makes it fail open.
 			r.Use(httpx.EnforceOrganizationScope)
@@ -284,7 +285,7 @@ func NewRouter(d Deps) http.Handler {
 			// Generous per-organization, per-user and per-key buckets: one
 			// organization can't exhaust shared resources, nor one compromised
 			// principal its organization's.
-			r.Use(d.OrganizationLim.MiddlewareBy("tenant", ratelimit.PerOrganization))
+			r.Use(d.OrganizationLim.MiddlewareBy("organization", ratelimit.PerOrganization))
 			r.Use(d.UserLim.MiddlewareBy("user", ratelimit.PerUser))
 			r.Use(d.APIKeyLim.MiddlewareBy("apikey", ratelimit.PerAPIKey))
 			// RBAC permission enforcement for end-user principals. Gates the
@@ -304,28 +305,6 @@ func NewRouter(d Deps) http.Handler {
 	return r
 }
 
-// metricsGuard serves next only to a caller presenting token as a bearer
-// token, or, with no token, to anyone where open (development). Otherwise it
-// answers 404, as if there were no metrics.
-func metricsGuard(token string, open bool, next http.Handler) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if token == "" {
-			if open {
-				next.ServeHTTP(w, r)
-				return
-			}
-			http.NotFound(w, r)
-			return
-		}
-		got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if !ok || subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
-			http.NotFound(w, r)
-			return
-		}
-		next.ServeHTTP(w, r)
-	}
-}
-
 // mountRootPublicRoutes registers the protocol and operational routes outside
 // /v1. Groups add rate limits without changing route patterns. Health probes are
 // unlimited, so a busy pod isn't killed.
@@ -333,7 +312,7 @@ func mountRootPublicRoutes(r chi.Router, d Deps, credentialLimiter, protocolLimi
 	r.Get("/healthz", d.Health.Liveness)
 	r.Get("/readyz", d.Health.Readiness)
 	r.Get("/version", d.Health.Version)
-	r.Get("/metrics", metricsGuard(d.MetricsToken, d.MetricsOpen, metrics.Handler()))
+	r.Get("/metrics", httpx.MetricsGuard(d.MetricsToken, d.MetricsOpen, metrics.Handler()))
 
 	// Directory credential verification — same throttle as /v1 login.
 	r.Group(func(r chi.Router) {
@@ -359,7 +338,6 @@ func mountV1PublicRoutes(r chi.Router, d Deps) {
 	d.Invite.MountPublic(r)
 	d.Social.MountPublic(r)
 	d.Billing.MountPublic(r)
-	d.Agent.MountPublic(r)
 	d.VC.MountPublic(r)
 	d.Audit.MountPublic(r)
 	d.Passkey.MountPublic(r)
@@ -373,10 +351,10 @@ func mountV1PublicRoutes(r chi.Router, d Deps) {
 	d.SESWebhook.Mount(r)
 }
 
-// mountV1TokenRoutes registers the OAuth token endpoints, which applications
-// call for many people from one address.
+// mountV1TokenRoutes registers the OAuth token endpoint, which applications
+// call for many people from one address, and machine identities for their own
+// tokens.
 func mountV1TokenRoutes(r chi.Router, d Deps) {
-	d.Principal.MountToken(r)
 	d.OIDC.MountToken(r)
 }
 
@@ -403,6 +381,7 @@ func mountAuthenticatedRoutes(r chi.Router, d Deps) {
 	d.Policy.Mount(r)
 	d.AuthPolicy.Mount(r)
 	d.GDPR.Mount(r)
+	d.Compliance.Mount(r)
 	d.Retention.Mount(r)
 	d.Audit.Mount(r)
 	d.AuditAnomaly.Mount(r)
@@ -506,9 +485,9 @@ func IdempotentRoutes() []string {
 		"POST /v1/groups",
 		"POST /v1/invites",
 		"POST /v1/service-principals",
-		"POST /v1/tenants/{tenantID}/agents",
-		"POST /v1/tenants/{tenantID}/billing/checkout",
-		"POST /v1/tenants/{tenantID}/billing/invoices/{invoiceID}/pay",
+		"POST /v1/organizations/{organizationID}/agents",
+		"POST /v1/organizations/{organizationID}/billing/checkout",
+		"POST /v1/organizations/{organizationID}/billing/invoices/{invoiceID}/pay",
 		"POST /v1/users",
 		"POST /v1/webhooks",
 	}
@@ -519,21 +498,19 @@ func IdempotentRoutes() []string {
 // no-store and Pragma: no-cache (RFC 6749 §5.1).
 func NoStoreRoutes() []string {
 	return []string{
-		// Token endpoints, the device and backchannel requests whose codes a
-		// client polls them with, the consent answer carrying an authorization
+		// The token endpoint, the device and backchannel requests whose codes a
+		// client polls it with, the consent answer carrying an authorization
 		// code, and the IdP page carrying a signed SAML assertion.
 		"POST /v1/oauth/token",
-		"POST /v1/oauth/token-code",
 		"POST /v1/oauth/device_authorization",
 		"POST /v1/oauth/bc-authorize",
 		"POST /v1/oauth/authorize/decision",
-		"POST /v1/agents/token",
 		"POST /ldap/{id}/authenticate",
 		"POST /ldap/{id}/session",
 		"POST /saml/session",
 		"POST /v1/oidc-connections/session",
-		"GET /saml/idp/{tenantID}/sso",
-		"POST /saml/idp/{tenantID}/sso",
+		"GET /saml/idp/{organizationID}/sso",
+		"POST /saml/idp/{organizationID}/sso",
 
 		// Sign-in: a token pair, an mfa_token, or the hosted-login cookie.
 		"POST /v1/auth/signup",
@@ -545,7 +522,7 @@ func NoStoreRoutes() []string {
 		"POST /v1/auth/session/mfa",
 		"DELETE /v1/auth/session",
 		"POST /v1/auth/register",
-		"POST /v1/auth/switch-tenant",
+		"POST /v1/auth/switch-organization",
 		"POST /v1/auth/sessions/revoke-all",
 		"POST /v1/auth/forgot-password",
 		"POST /v1/auth/magic-link/consume",
@@ -561,32 +538,32 @@ func NoStoreRoutes() []string {
 		"POST /v1/social/exchange",
 		"POST /saml/exchange",
 		"POST /v1/oidc-connections/exchange",
-		"POST /v1/tenants",
+		"POST /v1/organizations",
 
 		// A secret, key, code or credential returned to its holder.
 		"POST /v1/api-keys",
-		"POST /v1/tenants/{tenantID}/api-keys/{id}/rotate",
+		"POST /v1/organizations/{organizationID}/api-keys/{id}/rotate",
 		"POST /v1/oidc/clients",
-		"POST /v1/tenants/{tenantID}/oidc/clients",
-		"POST /v1/tenants/{tenantID}/oidc/clients/{id}/rotate-secret",
+		"POST /v1/organizations/{organizationID}/oidc/clients",
+		"POST /v1/organizations/{organizationID}/oidc/clients/{id}/rotate-secret",
 		"POST /v1/service-principals",
-		"POST /v1/tenants/{tenantID}/service-principals/{id}/rotate-secret",
-		"POST /v1/tenants/{tenantID}/agents",
-		"POST /v1/tenants/{tenantID}/agents/{id}/rotate-secret",
+		"POST /v1/organizations/{organizationID}/service-principals/{id}/rotate-secret",
+		"POST /v1/organizations/{organizationID}/agents",
+		"POST /v1/organizations/{organizationID}/agents/{id}/rotate-secret",
 		"POST /v1/webhooks",
-		"POST /v1/tenants/{tenantID}/webhooks/{id}/rotate-secret",
+		"POST /v1/organizations/{organizationID}/webhooks/{id}/rotate-secret",
 		"POST /v1/mfa/totp/enroll/start",
 		"POST /v1/mfa/totp/enroll/confirm",
 		"POST /v1/mfa/recovery-codes/regenerate",
 		"POST /v1/mfa/push/devices",
 		"POST /v1/mfa/push/pairing",
 		"POST /v1/mfa/push/pairing/claim",
-		"POST /v1/tenants/{tenantID}/scim/token",
-		"POST /v1/tenants/{tenantID}/scim/tokens",
-		"POST /v1/tenants/{tenantID}/scim/tokens/{id}/rotate",
-		"POST /v1/tenants/{tenantID}/admin-portal/links",
-		"POST /v1/tenants/{tenantID}/secrets/{id}/reveal",
-		"POST /v1/tenants/{tenantID}/credentials",
+		"POST /v1/organizations/{organizationID}/scim/token",
+		"POST /v1/organizations/{organizationID}/scim/tokens",
+		"POST /v1/organizations/{organizationID}/scim/tokens/{id}/rotate",
+		"POST /v1/organizations/{organizationID}/admin-portal/links",
+		"POST /v1/organizations/{organizationID}/secrets/{id}/reveal",
+		"POST /v1/organizations/{organizationID}/credentials",
 		"GET /v1/vault/tokens/{provider}/access-token",
 	}
 }
@@ -612,8 +589,7 @@ func CSRF(allowedOrigins []string, cookieSecure bool, cookieDomain string) func(
 func csrfExemptPaths() []string {
 	return []string{
 		"/saml/acs/", "/saml/idp/*/sso", "/oauth/revoke", "/oauth/introspect",
-		"/v1/oauth/token-code", "/v1/oauth/device_authorization",
-		"/v1/oauth/token",        // service-principal client credentials, in the form or Basic; no cookie session
+		"/v1/oauth/token", "/v1/oauth/device_authorization", // the client's credentials, code or token, never a cookie session
 		"/ldap/*/authenticate",   // directory credentials in the body, answered with a token pair; no cookie session
 		"/v1/oauth/bc-authorize", // exact: .../decision below it is authenticated
 		"/v1/oauth/authorize",    // exact: an application's form POST, which only goes on by GET; .../decision is not exempt
@@ -631,7 +607,6 @@ func csrfExemptPaths() []string {
 		"/v1/billing/webhooks/",             // provider-signed (Stripe/Razorpay), no cookie session
 		"/v1/webhooks/ses",                  // SNS-signed SES events, no cookie session
 		"/v1/billing/sandbox/",              // dev-only mock hosted-checkout page + pay (no cookie session)
-		"/v1/agents/token",                  // agent-credential auth (no cookie session)
 		"/v1/credentials/verify",            // public JWT-VC verification (no cookie session)
 		"/v1/sso/discovery",                 // read-only lookup by an address's domain (no cookie session)
 		"/v1/mfa/push/challenges/",          // a linked phone answers with its device credential (no cookie session)
@@ -654,56 +629,8 @@ var publicMetadataPaths = []string{
 // browserAppPaths are the OAuth endpoints a single-page application calls
 // from the browser with its own code or token, never a cookie.
 var browserAppPaths = []string{
-	"/v1/oauth/token-code",
+	"/v1/oauth/token",
 	"/v1/oauth/userinfo",
 	"/oauth/revoke",
 	"/oauth/introspect",
-}
-
-// corsPolicy answers cross-origin requests. The console and hosted login, the
-// operator's allowed origins, may send credentials anywhere, as before. The
-// metadata and signing keys answer any origin, without credentials. The OAuth
-// endpoints a browser application calls answer an origin one of the
-// applications allows (appOrigin), without credentials, so a page reads only
-// what its own request, holding its own code or token, gets. Nothing is ever
-// allowed for every origin with credentials.
-func corsPolicy(allowed []string, appOrigin func(ctx context.Context, origin string) bool) func(http.Handler) http.Handler {
-	operator := cors.Handler(cors.Options{
-		AllowedOrigins:   allowed,
-		AllowedMethods:   []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Authorization", "Content-Type", "X-Request-Id", "X-Dev-User", "X-Dev-Tenant", "X-CSRF-Token", idempotency.Header},
-		ExposedHeaders:   []string{"X-Request-Id", "Idempotent-Replayed"},
-		AllowCredentials: true,
-		MaxAge:           300,
-	})
-	public := cors.Handler(cors.Options{
-		AllowedOrigins: []string{"*"},
-		AllowedMethods: []string{"GET", "OPTIONS"},
-		MaxAge:         300,
-	})
-	app := cors.Handler(cors.Options{
-		AllowOriginFunc: func(r *http.Request, origin string) bool {
-			return appOrigin != nil && appOrigin(r.Context(), origin)
-		},
-		AllowedMethods: []string{"GET", "POST", "OPTIONS"},
-		AllowedHeaders: []string{"Authorization", "Content-Type"},
-		ExposedHeaders: []string{"WWW-Authenticate"},
-		MaxAge:         300,
-	})
-	operatorOrigin := func(origin string) bool {
-		return slices.ContainsFunc(allowed, func(a string) bool { return strings.EqualFold(a, origin) })
-	}
-	return func(next http.Handler) http.Handler {
-		viaOperator, viaPublic, viaApp := operator(next), public(next), app(next)
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			switch {
-			case slices.Contains(publicMetadataPaths, r.URL.Path):
-				viaPublic.ServeHTTP(w, r)
-			case slices.Contains(browserAppPaths, r.URL.Path) && !operatorOrigin(r.Header.Get("Origin")):
-				viaApp.ServeHTTP(w, r)
-			default:
-				viaOperator.ServeHTTP(w, r)
-			}
-		})
-	}
 }

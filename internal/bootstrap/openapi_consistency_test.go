@@ -239,11 +239,11 @@ func openAPIHeaderProblems(files []openAPIFile, noStore, idempotent []string) []
 
 // unpagedLists are the lists answered whole, by design.
 var unpagedLists = []string{
-	"GET /v1/permissions",                                        // the platform's permission catalogue
-	"GET /v1/tenants/{tenantID}/webhooks/events",                 // the webhook event catalogue
-	"GET /v1/billing/plans",                                      // the plan catalogue
-	"GET /v1/tenants/{tenantID}/email-templates",                 // one item per template key
-	"GET /v1/tenants/{tenantID}/oidc/clients/{id}/auth-failures", // the last 20, as documented
+	"GET /v1/permissions", // the platform's permission catalogue
+	"GET /v1/organizations/{organizationID}/webhooks/events",                 // the webhook event catalogue
+	"GET /v1/billing/plans",                                                  // the plan catalogue
+	"GET /v1/organizations/{organizationID}/email-templates",                 // one item per template key
+	"GET /v1/organizations/{organizationID}/oidc/clients/{id}/auth-failures", // the last 20, as documented
 }
 
 // resolveRef follows node's local $ref within the document, if it has one.

@@ -2,17 +2,17 @@ post:
   operationId: finishPasskeySignUpInOrganization
   description: >-
     Completes passwordless hosted signup by verifying the authenticator
-    attestation and creating the user in the ceremony's tenant with the passkey
+    attestation and creating the user in the ceremony's organization with the passkey
     as its credential. On success it sets the hosted-login SSO cookie so the
     browser continues into the OAuth authorize and consent flow rather than
     returning bearer tokens. The account is passwordless and its passkey
     satisfies MFA on its own. A body not sent as JSON is refused (415
-    unsupported_media_type). A ceremony finished after the organisation switched
+    unsupported_media_type). A ceremony finished after the organization switched
     passkeys off is refused with 403 passkey.disabled and nothing is created. An
-    address already taken, or on a domain another organisation has verified, is
+    address already taken, or on a domain another organization has verified, is
     refused with the neutral 422 unprocessable of POST /v1/auth/signup, which
     does not name the reason, and nothing is created.
-  summary: Passkey-first signup finish (tenant-scoped hosted signup)
+  summary: Passkey-first signup finish (organization-scoped hosted signup)
   tags:
     - Passkeys
   security: []
@@ -34,7 +34,7 @@ post:
             name:
               type: string
     description: >-
-      Verifies the attestation, creates the user in the ceremony's tenant, and
+      Verifies the attestation, creates the user in the ceremony's organization, and
       sets the hosted-login SSO cookie.
   responses:
     '201':

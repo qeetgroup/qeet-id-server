@@ -6,18 +6,15 @@ package directory
 
 import (
 	"context"
-	"net/http"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id-server/internal/federation/directory/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ldap"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 // Connection is a SCIM or LDAP directory connection, as listed.
@@ -54,6 +51,7 @@ type Service struct {
 	scim SCIMSource
 	ldap LDAPSource
 	pool *pgxpool.Pool
+	q    *dbgen.Queries
 }
 
 // NewService returns the directory service.
@@ -111,33 +109,19 @@ func (service *Service) countConnections(ctx context.Context, organizationID uui
 	if service.pool == nil {
 		return nil
 	}
-	people := map[string]int{}
-	rows, err := service.pool.Query(ctx, `
-		SELECT ei.connection_id::text, count(DISTINCT ei.user_id)::int
-		FROM account.external_identities ei
-		JOIN account.users u ON u.id = ei.user_id AND u.deleted_at IS NULL
-		WHERE ei.organization_id = $1 AND ei.provider = 'ldap' AND ei.connection_id IS NOT NULL
-		GROUP BY ei.connection_id`, organizationID)
+	counted, err := service.q.CountLDAPPeople(ctx, organizationID)
 	if err != nil {
 		return err
 	}
-	for rows.Next() {
-		var id string
-		var n int
-		if err := rows.Scan(&id, &n); err != nil {
-			rows.Close()
-			return err
-		}
-		people[id] = n
+	people := make(map[string]int, len(counted))
+	for _, c := range counted {
+		people[c.ConnectionID] = int(c.People)
 	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
+	scimGroups, err := service.q.CountSCIMGroups(ctx, organizationID)
+	if err != nil {
 		return err
 	}
-	var groups int
-	if err := service.pool.QueryRow(ctx, `SELECT count(*)::int FROM organization.groups WHERE organization_id = $1 AND provisioned_via = 'scim'`, organizationID).Scan(&groups); err != nil {
-		return err
-	}
+	groups := int(scimGroups)
 	for i := range records {
 		switch records[i].Type {
 		case "ldap":
@@ -151,58 +135,40 @@ func (service *Service) countConnections(ctx context.Context, organizationID uui
 	return nil
 }
 
-// Handler serves the directory HTTP API.
-type Handler struct {
-	Service *Service
-}
-
-// Mount registers the directory routes on r.
-func (handler *Handler) Mount(router chi.Router) {
-	router.Get("/tenants/{tenantID}/directory/connections", handler.list)
-	router.Get("/tenants/{tenantID}/directory/profiles/{userID}", handler.profiles)
-	router.Get("/tenants/{tenantID}/directory/activity", handler.events)
-	router.Post("/tenants/{tenantID}/directory/alerts", handler.createAlert)
-	router.Get("/tenants/{tenantID}/directory/alerts", handler.listAlerts)
-	router.Patch("/tenants/{tenantID}/directory/alerts/{alertID}", handler.updateAlert)
-	router.Delete("/tenants/{tenantID}/directory/alerts/{alertID}", handler.deleteAlert)
-	router.Get("/tenants/{tenantID}/directory/errors", handler.errors)
-	router.Post("/tenants/{tenantID}/directory/errors/{eventID}/resolve", handler.resolveError)
-	router.Post("/tenants/{tenantID}/directory/errors/{eventID}/retry", handler.retryError)
-	router.Get("/tenants/{tenantID}/directory/connections/{connectionID}/mappings", handler.mappings)
-	router.Post("/tenants/{tenantID}/directory/connections/{connectionID}/mappings", handler.saveMapping)
-	router.Post("/tenants/{tenantID}/directory/connections/{connectionID}/mappings/preview", handler.previewMappings)
-	router.Put("/tenants/{tenantID}/directory/connections/{connectionID}/mappings/{mappingID}", handler.saveMapping)
-	router.Delete("/tenants/{tenantID}/directory/connections/{connectionID}/mappings/{mappingID}", handler.deleteMapping)
-}
-
-func requireOrganization(request *http.Request) (uuid.UUID, error) {
-	organizationID, err := httpx.RequireOrganization(request)
+func (service *Service) enrichConnections(ctx context.Context, organizationID uuid.UUID, records []Connection) error {
+	if service.pool == nil {
+		return nil
+	}
+	syncs, err := service.q.LastDirectorySyncs(ctx, organizationID)
 	if err != nil {
-		return uuid.Nil, err
+		return err
 	}
-	if organizationID == uuid.Nil {
-		return uuid.Nil, errs.ErrUnauthorized
+	synced := make(map[string]time.Time, len(syncs))
+	for _, s := range syncs {
+		synced[s.ConnectionID] = s.SyncedAt
 	}
-	pathOrganization, err := uuid.Parse(chi.URLParam(request, "tenantID"))
+	latest, err := service.q.LatestDirectoryEvents(ctx, organizationID)
 	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest
+		return err
 	}
-	if pathOrganization != organizationID {
-		return uuid.Nil, errs.ErrForbidden
+	for _, event := range latest {
+		var successful *time.Time
+		if at, ok := synced[event.ConnectionID]; ok {
+			successful = &at
+		}
+		for index := range records {
+			if records[index].ID != event.ConnectionID {
+				continue
+			}
+			records[index].Health = event.Status
+			if event.Status == "success" {
+				records[index].Health = "healthy"
+			}
+			if time.Since(event.StartedAt) > 24*time.Hour {
+				records[index].Health = "unknown"
+			}
+			records[index].LastSyncAt = successful
+		}
 	}
-	return organizationID, nil
-}
-
-func (handler *Handler) list(response http.ResponseWriter, request *http.Request) {
-	organizationID, err := requireOrganization(request)
-	if err != nil {
-		httpx.WriteError(response, request, err)
-		return
-	}
-	records, err := handler.Service.List(request.Context(), organizationID)
-	if err != nil {
-		httpx.WriteError(response, request, err)
-		return
-	}
-	httpx.WriteJSON(response, http.StatusOK, paging.List(records))
+	return nil
 }

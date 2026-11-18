@@ -34,3 +34,8 @@ FROM account.users u
 WHERE LOWER(u.email) = LOWER(@email) AND u.deleted_at IS NULL
   AND (u.organization_id = @organization_id::uuid
        OR EXISTS (SELECT 1 FROM rbac.user_roles r WHERE r.user_id = u.id AND r.organization_id = @organization_id::uuid));
+
+-- name: GetVerifiedEmail :one
+-- The verified address of an active account, where a test email may go.
+SELECT email FROM account.users
+WHERE id = @id AND email_verified_at IS NOT NULL AND status = 'active' AND deleted_at IS NULL;

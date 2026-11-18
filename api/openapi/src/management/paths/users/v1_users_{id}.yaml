@@ -1,7 +1,7 @@
 delete:
   operationId: deleteUser
   description: >-
-    Soft-deletes the user, moving the account into the tenant recycle bin rather
+    Soft-deletes the user, moving the account into the organization recycle bin rather
     than erasing it. Requires user.delete. A soft-deleted account can be brought
     back with the restore call or removed for good with the purge call. It
     continues to appear in the deleted-users list until purged. In the same
@@ -17,7 +17,7 @@ delete:
     deleted user, when, and by whom.
     Only the organization the account belongs to can delete it; for a member
     whose account belongs elsewhere the call answers 403 user.managed_elsewhere.
-    Refused with 409 tenant.last_owner, and nothing changes, when it would leave
+    Refused with 409 organization.last_owner, and nothing changes, when it would leave
     this organization with no active owner: make someone else an owner first. An
     organization the person owns elsewhere doesn't block it; it is left without
     an active owner. The person must not outrank the caller: only an owner
@@ -67,11 +67,11 @@ delete:
 get:
   operationId: getUser
   description: >-
-    Returns a single user by id within the caller's tenant. Requests for a user
-    outside the tenant are rejected rather than disclosed. Anyone who belongs to
+    Returns a single user by id within the caller's organization. Requests for a user
+    outside the organization are rejected rather than disclosed. Anyone who belongs to
     the caller's organization can be fetched: a role here, or here being their
-    home. Anyone else is 404. Someone whose home is another organisation is
-    shown with empty metadata, which their home organisation keeps.
+    home. Anyone else is 404. Someone whose home is another organization is
+    shown with empty metadata, which their home organization keeps.
   summary: Get user
   tags:
     - Users
@@ -99,14 +99,14 @@ get:
 patch:
   operationId: updateUser
   description: >-
-    Updates mutable attributes of a user in the caller's tenant. Only the fields
+    Updates mutable attributes of a user in the caller's organization. Only the fields
     present in the request body are modified. This edits directory attributes,
     not credentials or verification state. Changing the account (status,
     profile) belongs to the organization the account belongs to; for a member
     whose account belongs elsewhere the call answers 403 user.managed_elsewhere
     and nothing changes. Remove them from this organization instead (DELETE
     /v1/users/{id}/membership). Suspending is refused with 409
-    tenant.last_owner, and nothing changes, when it would leave this
+    organization.last_owner, and nothing changes, when it would leave this
     organization with no active owner: make someone else an owner first. An
     organization the person owns elsewhere doesn't block it; it is left without
     an active owner. Changing the phone number clears its verification. A change

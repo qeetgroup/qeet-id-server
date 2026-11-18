@@ -3,9 +3,9 @@ post:
   summary: Backchannel authentication (CIBA, poll mode)
   description: >-
     OpenID CIBA §7. Client-authenticated endpoint for a client that already
-    knows who the user is (login_hint, an email scoped to the client's tenant) —
+    knows who the user is (login_hint, an email scoped to the client's organization) —
     no browser redirect. Best-effort notifies the user (in-app), then returns
-    auth_req_id; the client polls /v1/oauth/token-code with
+    auth_req_id; the client polls /v1/oauth/token with
     grant_type=urn:openid:params:grant-type:ciba while the user approves/denies
     via GET/POST /v1/oauth/bc-authorize/{pending,decision}. Only a confidential
     client may call it; a public client is refused with 401

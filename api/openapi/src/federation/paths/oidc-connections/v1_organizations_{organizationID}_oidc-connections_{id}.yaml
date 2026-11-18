@@ -1,0 +1,120 @@
+get:
+  operationId: getOidcConnection
+  description: >-
+    Returns one of the organization's OpenID Connect connections, without its
+    client secret. Another organization's connection answers 404. Requires
+    connection.read.
+  summary: Get OIDC connection
+  tags:
+    - OIDC Connections
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: Connection
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/OIDCConnection.yaml
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+patch:
+  operationId: updateOidcConnection
+  description: >-
+    Changes the given fields of one of the organization's OpenID Connect
+    connections, checked as on create; an absent field is kept, as is the client
+    secret when client_secret is absent or empty. Only an active connection
+    signs anyone in. A change that would leave a Microsoft issuer serving every
+    organization without allowed_idp_tenant_ids is refused (422
+    oidc_connection.idp_tenant_ids_required). Audited as oidc_connection.updated
+    with the fields changed. Another organization's connection answers 404.
+    Requires connection.write. Needs a recent step-up.
+    Changing what the connection trusts (its issuer, discovery_url, client_id or
+    allowed_idp_tenant_ids) is acting on every account linked to it, as the
+    changed connection could sign in as any of them: while an administrator is
+    linked, it needs a caller who outranks each one (403
+    rbac.trust_change_outranks_caller otherwise).
+  summary: Update OIDC connection
+  tags:
+    - OIDC Connections
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/OIDCConnectionUpdate.yaml
+  responses:
+    '200':
+      description: Updated
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/OIDCConnection.yaml
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+delete:
+  operationId: deleteOidcConnection
+  description: >-
+    Deletes one of the organization's OpenID Connect connections, with the
+    sign-ins and login codes it has in flight. Its people no longer sign in
+    through it. Audited as oidc_connection.deleted. Another organization's
+    connection answers 404. Requires connection.write. Needs a recent step-up.
+  summary: Delete OIDC connection
+  tags:
+    - OIDC Connections
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '204':
+      description: Deleted
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml

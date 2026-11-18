@@ -3,13 +3,13 @@ post:
   summary: Discover where an address signs in (public)
   description: >-
     Home-realm discovery: says whether an email address signs in through its
-    organisation's identity provider, and through which connections. It is
+    organization's identity provider, and through which connections. It is
     judged by the address's domain alone, so every address on a domain gets the
     same answer whether or not it has an account. sso is true when the
-    organisation that verified the domain (or the closest verified domain above
+    organization that verified the domain (or the closest verified domain above
     it) has switched sso_enabled on for it and has an active SAML, LDAP or
     OpenID Connect connection; those addresses' own sign-in methods are then
-    refused with 403 auth.sso_required, except for the organisation's
+    refused with 403 auth.sso_required, except for the organization's
     break-glass members. Each connection gives login_path, below the API's
     address: a browser goes to it for SAML and OpenID Connect (method redirect),
     and the directory login name and password are posted to it for LDAP (method
@@ -48,7 +48,7 @@ post:
               organization_name:
                 type: string
                 description: >-
-                  When sso is true, the name of the organisation that manages
+                  When sso is true, the name of the organization that manages
                   the domain, for the sign-in page to say whose sign-in it is.
                   Like the connections' names, it is the same for every address
                   on the domain.

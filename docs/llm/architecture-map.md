@@ -23,19 +23,17 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | Binary | Path |
 |---|---|
 | API server | `cmd/api/main.go` → `bootstrap.Run()` |
-| Background workers | `cmd/worker/main.go` |
-| Scheduled maintenance | `internal/bootstrap/maintenance.go` (jobs) · `internal/platform/worker/scheduled.go` (runner) |
-| Roll back or repair a migration with the golang-migrate CLI (does not apply them) | `cmd/migrate/main.go` |
-| Demo data (a workstation and the kit's DEV only) | `cmd/seed/` — `main.go` runs the steps in `internal/` (census, accounts, connections, integrations, security, activity) |
+| Scheduled maintenance | `internal/bootstrap/maintenance.go` (`MaintenanceJobs`; each job in its context's `wire_<context>.go`) · `internal/platform/worker/scheduled.go` (runner) |
+| Demo data (a workstation and the kit's DEV only) | `cmd/seed/` — `main.go` runs the steps in `internal/` (census, accounts, connections, integrations, security) |
 
 ## Composition root — where everything is wired
 
 | | |
 |---|---|
 | Application lifecycle | `internal/bootstrap/app.go` |
-| Dependency construction | `internal/bootstrap/dependencies.go` (building blocks in `keys.go`, `mail.go`, `infra.go`, `sso.go`, `adapters.go`) |
+| Dependency construction | `internal/bootstrap/dependencies.go` and one `wire_<context>.go` per bounded context (building blocks in `keys.go`, `mail.go`, `infra.go`, `sso.go`, `adapters.go`) |
 | **Router + middleware** | `internal/bootstrap/router.go` |
-| Route → permission map | `internal/bootstrap/permissions.go` |
+| Route → permission map | `internal/bootstrap/permissions.go`, joined from each context's table in `wire_<context>.go` |
 | HTTP server | `internal/bootstrap/server.go` |
 | Startup/shutdown | `internal/bootstrap/lifecycle.go` |
 
@@ -51,8 +49,9 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | Metrics | `internal/bootstrap/router.go` → `/metrics` |
 | Request helpers, principal, guards | `internal/platform/http/httpx/` |
 | Error taxonomy | `internal/platform/http/errs/` |
-| Status-code mapping | `internal/platform/http/codes/` |
 | Cursor pagination | `internal/platform/http/paging/` |
+| Server-Sent Events writer (activity stream, Qeet AI) | `internal/platform/http/sse/` |
+| Small string helpers (nullable pointers, comma lists) | `internal/platform/strutil/` |
 
 ## Security — read these carefully before editing
 
@@ -61,29 +60,30 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | **Auth middleware, principal, `EnforceOrganizationScope`, `RequireOrganization`** | `internal/platform/http/httpx/auth.go` |
 | **CSRF double-submit** | `internal/platform/http/httpx/csrf.go` |
 | Security headers | `internal/platform/http/httpx/` |
-| **JWT issue/verify, ES256 or RS256, `kid`, rotation** | `internal/platform/crypto/tokens/jwt.go` |
+| **JWT issue/verify, ES256 or RS256, `kid`, rotation** | `internal/platform/crypto/tokens/` — `issue.go`, `verify.go`, `keys.go` |
 | **Password hashing (Argon2id)** | `internal/platform/crypto/password/hasher.go` |
 | Encryption, secrets vault crypto | `internal/platform/crypto/envelope/` |
 | TOTP | `internal/platform/crypto/totp/` |
 | Breached-password check | `internal/platform/crypto/hibp/` |
-| **Boot-time production gate** | `internal/platform/config/config.go` — `Config.Validate()` |
+| One-time codes and tokens, and the hash they are stored as | `internal/platform/crypto/codes/` |
+| **Boot-time production gate** | `internal/platform/config/validate.go` — `Config.Validate()` |
 
 ## Authentication
 
 | Flow | Path |
 |---|---|
-| Password login, sessions, refresh | `internal/access/authentication/` — `password.go`, `issue.go`, `refresh.go`, `sessions.go` |
-| Hosted SSO login session (`qe_ls`) | `internal/access/authentication/loginsession.go` |
-| Trusted device (`qe_td`) | `internal/access/authentication/trusteddevice.go` |
-| Account lockout | `internal/access/authentication/lockout.go` |
-| Passkeys / WebAuthn | `internal/access/passkeys/` |
+| Password login, sessions, refresh | `internal/access/auth/` — `password.go`, `issue.go`, `refresh.go`, `sessions.go` |
+| Hosted SSO login session (`qe_ls`) | `internal/access/auth/loginsession.go` |
+| Trusted device (`qe_td`) | `internal/access/auth/trusteddevice.go` |
+| Account lockout | `internal/access/auth/lockout.go` |
+| Passkeys / WebAuthn | `internal/access/passkey/` |
 | MFA — TOTP, OTP, recovery codes | `internal/access/mfa/` — `totp.go`, `otp.go`, `stepup.go` |
-| MFA — push approval | `internal/access/mfa/push.go` |
-| MFA — native push delivery (APNs for iOS, FCM for Android; Expo for phones still linked by the retired React Native app) | `internal/access/mfa/pushnative.go` |
+| MFA — push approval | `internal/access/mfa/push.go`, `pushdevices.go`, `pushchallenge.go`, `pushadmin.go` |
+| MFA — push delivery (APNs for iOS, FCM for Android) | `internal/access/mfa/pushnative.go` |
 | Magic link, password reset | `internal/access/recovery/` |
 | Adaptive risk, login history | `internal/access/threat/risk/` |
 | Bot detection | `internal/access/threat/bot/` |
-| IP allow/deny | `internal/access/risk/ipallow/` |
+| IP allow/deny | `internal/access/ipallow/` |
 
 ## Authorization
 
@@ -95,9 +95,9 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | ReBAC (Zanzibar-style) | `internal/access/authorization/rebac/` |
 | AuthZEN PDP/PEP | `internal/access/authorization/authzen/` |
 | Access decision log | `internal/access/authorization/decisionlog/` |
-| Organization security policy | `internal/access/authorization/policy/` |
-| Password rules, login methods | `internal/access/authorization/authpolicy/` |
-| **Route → permission map** | `internal/bootstrap/permissions.go` |
+| Organization security policy | `internal/access/authpolicy/securitypolicy.go` |
+| Password rules, login methods | `internal/access/authpolicy/` |
+| **Route → permission map** | `internal/bootstrap/permissions.go` + `wire_<context>.go` |
 
 ## Identity
 
@@ -105,9 +105,9 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 |---|---|
 | Organizations | `internal/identity/organization/` |
 | Per-organization branding | `internal/identity/organization/branding/` |
-| Users, bulk import, IdP migration | `internal/identity/users/` |
-| Groups | `internal/identity/groups/` |
-| Invitations | `internal/identity/invitations/` |
+| Users, bulk import, IdP migration | `internal/identity/user/` |
+| Groups | `internal/identity/group/` |
+| Invitations | `internal/identity/invite/` |
 | Email/phone verification | `internal/identity/verification/` |
 | DNS domain verification | `internal/identity/domainverify/` |
 
@@ -115,27 +115,33 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 
 | Protocol | Path |
 |---|---|
-| OIDC/OAuth provider, discovery, JWKS | `internal/federation/oidc/` — `token.go`, `authorize.go`, `discovery.go`, `clients.go` |
+| OIDC/OAuth provider, discovery, JWKS | `internal/federation/oidc/` — `authorization_code.go`, `refresh.go`, `token_exchange.go`, `authorize.go`, `discovery.go`, `clients.go` |
+| The token endpoint (every grant) and its error writer | `internal/federation/oidc/http_token.go` |
+| Device and CIBA polling (one step) | `internal/federation/oidc/poll.go` |
 | Device grant | `internal/federation/oidc/device.go` |
 | CIBA | `internal/federation/oidc/ciba.go` |
 | OAuth client administration | `internal/federation/oidc/clients_admin.go` |
-| SAML — SP | `internal/federation/saml/saml.go` |
-| SAML — IdP | `internal/federation/saml/idp.go` |
+| SAML — SP | `internal/federation/saml/saml.go`, `signin.go`, `acs.go` |
+| SAML — IdP | `internal/federation/saml/idp.go`, `idp_sso.go` |
 | SCIM 2.0 | `internal/federation/scim/` |
 | LDAP / AD | `internal/federation/ldap/` |
 | Social login | `internal/federation/social/` |
+| Federated account provisioning (link, adopt, JIT) | `internal/federation/provision/` · checks in `internal/federation/identitylink/` |
+| OpenID Connect relying party (SSO + social) | `internal/federation/oidcrp/` |
+| Federated sign-in codes and OAuth states | `internal/federation/logincode/` · `internal/federation/oauthstate/` |
 | Self-serve admin portal | `internal/federation/adminportal/` |
 
 ## Developer & machine identity
 
 | Concern | Path |
 |---|---|
-| API keys (`qk_`) | `internal/developer/api-keys/` |
+| API keys (`qk_`) | `internal/developer/apikey/` |
 | Service principals, `client_credentials` | `internal/developer/principal/` |
-| **AI agents, lifecycle, kill switch** | `internal/developer/agents/` |
-| Auth hooks | `internal/developer/auth-hooks/` |
-| Webhooks + DLQ | `internal/developer/webhooks/` |
-| Secrets vault, KMS provider | `internal/developer/credentials/secrets/` |
+| Rotating a key or machine secret: request, scope check, overlap | `internal/developer/rotation/` |
+| **AI agents, lifecycle, kill switch** | `internal/developer/agent/` |
+| Auth hooks | `internal/developer/authhook/` |
+| Webhooks + DLQ | `internal/developer/webhook/` |
+| Secrets vault, KMS provider | `internal/developer/credentials/secret/` |
 | Third-party token vault | `internal/developer/credentials/tokenvault/` |
 | Verifiable credentials | `internal/developer/credentials/vc/` |
 
@@ -153,8 +159,8 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | Analytics | `internal/operations/analytics/` |
 | Service health and incidents | `internal/operations/servicehealth/` |
 | Live activity feed (SSE) | `internal/operations/activity/` |
-| In-app notifications | `internal/operations/notifications/` |
-| Plan entitlements | `internal/operations/entitlements/` |
+| In-app notifications | `internal/operations/notification/` |
+| Plan entitlements, and the `PlanGate` / `PlanLimiter` / `SeatGuard` interfaces packages take | `internal/operations/entitlements/` |
 | Per-organization rate-limit overrides | `internal/operations/ratelimits/` |
 | AI assistant | `internal/operations/qeetai/` |
 
@@ -163,12 +169,12 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | Concern | Path |
 |---|---|
 | Postgres pool | `internal/platform/database/postgres/` |
-| pgx error mapping | `internal/platform/database/postgres/pgxerr/` |
+| pgx error mapping | `internal/platform/database/postgres/` |
 | **Migrations (0001–0012, the schema baseline)** | `internal/platform/database/migrations/` |
 | Migration runner (`//go:embed`) | `internal/platform/database/migrations/runner.go` |
-| Per-domain queries | `internal/<context>/<domain>/queries.sql` (53) |
-| sqlc config | `internal/<context>/<domain>/sqlc.yaml` (53) |
-| Generated accessors | `internal/<context>/<domain>/dbgen/` (53) — **never hand-edit** |
+| Per-domain queries | `internal/<context>/<domain>/queries.sql` (60) |
+| sqlc config | `sqlc.yaml` at the root: one entry per package, shared overrides (NULL-able uuid/timestamptz/date are pointers) |
+| Generated accessors | `internal/<context>/<domain>/dbgen/` (60) — **never hand-edit** |
 
 ## Events & background work
 
@@ -177,14 +183,14 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | Transactional outbox | `internal/platform/events/outbox/outbox.go` |
 | NATS publishing | `internal/platform/events/outbox/nats.go` |
 | Worker pool | `internal/platform/worker/worker.go` |
-| Standalone worker | `cmd/worker/main.go` — webhooks, anomaly, gdpr, retention, siem, outbox |
+| Continuous workers | the API runs them: the `workers` list in `internal/bootstrap/dependencies.go` |
 | Scheduler | `cmd/scheduler/main.go` — runs `bootstrap.MaintenanceJobs` standalone; the API embeds the same |
 
 ## Configuration & observability
 
 | Concern | Path |
 |---|---|
-| **All 138 env vars, defaults, `Validate()`** | `internal/platform/config/config.go` |
+| **All 111 env vars, defaults, `Validate()`** | `internal/platform/config/config.go` · `validate.go` |
 | Variable reference | `.env.example` — placeholders only |
 | Structured logging | `internal/platform/observability/logging/` |
 | Prometheus metrics | `internal/platform/observability/metrics/` |
@@ -202,7 +208,6 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | **OpenAPI 3.1 — 5 documents** (generated, committed) | `api/openapi/{auth,management,federation,developer,operations}.yaml` |
 | OpenAPI sources — edit these, then `make openapi` | `api/openapi/src/<document>/` (`openapi.yaml`, `paths/<tag>/`, `components/`), `api/openapi/src/shared/` |
 | Spec conventions | `api/openapi/README.md` |
-| Postman collection | `api/postman/` |
 | AI tool catalogue | `api/qeetai/tools.manifest.json` |
 
 ## Tests

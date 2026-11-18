@@ -51,7 +51,7 @@ func TestCredentialsCarryNoMoreThanTheirIssuer(t *testing.T) {
 	if err := repo.CheckGrantScopes(ctx, asDeveloper, organization, []string{"vault:read"}); !refused(err, "vault:read") {
 		t.Errorf("a developer without secret.read issues vault:read: %v", err)
 	}
-	if err := repo.CheckGrantScopes(ctx, dbtest.Principal(owner.ID, organization), organization, []string{"role.write", "tenant.write", "vault:read"}); err != nil {
+	if err := repo.CheckGrantScopes(ctx, dbtest.Principal(owner.ID, organization), organization, []string{"role.write", "organization.write", "vault:read"}); err != nil {
 		t.Errorf("an owner issues anything: %v", err)
 	}
 
@@ -120,12 +120,12 @@ func TestOwnersAndTheOwnerRoleStayProtected(t *testing.T) {
 		status       int
 		code         string
 	}{
-		{"an owner revokes from the owner role", owner.ID, http.MethodDelete, "/roles/" + ownerRole.String() + "/permissions/" + roleWrite.String(), http.StatusForbidden, errs.CodeRBACSystemRoleFixed},
-		{"an admin grants to the owner role", admin.ID, http.MethodPost, "/roles/" + ownerRole.String() + "/permissions/" + roleWrite.String(), http.StatusForbidden, errs.CodeRBACSystemRoleFixed},
+		{"an owner revokes from the owner role", owner.ID, http.MethodDelete, "/roles/" + ownerRole.String() + "/permissions/" + roleWrite.String(), http.StatusForbidden, CodeSystemRoleFixed},
+		{"an admin grants to the owner role", admin.ID, http.MethodPost, "/roles/" + ownerRole.String() + "/permissions/" + roleWrite.String(), http.StatusForbidden, CodeSystemRoleFixed},
 		{"an admin revokes a permission they lack", admin.ID, http.MethodDelete, "/roles/" + reviewers.String() + "/permissions/" + auditRead.String(), http.StatusForbidden, errs.CodeRBACGrantExceedsCaller},
-		{"an admin removes an owner's owner role", admin.ID, http.MethodDelete, "/users/" + coOwner.ID.String() + "/tenants/" + organization.String() + "/roles/" + ownerRole.String(), http.StatusForbidden, errs.CodeRBACTargetIsOwner},
-		{"an admin strips an owner of another role", admin.ID, http.MethodDelete, "/users/" + coOwner.ID.String() + "/tenants/" + organization.String() + "/roles/" + reviewers.String(), http.StatusForbidden, errs.CodeRBACTargetIsOwner},
-		{"an owner removes a co-owner's owner role", owner.ID, http.MethodDelete, "/users/" + coOwner.ID.String() + "/tenants/" + organization.String() + "/roles/" + ownerRole.String(), http.StatusNoContent, ""},
+		{"an admin removes an owner's owner role", admin.ID, http.MethodDelete, "/users/" + coOwner.ID.String() + "/organizations/" + organization.String() + "/roles/" + ownerRole.String(), http.StatusForbidden, errs.CodeRBACTargetIsOwner},
+		{"an admin strips an owner of another role", admin.ID, http.MethodDelete, "/users/" + coOwner.ID.String() + "/organizations/" + organization.String() + "/roles/" + reviewers.String(), http.StatusForbidden, errs.CodeRBACTargetIsOwner},
+		{"an owner removes a co-owner's owner role", owner.ID, http.MethodDelete, "/users/" + coOwner.ID.String() + "/organizations/" + organization.String() + "/roles/" + ownerRole.String(), http.StatusNoContent, ""},
 	} {
 		rec := dbtest.Do(t, as(tc.caller), tc.method, tc.path, nil)
 		if rec.Code != tc.status || !strings.Contains(rec.Body.String(), tc.code) {
@@ -139,7 +139,7 @@ func TestOwnersAndTheOwnerRoleStayProtected(t *testing.T) {
 
 // TestBuiltinRolesHoldTheirDefinitions checks that seeding at boot gives an
 // organization's built-in roles what their definitions cover of the catalogue
-// (owner everything, admin all but tenant.delete, viewer every read but
+// (owner everything, admin all but organization.delete, viewer every read but
 // secret.read, member nothing), that nobody changes them, and that none counts
 // as a custom role.
 func TestBuiltinRolesHoldTheirDefinitions(t *testing.T) {
@@ -166,7 +166,7 @@ func TestBuiltinRolesHoldTheirDefinitions(t *testing.T) {
 		for _, p := range builtinPermissionDefinitions {
 			want := map[string]bool{
 				"owner":  true,
-				"admin":  p.Key != "tenant.delete",
+				"admin":  p.Key != "organization.delete",
 				"member": false,
 				"viewer": strings.HasSuffix(p.Key, ".read") && p.Key != "secret.read",
 			}[name]
@@ -182,7 +182,7 @@ func TestBuiltinRolesHoldTheirDefinitions(t *testing.T) {
 	owner := dbtest.User(t, organization)
 	dbtest.Assign(t, owner.ID, organization, roles["owner"])
 	var organizationDelete, auditRead uuid.UUID
-	for key, id := range map[string]*uuid.UUID{"tenant.delete": &organizationDelete, "audit.read": &auditRead} {
+	for key, id := range map[string]*uuid.UUID{"organization.delete": &organizationDelete, "audit.read": &auditRead} {
 		if err := pool.QueryRow(ctx, `SELECT id FROM rbac.permissions WHERE key = $1`, key).Scan(id); err != nil {
 			t.Fatal(err)
 		}
@@ -190,13 +190,13 @@ func TestBuiltinRolesHoldTheirDefinitions(t *testing.T) {
 	h := &Handler{Repo: repo, Service: NewService(repo), Validate: validator.New(validator.WithRequiredStructEnabled())}
 	asOwner := dbtest.Serve(dbtest.Principal(owner.ID, organization), h.Mount)
 	for _, tc := range []struct{ name, method, path string }{
-		{"an owner grants tenant.delete to admin", http.MethodPost, "/roles/" + roles["admin"].String() + "/permissions/" + organizationDelete.String()},
+		{"an owner grants organization.delete to admin", http.MethodPost, "/roles/" + roles["admin"].String() + "/permissions/" + organizationDelete.String()},
 		{"an owner takes audit.read from viewer", http.MethodDelete, "/roles/" + roles["viewer"].String() + "/permissions/" + auditRead.String()},
 		{"an owner grants audit.read to member", http.MethodPost, "/roles/" + roles["member"].String() + "/permissions/" + auditRead.String()},
 	} {
 		rec := dbtest.Do(t, asOwner, tc.method, tc.path, nil)
-		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeRBACSystemRoleFixed) {
-			t.Errorf("%s: %d %s, want 403 %s", tc.name, rec.Code, rec.Body.String(), errs.CodeRBACSystemRoleFixed)
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), CodeSystemRoleFixed) {
+			t.Errorf("%s: %d %s, want 403 %s", tc.name, rec.Code, rec.Body.String(), CodeSystemRoleFixed)
 		}
 	}
 }
@@ -240,7 +240,7 @@ func TestRemovingARoleFromAGroupNeedsTheRole(t *testing.T) {
 	h := dbtest.Serve(dbtest.Principal(editor.ID, organization),
 		(&Handler{Repo: repo, Service: NewService(repo), Validate: validator.New(validator.WithRequiredStructEnabled())}).Mount)
 	unassign := func(role uuid.UUID) (int, string) {
-		rec := dbtest.Do(t, h, http.MethodDelete, "/tenants/"+organization.String()+"/groups/"+group.String()+"/roles/"+role.String(), nil)
+		rec := dbtest.Do(t, h, http.MethodDelete, "/organizations/"+organization.String()+"/groups/"+group.String()+"/roles/"+role.String(), nil)
 		return rec.Code, rec.Body.String()
 	}
 

@@ -21,25 +21,18 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/accountnotice"
-	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authpolicy"
 	"github.com/qeetgroup/qeet-id-server/internal/access/recovery/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/cache/ratelimit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/emailtmpl"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
-
-// AuditCtx is the client context of a recovery request, for its audit rows.
-// These flows have no signed-in principal.
-type AuditCtx struct {
-	IP        string
-	UserAgent string
-	RequestID string
-}
 
 // Service runs password resets and magic links. Email links go to baseAppURL
 // (the console), or to loginBaseURL for a request made from hosted login.
@@ -52,7 +45,7 @@ type Service struct {
 	ttl             time.Duration
 	baseAppURL      string
 	loginBaseURL    string
-	rules           PasswordRules
+	rules           authpolicy.PasswordRules
 	magicLinks      MagicLinkPolicy
 	capture         auth.DomainCapture
 	magicPerAddress Limiter
@@ -62,13 +55,6 @@ type Service struct {
 	requestRecords  Limiter
 	// deliveries tracks the work requests leave running; see afterAnswer.
 	deliveries sync.WaitGroup
-}
-
-// PasswordRules checks a new password against the rules of the account's
-// organization (uuid.Nil: the platform baseline), the offline strength check
-// and, when enabled, the breach check. Satisfied by *authpolicy.Service.
-type PasswordRules interface {
-	ValidateForOrganization(ctx context.Context, organizationID uuid.UUID, email, pw string) error
 }
 
 // MagicLinkPolicy is the slice of the authentication policy that decides
@@ -131,7 +117,7 @@ func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, b
 }
 
 // SetPasswordRules sets the password check run on reset.
-func (s *Service) SetPasswordRules(r PasswordRules) { s.rules = r }
+func (s *Service) SetPasswordRules(r authpolicy.PasswordRules) { s.rules = r }
 
 // SetHostedLogin sets the hosted login origin, so a reset requested there links
 // back to its own reset page.
@@ -143,9 +129,11 @@ const AppHostedLogin = "hosted_login"
 // ResetOrigin says where a password reset was requested from, which decides
 // where its emailed link lands.
 type ResetOrigin struct {
-	App      string   // AppHostedLogin for hosted login; anything else means the console
-	ReturnTo string   // hosted login only: where to continue, already validated by the caller
-	Audit    AuditCtx // the request, for its audit record
+	App      string // AppHostedLogin for hosted login; anything else means the console
+	ReturnTo string // hosted login only: where to continue, already validated by the caller
+	// Actor is the request's client address, user agent and request ID, for
+	// its audit record.
+	audit.Actor
 }
 
 // resetLink builds the emailed reset link: hosted login's own reset page for a
@@ -187,12 +175,7 @@ func (s *Service) StartPasswordReset(ctx context.Context, email string, from Res
 	if err := s.refuseCaptured(ctx, email); err != nil {
 		return "", err
 	}
-	var userID uuid.UUID
-	var organizationID *uuid.UUID
-	var stored string
-	err := s.pool.QueryRow(ctx,
-		`SELECT id, organization_id, email FROM account.users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL`, email,
-	).Scan(&userID, &organizationID, &stored)
+	account, err := s.q.FindResetAccount(ctx, email)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
@@ -205,11 +188,11 @@ func (s *Service) StartPasswordReset(ctx context.Context, email string, from Res
 	}
 	resetURL := s.resetLink(raw, from)
 	s.afterAnswer(ctx, "send a password reset link", func(ctx context.Context) error {
-		if err := s.q.ExpirePasswordResets(ctx, userID); err != nil {
+		if err := s.q.ExpirePasswordResets(ctx, account.ID); err != nil {
 			return err
 		}
 		if err := s.q.InsertPasswordReset(ctx, dbgen.InsertPasswordResetParams{
-			UserID:    userID,
+			UserID:    account.ID,
 			TokenHash: hash,
 			ExpiresAt: time.Now().UTC().Add(s.ttl),
 		}); err != nil {
@@ -217,7 +200,7 @@ func (s *Service) StartPasswordReset(ctx context.Context, email string, from Res
 		}
 		if err := s.sender.Send(ctx, notifier.Message{
 			Channel: "email",
-			To:      stored,
+			To:      account.Email,
 			Subject: "Reset your password",
 			Body:    fmt.Sprintf("Reset your Qeet ID password: %s", resetURL),
 			HTML: emailtmpl.Action(
@@ -230,10 +213,10 @@ func (s *Service) StartPasswordReset(ctx context.Context, email string, from Res
 			return err
 		}
 		var orgs []uuid.UUID
-		if organizationID != nil {
-			orgs = []uuid.UUID{*organizationID}
+		if account.OrganizationID != nil {
+			orgs = []uuid.UUID{*account.OrganizationID}
 		}
-		s.recordRequest(ctx, "auth.password_reset_requested", userID, orgs, from.Audit, map[string]any{"app": from.App})
+		s.recordRequest(ctx, "auth.password_reset_requested", account.ID, orgs, from.Actor, map[string]any{"app": from.App})
 		return nil
 	})
 	return raw, nil
@@ -277,11 +260,19 @@ func init() {
 	}
 }
 
+// as is the provenance of the request from (its client address, user agent
+// and request ID) recorded as actorType, acting as userID (nil: no one).
+// These flows have no signed-in principal, so each audit row names its actor.
+func as(from audit.Actor, actorType string, userID *uuid.UUID) audit.Actor {
+	from.Type, from.UserID = actorType, userID
+	return from
+}
+
 // recordRequest records a recovery request in the audit trail of each of orgs
 // (none: no organization's), naming the account as the subject, not the actor,
 // since whoever asked may not own it. It is bounded per account and best
 // effort: a record that can't be written is logged.
-func (s *Service) recordRequest(ctx context.Context, action string, userID uuid.UUID, orgs []uuid.UUID, ac AuditCtx, meta map[string]any) {
+func (s *Service) recordRequest(ctx context.Context, action string, userID uuid.UUID, orgs []uuid.UUID, from audit.Actor, meta map[string]any) {
 	if s.requestRecords != nil {
 		if ok, _ := s.requestRecords.Take(ctx, action+":"+userID.String()); !ok {
 			unrecordedRequests.WithLabelValues(action).Inc()
@@ -296,12 +287,8 @@ func (s *Service) recordRequest(ctx context.Context, action string, userID uuid.
 			return err
 		}
 		defer tx.Rollback(ctx)
-		subject := userID
 		for _, org := range auditOrgs(orgs) {
-			if err := audit.Record(ctx, tx, audit.Event{
-				OrganizationID: org, ActorType: "anonymous", Action: action, ResourceType: "user", ResourceID: &subject,
-				IP: ac.IP, UserAgent: ac.UserAgent, RequestID: ac.RequestID, Metadata: meta,
-			}); err != nil {
+			if err := audit.Record(ctx, tx, as(from, "anonymous", nil).EventIn(org, action, "user", userID, meta)); err != nil {
 				return err
 			}
 		}
@@ -316,7 +303,7 @@ func (s *Service) recordRequest(ctx context.Context, action string, userID uuid.
 // it was used (proof names which). The first proof also removes every
 // credential set up before it, keeping the password only if keepPassword, and
 // records both in org's trail. proved reports whether this was the first proof.
-func proveAddress(ctx context.Context, tx pgx.Tx, userID uuid.UUID, org *uuid.UUID, proof string, keepPassword bool, ac AuditCtx) (proved bool, err error) {
+func proveAddress(ctx context.Context, tx pgx.Tx, userID uuid.UUID, org *uuid.UUID, proof string, keepPassword bool, from audit.Actor) (proved bool, err error) {
 	email, err := dbgen.New(tx).VerifyEmailByLink(ctx, userID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
@@ -328,7 +315,7 @@ func proveAddress(ctx context.Context, tx pgx.Tx, userID uuid.UUID, org *uuid.UU
 	if err != nil {
 		return false, err
 	}
-	subject := userID
+	by := as(from, "user", &userID)
 	for _, e := range []struct {
 		action string
 		meta   map[string]any
@@ -336,10 +323,7 @@ func proveAddress(ctx context.Context, tx pgx.Tx, userID uuid.UUID, org *uuid.UU
 		{"email.verified", map[string]any{"email": email, "proof": proof}},
 		{"auth.credentials_removed", map[string]any{"proof": proof, "removed": removed}},
 	} {
-		if err := audit.Record(ctx, tx, audit.Event{
-			OrganizationID: org, ActorUserID: &subject, ActorType: "user", Action: e.action, ResourceType: "user",
-			ResourceID: &subject, IP: ac.IP, UserAgent: ac.UserAgent, RequestID: ac.RequestID, Metadata: e.meta,
-		}); err != nil {
+		if err := audit.Record(ctx, tx, by.EventIn(org, e.action, "user", userID, e.meta)); err != nil {
 			return false, err
 		}
 	}
@@ -366,7 +350,7 @@ func auditOrgs(orgs []uuid.UUID) []*uuid.UUID {
 // refused password, or an address that must now sign in with single sign-on,
 // leaves the credential and link untouched. On success the address counts as
 // verified and every sign-in ends (see auth.EndSignIns).
-func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPassword string, ac AuditCtx) error {
+func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPassword string, from audit.Actor) error {
 	if s.rules == nil {
 		return errs.ErrNotImplemented
 	}
@@ -387,8 +371,8 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPasswor
 	}
 	var organizationID uuid.UUID // uuid.Nil: the account belongs to no organization
 	var orgOf *uuid.UUID         // the trail the reset is recorded in
-	if account.OrganizationID.Valid {
-		organizationID = account.OrganizationID.Bytes
+	if account.OrganizationID != nil {
+		organizationID = *account.OrganizationID
 		orgOf = &organizationID
 	}
 	if err := s.rules.ValidateForOrganization(ctx, organizationID, account.Email, newPassword); err != nil {
@@ -421,7 +405,7 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPasswor
 	// so an account registered with it unproved becomes the owner's here —
 	// everything set up before but the new password goes, and every session
 	// it had ends below.
-	if _, err := proveAddress(ctx, tx, row.UserID, orgOf, "password_reset", true, ac); err != nil {
+	if _, err := proveAddress(ctx, tx, row.UserID, orgOf, "password_reset", true, from); err != nil {
 		return err
 	}
 	// End every sign-in the old password could have opened, and announce the
@@ -432,23 +416,11 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPasswor
 		return err
 	}
 	userID := row.UserID
-	target := userID
-	if err := audit.Record(ctx, tx, audit.Event{
-		OrganizationID: orgOf,
-		ActorUserID:    &target,
-		ActorType:      "system",
-		Action:         "auth.password_reset_confirmed",
-		ResourceType:   "user",
-		ResourceID:     &target,
-		IP:             ac.IP,
-		UserAgent:      ac.UserAgent,
-		RequestID:      ac.RequestID,
-		Metadata: map[string]any{
-			"sessions_revoked": true, "revoked_sessions": ended.Sessions, "revoked_login_sessions": ended.LoginSessions,
-			"revoked_app_grants": ended.AppGrants, "revoked_trusted_devices": ended.TrustedDevices,
-			"ended_pending_authorizations": ended.PendingAuthorizations,
-		},
-	}); err != nil {
+	if err := audit.Record(ctx, tx, as(from, "system", &userID).EventIn(orgOf, "auth.password_reset_confirmed", "user", userID, map[string]any{
+		"sessions_revoked": true, "revoked_sessions": ended.Sessions, "revoked_login_sessions": ended.LoginSessions,
+		"revoked_app_grants": ended.AppGrants, "revoked_trusted_devices": ended.TrustedDevices,
+		"ended_pending_authorizations": ended.PendingAuthorizations,
+	})); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -464,16 +436,16 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPasswor
 func resetLink(ctx context.Context, q *dbgen.Queries, hash string) (dbgen.GetPasswordResetByTokenRow, error) {
 	row, err := q.GetPasswordResetByToken(ctx, hash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return row, errs.ErrResetLinkInvalid
+		return row, ErrResetLinkInvalid
 	}
 	if err != nil {
 		return row, err
 	}
-	if row.UsedAt.Valid {
-		return row, errs.ErrRecoveryLinkUsed
+	if row.UsedAt != nil {
+		return row, ErrLinkUsed
 	}
 	if time.Now().After(row.ExpiresAt) {
-		return row, errs.ErrRecoveryLinkExpired
+		return row, ErrLinkExpired
 	}
 	return row, nil
 }

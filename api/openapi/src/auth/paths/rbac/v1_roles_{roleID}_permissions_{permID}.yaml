@@ -5,7 +5,7 @@ delete:
     permissions as soon as this returns, unless another role still grants it.
     This is the counterpart to the grant-permission-to-role call. Confirm the
     resulting grants with the list-role-permissions call. A built-in role
-    (owner, every permission; admin, all but tenant.delete; viewer, every read
+    (owner, every permission; admin, all but organization.delete; viewer, every read
     but secret.read; member, none) holds what its definition says, so it can't
     be changed (403 rbac.system_role_fixed), and nobody takes away a permission
     they don't hold (403 rbac.grant_exceeds_caller). Audited in the
@@ -51,7 +51,7 @@ post:
     list-role-permissions call. The caller must hold the permission in this
     organization, unless they are an owner (403 rbac.grant_exceeds_caller
     otherwise). A built-in role (owner, every permission; admin, all but
-    tenant.delete; viewer, every read but secret.read; member, none) holds what
+    organization.delete; viewer, every read but secret.read; member, none) holds what
     its definition says, so it can't be changed (403 rbac.system_role_fixed).
     Audited in the organization's audit log as role.permission_granted, naming
     the role, the permission (permission_id, permission) and the caller.

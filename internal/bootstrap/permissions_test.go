@@ -38,7 +38,7 @@ func routeInventoryDeps(t *testing.T) Deps {
 	// These handlers conditionally mount route families when an optional
 	// collaborator is present. Populate those exported pointers so the inventory
 	// includes the same feature-complete surface as production.
-	for _, pair := range [][2]string{{"SAML", "IdP"}, {"GDPR", "Evidence"}} {
+	for _, pair := range [][2]string{{"SAML", "IdP"}, {"Compliance", "Evidence"}} {
 		outer := value.FieldByName(pair[0])
 		if !outer.IsValid() || outer.IsNil() {
 			t.Fatalf("missing handler field %s", pair[0])
@@ -53,7 +53,7 @@ func routeInventoryDeps(t *testing.T) Deps {
 }
 
 func TestDirectoryConnectionsRequireConnectionRead(test *testing.T) {
-	permission := userPermissionMap()["GET /v1/tenants/{tenantID}/directory/connections"]
+	permission := userPermissionMap()["GET /v1/organizations/{organizationID}/directory/connections"]
 	if permission != "connection.read" {
 		test.Fatalf("directory inventory permission = %q, want connection.read", permission)
 	}
@@ -281,7 +281,7 @@ var sensitiveLooking = regexp.MustCompile(`/mfa/|/passkeys|/api-keys|/service-pr
 	`/policy$|/auth-policy|/risk-settings|/bots/settings|/ip-rules|/rate-limits|/mfa-required|/mfa$|` +
 	`/password$|/saml|/ldap|/oidc-connections|/social/|/domains|/mappings|/admin-portal|/email-templates|/retention|` +
 	`/anomaly-settings|/log-sinks|/purge|/account/|/sessions|/gdpr/|/oauth/(grants|devices)|/anomalies/|` +
-	`^/v1/tenants/\{tenantID\}$|^/v1/users/\{id\}$`)
+	`^/v1/organizations/\{organizationID\}$|^/v1/users/\{id\}$`)
 
 // TestSensitiveRoutesNeedStepUp fails when a mutating route that looks
 // sensitive is neither in the step-up catalogue nor exempted with a reason, and
@@ -431,7 +431,7 @@ func TestServerCallersPassTheCSRFCheck(t *testing.T) {
 		want                                                   bool
 	}{
 		{name: "an API-key write", path: "/v1/users", authorization: "ApiKey qk_test", want: true},
-		{name: "the service-principal token exchange", path: "/v1/oauth/token", contentType: "application/x-www-form-urlencoded", want: true},
+		{name: "the token endpoint", path: "/v1/oauth/token", contentType: "application/x-www-form-urlencoded", want: true},
 		{name: "a directory sign-in", path: "/ldap/" + uuid.NewString() + "/authenticate", want: true},
 		{name: "a cookie change without the token", path: "/v1/passkeys/register/begin", cookie: "qe_ls=session", origin: "https://console.example"},
 		{name: "a cross-site form post", path: "/v1/auth/session", origin: "https://attacker.example", contentType: "text/plain"},
@@ -453,7 +453,7 @@ func TestServerCallersPassTheCSRFCheck(t *testing.T) {
 
 // tokenScopedRoutes are the organization routes that take the organization
 // from the caller's token alone, as they did before 1.0. The set is frozen: a
-// new organization route names it in the path, /v1/tenants/{tenantID}/….
+// new organization route names it in the path, /v1/organizations/{organizationID}/….
 var tokenScopedRoutes = map[string]bool{
 	"GET /v1/activity":                                     true,
 	"GET /v1/activity/stream":                              true,
@@ -535,12 +535,12 @@ var tokenScopedRoutes = map[string]bool{
 }
 
 // TestNewOrganizationRoutesNameTheOrganization checks that every route needing a
-// permission, an organization administration route, has {tenantID} in its path
+// permission, an organization administration route, has {organizationID} in its path
 // unless it is one of the frozen token-scoped routes.
 func TestNewOrganizationRoutesNameTheOrganization(t *testing.T) {
 	for route := range userPermissionMap() {
-		if !strings.Contains(route, "{tenantID}") && !tokenScopedRoutes[route] {
-			t.Errorf("%s: an organisation route names it in the path: /v1/tenants/{tenantID}/…", route)
+		if !strings.Contains(route, "{organizationID}") && !tokenScopedRoutes[route] {
+			t.Errorf("%s: an organization route names it in the path: /v1/organizations/{organizationID}/…", route)
 		}
 	}
 	for route := range tokenScopedRoutes {

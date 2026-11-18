@@ -13,7 +13,7 @@ post:
     account; past that the call answers 429 mfa.code_send_limited with
     retry_after (seconds). A new code makes the factor's earlier unused code
     stop working. A code sent here only completes a sign-in, never a step-up. An
-    SMS code needs an organisation whose plan includes SMS (403
+    SMS code needs an organization whose plan includes SMS (403
     upgrade_required). Each code sent is audited as mfa.otp_sent.
   tags:
     - Auth

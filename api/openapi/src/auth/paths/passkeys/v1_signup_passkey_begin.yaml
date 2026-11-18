@@ -8,13 +8,13 @@ post:
     returning the signed attestation to the passkey-signup finish call. The
     answer here is the same whether or not the address has an account, and
     starting claims nothing, so another start for the same address works; an
-    address already taken, or on a domain an organisation has verified (that
-    organisation creates its people's accounts), is refused at the finish call
+    address already taken, or on a domain an organization has verified (that
+    organization creates its people's accounts), is refused at the finish call
     with the neutral 422 unprocessable of POST /v1/auth/signup, which does not
     name the reason. Every attempt here takes at least the same minimum time. On a domain
-    whose organisation requires single sign-on, the ceremony is refused with 403
+    whose organization requires single sign-on, the ceremony is refused with 403
     auth.sso_required and nothing is created (see the SSORequired response).
-  summary: Passkey-first signup begin (tenant-less)
+  summary: Passkey-first signup begin (organization-less)
   tags:
     - Passkeys
   security: []

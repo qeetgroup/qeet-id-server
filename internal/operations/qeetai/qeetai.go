@@ -16,14 +16,15 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/qeetai/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/qeetai/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 // Conversation is a named thread between one user and the qeetai.
 type Conversation struct {
 	ID             uuid.UUID `json:"id"`
-	OrganizationID uuid.UUID `json:"tenant_id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
 	UserID         uuid.UUID `json:"user_id"`
 	Title          string    `json:"title"`
 	Pinned         bool      `json:"pinned"`
@@ -36,7 +37,7 @@ type Conversation struct {
 // no secret artifacts are persisted.
 type Message struct {
 	ID             uuid.UUID       `json:"id"`
-	OrganizationID uuid.UUID       `json:"tenant_id"`
+	OrganizationID uuid.UUID       `json:"organization_id"`
 	ConversationID uuid.UUID       `json:"conversation_id"`
 	Role           string          `json:"role"`
 	Content        json.RawMessage `json:"content"`
@@ -75,7 +76,6 @@ type ToolCallError struct {
 // serviceStore is the persistence Handler needs. *Service implements it, and
 // tests substitute a stub.
 type serviceStore interface {
-	Pool() *pgxpool.Pool
 	CreateConversation(ctx context.Context, organizationID, userID uuid.UUID, in CreateConversationInput) (*Conversation, error)
 	ListConversations(ctx context.Context, organizationID, userID uuid.UUID) ([]Conversation, error)
 	GetConversation(ctx context.Context, organizationID, userID, conversationID uuid.UUID) (*Conversation, []Message, error)
@@ -83,6 +83,7 @@ type serviceStore interface {
 	DeleteConversation(ctx context.Context, organizationID, userID, conversationID uuid.UUID) error
 	AppendMessage(ctx context.Context, organizationID, conversationID uuid.UUID, role string, content json.RawMessage) (*Message, error)
 	BeginTurn(ctx context.Context, organizationID, conversationID uuid.UUID) (release func(), err error)
+	RecordMessageSent(ctx context.Context, organizationID, conversationID uuid.UUID, actor audit.Actor) error
 }
 
 // Service owns conversation and message persistence via sqlc-generated queries.
@@ -95,10 +96,6 @@ type Service struct {
 func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool)}
 }
-
-// Pool returns the underlying connection pool, for callers that record audit
-// events in their own transaction.
-func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
 // CreateConversation inserts a new conversation for the given organization+user.
 func (s *Service) CreateConversation(ctx context.Context, organizationID, userID uuid.UUID, in CreateConversationInput) (*Conversation, error) {
@@ -192,6 +189,13 @@ func (s *Service) DeleteConversation(ctx context.Context, organizationID, userID
 	return nil
 }
 
+// RecordMessageSent records that actor sent a message in the conversation: an
+// event of its own, after the message is stored.
+func (s *Service) RecordMessageSent(ctx context.Context, organizationID, conversationID uuid.UUID, actor audit.Actor) error {
+	return audit.RecordAlone(ctx, s.pool, actor.Event(organizationID, "qeetai.message.sent", "qeetai_conversation", conversationID,
+		map[string]any{"conversation_id": conversationID.String()}))
+}
+
 // AppendMessage inserts a message row and bumps the conversation updated_at
 // in a single transaction. content must be a valid JSON array of Anthropic
 // content blocks.
@@ -233,14 +237,14 @@ func (s *Service) AppendMessage(ctx context.Context, organizationID, conversatio
 const turnTimeout = 10 * time.Minute
 
 // BeginTurn starts a turn of the conversation, which answers one at a time: it
-// returns errs.ErrQeetAITurnInProgress while another runs, on any instance.
+// returns ErrTurnInProgress while another runs, on any instance.
 // Call release when the turn ends.
 func (s *Service) BeginTurn(ctx context.Context, organizationID, conversationID uuid.UUID) (release func(), err error) {
 	startedAt, err := s.q.ClaimConversationTurn(ctx, dbgen.ClaimConversationTurnParams{
 		ConversationID: conversationID, OrganizationID: organizationID, StaleAfterSeconds: (turnTimeout + time.Minute).Seconds(),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrQeetAITurnInProgress
+		return nil, ErrTurnInProgress
 	}
 	if err != nil {
 		return nil, err

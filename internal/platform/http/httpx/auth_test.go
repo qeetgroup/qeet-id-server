@@ -16,7 +16,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// TestEnforceOrganizationScope checks that a {tenantID} route admits only the caller's
+// TestEnforceOrganizationScope checks that a {organizationID} route admits only the caller's
 // own organization (403 for another, 400 for a malformed id) and that routes without
 // the param pass through.
 func TestEnforceOrganizationScope(t *testing.T) {
@@ -25,7 +25,7 @@ func TestEnforceOrganizationScope(t *testing.T) {
 	uid := uuid.New()
 
 	// Mirror the production router structure exactly (nested Route + Group with
-	// the guard as group middleware) — chi only populates {tenantID} for a
+	// the guard as group middleware) — chi only populates {organizationID} for a
 	// group-level middleware when routes are matched by a nested subrouter, so a
 	// flat mux would not exercise the same code path the server uses.
 	newRouter := func() *chi.Mux {
@@ -40,8 +40,8 @@ func TestEnforceOrganizationScope(t *testing.T) {
 				})
 				r.Use(httpx.EnforceOrganizationScope)
 				ok := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }
-				r.Get("/tenants/{tenantID}/roles", ok)
-				r.Get("/users/{id}", ok) // no tenantID param — must pass through
+				r.Get("/organizations/{organizationID}/roles", ok)
+				r.Get("/users/{id}", ok) // no organizationID param — must pass through
 			})
 		})
 		return r
@@ -52,10 +52,10 @@ func TestEnforceOrganizationScope(t *testing.T) {
 		path string
 		want int
 	}{
-		{"own tenant allowed", "/v1/tenants/" + callerOrganization.String() + "/roles", http.StatusOK},
-		{"cross tenant forbidden", "/v1/tenants/" + otherOrganization.String() + "/roles", http.StatusForbidden},
-		{"malformed tenant rejected", "/v1/tenants/not-a-uuid/roles", http.StatusBadRequest},
-		{"no tenant param passes through", "/v1/users/" + uuid.New().String(), http.StatusOK},
+		{"own organization allowed", "/v1/organizations/" + callerOrganization.String() + "/roles", http.StatusOK},
+		{"cross organization forbidden", "/v1/organizations/" + otherOrganization.String() + "/roles", http.StatusForbidden},
+		{"malformed organization rejected", "/v1/organizations/not-a-uuid/roles", http.StatusBadRequest},
+		{"no organization param passes through", "/v1/users/" + uuid.New().String(), http.StatusOK},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -92,17 +92,17 @@ func TestRequireAuth_AgentStatusEnforced(t *testing.T) {
 	// Mint an agent access token the way the agents service does: a normal ES256
 	// access token additionally carrying actor_type=agent + agent_id.
 	agentTok, err := iss.Sign(jwt.MapClaims{
-		"iss":        "qeet-test",
-		"aud":        "qeet-test",
-		"sub":        agentID.String(),
-		"iat":        now.Unix(),
-		"nbf":        now.Unix(),
-		"exp":        now.Add(time.Hour).Unix(),
-		"jti":        uuid.NewString(),
-		"tenant_id":  organizationID.String(),
-		"scope":      "openid",
-		"actor_type": "agent",
-		"agent_id":   agentID.String(),
+		"iss":             "qeet-test",
+		"aud":             "qeet-test",
+		"sub":             agentID.String(),
+		"iat":             now.Unix(),
+		"nbf":             now.Unix(),
+		"exp":             now.Add(time.Hour).Unix(),
+		"jti":             uuid.NewString(),
+		"organization_id": organizationID.String(),
+		"scope":           "openid",
+		"actor_type":      "agent",
+		"agent_id":        agentID.String(),
 	})
 	if err != nil {
 		t.Fatalf("sign agent token: %v", err)
@@ -216,8 +216,8 @@ func TestRequireOrganization(t *testing.T) {
 		want    uuid.UUID
 		wantErr bool
 	}{
-		{"tenant present", &httpx.Principal{UserID: &uid, OrganizationID: &tid}, tid, false},
-		{"tenant-less principal", &httpx.Principal{UserID: &uid}, uuid.Nil, true},
+		{"organization present", &httpx.Principal{UserID: &uid, OrganizationID: &tid}, tid, false},
+		{"organization-less principal", &httpx.Principal{UserID: &uid}, uuid.Nil, true},
 		{"no principal", nil, uuid.Nil, true},
 	}
 	for _, tc := range cases {
@@ -228,7 +228,7 @@ func TestRequireOrganization(t *testing.T) {
 			}
 			got, err := httpx.RequireOrganization(r)
 			if tc.wantErr && err == nil {
-				t.Fatalf("expected error, got tenant %s", got)
+				t.Fatalf("expected error, got organization %s", got)
 			}
 			if !tc.wantErr && (err != nil || got != tc.want) {
 				t.Fatalf("got (%s, %v), want (%s, nil)", got, err, tc.want)
@@ -277,7 +277,7 @@ func TestRequireAuth_PrincipalLiveEnforced(t *testing.T) {
 	tok, err := iss.Sign(jwt.MapClaims{
 		"iss": "qeet-test", "aud": "qeet-test", "sub": principalID.String(),
 		"iat": now.Unix(), "nbf": now.Unix(), "exp": now.Add(time.Hour).Unix(), "jti": uuid.NewString(),
-		"tenant_id": uuid.NewString(), "scope": "users.read", "actor_type": "service",
+		"organization_id": uuid.NewString(), "scope": "users.read", "actor_type": "service",
 	})
 	if err != nil {
 		t.Fatalf("sign service token: %v", err)
@@ -307,5 +307,164 @@ func TestRequireAuth_PrincipalLiveEnforced(t *testing.T) {
 				t.Errorf("status = %d, want %d (body: %s)", w.Code, tc.want, w.Body.String())
 			}
 		})
+	}
+}
+
+// TestLiveFollowsWhatAdmitted checks that a principal admitted earlier stays
+// live only as long as what admitted it: its token unexpired, its API key, service
+// principal, agent and own session still in force, and that a check that
+// fails answers no with its error.
+func TestLiveFollowsWhatAdmitted(t *testing.T) {
+	ctx := context.Background()
+	organization, user, session, agent, key := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	down := errors.New("down")
+	soon, gone := time.Now().Add(time.Hour), time.Now().Add(-time.Second)
+	answer := func(live bool, err error) func(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
+		return func(context.Context, uuid.UUID, uuid.UUID) (bool, error) { return live, err }
+	}
+	principalAnswer := func(live bool) func(context.Context, uuid.UUID) (bool, error) {
+		return func(context.Context, uuid.UUID) (bool, error) { return live, nil }
+	}
+	agentAnswer := func(status string, err error) func(context.Context, uuid.UUID) (string, error) {
+		return func(context.Context, uuid.UUID) (string, error) { return status, err }
+	}
+	person := &httpx.Principal{ActorType: "user", UserID: &user, OrganizationID: &organization, SessionID: &session, ExpiresAt: &soon}
+	apiKey := &httpx.Principal{ActorType: "api_key", Subject: key.String(), OrganizationID: &organization}
+	for _, c := range []struct {
+		name    string
+		v       httpx.AuthVerifier
+		p       *httpx.Principal
+		want    bool
+		wantErr error
+	}{
+		{"no principal", httpx.AuthVerifier{}, nil, false, nil},
+		{"an expired token", httpx.AuthVerifier{SessionLive: answer(true, nil)},
+			&httpx.Principal{ActorType: "user", UserID: &user, SessionID: &session, ExpiresAt: &gone}, false, nil},
+		{"a person's live session", httpx.AuthVerifier{SessionLive: answer(true, nil)}, person, true, nil},
+		{"a person's ended session", httpx.AuthVerifier{SessionLive: answer(false, nil)}, person, false, nil},
+		{"a session that can't be read", httpx.AuthVerifier{SessionLive: answer(true, down)}, person, false, down},
+		{"an application's token is not the person's session", httpx.AuthVerifier{SessionLive: answer(false, nil)},
+			&httpx.Principal{ActorType: "user", UserID: &user, SessionID: &session, ClientID: "app"}, true, nil},
+		{"a live API key", httpx.AuthVerifier{APIKeyLive: answer(true, nil)}, apiKey, true, nil},
+		{"a revoked API key", httpx.AuthVerifier{APIKeyLive: answer(false, nil)}, apiKey, false, nil},
+		{"an API key that can't be read", httpx.AuthVerifier{APIKeyLive: answer(true, down)}, apiKey, false, down},
+		{"an API key with nothing to check it", httpx.AuthVerifier{}, apiKey, false, nil},
+		{"an API key naming no organization", httpx.AuthVerifier{APIKeyLive: answer(true, nil)},
+			&httpx.Principal{ActorType: "api_key", Subject: key.String()}, false, nil},
+		{"an API key whose subject isn't an id", httpx.AuthVerifier{APIKeyLive: answer(true, nil)},
+			&httpx.Principal{ActorType: "api_key", Subject: "qk_x", OrganizationID: &organization}, false, nil},
+		{"an enabled service principal", httpx.AuthVerifier{PrincipalLive: principalAnswer(true)},
+			&httpx.Principal{ActorType: "service", Subject: key.String()}, true, nil},
+		{"a disabled service principal", httpx.AuthVerifier{PrincipalLive: principalAnswer(false)},
+			&httpx.Principal{ActorType: "service", Subject: key.String()}, false, nil},
+		{"an active agent", httpx.AuthVerifier{AgentStatus: agentAnswer("active", nil)},
+			&httpx.Principal{ActorType: "agent", AgentID: &agent}, true, nil},
+		{"a suspended agent", httpx.AuthVerifier{AgentStatus: agentAnswer("suspended", nil)},
+			&httpx.Principal{ActorType: "agent", AgentID: &agent}, false, nil},
+	} {
+		got, err := c.v.Live(ctx, c.p)
+		if got != c.want || !errors.Is(err, c.wantErr) {
+			t.Errorf("%s: %v, %v; want %v, %v", c.name, got, err, c.want, c.wantErr)
+		}
+	}
+}
+
+// serveAuth runs req through RequireAuth(v) and returns the response and the
+// principal the next handler saw (nil when it wasn't reached).
+func serveAuth(v *httpx.AuthVerifier, req *http.Request) (*httptest.ResponseRecorder, *httpx.Principal) {
+	var seen *httpx.Principal
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = httpx.PrincipalFromCtx(r.Context())
+		if seen == nil {
+			seen = &httpx.Principal{}
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	w := httptest.NewRecorder()
+	httpx.RequireAuth(v)(next).ServeHTTP(w, req)
+	return w, seen
+}
+
+// TestRequireAuth_AdmitsAndRefusesAsItAlwaysHas pins which requests
+// RequireAuth admits, with what principal, and how it refuses the rest: an
+// earlier principal passes as it is; development headers count only when
+// trusted; a missing or bad bearer token is a 401 naming the realm; a user's
+// own session token carries its user, organization, session, scopes and
+// expiry and is reported used, while an application's token is not.
+func TestRequireAuth_AdmitsAndRefusesAsItAlwaysHas(t *testing.T) {
+	iss := testIssuer(t)
+	userID, organizationID, sessionID := uuid.New(), uuid.New(), uuid.New()
+	get := func(header ...string) *http.Request {
+		req := httptest.NewRequest("GET", "/v1/anything", nil)
+		for i := 0; i+1 < len(header); i += 2 {
+			req.Header.Set(header[i], header[i+1])
+		}
+		return req
+	}
+
+	earlier := &httpx.Principal{ActorType: "api_key", Subject: "qk_1"}
+	req := get()
+	req = req.WithContext(httpx.WithPrincipal(req.Context(), earlier))
+	if w, p := serveAuth(&httpx.AuthVerifier{Tokens: iss}, req); w.Code != http.StatusOK || p != earlier {
+		t.Errorf("an earlier principal: %d %+v, want it passed on as it is", w.Code, p)
+	}
+
+	dev := get("X-Dev-User", userID.String(), "X-Dev-Organization", organizationID.String())
+	if w, _ := serveAuth(&httpx.AuthVerifier{Tokens: iss}, dev); w.Code != http.StatusUnauthorized {
+		t.Errorf("development headers untrusted: %d, want 401", w.Code)
+	}
+	w, p := serveAuth(&httpx.AuthVerifier{Tokens: iss, DevTrustHeaders: true}, dev)
+	if w.Code != http.StatusOK || p.ActorType != "user" || p.Subject != userID.String() || *p.UserID != userID || *p.OrganizationID != organizationID {
+		t.Errorf("development headers trusted: %d %+v", w.Code, p)
+	}
+	if w, p := serveAuth(&httpx.AuthVerifier{Tokens: iss, DevTrustHeaders: true}, get("X-Dev-User", "someone", "X-Dev-Organization", "not-a-uuid")); w.Code != http.StatusOK || p.Subject != "someone" || p.UserID != nil || p.OrganizationID != nil {
+		t.Errorf("development headers that aren't ids: %d %+v", w.Code, p)
+	}
+
+	for name, c := range map[string]struct {
+		header, challenge string
+	}{
+		"no token":       {"", `Bearer realm="qeet"`},
+		"another scheme": {"Basic dXNlcjpwYXNz", `Bearer realm="qeet"`},
+		"a bad token":    {"Bearer not-a-jwt", `Bearer realm="qeet", error="invalid_token"`},
+	} {
+		w, p := serveAuth(&httpx.AuthVerifier{Tokens: iss}, get("Authorization", c.header))
+		if w.Code != http.StatusUnauthorized || p != nil || w.Header().Get("WWW-Authenticate") != c.challenge {
+			t.Errorf("%s: %d %q, want 401 %q", name, w.Code, w.Header().Get("WWW-Authenticate"), c.challenge)
+		}
+	}
+
+	own, exp, err := iss.IssueAccess(userID, organizationID, sessionID, "openid profile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var used []uuid.UUID
+	v := &httpx.AuthVerifier{Tokens: iss, SessionUsed: func(_ context.Context, sid uuid.UUID) { used = append(used, sid) }}
+	w, p = serveAuth(v, get("Authorization", "bearer "+own))
+	if w.Code != http.StatusOK || p.ActorType != "user" || p.Subject != userID.String() || *p.UserID != userID ||
+		*p.OrganizationID != organizationID || *p.SessionID != sessionID || p.ClientID != "" || p.AgentID != nil ||
+		len(p.Scopes) != 2 || p.Scopes[0] != "openid" || p.Scopes[1] != "profile" || p.ExpiresAt == nil || !p.ExpiresAt.Equal(exp.Truncate(time.Second)) {
+		t.Errorf("a user's own token: %d %+v", w.Code, p)
+	}
+	if len(used) != 1 || used[0] != sessionID {
+		t.Errorf("sessions reported used: %v, want the token's own", used)
+	}
+
+	app, _, err := iss.IssueClientAccess(tokens.ClientAccess{UserID: userID, OrganizationID: organizationID, SessionID: sessionID, ClientID: "app", Scopes: "openid"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	used = nil
+	if w, p := serveAuth(v, get("Authorization", "Bearer "+app)); w.Code != http.StatusOK || p.ClientID != "app" || len(used) != 0 {
+		t.Errorf("an application's token: %d %+v, used %v; want admitted, its client named, no session use", w.Code, p, used)
+	}
+
+	agentID := uuid.New()
+	machine, err := iss.IssueMachineAccess(tokens.MachineAccess{Subject: agentID, OrganizationID: organizationID, Scopes: []string{"users.read"}, Agent: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w, p := serveAuth(&httpx.AuthVerifier{Tokens: iss}, get("Authorization", "Bearer "+machine.AccessToken)); w.Code != http.StatusOK || p.ActorType != "agent" || p.AgentID == nil || *p.AgentID != agentID || p.UserID != nil {
+		t.Errorf("an agent's token with no status check: %d %+v", w.Code, p)
 	}
 }

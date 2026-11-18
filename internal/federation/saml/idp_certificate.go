@@ -24,7 +24,6 @@ import (
 	"github.com/beevik/etree"
 	dsig "github.com/russellhaering/goxmldsig"
 
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
@@ -69,18 +68,18 @@ func checkCertificateUse(certPEM string, requireSigned, encrypt bool) error {
 	has := strings.TrimSpace(certPEM) != ""
 	switch {
 	case has && !requireSigned && !encrypt:
-		return errs.ErrSAMLCertificateUnused
+		return ErrCertificateUnused
 	case !has && (requireSigned || encrypt):
-		return errs.ErrSAMLCertificateRequired
+		return ErrCertificateRequired
 	case !has:
 		return nil
 	}
 	cert, err := parseCertificate(certPEM)
 	if err != nil {
-		return errs.ErrSAMLCertificateInvalid
+		return ErrCertificateInvalid
 	}
 	if _, ok := cert.PublicKey.(*rsa.PublicKey); encrypt && !ok {
-		return errs.ErrSAMLEncryptionKeyUnsupported
+		return ErrEncryptionKeyUnsupported
 	}
 	return nil
 }
@@ -93,32 +92,32 @@ func checkCertificateUse(certPEM string, requireSigned, encrypt bool) error {
 func verifiedAuthnRequest(r *http.Request, raw []byte, certPEM string) (*authnRequest, error) {
 	cert, err := parseCertificate(certPEM)
 	if err != nil {
-		return nil, errs.ErrSAMLRequestSignatureInvalid
+		return nil, ErrRequestSignatureInvalid
 	}
 	if r.Method == http.MethodGet && r.URL.Query().Get("Signature") != "" {
 		samlRequest, err := verifyRedirectSignature(r.URL.RawQuery, cert)
 		if err != nil {
-			return nil, errs.ErrSAMLRequestSignatureInvalid
+			return nil, ErrRequestSignatureInvalid
 		}
 		signed, err := authnRequestXML(samlRequest, http.MethodGet)
 		if err != nil {
-			return nil, errs.ErrSAMLAuthnRequestInvalid
+			return nil, ErrAuthnRequestInvalid
 		}
 		var ar authnRequest
 		if err := xml.Unmarshal(signed, &ar); err != nil { // #nosec G709 -- decodes into a typed struct
-			return nil, errs.ErrSAMLAuthnRequestInvalid
+			return nil, ErrAuthnRequestInvalid
 		}
 		return &ar, nil
 	}
 	doc := etree.NewDocument()
 	if err := doc.ReadFromBytes(raw); err != nil || doc.Root() == nil {
-		return nil, errs.ErrSAMLAuthnRequestInvalid
+		return nil, ErrAuthnRequestInvalid
 	}
 	vctx := dsig.NewDefaultValidationContext(&dsig.MemoryX509CertificateStore{Roots: []*x509.Certificate{cert}})
 	vctx.IdAttribute = "ID"
 	signed, err := vctx.Validate(doc.Root())
 	if err != nil {
-		return nil, errs.ErrSAMLRequestSignatureInvalid
+		return nil, ErrRequestSignatureInvalid
 	}
 	out := etree.NewDocument()
 	out.SetRoot(signed)
@@ -128,7 +127,7 @@ func verifiedAuthnRequest(r *http.Request, raw []byte, certPEM string) (*authnRe
 	}
 	var ar authnRequest
 	if err := xml.Unmarshal(b, &ar); err != nil { // #nosec G709 -- decodes into a typed struct
-		return nil, errs.ErrSAMLAuthnRequestInvalid
+		return nil, ErrAuthnRequestInvalid
 	}
 	return &ar, nil
 }
@@ -144,19 +143,19 @@ func verifyRedirectSignature(rawQuery string, cert *x509.Certificate) (string, e
 		k, v, _ := strings.Cut(part, "=")
 		name, err := url.QueryUnescape(k)
 		if err != nil {
-			return "", errs.ErrSAMLRequestSignatureInvalid
+			return "", ErrRequestSignatureInvalid
 		}
 		switch name {
 		case "SAMLRequest", "RelayState", "SigAlg", "Signature":
 			if _, seen := values[name]; seen || name != k {
-				return "", errs.ErrSAMLRequestSignatureInvalid
+				return "", ErrRequestSignatureInvalid
 			}
 			values[name] = v
 		}
 	}
 	samlRequest, ok := values["SAMLRequest"]
 	if !ok {
-		return "", errs.ErrSAMLRequestSignatureInvalid
+		return "", ErrRequestSignatureInvalid
 	}
 	signed := "SAMLRequest=" + samlRequest
 	if relay, ok := values["RelayState"]; ok {
@@ -189,7 +188,7 @@ func verifyRedirectSignature(rawQuery string, cert *x509.Certificate) (string, e
 		d := sha512.Sum512([]byte(signed))
 		hash, sum = crypto.SHA512, d[:]
 	default:
-		return "", errs.ErrSAMLRequestSignatureInvalid
+		return "", ErrRequestSignatureInvalid
 	}
 	switch pub := cert.PublicKey.(type) {
 	case *rsa.PublicKey:
@@ -202,11 +201,11 @@ func verifyRedirectSignature(rawQuery string, cert *x509.Certificate) (string, e
 		half := len(sig) / 2
 		if len(sig) == 0 || len(sig)%2 != 0 ||
 			!ecdsa.Verify(pub, sum, new(big.Int).SetBytes(sig[:half]), new(big.Int).SetBytes(sig[half:])) {
-			return "", errs.ErrSAMLRequestSignatureInvalid
+			return "", ErrRequestSignatureInvalid
 		}
 		return request, nil
 	}
-	return "", errs.ErrSAMLRequestSignatureInvalid
+	return "", ErrRequestSignatureInvalid
 }
 
 // sealAssertion encrypts the signed assertion to cert's RSA key as an
@@ -214,7 +213,7 @@ func verifyRedirectSignature(rawQuery string, cert *x509.Certificate) (string, e
 func sealAssertion(assertion *etree.Element, cert *x509.Certificate) (*etree.Element, error) {
 	pub, ok := cert.PublicKey.(*rsa.PublicKey)
 	if !ok {
-		return nil, errs.ErrSAMLEncryptionKeyUnsupported
+		return nil, ErrEncryptionKeyUnsupported
 	}
 	doc := etree.NewDocument()
 	doc.SetRoot(assertion.Copy())
@@ -264,7 +263,7 @@ func sealAssertion(assertion *etree.Element, cert *x509.Certificate) (*etree.Ele
 // assertions with, as PEM, for an SP that asks for the certificate on its own.
 func (h *Handler) idpCertificate(w http.ResponseWriter, r *http.Request) {
 	if h.IdP == nil {
-		httpx.WriteError(w, r, errs.ErrSAMLIdPNotConfigured)
+		httpx.WriteError(w, r, ErrIdPNotConfigured)
 		return
 	}
 	if _, err := h.idpOrganization(r); err != nil {

@@ -41,15 +41,15 @@ patch:
             apple_key_id:
               type: string
   description: >-
-    Changes only the fields given on one of the caller's organisation's social
+    Changes only the fields given on one of the caller's organization's social
     providers — switch it off or on, replace its secret, or change its client ID
     or discovery URL. Takes effect for the next sign-in; other providers are
     unaffected. A switched-off provider reads to a signing-in user exactly like
     one that was never set up. Audited as social_provider.updated (fields
     changed, whether the secret was replaced), social_provider.disabled and
-    social_provider.enabled. 404 for a provider the organisation does not have.
+    social_provider.enabled. 404 for a provider the organization does not have.
     Switching it off is refused with 409 social.provider_in_use
-    (metadata.people: how many) while anyone in the organisation can sign in
+    (metadata.people: how many) while anyone in the organization can sign in
     only through it, as removing it is; give them another way in first.
     Changing what the connection trusts (an OpenID Connect provider's
     discovery_url) is acting on every account linked to it, as the changed
@@ -90,14 +90,14 @@ delete:
     - bearerAuth: []
     - apiKeyAuth: []
   description: >-
-    Removes one of the caller's organisation's social providers. The identities
+    Removes one of the caller's organization's social providers. The identities
     people linked through it are kept — they still show in those people's
     connected accounts and work again if the provider is added back — but nobody
     can sign in through it meanwhile. Refused with 409 social.provider_in_use
-    (metadata.people: how many) while anyone in the organisation can sign in
+    (metadata.people: how many) while anyone in the organization can sign in
     only through it (no password, no passkey, no other linked identity); give
     them another way in first. Audited as social_provider.deleted. 404 for a
-    provider the organisation does not have.
+    provider the organization does not have.
   responses:
     '204':
       description: Removed

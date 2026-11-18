@@ -1,8 +1,4 @@
--- Queries for the SCIM domain.
--- DYNAMIC queries kept hand-written:
---   listProvisioned  — conditional WHERE + dynamic parameter positions for LIMIT/OFFSET
---   listGroups       — same conditional pattern with optional name filter
---   touchGroupTx     — CASE WHEN bool flag controls external_id update
+-- Queries for the SCIM domain, compiled by sqlc into ./dbgen.
 
 -- ==========================================================================
 -- Token management
@@ -124,9 +120,92 @@ UPDATE account.users
         updated_at     = NOW()
 WHERE id = @id;
 
+-- The SCIM protocol's user list pages by offset, newest first: the
+-- organization's provisioned users, or a userName lookup of any account at
+-- home there.
+
+-- name: ListProvisionedUsers :many
+SELECT id, email, display_name, status, external_id, created_at, updated_at
+FROM account.users
+WHERE organization_id = @organization_id AND deleted_at IS NULL AND provisioned_via = 'scim'
+ORDER BY created_at DESC, id DESC
+LIMIT @lim::bigint OFFSET @off::bigint;
+
+-- name: CountHomeUsersByEmail :one
+SELECT count(*) FROM account.users
+WHERE organization_id = @organization_id AND deleted_at IS NULL AND LOWER(email) = LOWER(@email);
+
+-- name: ListHomeUsersByEmail :many
+SELECT id, email, display_name, status, external_id, created_at, updated_at
+FROM account.users
+WHERE organization_id = @organization_id AND deleted_at IS NULL AND LOWER(email) = LOWER(@email)
+ORDER BY created_at DESC, id DESC
+LIMIT @lim::bigint OFFSET @off::bigint;
+
+-- ListProvisionedUsersPage is a console page of the provisioned users, newest
+-- first, before the cursor (created_at, id) when before_ts is set.
+-- name: ListProvisionedUsersPage :many
+SELECT id, email, display_name, status, external_id, created_at
+FROM account.users
+WHERE organization_id = @organization_id AND deleted_at IS NULL AND provisioned_via = 'scim'
+  AND (sqlc.narg('before_ts')::timestamptz IS NULL OR created_at < sqlc.narg('before_ts')
+       OR (created_at = sqlc.narg('before_ts') AND id < sqlc.narg('before_id')::uuid))
+ORDER BY created_at DESC, id DESC
+LIMIT @lim;
+
+-- name: SetProvisionedUserEmail :exec
+-- The directory vouches for the address it gives.
+UPDATE account.users SET email = @email, email_verified_at = NOW(), updated_at = NOW()
+WHERE id = @id AND organization_id = @organization_id;
+
+-- name: SetScimSuspension :exec
+UPDATE account.users SET suspension_source = 'scim', suspension_reason = 'provider'
+WHERE organization_id = @organization_id AND id = @id;
+
+-- name: ClaimUnattributedSuspension :exec
+-- A suspension nothing else claimed becomes the directory's.
+UPDATE account.users SET suspension_source = 'scim', suspension_reason = 'provider'
+WHERE organization_id = @organization_id AND id = @id AND suspension_source = 'unknown';
+
 -- ==========================================================================
 -- Groups
 -- ==========================================================================
+
+-- name: CountScimGroups :one
+-- An empty name counts every group SCIM made.
+SELECT count(*) FROM organization.groups
+WHERE organization_id = @organization_id AND provisioned_via = 'scim'
+  AND (@name::text = '' OR LOWER(name) = LOWER(@name));
+
+-- name: ListScimGroups :many
+SELECT id, name, external_id, created_at, updated_at
+FROM organization.groups
+WHERE organization_id = @organization_id AND provisioned_via = 'scim'
+  AND (@name::text = '' OR LOWER(name) = LOWER(@name))
+ORDER BY created_at DESC, id DESC
+LIMIT @lim::bigint OFFSET @off::bigint;
+
+-- ListScimGroupsPage is a console page of the groups SCIM made, newest first,
+-- each with its count of live members, before the cursor when before_ts is set.
+-- name: ListScimGroupsPage :many
+SELECT g.id, g.name, g.external_id, g.created_at, g.updated_at,
+       (SELECT count(*) FROM organization.group_members gm JOIN account.users u ON u.id = gm.user_id
+        WHERE gm.group_id = g.id AND gm.organization_id = g.organization_id AND u.deleted_at IS NULL)::int AS members
+FROM organization.groups g
+WHERE g.organization_id = @organization_id AND g.provisioned_via = 'scim'
+  AND (sqlc.narg('before_ts')::timestamptz IS NULL OR g.created_at < sqlc.narg('before_ts')
+       OR (g.created_at = sqlc.narg('before_ts') AND g.id < sqlc.narg('before_id')::uuid))
+ORDER BY g.created_at DESC, g.id DESC
+LIMIT @lim;
+
+-- name: TouchScimGroup :execrows
+-- Sets the name when given, the external ID when set_external_id (NULL clears
+-- it), and bumps updated_at.
+UPDATE organization.groups SET
+    name        = COALESCE(sqlc.narg('name'), name),
+    external_id = CASE WHEN @set_external_id::bool THEN sqlc.narg('external_id') ELSE external_id END,
+    updated_at  = NOW()
+WHERE id = @id AND organization_id = @organization_id AND provisioned_via = 'scim';
 
 -- name: GetScimGroup :one
 SELECT id, name, external_id, created_at, updated_at

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const cancelSubscription = `-- name: CancelSubscription :execrows
@@ -53,7 +52,7 @@ type ClaimInvoiceEmailsRow struct {
 	Status         string
 	PeriodStart    time.Time
 	PeriodEnd      time.Time
-	DueAt          pgtype.Timestamptz
+	DueAt          *time.Time
 	BilledTo       []byte
 }
 
@@ -91,6 +90,58 @@ func (q *Queries) ClaimInvoiceEmails(ctx context.Context) ([]ClaimInvoiceEmailsR
 	return items, nil
 }
 
+const claimSignupCheckout = `-- name: ClaimSignupCheckout :one
+UPDATE organization.signup_checkouts
+SET status = 'completed', completed_at = NOW(), payment_method = $1
+WHERE id = $2 AND status = 'pending'
+RETURNING user_id, org_name, org_slug, region, plan_code, currency, organization_id,
+          amount_minor, taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply
+`
+
+type ClaimSignupCheckoutParams struct {
+	PaymentMethod []byte
+	ID            uuid.UUID
+}
+
+type ClaimSignupCheckoutRow struct {
+	UserID             uuid.UUID
+	OrgName            string
+	OrgSlug            string
+	Region             string
+	PlanCode           string
+	Currency           string
+	OrganizationID     *uuid.UUID
+	AmountMinor        int64
+	TaxableAmountMinor int64
+	TaxAmountMinor     int64
+	TaxRateBps         int32
+	TaxType            string
+	PlaceOfSupply      string
+}
+
+// Completes a pending signup checkout, once: a retry of the same payment finds
+// no row.
+func (q *Queries) ClaimSignupCheckout(ctx context.Context, arg ClaimSignupCheckoutParams) (ClaimSignupCheckoutRow, error) {
+	row := q.db.QueryRow(ctx, claimSignupCheckout, arg.PaymentMethod, arg.ID)
+	var i ClaimSignupCheckoutRow
+	err := row.Scan(
+		&i.UserID,
+		&i.OrgName,
+		&i.OrgSlug,
+		&i.Region,
+		&i.PlanCode,
+		&i.Currency,
+		&i.OrganizationID,
+		&i.AmountMinor,
+		&i.TaxableAmountMinor,
+		&i.TaxAmountMinor,
+		&i.TaxRateBps,
+		&i.TaxType,
+		&i.PlaceOfSupply,
+	)
+	return i, err
+}
+
 const completeCheckout = `-- name: CompleteCheckout :one
 UPDATE organization.billing_checkouts
 SET status = 'completed', completed_at = NOW(), payment_method = $1
@@ -115,7 +166,7 @@ type CompleteCheckoutRow struct {
 	TaxRateBps         int32
 	TaxType            string
 	PlaceOfSupply      string
-	InvoiceID          pgtype.UUID
+	InvoiceID          *uuid.UUID
 	Provider           string
 	ProviderRef        string
 }
@@ -191,6 +242,15 @@ WHERE organization_id = $1
 
 func (q *Queries) EndSubscription(ctx context.Context, organizationID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, endSubscription, organizationID)
+	return err
+}
+
+const failSignupCheckout = `-- name: FailSignupCheckout :exec
+UPDATE organization.signup_checkouts SET status = 'failed' WHERE id = $1
+`
+
+func (q *Queries) FailSignupCheckout(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, failSignupCheckout, id)
 	return err
 }
 
@@ -281,8 +341,8 @@ type GetSubscriptionRow struct {
 	CurrentPeriodStart time.Time
 	CurrentPeriodEnd   time.Time
 	CancelAtPeriodEnd  bool
-	TrialEnd           pgtype.Timestamptz
-	EndedAt            pgtype.Timestamptz
+	TrialEnd           *time.Time
+	EndedAt            *time.Time
 	AmountMinor        int64
 }
 
@@ -328,7 +388,7 @@ type InsertBillingCheckoutParams struct {
 	TaxRateBps         int32
 	TaxType            string
 	PlaceOfSupply      string
-	InvoiceID          pgtype.UUID
+	InvoiceID          *uuid.UUID
 }
 
 // Create a pending card-payment checkout row and return its id, which is
@@ -381,7 +441,7 @@ type InsertInvoiceParams struct {
 	PlaceOfSupply      string
 	InvoiceNumber      *string
 	Kind               string
-	DueAt              pgtype.Timestamptz
+	DueAt              *time.Time
 	BilledTo           []byte
 	SupplierGstin      string
 	Sac                string
@@ -410,6 +470,54 @@ func (q *Queries) InsertInvoice(ctx context.Context, arg InsertInvoiceParams) (u
 		arg.BilledTo,
 		arg.SupplierGstin,
 		arg.Sac,
+	)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const insertSignupCheckout = `-- name: InsertSignupCheckout :one
+INSERT INTO organization.signup_checkouts
+    (user_id, org_name, org_slug, region, plan_code, currency, country, provider, amount_minor,
+     taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+        $10, $11, $12, $13, $14)
+RETURNING id
+`
+
+type InsertSignupCheckoutParams struct {
+	UserID             uuid.UUID
+	OrgName            string
+	OrgSlug            string
+	Region             string
+	PlanCode           string
+	Currency           string
+	Country            string
+	Provider           string
+	AmountMinor        int64
+	TaxableAmountMinor int64
+	TaxAmountMinor     int64
+	TaxRateBps         int32
+	TaxType            string
+	PlaceOfSupply      string
+}
+
+func (q *Queries) InsertSignupCheckout(ctx context.Context, arg InsertSignupCheckoutParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, insertSignupCheckout,
+		arg.UserID,
+		arg.OrgName,
+		arg.OrgSlug,
+		arg.Region,
+		arg.PlanCode,
+		arg.Currency,
+		arg.Country,
+		arg.Provider,
+		arg.AmountMinor,
+		arg.TaxableAmountMinor,
+		arg.TaxAmountMinor,
+		arg.TaxRateBps,
+		arg.TaxType,
+		arg.PlaceOfSupply,
 	)
 	var id uuid.UUID
 	err := row.Scan(&id)
@@ -470,7 +578,7 @@ LIMIT 1
 type LatestPaymentMethodRow struct {
 	Provider      string
 	PaymentMethod []byte
-	CompletedAt   pgtype.Timestamptz
+	CompletedAt   *time.Time
 }
 
 // What the organization's most recent completed checkout was paid with.
@@ -580,12 +688,12 @@ type ListInvoicesRow struct {
 	PlaceOfSupply      string
 	InvoiceNumber      *string
 	Kind               string
-	DueAt              pgtype.Timestamptz
-	PaidAt             pgtype.Timestamptz
+	DueAt              *time.Time
+	PaidAt             *time.Time
 	BilledTo           []byte
 	SupplierGstin      string
 	Sac                string
-	EmailedAt          pgtype.Timestamptz
+	EmailedAt          *time.Time
 }
 
 // Return the organization's billing history, most recent first.
@@ -704,7 +812,7 @@ type LockSubscriptionRow struct {
 	CurrentPeriodStart time.Time
 	CurrentPeriodEnd   time.Time
 	CancelAtPeriodEnd  bool
-	TrialEnd           pgtype.Timestamptz
+	TrialEnd           *time.Time
 	AmountMinor        int64
 }
 
@@ -743,6 +851,22 @@ func (q *Queries) NextInvoiceNumber(ctx context.Context, financialYear string) (
 	return last_number, err
 }
 
+const organizationSlugTaken = `-- name: OrganizationSlugTaken :one
+
+SELECT EXISTS (SELECT 1 FROM organization.organizations WHERE slug = $1)
+`
+
+// -----------------------------------------------------------------------
+// Signup checkouts: a paid plan chosen at signup, before its organization
+// exists (checkout.go).
+// -----------------------------------------------------------------------
+func (q *Queries) OrganizationSlugTaken(ctx context.Context, slug string) (bool, error) {
+	row := q.db.QueryRow(ctx, organizationSlugTaken, slug)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const releaseInvoiceEmail = `-- name: ReleaseInvoiceEmail :exec
 UPDATE organization.invoices SET emailed_at = NULL WHERE id = $1 AND organization_id = $2
 `
@@ -775,6 +899,16 @@ func (q *Queries) RenewSubscription(ctx context.Context, arg RenewSubscriptionPa
 	return err
 }
 
+const reopenSignupCheckout = `-- name: ReopenSignupCheckout :exec
+UPDATE organization.signup_checkouts SET status = 'pending', completed_at = NULL WHERE id = $1
+`
+
+// Returns a claimed checkout to pending, so a retry resumes it.
+func (q *Queries) ReopenSignupCheckout(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, reopenSignupCheckout, id)
+	return err
+}
+
 const setOrganizationPlan = `-- name: SetOrganizationPlan :exec
 UPDATE organization.organizations
 SET plan = $1, updated_at = NOW()
@@ -792,6 +926,34 @@ type SetOrganizationPlanParams struct {
 // Runs on the caller's tx, alongside UpsertSubscription.
 func (q *Queries) SetOrganizationPlan(ctx context.Context, arg SetOrganizationPlanParams) error {
 	_, err := q.db.Exec(ctx, setOrganizationPlan, arg.Plan, arg.OrganizationID)
+	return err
+}
+
+const setSignupCheckoutOrganization = `-- name: SetSignupCheckoutOrganization :exec
+UPDATE organization.signup_checkouts SET organization_id = $1::uuid WHERE id = $2
+`
+
+type SetSignupCheckoutOrganizationParams struct {
+	OrganizationID uuid.UUID
+	ID             uuid.UUID
+}
+
+func (q *Queries) SetSignupCheckoutOrganization(ctx context.Context, arg SetSignupCheckoutOrganizationParams) error {
+	_, err := q.db.Exec(ctx, setSignupCheckoutOrganization, arg.OrganizationID, arg.ID)
+	return err
+}
+
+const setSignupCheckoutProviderRef = `-- name: SetSignupCheckoutProviderRef :exec
+UPDATE organization.signup_checkouts SET provider_ref = $1 WHERE id = $2
+`
+
+type SetSignupCheckoutProviderRefParams struct {
+	ProviderRef string
+	ID          uuid.UUID
+}
+
+func (q *Queries) SetSignupCheckoutProviderRef(ctx context.Context, arg SetSignupCheckoutProviderRefParams) error {
+	_, err := q.db.Exec(ctx, setSignupCheckoutProviderRef, arg.ProviderRef, arg.ID)
 	return err
 }
 

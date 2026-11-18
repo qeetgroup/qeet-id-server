@@ -9,7 +9,7 @@ func TestTakingAuthorityAwayNeedsStepUp(t *testing.T) {
 	for _, route := range []string{
 		"DELETE /v1/groups/{id}",
 		"DELETE /v1/groups/{id}/members/{userID}",
-		"DELETE /v1/tenants/{tenantID}/groups/{groupID}/roles/{roleID}",
+		"DELETE /v1/organizations/{organizationID}/groups/{groupID}/roles/{roleID}",
 	} {
 		if _, ok := routes[route]; !ok {
 			t.Errorf("%s needs no step-up", route)

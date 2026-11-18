@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const applicationSignInLive = `-- name: ApplicationSignInLive :one
@@ -61,7 +60,7 @@ WHERE id = $2
 `
 
 type ApproveDeviceParams struct {
-	UserID pgtype.UUID
+	UserID *uuid.UUID
 	ID     uuid.UUID
 }
 
@@ -174,10 +173,10 @@ type ConsumeAuthorizationCodeRow struct {
 	CodeChallenge       *string
 	CodeChallengeMethod *string
 	ExpiresAt           time.Time
-	UsedAt              pgtype.Timestamptz
-	LoginSessionID      pgtype.UUID
+	UsedAt              *time.Time
+	LoginSessionID      *uuid.UUID
 	Resource            *string
-	AuthTime            pgtype.Timestamptz
+	AuthTime            *time.Time
 }
 
 func (q *Queries) ConsumeAuthorizationCode(ctx context.Context, arg ConsumeAuthorizationCodeParams) (ConsumeAuthorizationCodeRow, error) {
@@ -381,9 +380,9 @@ type GetClientLockedUntilParams struct {
 // ==========================================================================
 // GetClientLockedUntil reports a lockout still in force for an application
 // from a source network.
-func (q *Queries) GetClientLockedUntil(ctx context.Context, arg GetClientLockedUntilParams) (pgtype.Timestamptz, error) {
+func (q *Queries) GetClientLockedUntil(ctx context.Context, arg GetClientLockedUntilParams) (*time.Time, error) {
 	row := q.db.QueryRow(ctx, getClientLockedUntil, arg.ClientRowID, arg.SourceNetwork)
-	var locked_until pgtype.Timestamptz
+	var locked_until *time.Time
 	err := row.Scan(&locked_until)
 	return locked_until, err
 }
@@ -625,7 +624,7 @@ type GetOIDCClientRow struct {
 	GrantTypes            []string
 	Scopes                []string
 	CreatedAt             time.Time
-	PkceExemptUntil       pgtype.Timestamptz
+	PkceExemptUntil       *time.Time
 	BackchannelLogoutUri  *string
 	FrontchannelLogoutUri *string
 	LogoUri               *string
@@ -667,8 +666,8 @@ type GetRefreshTokenForIntrospectRow struct {
 	Scopes         []string
 	IssuedAt       time.Time
 	ExpiresAt      time.Time
-	UsedAt         pgtype.Timestamptz
-	RevokedAt      pgtype.Timestamptz
+	UsedAt         *time.Time
+	RevokedAt      *time.Time
 }
 
 func (q *Queries) GetRefreshTokenForIntrospect(ctx context.Context, tokenHash string) (GetRefreshTokenForIntrospectRow, error) {
@@ -720,9 +719,9 @@ FROM account.users WHERE id = $1 AND deleted_at IS NULL AND status = 'active'
 
 type GetUserinfoRow struct {
 	Email           string
-	EmailVerifiedAt pgtype.Timestamptz
+	EmailVerifiedAt *time.Time
 	Phone           *string
-	PhoneVerifiedAt pgtype.Timestamptz
+	PhoneVerifiedAt *time.Time
 	DisplayName     *string
 	AvatarUrl       *string
 	UpdatedAt       time.Time
@@ -768,9 +767,9 @@ type InsertAuthorizationCodeParams struct {
 	Nonce               interface{}
 	CodeChallenge       interface{}
 	CodeChallengeMethod interface{}
-	LoginSessionID      pgtype.UUID
+	LoginSessionID      *uuid.UUID
 	Resource            string
-	AuthTime            pgtype.Timestamptz
+	AuthTime            *time.Time
 }
 
 // ==========================================================================
@@ -972,15 +971,14 @@ type InsertOIDCClientRow struct {
 	GrantTypes            []string
 	Scopes                []string
 	CreatedAt             time.Time
-	PkceExemptUntil       pgtype.Timestamptz
+	PkceExemptUntil       *time.Time
 	BackchannelLogoutUri  *string
 	FrontchannelLogoutUri *string
 	LogoUri               *string
 	ClientUri             *string
 }
 
-// Queries for the OIDC domain.
-// All queries are STATIC. Dynamic patterns (buildUpdate etc.) do not exist here.
+// Queries for the OIDC domain, compiled by sqlc into ./dbgen.
 // ==========================================================================
 // OIDC clients
 // ==========================================================================
@@ -1046,9 +1044,9 @@ type InsertRefreshTokenParams struct {
 	Scopes                []string
 	ExpiresAt             time.Time
 	Resource              *string
-	LoginSessionID        pgtype.UUID
+	LoginSessionID        *uuid.UUID
 	AuthorizationCodeHash *string
-	AuthTime              pgtype.Timestamptz
+	AuthTime              *time.Time
 	DefaultMaxAgeSeconds  float64
 }
 
@@ -1132,10 +1130,10 @@ type InsertRotatedRefreshTokenParams struct {
 	ExpiresAt             time.Time
 	GrantExpiresAt        time.Time
 	Resource              *string
-	LoginSessionID        pgtype.UUID
+	LoginSessionID        *uuid.UUID
 	AuthorizationCodeHash *string
-	GrantID               pgtype.UUID
-	AuthTime              pgtype.Timestamptz
+	GrantID               *uuid.UUID
+	AuthTime              *time.Time
 }
 
 // InsertRotatedRefreshToken continues a grant: it keeps the grant's end, and
@@ -1252,8 +1250,8 @@ LIMIT $3
 `
 
 type ListClientAuthFailuresParams struct {
-	OrganizationID pgtype.UUID
-	ClientRowID    pgtype.UUID
+	OrganizationID *uuid.UUID
+	ClientRowID    *uuid.UUID
 	MaxRows        int32
 }
 
@@ -1332,13 +1330,13 @@ type ListDevicesRow struct {
 	ClientName   string
 	UserCode     string
 	Status       string
-	UserID       pgtype.UUID
+	UserID       *uuid.UUID
 	UserEmail    string
 	Scopes       []string
 	CreatedAt    time.Time
 	ExpiresAt    time.Time
-	LastPolledAt pgtype.Timestamptz
-	ConsumedAt   pgtype.Timestamptz
+	LastPolledAt *time.Time
+	ConsumedAt   *time.Time
 }
 
 // At most paging.MaxListItems+1 rows: the API truncates the rest.
@@ -1413,7 +1411,7 @@ type ListGrantsRow struct {
 	IssuedAt     time.Time
 	ExpiresAt    time.Time
 	AuthorizedAt time.Time
-	ConsentedAt  pgtype.Timestamptz
+	ConsentedAt  *time.Time
 }
 
 // ListGrants returns a page of the organization's live grants (each the current
@@ -1476,7 +1474,7 @@ type ListOIDCClientsRow struct {
 	GrantTypes            []string
 	Scopes                []string
 	CreatedAt             time.Time
-	PkceExemptUntil       pgtype.Timestamptz
+	PkceExemptUntil       *time.Time
 	BackchannelLogoutUri  *string
 	FrontchannelLogoutUri *string
 	LogoUri               *string
@@ -1654,6 +1652,37 @@ func (q *Queries) ListShadowAICandidates(ctx context.Context, arg ListShadowAICa
 	return items, nil
 }
 
+const listSigningKeyDates = `-- name: ListSigningKeyDates :many
+SELECT kid, created_at, activated_at FROM platform.jwt_signing_keys
+`
+
+type ListSigningKeyDatesRow struct {
+	Kid         string
+	CreatedAt   time.Time
+	ActivatedAt *time.Time
+}
+
+// When the key registry created and activated each signing key.
+func (q *Queries) ListSigningKeyDates(ctx context.Context) ([]ListSigningKeyDatesRow, error) {
+	rows, err := q.db.Query(ctx, listSigningKeyDates)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSigningKeyDatesRow{}
+	for rows.Next() {
+		var i ListSigningKeyDatesRow
+		if err := rows.Scan(&i.Kid, &i.CreatedAt, &i.ActivatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockCIBARequest = `-- name: LockCIBARequest :one
 SELECT user_id, organization_id, status, expires_at
 FROM auth.oidc_ciba_requests WHERE id = $1 FOR UPDATE
@@ -1692,9 +1721,9 @@ type LockCIBARequestByHashRow struct {
 	Scopes          []string
 	Status          string
 	IntervalSeconds int32
-	LastPolledAt    pgtype.Timestamptz
+	LastPolledAt    *time.Time
 	ExpiresAt       time.Time
-	ConsumedAt      pgtype.Timestamptz
+	ConsumedAt      *time.Time
 }
 
 func (q *Queries) LockCIBARequestByHash(ctx context.Context, authReqIDHash string) (LockCIBARequestByHashRow, error) {
@@ -1733,9 +1762,9 @@ type LockClientParams struct {
 // LockClient starts a lockout of a source network and restarts its count,
 // unless one is already in force: only the attempt that starts it gets a row
 // back.
-func (q *Queries) LockClient(ctx context.Context, arg LockClientParams) (pgtype.Timestamptz, error) {
+func (q *Queries) LockClient(ctx context.Context, arg LockClientParams) (*time.Time, error) {
 	row := q.db.QueryRow(ctx, lockClient, arg.DurationSeconds, arg.ClientRowID, arg.SourceNetwork)
-	var locked_until pgtype.Timestamptz
+	var locked_until *time.Time
 	err := row.Scan(&locked_until)
 	return locked_until, err
 }
@@ -1750,13 +1779,13 @@ type LockDeviceByCodeRow struct {
 	ID              uuid.UUID
 	ClientID        string
 	OrganizationID  uuid.UUID
-	UserID          pgtype.UUID
+	UserID          *uuid.UUID
 	Scopes          []string
 	Status          string
 	IntervalSeconds int32
-	LastPolledAt    pgtype.Timestamptz
+	LastPolledAt    *time.Time
 	ExpiresAt       time.Time
-	ConsumedAt      pgtype.Timestamptz
+	ConsumedAt      *time.Time
 }
 
 func (q *Queries) LockDeviceByCode(ctx context.Context, deviceCodeHash string) (LockDeviceByCodeRow, error) {
@@ -1827,7 +1856,7 @@ type LockOIDCClientForUpdateRow struct {
 	GrantTypes            []string
 	Scopes                []string
 	CreatedAt             time.Time
-	PkceExemptUntil       pgtype.Timestamptz
+	PkceExemptUntil       *time.Time
 	BackchannelLogoutUri  *string
 	FrontchannelLogoutUri *string
 	LogoUri               *string
@@ -1871,14 +1900,14 @@ type LockRefreshTokenRow struct {
 	OrganizationID        uuid.UUID
 	Scopes                []string
 	ExpiresAt             time.Time
-	UsedAt                pgtype.Timestamptz
-	RevokedAt             pgtype.Timestamptz
+	UsedAt                *time.Time
+	RevokedAt             *time.Time
 	Resource              *string
-	LoginSessionID        pgtype.UUID
+	LoginSessionID        *uuid.UUID
 	GrantExpiresAt        time.Time
 	AuthorizationCodeHash *string
-	GrantID               pgtype.UUID
-	AuthTime              pgtype.Timestamptz
+	GrantID               *uuid.UUID
+	AuthTime              *time.Time
 }
 
 func (q *Queries) LockRefreshToken(ctx context.Context, tokenHash string) (LockRefreshTokenRow, error) {
@@ -1952,7 +1981,7 @@ UPDATE auth.oidc_refresh_tokens SET used_at = NOW(), replaced_by = $1 WHERE id =
 `
 
 type MarkRefreshTokenUsedParams struct {
-	NewID pgtype.UUID
+	NewID *uuid.UUID
 	ID    uuid.UUID
 }
 
@@ -2084,7 +2113,7 @@ WHERE id = $2 AND organization_id = $3
 `
 
 type ReviewOIDCClientParams struct {
-	ReviewedBy     pgtype.UUID
+	ReviewedBy     *uuid.UUID
 	ID             uuid.UUID
 	OrganizationID uuid.UUID
 }
@@ -2248,7 +2277,7 @@ type RevokeRefreshTokenGrantRow struct {
 	ID             uuid.UUID
 	UserID         uuid.UUID
 	OrganizationID uuid.UUID
-	GrantID        pgtype.UUID
+	GrantID        *uuid.UUID
 }
 
 // RevokeRefreshTokenGrant ends the whole grant (every rotation) the
@@ -2304,7 +2333,7 @@ type SessionClientsRow struct {
 // ==========================================================================
 // SessionClients is every application that holds a code or a grant from a
 // hosted-login session, with where it hears of a sign-out.
-func (q *Queries) SessionClients(ctx context.Context, loginSessionID pgtype.UUID) ([]SessionClientsRow, error) {
+func (q *Queries) SessionClients(ctx context.Context, loginSessionID *uuid.UUID) ([]SessionClientsRow, error) {
 	rows, err := q.db.Query(ctx, sessionClients, loginSessionID)
 	if err != nil {
 		return nil, err
@@ -2435,7 +2464,7 @@ type UpdateOIDCClientParams struct {
 	GrantTypes               []string
 	Scopes                   []string
 	SetPkceExemptUntil       bool
-	PkceExemptUntil          pgtype.Timestamptz
+	PkceExemptUntil          *time.Time
 	SetBackchannelLogoutUri  bool
 	BackchannelLogoutUri     string
 	SetFrontchannelLogoutUri bool
@@ -2459,7 +2488,7 @@ type UpdateOIDCClientRow struct {
 	GrantTypes            []string
 	Scopes                []string
 	CreatedAt             time.Time
-	PkceExemptUntil       pgtype.Timestamptz
+	PkceExemptUntil       *time.Time
 	BackchannelLogoutUri  *string
 	FrontchannelLogoutUri *string
 	LogoUri               *string
@@ -2520,30 +2549,6 @@ type UpdateOIDCClientSecretParams struct {
 
 func (q *Queries) UpdateOIDCClientSecret(ctx context.Context, arg UpdateOIDCClientSecretParams) error {
 	_, err := q.db.Exec(ctx, updateOIDCClientSecret, arg.ClientSecretHash, arg.ID, arg.OrganizationID)
-	return err
-}
-
-const upgradeOIDCClientSecretHash = `-- name: UpgradeOIDCClientSecretHash :exec
-UPDATE auth.oidc_clients SET client_secret_hash = $1
-WHERE id = $2 AND organization_id = $3 AND client_secret_hash = $4
-`
-
-type UpgradeOIDCClientSecretHashParams struct {
-	NewHash        *string
-	ID             uuid.UUID
-	OrganizationID uuid.UUID
-	OldHash        *string
-}
-
-// UpgradeOIDCClientSecretHash replaces an Argon2id secret hash from before with
-// its SHA-256 form, once the secret has verified.
-func (q *Queries) UpgradeOIDCClientSecretHash(ctx context.Context, arg UpgradeOIDCClientSecretHashParams) error {
-	_, err := q.db.Exec(ctx, upgradeOIDCClientSecretHash,
-		arg.NewHash,
-		arg.ID,
-		arg.OrganizationID,
-		arg.OldHash,
-	)
 	return err
 }
 

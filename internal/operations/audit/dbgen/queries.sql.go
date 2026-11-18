@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const advanceAuditChainCheckpoint = `-- name: AdvanceAuditChainCheckpoint :exec
@@ -29,7 +28,7 @@ type AdvanceAuditChainCheckpointParams struct {
 	Mac            []byte
 	FromEventID    uuid.UUID
 	ChainShard     int16
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 }
 
 // Move a chain's checkpoint on from the one the run began at, or sign it again
@@ -120,6 +119,22 @@ func (q *Queries) FindAuditRowOutsideShards(ctx context.Context, shards int16) (
 	return i, err
 }
 
+const getABACPolicyName = `-- name: GetABACPolicyName :one
+SELECT name FROM auth.abac_policies WHERE id = $1 AND organization_id = $2
+`
+
+type GetABACPolicyNameParams struct {
+	ID             uuid.UUID
+	OrganizationID *uuid.UUID
+}
+
+func (q *Queries) GetABACPolicyName(ctx context.Context, arg GetABACPolicyNameParams) (string, error) {
+	row := q.db.QueryRow(ctx, getABACPolicyName, arg.ID, arg.OrganizationID)
+	var name string
+	err := row.Scan(&name)
+	return name, err
+}
+
 const getAuditChainCheckpoint = `-- name: GetAuditChainCheckpoint :one
 SELECT event_id, event_created_at, row_hash, key_id, mac FROM platform.audit_chain_checkpoints
 WHERE chain_shard = $1
@@ -128,7 +143,7 @@ WHERE chain_shard = $1
 
 type GetAuditChainCheckpointParams struct {
 	ChainShard     int16
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 }
 
 type GetAuditChainCheckpointRow struct {
@@ -167,7 +182,7 @@ LIMIT 1
 `
 
 type GetAuditChainTipParams struct {
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 	ChainShard     int16
 }
 
@@ -178,9 +193,9 @@ type GetAuditChainTipRow struct {
 
 // Queries for the audit domain.
 //
-// The hash-chained append-only audit log.  Static queries are here; dynamic
-// ones stay hand-written in the respective .go files:
-//   - Reader.List (http.go): dynamic WHERE clause with optional action, resource
+// The hash-chained append-only audit log.  Static queries are here; two stay
+// hand-written in Go:
+//   - Reader.List (list.go): dynamic WHERE clause with optional action, resource
 //     type, actor, free-text search, and cursor filters.
 //   - Record advisory-lock call (audit.go): pg_advisory_xact_lock is a
 //     void-returning side-effect function; it stays as a raw tx.Exec call.
@@ -224,18 +239,18 @@ UNION ALL
 
 type GetAuditEventForVerifyParams struct {
 	ID             uuid.UUID
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 	ChainShard     int16
 }
 
 type GetAuditEventForVerifyRow struct {
 	ID             uuid.UUID
-	OrganizationID pgtype.UUID
-	ActorUserID    pgtype.UUID
+	OrganizationID *uuid.UUID
+	ActorUserID    *uuid.UUID
 	ActorType      string
 	Action         string
 	ResourceType   string
-	ResourceID     pgtype.UUID
+	ResourceID     *uuid.UUID
 	Ip             interface{}
 	UserAgent      string
 	RequestID      string
@@ -298,6 +313,22 @@ func (q *Queries) GetAuditPurgeCheckpoint(ctx context.Context, organizationID uu
 	return i, err
 }
 
+const getGroupName = `-- name: GetGroupName :one
+SELECT name FROM organization.groups WHERE id = $1 AND organization_id = $2
+`
+
+type GetGroupNameParams struct {
+	ID             uuid.UUID
+	OrganizationID *uuid.UUID
+}
+
+func (q *Queries) GetGroupName(ctx context.Context, arg GetGroupNameParams) (string, error) {
+	row := q.db.QueryRow(ctx, getGroupName, arg.ID, arg.OrganizationID)
+	var name string
+	err := row.Scan(&name)
+	return name, err
+}
+
 const getLatestVerificationRun = `-- name: GetLatestVerificationRun :one
 SELECT finished_at, scope FROM platform.audit_verification_runs ORDER BY started_at DESC LIMIT 1
 `
@@ -324,7 +355,7 @@ type GetOrganizationChainCheckpointRow struct {
 	EventID        uuid.UUID
 	EventCreatedAt time.Time
 	VerifiedAt     time.Time
-	BrokenAt       pgtype.Timestamptz
+	BrokenAt       *time.Time
 }
 
 // One organization's chain as the scheduled verification last left it.
@@ -340,6 +371,25 @@ func (q *Queries) GetOrganizationChainCheckpoint(ctx context.Context, organizati
 	return i, err
 }
 
+const getRoleName = `-- name: GetRoleName :one
+
+SELECT name FROM rbac.roles WHERE id = $1 AND organization_id = $2
+`
+
+type GetRoleNameParams struct {
+	ID             uuid.UUID
+	OrganizationID *uuid.UUID
+}
+
+// The names of what an event is about, as they are now, in the event's
+// organization: no row for an event with none (a NULL @organization_id).
+func (q *Queries) GetRoleName(ctx context.Context, arg GetRoleNameParams) (string, error) {
+	row := q.db.QueryRow(ctx, getRoleName, arg.ID, arg.OrganizationID)
+	var name string
+	err := row.Scan(&name)
+	return name, err
+}
+
 const insertAuditChainCheckpoint = `-- name: InsertAuditChainCheckpoint :exec
 INSERT INTO platform.audit_chain_checkpoints (organization_id, chain_shard, event_id, event_created_at, row_hash, key_id, mac)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -347,7 +397,7 @@ ON CONFLICT (organization_id, chain_shard) DO NOTHING
 `
 
 type InsertAuditChainCheckpointParams struct {
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 	ChainShard     int16
 	EventID        uuid.UUID
 	EventCreatedAt time.Time
@@ -385,12 +435,12 @@ INSERT INTO audit.events (
 
 type InsertAuditEventParams struct {
 	ID             uuid.UUID
-	OrganizationID pgtype.UUID
-	ActorUserID    pgtype.UUID
+	OrganizationID *uuid.UUID
+	ActorUserID    *uuid.UUID
 	ActorType      string
 	Action         string
 	ResourceType   string
-	ResourceID     pgtype.UUID
+	ResourceID     *uuid.UUID
 	Ip             interface{}
 	UserAgent      *string
 	RequestID      *string
@@ -444,8 +494,8 @@ type InsertAuditVerificationRunParams struct {
 	OrganizationsWalked  int32
 	RowsChecked          int64
 	Outcome              string
-	BrokenOrganizationID pgtype.UUID
-	FirstBrokenLink      pgtype.UUID
+	BrokenOrganizationID *uuid.UUID
+	FirstBrokenLink      *uuid.UUID
 	BrokenReason         *string
 	Error                *string
 }
@@ -489,7 +539,7 @@ FROM platform.audit_chain_checkpoints
 `
 
 type ListAuditChainCheckpointsRow struct {
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 	ChainShard     int16
 	EventID        uuid.UUID
 	EventCreatedAt time.Time
@@ -601,7 +651,7 @@ ORDER BY created_at ASC, id ASC
 `
 
 type ListAuditEventsForVerifyParams struct {
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 	AfterCreatedAt time.Time
 	AfterID        uuid.UUID
 	PageSize       int32
@@ -610,12 +660,12 @@ type ListAuditEventsForVerifyParams struct {
 
 type ListAuditEventsForVerifyRow struct {
 	ID             uuid.UUID
-	OrganizationID pgtype.UUID
-	ActorUserID    pgtype.UUID
+	OrganizationID *uuid.UUID
+	ActorUserID    *uuid.UUID
 	ActorType      string
 	Action         string
 	ResourceType   string
-	ResourceID     pgtype.UUID
+	ResourceID     *uuid.UUID
 	Ip             interface{}
 	UserAgent      string
 	RequestID      string
@@ -760,7 +810,7 @@ WHERE event_id = $1 AND chain_shard = $2
 type MarkAuditChainCheckpointBrokenParams struct {
 	EventID        uuid.UUID
 	ChainShard     int16
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 }
 
 // Mark a chain broken at the checkpoint the run began at. The checkpoint then

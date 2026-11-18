@@ -14,18 +14,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
@@ -42,7 +39,7 @@ type Service struct {
 		LookupTXT(ctx context.Context, name string) ([]string, error)
 	}
 	web    *http.Client
-	gate   PlanGate
+	gate   entitlements.PlanGate
 	owners OwnerChecker
 	// memberPermissions are all a member may hold without being an
 	// administrator for domain capture.
@@ -57,14 +54,8 @@ func NewService(pool *pgxpool.Pool, policies ...*egress.Policy) *Service {
 		web: loginProbeClient(egress.PublicPolicy(policies...))}
 }
 
-// PlanGate reports whether a boolean plan feature is in the organization's plan.
-// Satisfied by *entitlements.Service.
-type PlanGate interface {
-	FeatureAllowed(ctx context.Context, organizationID uuid.UUID, feature string) (bool, error)
-}
-
 // SetPlanGate sets the plan-feature gate (nil allows all features).
-func (s *Service) SetPlanGate(g PlanGate) { s.gate = g }
+func (s *Service) SetPlanGate(g entitlements.PlanGate) { s.gate = g }
 
 // Resolver looks up the TXT records at a DNS name.
 type Resolver interface {
@@ -150,23 +141,14 @@ func newToken() (string, error) {
 	return "qeet-verify-" + hex.EncodeToString(b), nil
 }
 
-// pgtypeToTimePtr converts a pgtype.Timestamptz returned by generated code to *time.Time.
-func pgtypeToTimePtr(p pgtype.Timestamptz) *time.Time {
-	if !p.Valid {
-		return nil
-	}
-	t := p.Time
-	return &t
-}
-
 // rowToDomain builds a Domain from the columns the generated InsertDomain,
 // GetDomainForVerify and MarkDomainVerified rows share.
-func rowToDomain(id uuid.UUID, domain, token string, verifiedAt pgtype.Timestamptz, createdAt time.Time) Domain {
+func rowToDomain(id uuid.UUID, domain, token string, verifiedAt *time.Time, createdAt time.Time) Domain {
 	d := Domain{
 		ID:                id,
 		Domain:            domain,
 		VerificationToken: token,
-		VerifiedAt:        pgtypeToTimePtr(verifiedAt),
+		VerifiedAt:        verifiedAt,
 		CreatedAt:         createdAt,
 	}
 	d.fillDNS()
@@ -207,7 +189,7 @@ func (s *Service) Add(ctx context.Context, organizationID uuid.UUID, raw string,
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "uq_organization_domain") {
-			return nil, errs.ErrDomainVerifyExists
+			return nil, ErrExists
 		}
 		return nil, err
 	}
@@ -215,7 +197,7 @@ func (s *Service) Add(ctx context.Context, organizationID uuid.UUID, raw string,
 	if err := audit.Record(ctx, tx, actor.Event(organizationID, "domain.created", "domain", d.ID, map[string]any{"domain": d.Domain})); err != nil {
 		return nil, err
 	}
-	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: d.ID, Topic: "domain.events", EventType: "domain.created", Payload: map[string]any{"domain_id": d.ID, "tenant_id": organizationID, "domain": d.Domain}}); err != nil {
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: d.ID, Topic: "domain.events", EventType: "domain.created", Payload: map[string]any{"domain_id": d.ID, "organization_id": organizationID, "domain": d.Domain}}); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -224,36 +206,31 @@ func (s *Service) Add(ctx context.Context, organizationID uuid.UUID, raw string,
 	return &d, nil
 }
 
+// domainWithStatus builds a Domain from a row that also carries its switches
+// and the outcome of its last check.
+func domainWithStatus(row dbgen.ListDomainsRow) Domain {
+	d := Domain{
+		ID: row.ID, Domain: row.Domain, VerificationToken: row.VerificationToken, VerifiedAt: row.VerifiedAt,
+		CreatedAt: row.CreatedAt, LastCheckedAt: row.LastCheckedAt, LastError: row.LastError,
+		SSOEnabled: row.SsoEnabled, JITEnabled: row.JitEnabled,
+	}
+	d.fillDNS()
+	d.deriveStatus()
+	return d
+}
+
 // List returns the organization's domains with their settings and the outcome of the
-// last verification attempt. It is hand-written SQL because the generated
-// ListDomains doesn't select those columns.
+// last verification attempt.
 func (s *Service) List(ctx context.Context, organizationID uuid.UUID) ([]Domain, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, domain, verification_token, verified_at, created_at,
-		       last_checked_at, COALESCE(last_error, ''), sso_enabled, jit_enabled
-		FROM organization.domains
-		WHERE organization_id = $1
-		ORDER BY domain
-	`, organizationID)
+	rows, err := s.q.ListDomains(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	out := make([]Domain, 0)
-	for rows.Next() {
-		var d Domain
-		var verifiedAt, lastChecked *time.Time
-		if err := rows.Scan(&d.ID, &d.Domain, &d.VerificationToken, &verifiedAt, &d.CreatedAt,
-			&lastChecked, &d.LastError, &d.SSOEnabled, &d.JITEnabled); err != nil {
-			return nil, err
-		}
-		d.VerifiedAt, d.LastCheckedAt = verifiedAt, lastChecked
-		d.fillDNS()
-		d.deriveStatus()
-		out = append(out, d)
+	out := make([]Domain, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, domainWithStatus(row))
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // UpdateSettings toggles the per-domain switches.
@@ -267,27 +244,16 @@ func (s *Service) UpdateSettings(
 	}
 	defer tx.Rollback(ctx)
 
-	var d Domain
-	var verifiedAt, lastChecked *time.Time
-	err = tx.QueryRow(ctx, `
-		UPDATE organization.domains SET
-			sso_enabled = COALESCE($3, sso_enabled),
-			jit_enabled = COALESCE($4, jit_enabled)
-		WHERE id = $1 AND organization_id = $2
-		RETURNING id, domain, verification_token, verified_at, created_at,
-		          last_checked_at, COALESCE(last_error, ''), sso_enabled, jit_enabled
-	`, id, organizationID, sso, jit).
-		Scan(&d.ID, &d.Domain, &d.VerificationToken, &verifiedAt, &d.CreatedAt,
-			&lastChecked, &d.LastError, &d.SSOEnabled, &d.JITEnabled)
+	row, err := s.q.WithTx(tx).UpdateDomainSettings(ctx, dbgen.UpdateDomainSettingsParams{
+		SsoEnabled: sso, JitEnabled: jit, ID: id, OrganizationID: organizationID,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrDomainVerifyNotFound
+		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	d.VerifiedAt, d.LastCheckedAt = verifiedAt, lastChecked
-	d.fillDNS()
-	d.deriveStatus()
+	d := domainWithStatus(dbgen.ListDomainsRow(row))
 
 	if err := audit.Record(ctx, tx, actor.Event(organizationID, "domain.settings_updated", "domain", d.ID,
 		map[string]any{"domain": d.Domain, "sso": d.SSOEnabled, "jit": d.JITEnabled})); err != nil {
@@ -306,7 +272,7 @@ func (s *Service) UpdateSettings(
 func (s *Service) Verify(ctx context.Context, id, organizationID uuid.UUID, actor audit.Actor) (*Domain, error) {
 	row, err := s.q.GetDomainForVerify(ctx, dbgen.GetDomainForVerifyParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrDomainVerifyNotFound
+		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -334,9 +300,7 @@ func (s *Service) Verify(ctx context.Context, id, organizationID uuid.UUID, acto
 		if lerr != nil {
 			reason = "DNS lookup failed"
 		}
-		if _, uerr := s.pool.Exec(ctx,
-			`UPDATE organization.domains SET last_checked_at = NOW(), last_error = $3
-			 WHERE id = $1 AND organization_id = $2`, id, organizationID, reason); uerr != nil {
+		if uerr := s.q.RecordDomainCheck(ctx, dbgen.RecordDomainCheckParams{LastError: &reason, ID: id, OrganizationID: organizationID}); uerr != nil {
 			return nil, uerr
 		}
 		return nil, errs.ErrDomainVerifyDNSRecordMissing
@@ -347,9 +311,7 @@ func (s *Service) Verify(ctx context.Context, id, organizationID uuid.UUID, acto
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx,
-		`UPDATE organization.domains SET last_checked_at = NOW(), last_error = NULL
-		 WHERE id = $1 AND organization_id = $2`, id, organizationID); err != nil {
+	if err := s.q.WithTx(tx).RecordDomainCheck(ctx, dbgen.RecordDomainCheckParams{ID: id, OrganizationID: organizationID}); err != nil {
 		return nil, err
 	}
 	updated, err := s.q.WithTx(tx).MarkDomainVerified(ctx, dbgen.MarkDomainVerifiedParams{ID: id, OrganizationID: organizationID})
@@ -363,7 +325,7 @@ func (s *Service) Verify(ctx context.Context, id, organizationID uuid.UUID, acto
 	if err := audit.Record(ctx, tx, actor.Event(organizationID, "domain.verified", "domain", verified.ID, map[string]any{"domain": verified.Domain})); err != nil {
 		return nil, err
 	}
-	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: verified.ID, Topic: "domain.events", EventType: "domain.verified", Payload: map[string]any{"domain_id": verified.ID, "tenant_id": organizationID, "domain": verified.Domain}}); err != nil {
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: verified.ID, Topic: "domain.events", EventType: "domain.verified", Payload: map[string]any{"domain_id": verified.ID, "organization_id": organizationID, "domain": verified.Domain}}); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -384,135 +346,13 @@ func (s *Service) Remove(ctx context.Context, id, organizationID uuid.UUID, acto
 		return err
 	}
 	if n == 0 {
-		return errs.ErrDomainVerifyNotFound
+		return ErrNotFound
 	}
 	if err := audit.Record(ctx, tx, actor.Event(organizationID, "domain.deleted", "domain", id, nil)); err != nil {
 		return err
 	}
-	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "domain.events", EventType: "domain.deleted", Payload: map[string]any{"domain_id": id, "tenant_id": organizationID}}); err != nil {
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "domain.events", EventType: "domain.deleted", Payload: map[string]any{"domain_id": id, "organization_id": organizationID}}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
-}
-
-// Handler serves the domain verification HTTP API.
-type Handler struct {
-	Service *Service
-}
-
-// Mount registers the domain verification routes on r.
-func (h *Handler) Mount(r chi.Router) {
-	r.Get("/tenants/{tenantID}/domains", h.list)
-	r.Post("/tenants/{tenantID}/domains", h.add)
-	r.Post("/tenants/{tenantID}/domains/{id}/verify", h.verify)
-	r.Get("/tenants/{tenantID}/login-domain", h.loginDomain)
-	r.Post("/tenants/{tenantID}/login-domain/check", h.checkLoginDomain)
-	r.Patch("/tenants/{tenantID}/domains/{id}", h.updateSettings)
-	r.Delete("/tenants/{tenantID}/domains/{id}", h.remove)
-	r.Get("/tenants/{tenantID}/break-glass-members", h.listBreakGlass)
-	r.Put("/tenants/{tenantID}/break-glass-members/{userID}", h.addBreakGlass)
-	r.Delete("/tenants/{tenantID}/break-glass-members/{userID}", h.removeBreakGlass)
-}
-
-func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := httpx.PathOrganization(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	out, err := h.Service.List(r.Context(), organizationID)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, paging.List(out))
-}
-
-type addInput struct {
-	Domain string `json:"domain"`
-}
-
-func (h *Handler) add(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := httpx.PathOrganization(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	var in addInput
-	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	d, err := h.Service.Add(r.Context(), organizationID, in.Domain, audit.ActorOf(r))
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusCreated, d)
-}
-
-func (h *Handler) verify(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := httpx.PathOrganization(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
-		return
-	}
-	d, err := h.Service.Verify(r.Context(), id, organizationID, audit.ActorOf(r))
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, d)
-}
-
-func (h *Handler) remove(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := httpx.PathOrganization(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
-		return
-	}
-	if err := h.Service.Remove(r.Context(), id, organizationID, audit.ActorOf(r)); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-type updateSettingsInput struct {
-	SSOEnabled *bool `json:"sso_enabled"`
-	JITEnabled *bool `json:"jit_enabled"`
-}
-
-func (h *Handler) updateSettings(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := httpx.PathOrganization(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
-		return
-	}
-	var in updateSettingsInput
-	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	d, err := h.Service.UpdateSettings(r.Context(), id, organizationID, in.SSOEnabled, in.JITEnabled, audit.ActorOf(r))
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, d)
 }

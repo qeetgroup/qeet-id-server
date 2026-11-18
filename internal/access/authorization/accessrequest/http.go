@@ -3,7 +3,6 @@ package accessrequest
 import (
 	"context"
 	"net/http"
-	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -11,10 +10,11 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 // Handler serves access requests: a person's own under /me, and an
-// organization's under /tenants/{tenantID}, for the people who can grant roles.
+// organization's under /organizations/{organizationID}, for the people who can grant roles.
 type Handler struct {
 	Service *Service
 	// GrantCheck refuses an approval whose role would give authority the
@@ -29,10 +29,10 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/me/access-requests/roles", h.roles)
 	r.Post("/me/access-requests/{id}/cancel", h.cancel)
 
-	r.Get("/tenants/{tenantID}/access-requests", h.list)
-	r.Get("/tenants/{tenantID}/access-requests/{id}", h.get)
-	r.Post("/tenants/{tenantID}/access-requests/{id}/approve", h.approve)
-	r.Post("/tenants/{tenantID}/access-requests/{id}/deny", h.deny)
+	r.Get("/organizations/{organizationID}/access-requests", h.list)
+	r.Get("/organizations/{organizationID}/access-requests/{id}", h.get)
+	r.Post("/organizations/{organizationID}/access-requests/{id}/approve", h.approve)
+	r.Post("/organizations/{organizationID}/access-requests/{id}/deny", h.deny)
 }
 
 // caller is the signed-in person and the organization they're signed in to.
@@ -45,11 +45,7 @@ func caller(r *http.Request) (organizationID, userID uuid.UUID, err error) {
 }
 
 func pathID(r *http.Request) (uuid.UUID, error) {
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid id")
-	}
-	return id, nil
+	return httpx.PathUUID(r, "id", errs.ErrBadRequest.WithDetail("invalid id"))
 }
 
 func (h *Handler) listMine(w http.ResponseWriter, r *http.Request) {
@@ -127,14 +123,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	limit := 0
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if limit, err = strconv.Atoi(v); err != nil {
-			httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid limit"))
-			return
-		}
-	}
-	out, err := h.Service.List(r.Context(), tid, r.URL.Query().Get("status"), limit)
+	out, err := h.Service.List(r.Context(), tid, r.URL.Query().Get("status"), paging.Limit(r.URL.Query(), 100, 200))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

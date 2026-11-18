@@ -10,7 +10,7 @@ post:
     attaches their provider account to the sender's. An unknown, used or expired
     code answers 400 social.link_code_invalid (codes live two minutes); an
     identity already linked to another account answers 409
-    social.already_linked. An account whose organisation requires single
+    social.already_linked. An account whose organization requires single
     sign-on on its domain links no provider (403 auth.sso_required), as no
     social sign-in signs it in.
   tags:

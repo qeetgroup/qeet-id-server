@@ -1,0 +1,50 @@
+post:
+  operationId: revokeOauthGrants
+  summary: Revoke several grants
+  description: >-
+    Revokes, in one transaction, the grants ids names (up to 100; each ends its
+    whole client-and-person chain, as the delete endpoint does, and an unknown
+    one is skipped), or every grant the organization's people gave client_id. Send one
+    of the two. Returns how many people's access to an application it ended.
+    Audited as oauth.grant_revoked for each grant named, or once as
+    oauth.client_grants_revoked for an application. Requires connection.write.
+  tags:
+    - OIDC
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          properties:
+            ids:
+              type: array
+              maxItems: 100
+              items:
+                type: string
+                format: uuid
+            client_id:
+              type: string
+  responses:
+    '200':
+      description: Revoked
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - revoked
+            properties:
+              revoked:
+                type: integer
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml

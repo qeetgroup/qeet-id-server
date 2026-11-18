@@ -6,8 +6,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 // noopHandler returns 200 so test cases can distinguish "passed
@@ -73,7 +71,7 @@ func TestCSRF_RejectionUsesErrorEnvelope(t *testing.T) {
 			} `json:"error"`
 		}
 		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || rec.Code != http.StatusForbidden ||
-			body.Error.Code != errs.CodeCSRFFailed || body.Error.Detail == "" {
+			body.Error.Code != CodeCSRFFailed || body.Error.Detail == "" {
 			t.Errorf("%s refusal: status %d body %s, want 403 with error.code csrf_failed and a detail", name, rec.Code, rec.Body)
 		}
 	}

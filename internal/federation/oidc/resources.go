@@ -14,8 +14,6 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
@@ -25,7 +23,7 @@ import (
 // serves it and may introspect its tokens ("" for none).
 type Resource struct {
 	ID             uuid.UUID `json:"id"`
-	OrganizationID uuid.UUID `json:"tenant_id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
 	Identifier     string    `json:"identifier"`
 	Name           string    `json:"name"`
 	ServerClientID string    `json:"server_client_id,omitempty"`
@@ -61,7 +59,7 @@ func checkResource(ctx context.Context, q *dbgen.Queries, organizationID uuid.UU
 		return err
 	}
 	if !ok {
-		return oauthErr("invalid_target", "resource is not registered for this organisation")
+		return oauthErr("invalid_target", "resource is not registered for this organization")
 	}
 	return nil
 }
@@ -100,7 +98,7 @@ func (s *Service) CheckResourceDomain(ctx context.Context, organizationID uuid.U
 	host := hostOf(identifier)
 	for _, own := range []string{s.issuer.JWTIssuer(), s.issuer.JWTAudience(), publicBaseURL} {
 		if own != "" && (identifier == own || (host != "" && host == hostOf(own))) {
-			return errs.ErrOIDCResourceReserved
+			return ErrResourceReserved
 		}
 	}
 	if host == "" {
@@ -111,14 +109,14 @@ func (s *Service) CheckResourceDomain(ctx context.Context, organizationID uuid.U
 		return err
 	}
 	if taken {
-		return errs.ErrOIDCResourceDomainTaken
+		return ErrResourceDomainTaken
 	}
 	verified, err := s.q.ResourceHostVerifiedHere(ctx, dbgen.ResourceHostVerifiedHereParams{OrganizationID: organizationID, Host: host})
 	if err != nil {
 		return err
 	}
 	if !verified {
-		return errs.ErrOIDCResourceDomainUnverified
+		return ErrResourceDomainUnverified
 	}
 	return nil
 }
@@ -131,20 +129,40 @@ func hostOf(uri string) string {
 	return ""
 }
 
-// CreateResource registers a resource for the organization. An identifier is
-// unique across the platform (ErrOIDCResourceExists); callers check its domain
-// first with CheckResourceDomain.
-func (s *Service) CreateResource(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, in CreateResourceInput) (*Resource, error) {
+// CreateResource registers a resource for the organization, recorded as
+// actor's. An identifier is unique across the platform (ErrOIDCResourceExists);
+// callers check its domain first with CheckResourceDomain.
+func (s *Service) CreateResource(ctx context.Context, organizationID uuid.UUID, in CreateResourceInput, actor audit.Actor) (*Resource, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	res, err := s.createResource(ctx, tx, organizationID, in)
+	if err != nil {
+		return nil, err
+	}
+	if err := recordResourceChange(ctx, tx, actor, organizationID, res.ID, "oidc.resource_registered", res.Identifier); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+// createResource registers a resource for the organization within tx.
+func (s *Service) createResource(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, in CreateResourceInput) (*Resource, error) {
 	in.Identifier = strings.TrimSpace(in.Identifier)
 	if !wellFormedResource(in.Identifier) {
-		return nil, errs.ErrOIDCResourceInvalid
+		return nil, ErrResourceInvalid
 	}
 	q := s.q.WithTx(tx)
 	var server *string
 	if in.ServerClientID != "" {
 		owner, err := q.GetClientName(ctx, in.ServerClientID)
 		if errors.Is(err, pgx.ErrNoRows) || (err == nil && owner.OrganizationID != organizationID) {
-			return nil, errs.ErrOIDCClientNotFound
+			return nil, ErrClientNotFound
 		}
 		if err != nil {
 			return nil, err
@@ -154,8 +172,8 @@ func (s *Service) CreateResource(ctx context.Context, tx pgx.Tx, organizationID 
 	row, err := q.InsertResource(ctx, dbgen.InsertResourceParams{
 		OrganizationID: organizationID, Identifier: in.Identifier, Name: strings.TrimSpace(in.Name), ServerClientID: server,
 	})
-	if pgxerr.IsUnique(err) {
-		return nil, errs.ErrOIDCResourceExists
+	if postgres.IsUnique(err) {
+		return nil, ErrResourceExists
 	}
 	if err != nil {
 		return nil, err
@@ -164,18 +182,35 @@ func (s *Service) CreateResource(ctx context.Context, tx pgx.Tx, organizationID 
 	return &r, nil
 }
 
-// DeleteResource removes a registered resource; tokens already issued for it
-// last out their lifetime, and no new one is issued.
-func (s *Service) DeleteResource(ctx context.Context, tx pgx.Tx, organizationID, id uuid.UUID) (string, error) {
+// DeleteResource removes a registered resource, recorded as actor's; tokens
+// already issued for it last out their lifetime, and no new one is issued.
+func (s *Service) DeleteResource(ctx context.Context, organizationID, id uuid.UUID, actor audit.Actor) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
 	identifier, err := s.q.WithTx(tx).DeleteResource(ctx, dbgen.DeleteResourceParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", errs.ErrOIDCResourceNotFound
+		return ErrResourceNotFound
 	}
-	return identifier, err
+	if err != nil {
+		return err
+	}
+	if err := recordResourceChange(ctx, tx, actor, organizationID, id, "oidc.resource_removed", identifier); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// recordResourceChange audits, in tx, actor's change to organizationID's
+// resource id.
+func recordResourceChange(ctx context.Context, tx pgx.Tx, actor audit.Actor, organizationID, id uuid.UUID, action, identifier string) error {
+	return audit.Record(ctx, tx, actor.Event(organizationID, action, "oidc_resource", id, map[string]any{"identifier": identifier}))
 }
 
 func (h *Handler) listResources(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -189,7 +224,7 @@ func (h *Handler) listResources(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) createResource(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -204,22 +239,8 @@ func (h *Handler) createResource(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	tx, err := h.Service.Pool().Begin(ctx)
+	res, err := h.Service.CreateResource(ctx, organizationID, in, audit.ActorOf(r))
 	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	defer tx.Rollback(ctx)
-	res, err := h.Service.CreateResource(ctx, tx, organizationID, in)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := h.auditResource(ctx, tx, r, organizationID, res.ID, "oidc.resource_registered", res.Identifier); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -227,7 +248,7 @@ func (h *Handler) createResource(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) deleteResource(w http.ResponseWriter, r *http.Request) {
-	organizationID, err := requirePathOrganization(r)
+	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -237,35 +258,9 @@ func (h *Handler) deleteResource(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	ctx := r.Context()
-	tx, err := h.Service.Pool().Begin(ctx)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	defer tx.Rollback(ctx)
-	identifier, err := h.Service.DeleteResource(ctx, tx, organizationID, id)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := h.auditResource(ctx, tx, r, organizationID, id, "oidc.resource_removed", identifier); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := h.Service.DeleteResource(r.Context(), organizationID, id, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func (h *Handler) auditResource(ctx context.Context, tx pgx.Tx, r *http.Request, organizationID, id uuid.UUID, action, identifier string) error {
-	actorID, actorType := audit.ActorOf(r).Identity()
-	return audit.Record(ctx, tx, audit.Event{
-		OrganizationID: &organizationID, ActorUserID: actorID, ActorType: actorType,
-		Action: action, ResourceType: "oidc_resource", ResourceID: &id,
-		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
-		Metadata: map[string]any{"identifier": identifier},
-	})
 }

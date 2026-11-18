@@ -13,7 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/audit/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
@@ -56,6 +56,48 @@ func checkpointOf(t *testing.T, organization uuid.UUID) (uuid.UUID, bool) {
 		t.Fatal(err)
 	}
 	return id, broken
+}
+
+// TestEachPlatformChainKeepsItsCheckpoint checks that a scheduled run keeps a
+// checkpoint per platform chain, at that chain's last row, moves on only the
+// chain that grew, and keeps one per chain however many runs write one.
+func TestEachPlatformChainKeepsItsCheckpoint(t *testing.T) {
+	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
+	if err := OpenPlatformChains(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	last10 := recordPlatform(t, 10, "auth.signed_up")
+	last11 := recordPlatform(t, 11, "auth.signed_up")
+	verifyAllOf(t, false)
+	at := func(shard int16) uuid.UUID {
+		t.Helper()
+		var id uuid.UUID
+		if err := pool.QueryRow(ctx, `SELECT event_id FROM platform.audit_chain_checkpoints
+			WHERE organization_id IS NULL AND chain_shard = $1`, shard).Scan(&id); err != nil {
+			t.Fatalf("chain %d's checkpoint: %v", shard, err)
+		}
+		return id
+	}
+	if at(10) != last10 || at(11) != last11 {
+		t.Fatalf("checkpoints at %s and %s, want each chain's last row %s and %s", at(10), at(11), last10, last11)
+	}
+	grown := recordPlatform(t, 10, "auth.logout")
+	verifyAllOf(t, false)
+	if at(10) != grown || at(11) != last11 {
+		t.Errorf("after chain 10 grew: checkpoints at %s and %s, want %s and %s unmoved", at(10), at(11), grown, last11)
+	}
+	v := NewVerifier(pool, nil)
+	for range 2 {
+		if err := v.keepCheckpoint(ctx, chain{shard: 10}, nil, &checkpoint{EventID: uuid.New(), CreatedAt: time.Now(), RowHash: chainSeed}, true); err != nil {
+			t.Fatalf("a second first checkpoint of chain 10: %v", err)
+		}
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM platform.audit_chain_checkpoints WHERE organization_id IS NULL AND chain_shard = 10`); n != 1 {
+		t.Errorf("chain 10 has %d checkpoints, want 1", n)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM platform.audit_chain_checkpoints WHERE organization_id IS NULL`); n != PlatformChainShards {
+		t.Errorf("%d platform checkpoints, want one per chain, %d", n, PlatformChainShards)
+	}
 }
 
 // TestVerifyAllGoesOnFromTheCheckpoint checks that a scheduled run walks a
@@ -142,7 +184,7 @@ func rewriteChain(t *testing.T, organization, id uuid.UUID) {
 		t.Fatal(err)
 	}
 	rows, err := dbgen.New(pool).ListAuditEventsForVerify(ctx, dbgen.ListAuditEventsForVerifyParams{
-		OrganizationID: pgUUIDNullable(&organization), PageSize: 1000,
+		OrganizationID: &organization, PageSize: 1000,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -267,7 +309,7 @@ func TestLastVerificationIsRead(t *testing.T) {
 	organization, other := dbtest.Organization(t), dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
 	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Verifier: NewVerifier(pool, nil)}).Mount)
-	path := "/tenants/" + organization.String() + "/audit/verification"
+	path := "/organizations/" + organization.String() + "/audit/verification"
 	var got ChainVerification
 	dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, path, nil), &got)
 	if got.Verified || got.Intact || got.LastVerifiedAt != nil {
@@ -288,7 +330,7 @@ func TestLastVerificationIsRead(t *testing.T) {
 	}
 	dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, path, nil), &got)
 	if !got.Verified || !got.Intact || got.LastEventID == nil || *got.LastEventID != last || got.LastRunScope != "incremental" || got.LastRunAt == nil {
-		t.Errorf("once verified: %+v; want intact up to its last event, and the incremental run, whatever another organisation's chain shows", got)
+		t.Errorf("once verified: %+v; want intact up to its last event, and the incremental run, whatever another organization's chain shows", got)
 	}
 	if _, err := pool.Exec(ctx, `UPDATE platform.audit_chain_checkpoints SET broken_at = NOW() WHERE organization_id = $1`, organization); err != nil {
 		t.Fatal(err)

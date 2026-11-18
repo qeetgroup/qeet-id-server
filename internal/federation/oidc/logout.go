@@ -13,12 +13,14 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
-	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/strutil"
 )
 
 // When a hosted-login session ends, every application holding a code or grant
@@ -54,7 +56,7 @@ func validLogoutURI(raw string) bool {
 // the signed-out page. initiatedBy is the application that asked for the
 // sign-out ("" for none).
 func (s *Service) NotifySignOut(ctx context.Context, sessionID, userID uuid.UUID, initiatedBy string) ([]string, error) {
-	clients, err := s.q.SessionClients(ctx, optionalUUID(sessionID))
+	clients, err := s.q.SessionClients(ctx, postgres.NullIfZero(sessionID))
 	if err != nil || len(clients) == 0 {
 		return nil, err
 	}
@@ -97,16 +99,12 @@ func (s *Service) NotifySignOut(ctx context.Context, sessionID, userID uuid.UUID
 			n.frontchannel++
 		}
 	}
-	sid := sessionID
+	person := audit.Actor{UserID: &userID, Type: "user"}
 	for _, organizationID := range organizations {
 		n := notices[organizationID]
-		if err := audit.Record(ctx, tx, audit.Event{
-			OrganizationID: &organizationID, ActorUserID: &userID, ActorType: "user",
-			Action: "oidc.sign_out_notified", ResourceType: "login_session", ResourceID: &sid,
-			Metadata: map[string]any{
-				"initiated_by": initiatedBy, "backchannel": n.backchannel, "frontchannel_clients": n.frontchannel,
-			},
-		}); err != nil {
+		if err := audit.Record(ctx, tx, person.Event(organizationID, "oidc.sign_out_notified", "login_session", sessionID, map[string]any{
+			"initiated_by": initiatedBy, "backchannel": n.backchannel, "frontchannel_clients": n.frontchannel,
+		})); err != nil {
 			return nil, err
 		}
 	}
@@ -159,7 +157,7 @@ func (s *Service) DeliverLogoutNotices(ctx context.Context) (int, error) {
 			attempt := int(d.Attempts) + 1
 			final := attempt >= logoutMaxAttempts
 			if merr := s.q.MarkLogoutDeliveryFailed(ctx, dbgen.MarkLogoutDeliveryFailedParams{
-				ID: d.ID, LastError: truncate(err.Error(), 300),
+				ID: d.ID, LastError: strutil.Truncate(err.Error(), 300),
 				RetryInSeconds: (time.Duration(1<<attempt) * 30 * time.Second).Seconds(), Final: final,
 			}); merr != nil {
 				return delivered, merr
@@ -201,24 +199,8 @@ func (s *Service) postLogoutToken(ctx context.Context, uri, token string) error 
 }
 
 func (s *Service) auditLogoutFailed(ctx context.Context, organizationID uuid.UUID, clientID, uri string, cause error) {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return
-	}
-	defer tx.Rollback(ctx)
-	if audit.Record(ctx, tx, audit.Event{
-		OrganizationID: &organizationID, ActorType: "system", Action: "oidc.backchannel_logout_failed", ResourceType: "oidc_client",
-		Metadata: map[string]any{"client_id": clientID, "uri": uri, "attempts": logoutMaxAttempts, "error": truncate(cause.Error(), 300)},
-	}) == nil {
-		_ = tx.Commit(ctx)
-	}
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n]
+	_ = audit.RecordAlone(ctx, s.pool, audit.Actor{Type: "system"}.Event(organizationID, "oidc.backchannel_logout_failed", "oidc_client", uuid.Nil,
+		map[string]any{"client_id": clientID, "uri": uri, "attempts": logoutMaxAttempts, "error": strutil.Truncate(cause.Error(), 300)}))
 }
 
 // logoutConfirmation is a short-lived ticket naming the hosted-login session a

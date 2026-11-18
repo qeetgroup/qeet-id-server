@@ -18,7 +18,7 @@ post:
         schema:
           $ref: ../../components/schemas/WebhookCreateInput.yaml
   description: >-
-    Subscribes an endpoint to the organisation's events it names. The endpoint
+    Subscribes an endpoint to the organization's events it names. The endpoint
     must be an allowed outbound destination; the signing secret is shown only in
     this answer. events must name at least one event (422
     webhook.events_required), each from the event catalogue (422
@@ -46,7 +46,7 @@ post:
         application/json:
           example:
             id: '018f2a75-6a7b-7c8d-8e9f-0a1b2c3d4e5f'
-            tenant_id: '018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00'
+            organization_id: '018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00'
             url: https://hooks.example.com/qeet
             events:
             - user.created

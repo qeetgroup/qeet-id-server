@@ -17,20 +17,20 @@ info:
     1. Create an **API key** for simple machine access (`Authorization: ApiKey <key>`), or register an **agent** for AI workloads.
     2. **Agent tokens are re-minted, never refreshed** — call the mint endpoint again to obtain a fresh short-lived token.
     3. Wire up **webhooks** and **auth hooks** to react to events and customize auth flows.
-    4. Store secrets in the **Secrets Vault** (tenant secrets) or connect third-party accounts via the **Token Vault** (external OAuth credentials, refreshed for you).
+    4. Store secrets in the **Secrets Vault** (organization secrets) or connect third-party accounts via the **Token Vault** (external OAuth credentials, refreshed for you).
 
     ## Authentication
 
-    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session). CSRF protection applies only to cookie sessions (`ssoCookie`): requests authorised by `bearerAuth` or `apiKeyAuth` bypass it, as do the client-credentials token exchange (POST /v1/oauth/token) and the directory sign-in (POST /ldap/{id}/authenticate), which carry their credentials in the request. Basic credentials do not bypass it. A request that fails the check is refused with 403 `csrf_failed`.
+    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>` — legacy scheme), `scimBearer` (per-organization SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session). CSRF protection applies only to cookie sessions (`ssoCookie`): requests authorised by `bearerAuth` or `apiKeyAuth` bypass it, as do the token endpoint (POST /v1/oauth/token) and the directory sign-in (POST /ldap/{id}/authenticate), which carry their credentials in the request. Basic credentials do not bypass it. A request that fails the check is refused with 403 `csrf_failed`.
 
-    The responses of agent token minting and the token vault's access-token read, and of the operations returning a new API key, agent or webhook secret, a revealed secret or an issued credential, are sent with `Cache-Control: no-store` and `Pragma: no-cache`.
+    The responses of the token vault's access-token read, and of the operations returning a new API key, agent or webhook secret, a revealed secret or an issued credential, are sent with `Cache-Control: no-store` and `Pragma: no-cache`.
 
     Every response carries an `X-Request-Id` header naming the request; quote it when reporting a problem. An error body repeats it as `error.request_id`. A path with an encoded slash or backslash (`%2F`, `%5C`) is refused with 400 `bad_request`.
 
     ## Related APIs
 
     - **Authentication & Access API** — login, passkeys, MFA, authorization
-    - **Identity Management API** — tenants, users, groups, invitations
+    - **Identity Management API** — organizations, users, groups, invitations
     - **Federation API** — OIDC/OAuth provider, SAML, SCIM, LDAP, social
     - **Operations API** — audit, analytics, billing
 
@@ -46,17 +46,17 @@ tags:
   - name: API Keys
     description: Long-lived API keys for machine access.
   - name: Agents
-    description: AI agent identities — register agents and mint short-lived scoped tokens (re-minted, never refreshed); manage sponsorship, suspension and decommissioning.
+    description: AI agent identities — register agents, which get short-lived scoped tokens at the token endpoint by client_credentials (re-minted, never refreshed); manage sponsorship, suspension and decommissioning.
   - name: Credentials
     description: Verifiable credentials — issue, list and revoke W3C / JWT-VC documents, plus public verification.
   - name: Auth Hooks
     description: 'Custom authentication hooks (actions) invoked during authentication flows. Each call is a POST signed as a webhook delivery is: X-Qeet-Timestamp (Unix seconds) and X-Qeet-Signature, "sha256=" and the hex HMAC-SHA256, keyed by the hook''s secret, of the timestamp, a ".", and the raw body. For 24 hours after the secret is changed the header holds two comma-separated values, the new secret''s first; accept the call if any one matches. Verify in constant time before parsing, and refuse a timestamp more than a few minutes old, so a captured call can''t be replayed.'
   - name: Webhooks
-    description: 'Outbound webhook endpoint management. A subscription names the events it receives, from the event catalogue; an event''s name is its version, so an incompatible payload change comes as a new name, while new fields may be added to any payload. Each delivery is a POST whose JSON body is the envelope {id, type, tenant_id, occurred_at, data}: id is the same in every delivery of one event, retries included, so deduplicate on it, and data is the event''s own payload. Deliveries are at least once and in no guaranteed order. Headers: X-Qeet-Event (the type), X-Qeet-Delivery-ID, X-Qeet-Timestamp (Unix seconds) and X-Qeet-Signature, "sha256=" and the hex HMAC-SHA256, keyed by the subscription''s secret, of the timestamp, a ".", and the raw body. For 24 hours after the secret is rotated the header holds two comma-separated values, the new secret''s first; accept the delivery if any one matches. Verify in constant time before parsing, and refuse a timestamp more than a few minutes old. Answer 2xx quickly: a network error, a 5xx, 408 or 429 is retried with jittered backoff from 30 seconds up to an hour, for 60 attempts; any other 4xx dead-letters the delivery at once. A dead-lettered delivery stays in the delivery list and can be sent again. A subscription whose deliveries fail for 3 days with no success is disabled (disabled_reason "failing") and the members who hold webhook.write are alerted in-app; deliveries queued meanwhile are sent once it is enabled again.'
+    description: 'Outbound webhook endpoint management. A subscription names the events it receives, from the event catalogue; an event''s name is its version, so an incompatible payload change comes as a new name, while new fields may be added to any payload. Each delivery is a POST whose JSON body is the envelope {id, type, organization_id, occurred_at, data}: id is the same in every delivery of one event, retries included, so deduplicate on it, and data is the event''s own payload. Deliveries are at least once and in no guaranteed order. Headers: X-Qeet-Event (the type), X-Qeet-Delivery-ID, X-Qeet-Timestamp (Unix seconds) and X-Qeet-Signature, "sha256=" and the hex HMAC-SHA256, keyed by the subscription''s secret, of the timestamp, a ".", and the raw body. For 24 hours after the secret is rotated the header holds two comma-separated values, the new secret''s first; accept the delivery if any one matches. Verify in constant time before parsing, and refuse a timestamp more than a few minutes old. Answer 2xx quickly: a network error, a 5xx, 408 or 429 is retried with jittered backoff from 30 seconds up to an hour, for 60 attempts; any other 4xx dead-letters the delivery at once. A dead-lettered delivery stays in the delivery list and can be sent again. A subscription whose deliveries fail for 3 days with no success is disabled (disabled_reason "failing") and the members who hold webhook.write are alerted in-app; deliveries queued meanwhile are sent once it is enabled again.'
   - name: Secrets
-    description: Per-tenant encrypted secrets vault.
+    description: Per-organization encrypted secrets vault.
   - name: Token Vault
-    description: Third-party OAuth credential storage with transparent refresh, for calling external services on a user's behalf — distinct from Secrets Vault (tenant secrets).
+    description: Third-party OAuth credential storage with transparent refresh, for calling external services on a user's behalf — distinct from Secrets Vault (organization secrets).
 paths:
   /v1/api-keys:
     post:
@@ -73,7 +73,7 @@ paths:
         content:
           application/json:
             example:
-              tenant_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
+              organization_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
               name: CI deploy bot
               scopes:
                 - users:read
@@ -98,7 +98,7 @@ paths:
               example:
                 api_key:
                   id: 018f2a70-1a2b-7c3d-9e4f-5a6b7c8d9e0f
-                  tenant_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
+                  organization_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
                   name: CI deploy bot
                   prefix: qk_7Qx8t
                   scopes:
@@ -153,15 +153,15 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/tenants/{tenantID}/api-keys:
+  /v1/organizations/{organizationID}/api-keys:
     get:
       operationId: listApiKeys
-      description: Lists the tenant's API keys. Only key metadata is returned; the secret value is never included.
+      description: Lists the organization's API keys. Only key metadata is returned; the secret value is never included.
       summary: List API keys
       tags:
         - API Keys
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -183,7 +183,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-  /v1/tenants/{tenantID}/api-keys/{id}/rotate:
+  /v1/organizations/{organizationID}/api-keys/{id}/rotate:
     post:
       operationId: rotateApiKey
       summary: Rotate API key
@@ -191,7 +191,7 @@ paths:
       tags:
         - API Keys
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -240,59 +240,15 @@ paths:
           $ref: '#/components/responses/NotFound'
         '422':
           $ref: '#/components/responses/Unprocessable'
-  /v1/agents/token:
-    post:
-      operationId: mintAgentToken
-      summary: Mint agent token
-      description: An AI agent authenticates with its agent_id + secret (JSON body or HTTP Basic) and receives an ephemeral access token marked actor_type="agent" (+ agent_id claim), verifiable on the standard JWKS path. No user session. An agent of a suspended or deleted organisation gets no token, and the tokens it already holds stop working, as for a suspended agent.
-      tags:
-        - Agents
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            example:
-              agent_id: 018f2a80-4d5e-7f60-a1b2-c3d4e5f60718
-              secret: as_9m8n7b6v5c4x3z2a1s0d9f8g7h6j5k4l
-            schema:
-              type: object
-              required:
-                - agent_id
-                - secret
-              properties:
-                agent_id:
-                  type: string
-                secret:
-                  type: string
-      responses:
-        '200':
-          description: Short-lived agent access token
-          headers:
-            Cache-Control:
-              $ref: '#/components/headers/NoStoreCacheControl'
-            Pragma:
-              $ref: '#/components/headers/NoStorePragma'
-          content:
-            application/json:
-              example:
-                access_token: eyJhbGciOiJFUzI1NiIsImtpZCI6ImZ2MSJ9.eyJzdWIiOiJhZ2VudCJ9.FAKE-signature
-                token_type: Bearer
-                expires_in: 300
-                scope: agent:invoke
-              schema:
-                $ref: '#/components/schemas/TokenResponse'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-  /v1/tenants/{tenantID}/agents:
+  /v1/organizations/{organizationID}/agents:
     get:
       operationId: listAgents
-      description: Lists the AI agent identities registered in the tenant.
+      description: Lists the AI agent identities registered in the organization.
       summary: List agents
       tags:
         - Agents
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -316,12 +272,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
     post:
       operationId: createAgent
-      description: 'Registers a new AI agent identity. Mint short-lived access tokens for it with the mint-agent-token endpoint; agents resolve to actor_type `agent`. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, one still being processed 409 idempotency.in_progress, and one whose first request stopped before answering 409 idempotency.outcome_unknown: check whether it took effect, then retry with a new key. A credential carries only authority its creator holds: every scope must be one the caller holds (a vault scope needs secret.read; a machine caller, a scope of its own), or the request is refused with 403 rbac.grant_exceeds_caller naming the scope.'
+      description: 'Registers a new AI agent identity. It gets short-lived access tokens at the token endpoint (POST /v1/oauth/token, grant_type client_credentials, its id as client_id and its secret as client_secret); agents resolve to actor_type `agent`. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, one still being processed 409 idempotency.in_progress, and one whose first request stopped before answering 409 idempotency.outcome_unknown: check whether it took effect, then retry with a new key. A credential carries only authority its creator holds: every scope must be one the caller holds (a vault scope needs secret.read; a machine caller, a scope of its own), or the request is refused with 403 rbac.grant_exceeds_caller naming the scope.'
       summary: Create agent
       tags:
         - Agents
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - $ref: '#/components/parameters/IdempotencyKey'
       security:
         - bearerAuth: []
@@ -347,7 +303,7 @@ paths:
                 sponsor_user_id:
                   type: string
                   format: uuid
-                  description: The named human owner accountable for this agent. Must be a member of this tenant.
+                  description: The named human owner accountable for this agent. Must be a member of this organization.
       responses:
         '201':
           description: Agent created (secret returned once)
@@ -370,7 +326,7 @@ paths:
           description: 'A request with this Idempotency-Key is still being processed (idempotency.in_progress); retry shortly. Or the first request stopped before answering and may have taken effect (idempotency.outcome_unknown): check, then retry with a new key.'
         '422':
           $ref: '#/components/responses/Unprocessable'
-  /v1/tenants/{tenantID}/agents/{id}:
+  /v1/organizations/{organizationID}/agents/{id}:
     delete:
       operationId: deleteAgent
       description: Deletes an agent identity. Prefer decommissioning, which preserves audit history, unless a hard delete is required.
@@ -378,7 +334,7 @@ paths:
       tags:
         - Agents
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -404,7 +360,7 @@ paths:
       tags:
         - Agents
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -434,7 +390,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/tenants/{tenantID}/agents/{id}/suspend:
+  /v1/organizations/{organizationID}/agents/{id}/suspend:
     post:
       operationId: suspendAgent
       summary: Suspend agent
@@ -442,7 +398,7 @@ paths:
       tags:
         - Agents
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -467,7 +423,7 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
-  /v1/tenants/{tenantID}/agents/{id}/resume:
+  /v1/organizations/{organizationID}/agents/{id}/resume:
     post:
       operationId: resumeAgent
       summary: Resume agent
@@ -475,7 +431,7 @@ paths:
       tags:
         - Agents
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -500,7 +456,7 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
-  /v1/tenants/{tenantID}/agents/{id}/decommission:
+  /v1/organizations/{organizationID}/agents/{id}/decommission:
     post:
       operationId: decommissionAgent
       summary: Decommission agent
@@ -508,7 +464,7 @@ paths:
       tags:
         - Agents
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -533,15 +489,15 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
-  /v1/tenants/{tenantID}/agents/kill-all:
+  /v1/organizations/{organizationID}/agents/kill-all:
     post:
       operationId: suspendAllAgents
       summary: Suspend all agents
-      description: Security incident-response control. Sets disabled_at on all of the tenant's agents in a single transaction. Returns the number suspended.
+      description: Security incident-response control. Sets disabled_at on all of the organization's agents in a single transaction. Returns the number suspended.
       tags:
         - Agents
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -559,15 +515,15 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-  /v1/tenants/{tenantID}/agents/resume-all:
+  /v1/organizations/{organizationID}/agents/resume-all:
     post:
       operationId: resumeAllAgents
       summary: Resume all agents
-      description: Makes every suspended agent of the tenant active again in a single transaction, the undoing of suspend-all. Returns the number resumed. Requires apikey.write. Needs a recent step-up. Audited, and sent to webhooks, as agent.resume_all.
+      description: Makes every suspended agent of the organization active again in a single transaction, the undoing of suspend-all. Returns the number resumed. Requires apikey.write. Needs a recent step-up. Audited, and sent to webhooks, as agent.resume_all.
       tags:
         - Agents
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -585,7 +541,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-  /v1/tenants/{tenantID}/agents/{id}/rotate-secret:
+  /v1/organizations/{organizationID}/agents/{id}/rotate-secret:
     post:
       operationId: rotateAgentSecret
       summary: Rotate agent secret
@@ -593,7 +549,7 @@ paths:
       tags:
         - Agents
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -649,7 +605,7 @@ paths:
           $ref: '#/components/responses/NotFound'
         '422':
           $ref: '#/components/responses/Unprocessable'
-  /v1/tenants/{tenantID}/agents/sponsored-by/{userID}:
+  /v1/organizations/{organizationID}/agents/sponsored-by/{userID}:
     get:
       operationId: listSponsoredAgents
       summary: List agents sponsored by a user
@@ -657,7 +613,7 @@ paths:
       tags:
         - Agents
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: userID
           in: path
           required: true
@@ -687,7 +643,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-  /v1/tenants/{tenantID}/agents/sponsored-by/{userID}/transfer:
+  /v1/organizations/{organizationID}/agents/sponsored-by/{userID}/transfer:
     post:
       operationId: transferAgentSponsorship
       summary: Transfer sponsorship
@@ -695,7 +651,7 @@ paths:
       tags:
         - Agents
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: userID
           in: path
           required: true
@@ -717,7 +673,7 @@ paths:
                 to_user_id:
                   type: string
                   format: uuid
-                  description: Must be a member of this tenant.
+                  description: Must be a member of this organization.
       responses:
         '200':
           description: OK
@@ -763,15 +719,15 @@ paths:
                 $ref: '#/components/schemas/VerifyResult'
         '422':
           $ref: '#/components/responses/Unprocessable'
-  /v1/tenants/{tenantID}/credentials:
+  /v1/organizations/{organizationID}/credentials:
     get:
       operationId: listCredentials
-      description: Lists the verifiable credentials issued by the tenant, each with the person it was issued to when the issuer named one.
+      description: Lists the verifiable credentials issued by the organization, each with the person it was issued to when the issuer named one.
       summary: List credentials
       tags:
         - Credentials
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -800,7 +756,7 @@ paths:
       tags:
         - Credentials
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -828,7 +784,7 @@ paths:
                     - string
                     - 'null'
                   format: uuid
-                  description: The person the credential is for, a member of the organisation (else 422 vc.user_not_member). Recorded with the credential, not in the signed JWT-VC.
+                  description: The person the credential is for, a member of the organization (else 422 vc.user_not_member). Recorded with the credential, not in the signed JWT-VC.
       responses:
         '201':
           description: Signed JWT-VC + credential id
@@ -847,7 +803,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/Unprocessable'
-  /v1/tenants/{tenantID}/credentials/{id}/revoke:
+  /v1/organizations/{organizationID}/credentials/{id}/revoke:
     post:
       operationId: revokeCredential
       description: Revokes a previously issued credential. Verification of the revoked credential will subsequently fail.
@@ -855,7 +811,7 @@ paths:
       tags:
         - Credentials
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -874,15 +830,15 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/tenants/{tenantID}/auth-hooks:
+  /v1/organizations/{organizationID}/auth-hooks:
     get:
       operationId: listAuthHooks
-      description: Lists the tenant's authentication hooks — custom actions invoked at defined points in auth flows.
+      description: Lists the organization's authentication hooks — custom actions invoked at defined points in auth flows.
       summary: List auth hooks
       tags:
         - Auth Hooks
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -906,12 +862,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
     post:
       operationId: createAuthHook
-      description: 'Registers an authentication hook, called on every sign-in to the organisation once its first factor is proven, whatever the method: password, passkey, social, SAML, LDAP, magic link, invitation and organisation switch. It may deny the sign-in (authhook.denied), and on a sign-in that returns tokens its claims are added to the access token. An organisation may have several: every enabled hook is called, one after another, oldest first. The first to deny ends the sign-in and the rest are not called; otherwise the claims of all are added, a later hook''s replacing an earlier one''s of the same name. Each hook''s own fail_open decides what its silence does. A sign-in to no organisation asks the account''s own. Hooks fail open by default: a hook error does not block authentication.'
+      description: 'Registers an authentication hook, called on every sign-in to the organization once its first factor is proven, whatever the method: password, passkey, social, SAML, LDAP, magic link, invitation and organization switch. It may deny the sign-in (authhook.denied), and on a sign-in that returns tokens its claims are added to the access token. An organization may have several: every enabled hook is called, one after another, oldest first. The first to deny ends the sign-in and the rest are not called; otherwise the claims of all are added, a later hook''s replacing an earlier one''s of the same name. Each hook''s own fail_open decides what its silence does. A sign-in to no organization asks the account''s own. Hooks fail open by default: a hook error does not block authentication.'
       summary: Create auth hook
       tags:
         - Auth Hooks
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -931,7 +887,7 @@ paths:
                   type: string
                 fail_open:
                   type: boolean
-                  description: 'What a sign-in does when the hook gives no answer: it can''t be read, its signing secret can''t be opened, the call fails or times out, or its answer can''t be read. True (the default on create) lets the sign-in proceed; false refuses it as temporarily unavailable. Where the hook can''t be read, the setting last read for the organisation is followed. Every such skip is recorded (audit auth_hook.skipped with the reason and outcome; metric auth_hook_skipped_total).'
+                  description: 'What a sign-in does when the hook gives no answer: it can''t be read, its signing secret can''t be opened, the call fails or times out, or its answer can''t be read. True (the default on create) lets the sign-in proceed; false refuses it as temporarily unavailable. Where the hook can''t be read, the setting last read for the organization is followed. Every such skip is recorded (audit auth_hook.skipped with the reason and outcome; metric auth_hook_skipped_total).'
       responses:
         '201':
           description: Hook created
@@ -945,7 +901,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/Unprocessable'
-  /v1/tenants/{tenantID}/auth-hooks/{id}/test:
+  /v1/organizations/{organizationID}/auth-hooks/{id}/test:
     post:
       operationId: testAuthHook
       summary: Test an auth hook
@@ -953,7 +909,7 @@ paths:
       tags:
         - Auth Hooks
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -994,7 +950,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/tenants/{tenantID}/auth-hooks/{id}:
+  /v1/organizations/{organizationID}/auth-hooks/{id}:
     patch:
       operationId: updateAuthHook
       description: Turns an authentication hook on or off, sets whether it fails open, and changes its URL (checked as on creation, 422 auth_hook.url_invalid) or its signing secret (encrypted at rest; the next call is signed with it, and for 24 hours with the secret it replaced too, shown as previous_secret_expires_at, so the hook's endpoint can move over). Only the fields sent change; the answer is both switches as stored. Audited as auth_hook.updated, saying whether the secret changed.
@@ -1002,7 +958,7 @@ paths:
       tags:
         - Auth Hooks
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -1029,7 +985,7 @@ paths:
                   type: boolean
                 fail_open:
                   type: boolean
-                  description: 'What a sign-in does when the hook gives no answer: it can''t be read, its signing secret can''t be opened, the call fails or times out, or its answer can''t be read. True (the default on create) lets the sign-in proceed; false refuses it as temporarily unavailable. Where the hook can''t be read, the setting last read for the organisation is followed. Every such skip is recorded (audit auth_hook.skipped with the reason and outcome; metric auth_hook_skipped_total).'
+                  description: 'What a sign-in does when the hook gives no answer: it can''t be read, its signing secret can''t be opened, the call fails or times out, or its answer can''t be read. True (the default on create) lets the sign-in proceed; false refuses it as temporarily unavailable. Where the hook can''t be read, the setting last read for the organization is followed. Every such skip is recorded (audit auth_hook.skipped with the reason and outcome; metric auth_hook_skipped_total).'
       responses:
         '200':
           description: The hook's settings as stored
@@ -1058,7 +1014,7 @@ paths:
       tags:
         - Auth Hooks
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -1077,18 +1033,18 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/tenants/{tenantID}/webhooks:
+  /v1/organizations/{organizationID}/webhooks:
     get:
       operationId: listWebhooks
       summary: List webhooks
       tags:
         - Webhooks
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Lists the organisation's webhook subscriptions, without their signing secrets. Requires webhook.read.
+      description: Lists the organization's webhook subscriptions, without their signing secrets. Requires webhook.read.
       responses:
         '200':
           description: OK
@@ -1115,14 +1071,14 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/webhooks/events:
+  /v1/organizations/{organizationID}/webhooks/events:
     get:
       operationId: listWebhookEvents
       summary: List webhook events
       tags:
         - Webhooks
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -1149,14 +1105,14 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '429':
           $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/webhooks/{id}/enable:
+  /v1/organizations/{organizationID}/webhooks/{id}/enable:
     post:
       operationId: enableWebhook
       summary: Enable webhook
       tags:
         - Webhooks
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -1166,7 +1122,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Turns a disabled webhook subscription back on, whether an administrator or its failures disabled it, with its failures forgotten, and returns it. Deliveries queued while it was off are then sent. Enabling one already on changes nothing. The organisation's plan must include webhooks (402 billing.upgrade_required). Requires webhook.write. Needs a recent step-up.
+      description: Turns a disabled webhook subscription back on, whether an administrator or its failures disabled it, with its failures forgotten, and returns it. Deliveries queued while it was off are then sent. Enabling one already on changes nothing. The organization's plan must include webhooks (402 billing.upgrade_required). Requires webhook.write. Needs a recent step-up.
       responses:
         '200':
           description: OK
@@ -1179,14 +1135,14 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '402':
-          description: The organisation's plan does not include webhooks.
+          description: The organization's plan does not include webhooks.
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/webhooks/{id}:
+  /v1/organizations/{organizationID}/webhooks/{id}:
     patch:
       operationId: updateWebhook
       summary: Change a webhook
@@ -1194,7 +1150,7 @@ paths:
       tags:
         - Webhooks
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -1235,7 +1191,7 @@ paths:
           $ref: '#/components/responses/NotFound'
         '422':
           $ref: '#/components/responses/Unprocessable'
-  /v1/tenants/{tenantID}/webhooks/{id}/deliveries/retry:
+  /v1/organizations/{organizationID}/webhooks/{id}/deliveries/retry:
     post:
       operationId: retryFailedWebhookDeliveries
       summary: Retry given-up deliveries
@@ -1243,7 +1199,7 @@ paths:
       tags:
         - Webhooks
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -1269,7 +1225,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/tenants/{tenantID}/webhooks/{id}/deliveries/{deliveryID}/attempts:
+  /v1/organizations/{organizationID}/webhooks/{id}/deliveries/{deliveryID}/attempts:
     get:
       operationId: listWebhookDeliveryAttempts
       summary: List a delivery's attempts
@@ -1277,7 +1233,7 @@ paths:
       tags:
         - Webhooks
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -1313,14 +1269,14 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/tenants/{tenantID}/webhooks/{id}/rotate-secret:
+  /v1/organizations/{organizationID}/webhooks/{id}/rotate-secret:
     post:
       operationId: rotateWebhookSecret
       summary: Rotate webhook secret
       tags:
         - Webhooks
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -1382,7 +1338,7 @@ paths:
                 - user.updated
             schema:
               $ref: '#/components/schemas/WebhookCreateInput'
-      description: 'Subscribes an endpoint to the organisation''s events it names. The endpoint must be an allowed outbound destination; the signing secret is shown only in this answer. events must name at least one event (422 webhook.events_required), each from the event catalogue (422 webhook.event_unknown); a repeated name counts once. Requires webhook.write. Needs a recent step-up. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, one still being processed 409 idempotency.in_progress, and one whose first request stopped before answering 409 idempotency.outcome_unknown: check whether it took effect, then retry with a new key.'
+      description: 'Subscribes an endpoint to the organization''s events it names. The endpoint must be an allowed outbound destination; the signing secret is shown only in this answer. events must name at least one event (422 webhook.events_required), each from the event catalogue (422 webhook.event_unknown); a repeated name counts once. Requires webhook.write. Needs a recent step-up. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, one still being processed 409 idempotency.in_progress, and one whose first request stopped before answering 409 idempotency.outcome_unknown: check whether it took effect, then retry with a new key.'
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
@@ -1399,7 +1355,7 @@ paths:
             application/json:
               example:
                 id: 018f2a75-6a7b-7c8d-8e9f-0a1b2c3d4e5f
-                tenant_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
+                organization_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
                 url: https://hooks.example.com/qeet
                 events:
                   - user.created
@@ -1471,7 +1427,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Disables one of the organisation''s webhook subscriptions: no further events are sent to it. Requires webhook.write. Needs a recent step-up.'
+      description: 'Disables one of the organization''s webhook subscriptions: no further events are sent to it. Requires webhook.write. Needs a recent step-up.'
       responses:
         '204':
           description: No Content
@@ -1488,7 +1444,7 @@ paths:
   /v1/webhooks/{id}/deliveries:
     get:
       operationId: listWebhookDeliveries
-      description: 'Lists recent delivery attempts for a webhook, including status and response codes, for debugging failures. Retry a failed one with the retry-delivery endpoint. While the organisation''s plan does not include webhooks (one that has lapsed since the webhook was set up), deliveries are dead-lettered unsent, with error "not sent: the organisation''s plan does not include webhooks"; once paid again they can be retried.'
+      description: 'Lists recent delivery attempts for a webhook, including status and response codes, for debugging failures. Retry a failed one with the retry-delivery endpoint. While the organization''s plan does not include webhooks (one that has lapsed since the webhook was set up), deliveries are dead-lettered unsent, with error "not sent: the organization''s plan does not include webhooks"; once paid again they can be retried.'
       summary: List deliveries
       tags:
         - Webhooks
@@ -1541,7 +1497,7 @@ paths:
                       $ref: '#/components/schemas/WebhookDelivery'
                   next_cursor:
                     type: string
-                    description: Empty on the last page.
+                    description: Present when there is another page.
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -1551,7 +1507,7 @@ paths:
   /v1/webhooks/{id}/deliveries/{deliveryID}/retry:
     post:
       operationId: retryWebhookDelivery
-      description: 'Sends one of the organisation''s webhook deliveries again now. A delivery that had finished, delivered or given up after its 60 attempts, starts a fresh set of attempts; one still retrying keeps its count. The delivery must be one of the webhook''s in the path: any other, like one that doesn''t exist or is being sent at this moment, is refused with 404 webhook.delivery_not_found and left as it was. An ID that isn''t a UUID is refused with 400 webhook.invalid_id.'
+      description: 'Sends one of the organization''s webhook deliveries again now. A delivery that had finished, delivered or given up after its 60 attempts, starts a fresh set of attempts; one still retrying keeps its count. The delivery must be one of the webhook''s in the path: any other, like one that doesn''t exist or is being sent at this moment, is refused with 404 webhook.delivery_not_found and left as it was. An ID that isn''t a UUID is refused with 400 webhook.invalid_id.'
       summary: Retry delivery
       tags:
         - Webhooks
@@ -1629,7 +1585,7 @@ paths:
     get:
       operationId: readVaultSecret
       summary: Vault read by name
-      description: Returns a secret's value to a caller holding a "vault:<name>" (or "vault:read") scope — e.g. an AI agent fetching a credential at runtime without embedding it. Tenant comes from the caller's token; every access is audited.
+      description: Returns a secret's value to a caller holding a "vault:<name>" (or "vault:read") scope — e.g. an AI agent fetching a credential at runtime without embedding it. Organization comes from the caller's token; every access is audited.
       tags:
         - Secrets
       parameters:
@@ -1659,18 +1615,18 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/tenants/{tenantID}/secrets:
+  /v1/organizations/{organizationID}/secrets:
     get:
       operationId: listSecrets
       summary: List secrets
       tags:
         - Secrets
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Lists the organisation''s secrets: names, scopes and the last four characters, never the values; who last revealed each, and when one with a rotation interval is due to be rotated. Requires secret.read.'
+      description: 'Lists the organization''s secrets: names, scopes and the last four characters, never the values; who last revealed each, and when one with a rotation interval is due to be rotated. Requires secret.read.'
       responses:
         '200':
           description: OK
@@ -1703,7 +1659,7 @@ paths:
       tags:
         - Secrets
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -1731,7 +1687,7 @@ paths:
                   minimum: 1
                   maximum: 3650
                   description: Days after the value last changed that the secret is due to be rotated; null or left out for no reminder.
-      description: Stores a secret for the organisation, encrypted at rest. A name the organisation already uses is refused, and a rotation interval outside 1 to 3650 days with 422 secret.rotation_interval_out_of_range. Requires secret.write. Needs a recent step-up.
+      description: Stores a secret for the organization, encrypted at rest. A name the organization already uses is refused, and a rotation interval outside 1 to 3650 days with 422 secret.rotation_interval_out_of_range. Requires secret.write. Needs a recent step-up.
       responses:
         '201':
           description: Created
@@ -1749,14 +1705,14 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/secrets/{id}:
+  /v1/organizations/{organizationID}/secrets/{id}:
     delete:
       operationId: deleteSecret
       summary: Delete secret
       tags:
         - Secrets
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -1766,7 +1722,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Deletes one of the organisation's secrets. Requires secret.write. Needs a recent step-up.
+      description: Deletes one of the organization's secrets. Requires secret.write. Needs a recent step-up.
       responses:
         '204':
           description: No Content
@@ -1786,7 +1742,7 @@ paths:
       tags:
         - Secrets
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -1820,14 +1776,14 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/secrets/{id}/reveal:
+  /v1/organizations/{organizationID}/secrets/{id}/reveal:
     post:
       operationId: revealSecret
       summary: Reveal secret
       tags:
         - Secrets
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -1865,7 +1821,7 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/vault/tokens/providers:
+  /v1/organizations/{organizationID}/vault/tokens/providers:
     post:
       operationId: registerTokenVaultProvider
       description: Registers a third-party OAuth provider so the Token Vault can store and transparently refresh users' access tokens for it. provider, client_id and client_secret are required (422 validation_failed, naming each field); authorize_url and token_url must be public http or https URLs (422 tokenvault.provider_authorize_url_invalid and tokenvault.provider_token_url_invalid). Registering an existing provider again updates it, but while anyone is connected through it its authorize_url, token_url and client_id can't change (409 tokenvault.provider_in_use), so their refresh tokens only ever go to the endpoint that issued them; the secret and scopes can. Delete the provider to disconnect everyone first.
@@ -1873,7 +1829,7 @@ paths:
       tags:
         - Token Vault
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -1905,7 +1861,7 @@ paths:
                   format: uri
                 scopes:
                   type: string
-        description: Registers (or updates) the OAuth2 endpoints + client credentials for one third-party provider, tenant-wide.
+        description: Registers (or updates) the OAuth2 endpoints + client credentials for one third-party provider, organization-wide.
       responses:
         '201':
           description: Created
@@ -1929,7 +1885,7 @@ paths:
       tags:
         - Token Vault
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -1956,7 +1912,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '429':
           $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/vault/tokens/providers/{provider}:
+  /v1/organizations/{organizationID}/vault/tokens/providers/{provider}:
     delete:
       operationId: deleteTokenVaultProvider
       description: 'Removes a registered Token Vault provider and disconnects everyone connected through it: their vaulted tokens are deleted, so a provider registered again under the same name starts with no connected accounts.'
@@ -1964,7 +1920,7 @@ paths:
       tags:
         - Token Vault
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: provider
           in: path
           required: true
@@ -2027,7 +1983,7 @@ paths:
             type: string
       security:
         - bearerAuth: []
-      description: 'Returns the authorize_url to redirect the user''s browser to, starting a standard OAuth2 authorization-code ceremony (with PKCE, S256) against the tenant''s registered provider config. The answer also sets an HttpOnly cookie binding the ceremony to this browser, so call it with credentials included (fetch credentials: ''include'') from the browser that will open the link: the callback connects the account only in that browser.'
+      description: 'Returns the authorize_url to redirect the user''s browser to, starting a standard OAuth2 authorization-code ceremony (with PKCE, S256) against the organization''s registered provider config. The answer also sets an HttpOnly cookie binding the ceremony to this browser, so call it with credentials included (fetch credentials: ''include'') from the browser that will open the link: the callback connects the account only in that browser.'
       responses:
         '200':
           description: OK
@@ -2131,11 +2087,11 @@ components:
       type: apiKey
       in: header
       name: Authorization
-      description: 'API key credential. Send `Authorization: ApiKey <key>` (note the `ApiKey ` prefix). Accepted on the same authenticated routes as bearerAuth. A key works only while its organisation is active, not while it is suspended or deleted.'
+      description: 'API key credential. Send `Authorization: ApiKey <key>` (note the `ApiKey ` prefix). Accepted on the same authenticated routes as bearerAuth. A key works only while its organization is active, not while it is suspended or deleted.'
     scimBearer:
       type: http
       scheme: bearer
-      description: 'An organisation''s SCIM provisioning token, presented by its identity provider: `Authorization: Bearer <scim-token>`. Distinct from user JWTs. An organisation can hold several, managed under /v1/tenants/{tenantID}/scim/tokens. A revoked or expired token, and every token of an organisation that is suspended or due for deletion, is refused with 401.'
+      description: 'An organization''s SCIM provisioning token, presented by its identity provider: `Authorization: Bearer <scim-token>`. Distinct from user JWTs. An organization can hold several, managed under /v1/organizations/{organizationID}/scim/tokens. A revoked or expired token, and every token of an organization that is suspended or due for deletion, is refused with 401.'
     clientCredentials:
       type: oauth2
       description: OAuth 2.0 client credentials. Clients authenticate at the token endpoint via form params (`client_id`/`client_secret`) or HTTP Basic. Revocation/introspection use the same client auth.
@@ -2158,11 +2114,11 @@ components:
         type: string
         minLength: 1
         maxLength: 255
-    TenantID:
-      name: tenantID
+    OrganizationID:
+      name: organizationID
       in: path
       required: true
-      description: 'The organisation''s ID. On an authenticated route it must be the organisation of the caller''s credential: another is refused with 403, and a value that is not a UUID with 400.'
+      description: 'The organization''s ID. On an authenticated route it must be the organization of the caller''s credential: another is refused with 403, and a value that is not a UUID with 400.'
       schema:
         type: string
         format: uuid
@@ -2170,10 +2126,10 @@ components:
     ApiKeyCreate:
       type: object
       required:
-        - tenant_id
+        - organization_id
         - name
       properties:
-        tenant_id:
+        organization_id:
           type: string
           format: uuid
         user_id:
@@ -2200,7 +2156,7 @@ components:
         id:
           type: string
           format: uuid
-        tenant_id:
+        organization_id:
           type: string
           format: uuid
         user_id:
@@ -2296,21 +2252,6 @@ components:
     Truncated:
       type: boolean
       description: 'Present, and true, when the list was cut at its limit (1,000 items unless the operation says otherwise): there are more than were answered.'
-    TokenResponse:
-      type: object
-      required:
-        - access_token
-        - expires_in
-        - token_type
-      properties:
-        access_token:
-          type: string
-        expires_in:
-          type: integer
-        scope:
-          type: string
-        token_type:
-          type: string
     Agent:
       type: object
       required:
@@ -2511,7 +2452,7 @@ components:
         - disabled_at
         - events
         - id
-        - tenant_id
+        - organization_id
         - url
       properties:
         created_at:
@@ -2552,7 +2493,7 @@ components:
           description: Until when the secret replaced by the last rotation also signs deliveries.
         secret:
           type: string
-        tenant_id:
+        organization_id:
           type: string
           format: uuid
         url:
@@ -2621,10 +2562,10 @@ components:
           description: Event names from the event catalogue.
           items:
             type: string
-        tenant_id:
+        organization_id:
           type: string
           format: uuid
-          description: Ignored; the organisation is the caller's.
+          description: Ignored; the organization is the caller's.
         url:
           type: string
     WebhookDelivery:

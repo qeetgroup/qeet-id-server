@@ -2,6 +2,8 @@ package rbac
 
 import (
 	"context"
+	"errors"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/google/uuid"
@@ -38,6 +40,39 @@ func TestHoldsFollowsTheRouteRules(t *testing.T) {
 	} {
 		if got, err := Holds(context.Background(), c.has, c.p, "role.read"); err != nil || got != c.want {
 			t.Errorf("%s: %v, %v; want %v", c.name, got, err, c.want)
+		}
+	}
+}
+
+// failing is a Checker that cannot answer.
+type failing struct{}
+
+func (failing) Check(context.Context, uuid.UUID, uuid.UUID, string) (bool, error) {
+	return false, errors.New("down")
+}
+
+// TestCallerHoldsReadsTheRequest checks that CallerHolds answers Holds for the
+// request's caller, and no when there is none or the check fails.
+func TestCallerHoldsReadsTheRequest(t *testing.T) {
+	user, organization := uuid.New(), uuid.New()
+	person := &httpx.Principal{UserID: &user, OrganizationID: &organization}
+	for _, c := range []struct {
+		name string
+		p    *httpx.Principal
+		c    Checker
+		want bool
+	}{
+		{"a person holding it", person, grants{"role.read": true}, true},
+		{"a person without it", person, grants{}, false},
+		{"no caller", nil, grants{"role.read": true}, false},
+		{"a check that fails", person, failing{}, false},
+	} {
+		r := httptest.NewRequest("GET", "/v1/groups", nil)
+		if c.p != nil {
+			r = r.WithContext(httpx.WithPrincipal(r.Context(), c.p))
+		}
+		if got := CallerHolds(c.c, "role.read")(r); got != c.want {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
 		}
 	}
 }

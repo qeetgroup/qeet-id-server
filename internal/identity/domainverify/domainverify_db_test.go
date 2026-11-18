@@ -40,7 +40,7 @@ func TestDomainsStayInTheirOrganization(t *testing.T) {
 	}
 
 	asB := dbtest.Serve(dbtest.Principal(adminB.ID, organizationB), (&Handler{Service: svc}).Mount)
-	inB := "/tenants/" + organizationB.String() + "/domains"
+	inB := "/organizations/" + organizationB.String() + "/domains"
 	for _, tc := range []struct {
 		method, path string
 		body         any
@@ -49,14 +49,14 @@ func TestDomainsStayInTheirOrganization(t *testing.T) {
 		{http.MethodPatch, inB + "/" + domainA.ID.String(), map[string]any{"sso_enabled": true, "jit_enabled": true}, http.StatusNotFound},
 		{http.MethodPost, inB + "/" + domainA.ID.String() + "/verify", nil, http.StatusNotFound},
 		{http.MethodDelete, inB + "/" + domainA.ID.String(), nil, http.StatusNotFound},
-		{http.MethodGet, "/tenants/" + organizationA.String() + "/domains", nil, http.StatusForbidden},
+		{http.MethodGet, "/organizations/" + organizationA.String() + "/domains", nil, http.StatusForbidden},
 	} {
 		if rec := dbtest.Do(t, asB, tc.method, tc.path, tc.body); rec.Code != tc.want {
-			t.Errorf("tenant B %s %s: status %d, want %d (%s)", tc.method, tc.path, rec.Code, tc.want, rec.Body.String())
+			t.Errorf("organization B %s %s: status %d, want %d (%s)", tc.method, tc.path, rec.Code, tc.want, rec.Body.String())
 		}
 	}
 	if ids := dbtest.IDs(t, dbtest.Do(t, asB, http.MethodGet, inB, nil)); slices.Contains(ids, domainA.ID) {
-		t.Error("tenant B's domain list includes tenant A's")
+		t.Error("organization B's domain list includes organization A's")
 	}
 
 	// B may add the same name, but can't verify it while A holds it.
@@ -66,14 +66,14 @@ func TestDomainsStayInTheirOrganization(t *testing.T) {
 	}
 	svc.resolver = txtRecords{domainB.VerificationToken}
 	if rec := dbtest.Do(t, asB, http.MethodPost, inB+"/"+domainB.ID.String()+"/verify", nil); rec.Code != http.StatusConflict {
-		t.Errorf("tenant B verifies tenant A's domain: status %d, want 409 (%s)", rec.Code, rec.Body.String())
+		t.Errorf("organization B verifies organization A's domain: status %d, want 409 (%s)", rec.Code, rec.Body.String())
 	}
 
 	if n := dbtest.Count(t, `
 		SELECT count(*) FROM organization.domains
 		WHERE id = $1 AND verified_at IS NOT NULL AND NOT sso_enabled AND NOT jit_enabled
 	`, domainA.ID); n != 1 {
-		t.Error("tenant B changed tenant A's domain")
+		t.Error("organization B changed organization A's domain")
 	}
 }
 
@@ -128,6 +128,6 @@ func TestLoginDomainKeepsItsLastCheck(t *testing.T) {
 		t.Errorf("after the address changed: %+v, %d lookups; want it checked again", read, dns.lookups)
 	}
 	if read, _ := svc.LoginDomain(ctx, other); dns.lookups != 4 || read.LoginDomain != "auth.other.example" {
-		t.Errorf("another organisation's read: %+v, %d lookups; want its own check", read, dns.lookups)
+		t.Errorf("another organization's read: %+v, %d lookups; want its own check", read, dns.lookups)
 	}
 }

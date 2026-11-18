@@ -25,7 +25,7 @@ func TestOverridesOnlyTighten(t *testing.T) {
 		{"no burst", limit(5, 0), false},
 		{"a negative rate", limit(-1, 10), false},
 	} {
-		if err := c.in.check("tenant", 100, 500); (err == nil) != c.ok {
+		if err := c.in.check("organization", 100, 500); (err == nil) != c.ok {
 			t.Errorf("%s: err = %v, want ok %v", c.name, err, c.ok)
 		}
 	}

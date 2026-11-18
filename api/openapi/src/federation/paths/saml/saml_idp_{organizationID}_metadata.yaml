@@ -1,0 +1,27 @@
+get:
+  operationId: getSamlIdpMetadata
+  description: >-
+    Returns the organization's SAML Identity Provider metadata XML, including the
+    organization's IdP entity id (/saml/idp/{organizationID}), the signing certificate and
+    the redirect- and POST-binding SingleSignOnService endpoints
+    (/saml/idp/{organizationID}/sso), for downstream Service Providers to configure
+    Qeet as their IdP, and the NameID formats it issues (emailAddress,
+    persistent and unspecified). Mounted at the root, not under /v1, and
+    unauthenticated. An unknown or inactive organization returns 404. Register each
+    downstream SP with the SAML SP (IdP side) endpoints before it can obtain
+    assertions at the organization's IdP SSO endpoint.
+  summary: '[idp] IdP metadata'
+  tags:
+    - SAML
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  security: []
+  responses:
+    '200':
+      description: IdP metadata XML
+      content:
+        application/xml:
+          schema:
+            type: string
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml

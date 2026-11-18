@@ -10,37 +10,24 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const consumeSamlLoginCode = `-- name: ConsumeSamlLoginCode :one
-SELECT lc.user_id, c.organization_id, lc.expires_at, lc.used_at, c.status
-FROM auth.login_codes lc
-JOIN organization.saml_connections c ON c.organization_id = lc.organization_id AND c.id = lc.connection_id
-WHERE lc.code_hash = $1 AND lc.kind = 'saml'
-FOR UPDATE OF lc
+const consumeSamlAuthnRequest = `-- name: ConsumeSamlAuthnRequest :one
+DELETE FROM auth.saml_authn_requests
+WHERE request_id = $1 AND connection_id = $2 AND expires_at > NOW()
+RETURNING return_to
 `
 
-type ConsumeSamlLoginCodeRow struct {
-	UserID         uuid.UUID
-	OrganizationID uuid.UUID
-	ExpiresAt      time.Time
-	UsedAt         pgtype.Timestamptz
-	Status         string
+type ConsumeSamlAuthnRequestParams struct {
+	RequestID    string
+	ConnectionID uuid.UUID
 }
 
-// With the status of the connection that issued the code: one since deleted finds no row.
-func (q *Queries) ConsumeSamlLoginCode(ctx context.Context, codeHash string) (ConsumeSamlLoginCodeRow, error) {
-	row := q.db.QueryRow(ctx, consumeSamlLoginCode, codeHash)
-	var i ConsumeSamlLoginCodeRow
-	err := row.Scan(
-		&i.UserID,
-		&i.OrganizationID,
-		&i.ExpiresAt,
-		&i.UsedAt,
-		&i.Status,
-	)
-	return i, err
+func (q *Queries) ConsumeSamlAuthnRequest(ctx context.Context, arg ConsumeSamlAuthnRequestParams) (*string, error) {
+	row := q.db.QueryRow(ctx, consumeSamlAuthnRequest, arg.RequestID, arg.ConnectionID)
+	var return_to *string
+	err := row.Scan(&return_to)
+	return return_to, err
 }
 
 const deleteSamlCertificate = `-- name: DeleteSamlCertificate :exec
@@ -146,33 +133,21 @@ func (q *Queries) DeleteSamlSPUserAssignment(ctx context.Context, arg DeleteSaml
 	return result.RowsAffected(), nil
 }
 
-const getExternalIdentityUser = `-- name: GetExternalIdentityUser :one
-
-SELECT user_id FROM account.external_identities
-WHERE organization_id = $1 AND provider = $2 AND connection_id = $3::uuid
-  AND subject = $4
+const finishSamlTestSignIn = `-- name: FinishSamlTestSignIn :exec
+UPDATE auth.saml_test_sign_ins SET status = $1, result = $2, completed_at = NOW()
+WHERE id = $3 AND status = 'pending' AND expires_at > NOW()
 `
 
-type GetExternalIdentityUserParams struct {
-	OrganizationID uuid.UUID
-	Provider       string
-	ConnectionID   uuid.UUID
-	Subject        string
+type FinishSamlTestSignInParams struct {
+	Status string
+	Result []byte
+	ID     uuid.UUID
 }
 
-// ==========================================================================
-// findOrCreateUser — same pattern as ldap (cross-schema account tables)
-// ==========================================================================
-func (q *Queries) GetExternalIdentityUser(ctx context.Context, arg GetExternalIdentityUserParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, getExternalIdentityUser,
-		arg.OrganizationID,
-		arg.Provider,
-		arg.ConnectionID,
-		arg.Subject,
-	)
-	var user_id uuid.UUID
-	err := row.Scan(&user_id)
-	return user_id, err
+// Once, while the test still waits.
+func (q *Queries) FinishSamlTestSignIn(ctx context.Context, arg FinishSamlTestSignInParams) error {
+	_, err := q.db.Exec(ctx, finishSamlTestSignIn, arg.Status, arg.Result, arg.ID)
+	return err
 }
 
 const getIdPNameParts = `-- name: GetIdPNameParts :one
@@ -209,6 +184,22 @@ func (q *Queries) GetIdPNameParts(ctx context.Context, arg GetIdPNamePartsParams
 	return i, err
 }
 
+const getSamlAllowIdPInitiated = `-- name: GetSamlAllowIdPInitiated :one
+SELECT allow_idp_initiated FROM organization.saml_connections WHERE id = $1 AND organization_id = $2
+`
+
+type GetSamlAllowIdPInitiatedParams struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+func (q *Queries) GetSamlAllowIdPInitiated(ctx context.Context, arg GetSamlAllowIdPInitiatedParams) (bool, error) {
+	row := q.db.QueryRow(ctx, getSamlAllowIdPInitiated, arg.ID, arg.OrganizationID)
+	var allow_idp_initiated bool
+	err := row.Scan(&allow_idp_initiated)
+	return allow_idp_initiated, err
+}
+
 const getSamlConnection = `-- name: GetSamlConnection :one
 SELECT id, organization_id, name, idp_entity_id, idp_sso_url, idp_certificate,
        email_attribute, name_attribute, status, created_at, updated_at, last_login_at
@@ -232,7 +223,7 @@ type GetSamlConnectionRow struct {
 	Status         string
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
-	LastLoginAt    pgtype.Timestamptz
+	LastLoginAt    *time.Time
 }
 
 func (q *Queries) GetSamlConnection(ctx context.Context, arg GetSamlConnectionParams) (GetSamlConnectionRow, error) {
@@ -273,7 +264,7 @@ type GetSamlConnectionByIDRow struct {
 	Status         string
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
-	LastLoginAt    pgtype.Timestamptz
+	LastLoginAt    *time.Time
 }
 
 func (q *Queries) GetSamlConnectionByID(ctx context.Context, id uuid.UUID) (GetSamlConnectionByIDRow, error) {
@@ -355,7 +346,7 @@ type GetSamlMetadataSourceParams struct {
 
 type GetSamlMetadataSourceRow struct {
 	MetadataUrl         *string
-	MetadataRefreshedAt pgtype.Timestamptz
+	MetadataRefreshedAt *time.Time
 	MetadataError       *string
 }
 
@@ -499,15 +490,64 @@ func (q *Queries) GetSamlSPForUpdate(ctx context.Context, arg GetSamlSPForUpdate
 	return i, err
 }
 
-const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id FROM account.users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL
+const getSamlTestSignIn = `-- name: GetSamlTestSignIn :one
+SELECT t.id, t.connection_id, t.status, t.result, t.expires_at, t.created_at, t.completed_at
+FROM auth.saml_test_sign_ins t
+JOIN organization.saml_connections c ON c.id = t.connection_id
+WHERE t.id = $1 AND t.connection_id = $2 AND c.organization_id = $3
 `
 
-func (q *Queries) GetUserByEmail(ctx context.Context, email string) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, getUserByEmail, email)
-	var id uuid.UUID
-	err := row.Scan(&id)
-	return id, err
+type GetSamlTestSignInParams struct {
+	ID             uuid.UUID
+	ConnectionID   uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+type GetSamlTestSignInRow struct {
+	ID           uuid.UUID
+	ConnectionID uuid.UUID
+	Status       string
+	Result       []byte
+	ExpiresAt    time.Time
+	CreatedAt    time.Time
+	CompletedAt  *time.Time
+}
+
+func (q *Queries) GetSamlTestSignIn(ctx context.Context, arg GetSamlTestSignInParams) (GetSamlTestSignInRow, error) {
+	row := q.db.QueryRow(ctx, getSamlTestSignIn, arg.ID, arg.ConnectionID, arg.OrganizationID)
+	var i GetSamlTestSignInRow
+	err := row.Scan(
+		&i.ID,
+		&i.ConnectionID,
+		&i.Status,
+		&i.Result,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
+const getSamlTestSignInByRequest = `-- name: GetSamlTestSignInByRequest :one
+SELECT id, return_url FROM auth.saml_test_sign_ins
+WHERE connection_id = $1 AND request_id = $2
+`
+
+type GetSamlTestSignInByRequestParams struct {
+	ConnectionID uuid.UUID
+	RequestID    string
+}
+
+type GetSamlTestSignInByRequestRow struct {
+	ID        uuid.UUID
+	ReturnUrl string
+}
+
+func (q *Queries) GetSamlTestSignInByRequest(ctx context.Context, arg GetSamlTestSignInByRequestParams) (GetSamlTestSignInByRequestRow, error) {
+	row := q.db.QueryRow(ctx, getSamlTestSignInByRequest, arg.ConnectionID, arg.RequestID)
+	var i GetSamlTestSignInByRequestRow
+	err := row.Scan(&i.ID, &i.ReturnUrl)
+	return i, err
 }
 
 const getUserForIdP = `-- name: GetUserForIdP :one
@@ -517,7 +557,7 @@ SELECT email, display_name, organization_id, status, metadata FROM account.users
 type GetUserForIdPRow struct {
 	Email          string
 	DisplayName    *string
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 	Status         string
 	Metadata       []byte
 }
@@ -533,6 +573,51 @@ func (q *Queries) GetUserForIdP(ctx context.Context, id uuid.UUID) (GetUserForId
 		&i.Metadata,
 	)
 	return i, err
+}
+
+const hostedSamlReturn = `-- name: HostedSamlReturn :one
+SELECT return_to::text FROM auth.saml_authn_requests
+WHERE connection_id = $1 AND request_id = ANY($2::text[])
+  AND return_to IS NOT NULL AND expires_at > NOW()
+ORDER BY expires_at DESC
+LIMIT 1
+`
+
+type HostedSamlReturnParams struct {
+	ConnectionID uuid.UUID
+	RequestIds   []string
+}
+
+// The return_to of the latest pending sign-in, among request_ids, that the
+// hosted login began on the connection.
+func (q *Queries) HostedSamlReturn(ctx context.Context, arg HostedSamlReturnParams) (string, error) {
+	row := q.db.QueryRow(ctx, hostedSamlReturn, arg.ConnectionID, arg.RequestIds)
+	var return_to string
+	err := row.Scan(&return_to)
+	return return_to, err
+}
+
+const insertSamlAuthnRequest = `-- name: InsertSamlAuthnRequest :exec
+INSERT INTO auth.saml_authn_requests (request_id, connection_id, expires_at, return_to)
+VALUES ($1, $2, $3, NULLIF($4::text, ''))
+`
+
+type InsertSamlAuthnRequestParams struct {
+	RequestID    string
+	ConnectionID uuid.UUID
+	ExpiresAt    time.Time
+	ReturnTo     string
+}
+
+// An empty return_to (a console sign-in) is stored as NULL.
+func (q *Queries) InsertSamlAuthnRequest(ctx context.Context, arg InsertSamlAuthnRequestParams) error {
+	_, err := q.db.Exec(ctx, insertSamlAuthnRequest,
+		arg.RequestID,
+		arg.ConnectionID,
+		arg.ExpiresAt,
+		arg.ReturnTo,
+	)
+	return err
 }
 
 const insertSamlCertificate = `-- name: InsertSamlCertificate :one
@@ -600,12 +685,11 @@ type InsertSamlConnectionRow struct {
 	Status         string
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
-	LastLoginAt    pgtype.Timestamptz
+	LastLoginAt    *time.Time
 }
 
 // Queries for the saml domain.
 // Covers both saml.go (SP-side Service) and idp.go (IdP-side IdP struct).
-// All queries are STATIC.
 // ==========================================================================
 // SP-side: external IdP connections (saml.go)
 // ==========================================================================
@@ -659,34 +743,6 @@ func (q *Queries) InsertSamlConnectionKey(ctx context.Context, arg InsertSamlCon
 		arg.Certificate,
 		arg.KeyCt,
 		arg.KeyNonce,
-	)
-	return err
-}
-
-const insertSamlLoginCode = `-- name: InsertSamlLoginCode :exec
-
-INSERT INTO auth.login_codes (code_hash, kind, user_id, organization_id, connection_id, expires_at)
-VALUES ($1, 'saml', $2, $3::uuid, $4::uuid, $5)
-`
-
-type InsertSamlLoginCodeParams struct {
-	CodeHash       string
-	UserID         uuid.UUID
-	OrganizationID uuid.UUID
-	ConnectionID   uuid.UUID
-	ExpiresAt      time.Time
-}
-
-// ==========================================================================
-// SAML login codes (ExchangeLogin + ACS handler)
-// ==========================================================================
-func (q *Queries) InsertSamlLoginCode(ctx context.Context, arg InsertSamlLoginCodeParams) error {
-	_, err := q.db.Exec(ctx, insertSamlLoginCode,
-		arg.CodeHash,
-		arg.UserID,
-		arg.OrganizationID,
-		arg.ConnectionID,
-		arg.ExpiresAt,
 	)
 	return err
 }
@@ -796,7 +852,7 @@ type InsertSamlSPGroupAssignmentParams struct {
 	OrganizationID uuid.UUID
 	SpID           uuid.UUID
 	GroupID        uuid.UUID
-	AssignedBy     pgtype.UUID
+	AssignedBy     *uuid.UUID
 }
 
 func (q *Queries) InsertSamlSPGroupAssignment(ctx context.Context, arg InsertSamlSPGroupAssignmentParams) (int64, error) {
@@ -822,7 +878,7 @@ type InsertSamlSPUserAssignmentParams struct {
 	OrganizationID uuid.UUID
 	SpID           uuid.UUID
 	UserID         uuid.UUID
-	AssignedBy     pgtype.UUID
+	AssignedBy     *uuid.UUID
 }
 
 func (q *Queries) InsertSamlSPUserAssignment(ctx context.Context, arg InsertSamlSPUserAssignmentParams) (int64, error) {
@@ -838,23 +894,39 @@ func (q *Queries) InsertSamlSPUserAssignment(ctx context.Context, arg InsertSaml
 	return result.RowsAffected(), nil
 }
 
-const insertUserWithEmail = `-- name: InsertUserWithEmail :one
-INSERT INTO account.users (organization_id, email, email_verified_at, display_name, status)
-VALUES ($1, $2, NOW(), $3, 'active')
-RETURNING id
+const insertSamlTestSignIn = `-- name: InsertSamlTestSignIn :one
+
+INSERT INTO auth.saml_test_sign_ins (connection_id, request_id, return_url, expires_at)
+VALUES ($1, $2, $3, $4)
+RETURNING id, expires_at, created_at
 `
 
-type InsertUserWithEmailParams struct {
-	OrganizationID pgtype.UUID
-	Email          string
-	DisplayName    *string
+type InsertSamlTestSignInParams struct {
+	ConnectionID uuid.UUID
+	RequestID    string
+	ReturnUrl    string
+	ExpiresAt    time.Time
 }
 
-func (q *Queries) InsertUserWithEmail(ctx context.Context, arg InsertUserWithEmailParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, insertUserWithEmail, arg.OrganizationID, arg.Email, arg.DisplayName)
-	var id uuid.UUID
-	err := row.Scan(&id)
-	return id, err
+type InsertSamlTestSignInRow struct {
+	ID        uuid.UUID
+	ExpiresAt time.Time
+	CreatedAt time.Time
+}
+
+// ==========================================================================
+// SP-side: test sign-ins (testsignin.go)
+// ==========================================================================
+func (q *Queries) InsertSamlTestSignIn(ctx context.Context, arg InsertSamlTestSignInParams) (InsertSamlTestSignInRow, error) {
+	row := q.db.QueryRow(ctx, insertSamlTestSignIn,
+		arg.ConnectionID,
+		arg.RequestID,
+		arg.ReturnUrl,
+		arg.ExpiresAt,
+	)
+	var i InsertSamlTestSignInRow
+	err := row.Scan(&i.ID, &i.ExpiresAt, &i.CreatedAt)
+	return i, err
 }
 
 const isAssignedToSamlSP = `-- name: IsAssignedToSamlSP :one
@@ -926,7 +998,7 @@ SELECT EXISTS (
 
 type IsSamlAssignableUserParams struct {
 	UserID         uuid.UUID
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 }
 
 // IsSamlAssignableUser reports whether the organization is the account's home,
@@ -936,33 +1008,6 @@ func (q *Queries) IsSamlAssignableUser(ctx context.Context, arg IsSamlAssignable
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err
-}
-
-const linkExternalIdentity = `-- name: LinkExternalIdentity :exec
-INSERT INTO account.external_identities (user_id, organization_id, provider, connection_id, subject, email)
-VALUES ($1, $2, $3, $4::uuid, $5, $6)
-ON CONFLICT (organization_id, provider, connection_id, subject) DO NOTHING
-`
-
-type LinkExternalIdentityParams struct {
-	UserID         uuid.UUID
-	OrganizationID uuid.UUID
-	Provider       string
-	ConnectionID   uuid.UUID
-	Subject        string
-	Email          *string
-}
-
-func (q *Queries) LinkExternalIdentity(ctx context.Context, arg LinkExternalIdentityParams) error {
-	_, err := q.db.Exec(ctx, linkExternalIdentity,
-		arg.UserID,
-		arg.OrganizationID,
-		arg.Provider,
-		arg.ConnectionID,
-		arg.Subject,
-		arg.Email,
-	)
-	return err
 }
 
 const listIdPUserGroupNames = `-- name: ListIdPUserGroupNames :many
@@ -1131,7 +1176,7 @@ type ListSamlConnectionsRow struct {
 	Status         string
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
-	LastLoginAt    pgtype.Timestamptz
+	LastLoginAt    *time.Time
 }
 
 // At most paging.MaxListItems+1 rows: the API truncates the rest.
@@ -1197,6 +1242,37 @@ func (q *Queries) ListSamlGroupsAttributes(ctx context.Context, organizationID u
 	return items, nil
 }
 
+const listSamlIdPInitiatedFlags = `-- name: ListSamlIdPInitiatedFlags :many
+
+SELECT id, allow_idp_initiated FROM organization.saml_connections WHERE organization_id = $1
+`
+
+type ListSamlIdPInitiatedFlagsRow struct {
+	ID                uuid.UUID
+	AllowIdpInitiated bool
+}
+
+// Nor is allow_idp_initiated, the opt-in to unsolicited assertions.
+func (q *Queries) ListSamlIdPInitiatedFlags(ctx context.Context, organizationID uuid.UUID) ([]ListSamlIdPInitiatedFlagsRow, error) {
+	rows, err := q.db.Query(ctx, listSamlIdPInitiatedFlags, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSamlIdPInitiatedFlagsRow{}
+	for rows.Next() {
+		var i ListSamlIdPInitiatedFlagsRow
+		if err := rows.Scan(&i.ID, &i.AllowIdpInitiated); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSamlMetadataDue = `-- name: ListSamlMetadataDue :many
 SELECT id, organization_id, metadata_url::text AS metadata_url FROM organization.saml_connections
 WHERE metadata_url IS NOT NULL AND (metadata_checked_at IS NULL OR metadata_checked_at < $1)
@@ -1205,7 +1281,7 @@ LIMIT $2
 `
 
 type ListSamlMetadataDueParams struct {
-	CheckedBefore pgtype.Timestamptz
+	CheckedBefore *time.Time
 	MaxRows       int32
 }
 
@@ -1243,7 +1319,7 @@ FROM organization.saml_connections WHERE organization_id = $1
 type ListSamlMetadataSourcesRow struct {
 	ID                  uuid.UUID
 	MetadataUrl         *string
-	MetadataRefreshedAt pgtype.Timestamptz
+	MetadataRefreshedAt *time.Time
 	MetadataError       *string
 }
 
@@ -1289,7 +1365,7 @@ type ListSamlSPGroupAssignmentsRow struct {
 	GroupID    uuid.UUID
 	Name       string
 	AssignedAt time.Time
-	AssignedBy pgtype.UUID
+	AssignedBy *uuid.UUID
 }
 
 func (q *Queries) ListSamlSPGroupAssignments(ctx context.Context, arg ListSamlSPGroupAssignmentsParams) ([]ListSamlSPGroupAssignmentsRow, error) {
@@ -1335,7 +1411,7 @@ type ListSamlSPUserAssignmentsRow struct {
 	Email       string
 	DisplayName *string
 	AssignedAt  time.Time
-	AssignedBy  pgtype.UUID
+	AssignedBy  *uuid.UUID
 }
 
 func (q *Queries) ListSamlSPUserAssignments(ctx context.Context, arg ListSamlSPUserAssignmentsParams) ([]ListSamlSPUserAssignmentsRow, error) {
@@ -1453,17 +1529,79 @@ func (q *Queries) LockSamlMetadataSource(ctx context.Context, arg LockSamlMetada
 	return i, err
 }
 
-const markSamlLoginCodeUsed = `-- name: MarkSamlLoginCodeUsed :exec
-UPDATE auth.login_codes SET used_at = NOW() WHERE code_hash = $1 AND organization_id = $2::uuid
+const purgeExpiredSamlAuthnRequests = `-- name: PurgeExpiredSamlAuthnRequests :exec
+
+DELETE FROM auth.saml_authn_requests WHERE expires_at <= NOW()
 `
 
-type MarkSamlLoginCodeUsedParams struct {
-	CodeHash       string
-	OrganizationID uuid.UUID
+// ==========================================================================
+// SP-side: pending AuthnRequests and replay reservations (saml.go)
+// ==========================================================================
+func (q *Queries) PurgeExpiredSamlAuthnRequests(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, purgeExpiredSamlAuthnRequests)
+	return err
 }
 
-func (q *Queries) MarkSamlLoginCodeUsed(ctx context.Context, arg MarkSamlLoginCodeUsedParams) error {
-	_, err := q.db.Exec(ctx, markSamlLoginCodeUsed, arg.CodeHash, arg.OrganizationID)
+const purgeExpiredSamlReplayIDs = `-- name: PurgeExpiredSamlReplayIDs :exec
+DELETE FROM auth.saml_replay_ids WHERE expires_at <= NOW()
+`
+
+func (q *Queries) PurgeExpiredSamlReplayIDs(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, purgeExpiredSamlReplayIDs)
+	return err
+}
+
+const reserveSamlReplayID = `-- name: ReserveSamlReplayID :execrows
+INSERT INTO auth.saml_replay_ids (connection_id, kind, saml_id, expires_at)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT DO NOTHING
+`
+
+type ReserveSamlReplayIDParams struct {
+	ConnectionID uuid.UUID
+	Kind         string
+	SamlID       string
+	ExpiresAt    time.Time
+}
+
+// No row when the ID was already presented: a replay.
+func (q *Queries) ReserveSamlReplayID(ctx context.Context, arg ReserveSamlReplayIDParams) (int64, error) {
+	result, err := q.db.Exec(ctx, reserveSamlReplayID,
+		arg.ConnectionID,
+		arg.Kind,
+		arg.SamlID,
+		arg.ExpiresAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const samlAllowsIdPInitiated = `-- name: SamlAllowsIdPInitiated :one
+SELECT allow_idp_initiated FROM organization.saml_connections WHERE id = $1
+`
+
+func (q *Queries) SamlAllowsIdPInitiated(ctx context.Context, id uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, samlAllowsIdPInitiated, id)
+	var allow_idp_initiated bool
+	err := row.Scan(&allow_idp_initiated)
+	return allow_idp_initiated, err
+}
+
+const setSamlAllowIdPInitiated = `-- name: SetSamlAllowIdPInitiated :exec
+UPDATE organization.saml_connections SET allow_idp_initiated = $1, updated_at = NOW()
+WHERE id = $2 AND organization_id = $3
+`
+
+type SetSamlAllowIdPInitiatedParams struct {
+	AllowIdpInitiated bool
+	ID                uuid.UUID
+	OrganizationID    uuid.UUID
+}
+
+func (q *Queries) SetSamlAllowIdPInitiated(ctx context.Context, arg SetSamlAllowIdPInitiatedParams) error {
+	_, err := q.db.Exec(ctx, setSamlAllowIdPInitiated, arg.AllowIdpInitiated, arg.ID, arg.OrganizationID)
 	return err
 }
 
@@ -1621,7 +1759,7 @@ type UpdateSamlConnectionRow struct {
 	Status         string
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
-	LastLoginAt    pgtype.Timestamptz
+	LastLoginAt    *time.Time
 }
 
 func (q *Queries) UpdateSamlConnection(ctx context.Context, arg UpdateSamlConnectionParams) (UpdateSamlConnectionRow, error) {

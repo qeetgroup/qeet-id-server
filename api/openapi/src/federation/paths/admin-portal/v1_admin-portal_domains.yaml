@@ -2,7 +2,7 @@ get:
   operationId: listPortalDomains
   summary: List domains (portal)
   description: >-
-    Lists the domains of the tenant bound to the portal session, with the DNS
+    Lists the domains of the organization bound to the portal session, with the DNS
     record each needs and its verification status. Requires the link's
     capabilities to include domain_verification.
   tags:
@@ -31,8 +31,8 @@ post:
   operationId: claimPortalDomain
   summary: Claim a domain (portal)
   description: >-
-    Claims a domain for the tenant bound to the portal session and returns the
-    DNS TXT record to publish, as the tenant-admin claim-domain endpoint does,
+    Claims a domain for the organization bound to the portal session and returns the
+    DNS TXT record to publish, as the organization-admin claim-domain endpoint does,
     under the same plan. Requires the link's capabilities to include
     domain_verification. Audited as domain.created by the admin portal.
   tags:

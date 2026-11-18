@@ -5,7 +5,7 @@ get:
     of that role can do. Use it to review a role before changing its grants. Add
     a permission with the grant-permission-to-role call and remove one with the
     revoke-permission-from-role call, or set them all at once with PUT
-    /v1/tenants/{tenantID}/roles/{roleID}/permissions.
+    /v1/organizations/{organizationID}/roles/{roleID}/permissions.
   summary: List permissions granted to a role
   tags:
     - RBAC

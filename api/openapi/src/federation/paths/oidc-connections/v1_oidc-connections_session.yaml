@@ -7,7 +7,7 @@ post:
     hosted-login session, as POST /v1/auth/session answers: the qe_ls cookie and
     the user's id. The code is single-use and short-lived (401
     oidc_connection.login_code_invalid, oidc_connection.login_code_used or
-    oidc_connection.login_code_expired). The organisation's network rules apply
+    oidc_connection.login_code_expired). The organization's network rules apply
     (403 auth.address_not_allowed), and an account that is not active is refused
     (403 auth.account_inactive). As the console's sign-in through a connection,
     no second factor is asked. The session is recorded as an oidc sign-in.

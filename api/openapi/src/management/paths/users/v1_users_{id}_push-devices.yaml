@@ -4,7 +4,7 @@ get:
   description: >-
     Lists the phones a member has linked for push approval. Requires the
     user.read permission; 404 for someone who is not a member of the caller's
-    organisation.
+    organization.
   tags:
     - Users
   parameters:

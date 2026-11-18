@@ -3,9 +3,9 @@ get:
   description: >-
     Lists recent delivery attempts for a webhook, including status and response
     codes, for debugging failures. Retry a failed one with the retry-delivery
-    endpoint. While the organisation's plan does not include webhooks (one that
+    endpoint. While the organization's plan does not include webhooks (one that
     has lapsed since the webhook was set up), deliveries are dead-lettered
-    unsent, with error "not sent: the organisation's plan does not include
+    unsent, with error "not sent: the organization's plan does not include
     webhooks"; once paid again they can be retried.
   summary: List deliveries
   tags:
@@ -59,7 +59,7 @@ get:
                   $ref: ../../components/schemas/WebhookDelivery.yaml
               next_cursor:
                 type: string
-                description: Empty on the last page.
+                description: Present when there is another page.
     '400':
       $ref: ../../../shared/responses/BadRequest.yaml
     '401':

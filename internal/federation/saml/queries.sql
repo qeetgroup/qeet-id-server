@@ -1,6 +1,5 @@
 -- Queries for the saml domain.
 -- Covers both saml.go (SP-side Service) and idp.go (IdP-side IdP struct).
--- All queries are STATIC.
 
 -- ==========================================================================
 -- SP-side: external IdP connections (saml.go)
@@ -62,6 +61,80 @@ SELECT id, groups_attribute FROM organization.saml_connections WHERE organizatio
 -- name: SetSamlGroupsAttribute :exec
 UPDATE organization.saml_connections SET groups_attribute = @groups_attribute, updated_at = NOW()
 WHERE id = @id AND organization_id = @organization_id;
+
+-- Nor is allow_idp_initiated, the opt-in to unsolicited assertions.
+
+-- name: ListSamlIdPInitiatedFlags :many
+SELECT id, allow_idp_initiated FROM organization.saml_connections WHERE organization_id = @organization_id;
+
+-- name: GetSamlAllowIdPInitiated :one
+SELECT allow_idp_initiated FROM organization.saml_connections WHERE id = @id AND organization_id = @organization_id;
+
+-- name: SamlAllowsIdPInitiated :one
+SELECT allow_idp_initiated FROM organization.saml_connections WHERE id = @id;
+
+-- name: SetSamlAllowIdPInitiated :exec
+UPDATE organization.saml_connections SET allow_idp_initiated = @allow_idp_initiated, updated_at = NOW()
+WHERE id = @id AND organization_id = @organization_id;
+
+-- ==========================================================================
+-- SP-side: pending AuthnRequests and replay reservations (saml.go)
+-- ==========================================================================
+
+-- name: PurgeExpiredSamlAuthnRequests :exec
+DELETE FROM auth.saml_authn_requests WHERE expires_at <= NOW();
+
+-- name: InsertSamlAuthnRequest :exec
+-- An empty return_to (a console sign-in) is stored as NULL.
+INSERT INTO auth.saml_authn_requests (request_id, connection_id, expires_at, return_to)
+VALUES (@request_id, @connection_id, @expires_at, NULLIF(@return_to::text, ''));
+
+-- name: HostedSamlReturn :one
+-- The return_to of the latest pending sign-in, among request_ids, that the
+-- hosted login began on the connection.
+SELECT return_to::text FROM auth.saml_authn_requests
+WHERE connection_id = @connection_id AND request_id = ANY(@request_ids::text[])
+  AND return_to IS NOT NULL AND expires_at > NOW()
+ORDER BY expires_at DESC
+LIMIT 1;
+
+-- name: ConsumeSamlAuthnRequest :one
+DELETE FROM auth.saml_authn_requests
+WHERE request_id = @request_id AND connection_id = @connection_id AND expires_at > NOW()
+RETURNING return_to;
+
+-- name: PurgeExpiredSamlReplayIDs :exec
+DELETE FROM auth.saml_replay_ids WHERE expires_at <= NOW();
+
+-- name: ReserveSamlReplayID :execrows
+-- No row when the ID was already presented: a replay.
+INSERT INTO auth.saml_replay_ids (connection_id, kind, saml_id, expires_at)
+VALUES (@connection_id, @kind, @saml_id, @expires_at)
+ON CONFLICT DO NOTHING;
+
+-- ==========================================================================
+-- SP-side: test sign-ins (testsignin.go)
+-- ==========================================================================
+
+-- name: InsertSamlTestSignIn :one
+INSERT INTO auth.saml_test_sign_ins (connection_id, request_id, return_url, expires_at)
+VALUES (@connection_id, @request_id, @return_url, @expires_at)
+RETURNING id, expires_at, created_at;
+
+-- name: GetSamlTestSignIn :one
+SELECT t.id, t.connection_id, t.status, t.result, t.expires_at, t.created_at, t.completed_at
+FROM auth.saml_test_sign_ins t
+JOIN organization.saml_connections c ON c.id = t.connection_id
+WHERE t.id = @id AND t.connection_id = @connection_id AND c.organization_id = @organization_id;
+
+-- name: GetSamlTestSignInByRequest :one
+SELECT id, return_url FROM auth.saml_test_sign_ins
+WHERE connection_id = @connection_id AND request_id = @request_id;
+
+-- name: FinishSamlTestSignIn :exec
+-- Once, while the test still waits.
+UPDATE auth.saml_test_sign_ins SET status = @status, result = @result, completed_at = NOW()
+WHERE id = @id AND status = 'pending' AND expires_at > NOW();
 
 -- ==========================================================================
 -- SP-side: the IdP signing certificates a connection trusts (certificates.go)
@@ -157,47 +230,6 @@ WHERE connection_id = @connection_id AND organization_id = @organization_id;
 INSERT INTO organization.saml_connection_keys (connection_id, organization_id, certificate, key_ct, key_nonce)
 VALUES (@connection_id, @organization_id, @certificate, @key_ct, @key_nonce)
 ON CONFLICT (connection_id) DO NOTHING;
-
--- ==========================================================================
--- SAML login codes (ExchangeLogin + ACS handler)
--- ==========================================================================
-
--- name: InsertSamlLoginCode :exec
-INSERT INTO auth.login_codes (code_hash, kind, user_id, organization_id, connection_id, expires_at)
-VALUES (@code_hash, 'saml', @user_id, @organization_id::uuid, @connection_id::uuid, @expires_at);
-
--- name: ConsumeSamlLoginCode :one
--- With the status of the connection that issued the code: one since deleted finds no row.
-SELECT lc.user_id, c.organization_id, lc.expires_at, lc.used_at, c.status
-FROM auth.login_codes lc
-JOIN organization.saml_connections c ON c.organization_id = lc.organization_id AND c.id = lc.connection_id
-WHERE lc.code_hash = @code_hash AND lc.kind = 'saml'
-FOR UPDATE OF lc;
-
--- name: MarkSamlLoginCodeUsed :exec
-UPDATE auth.login_codes SET used_at = NOW() WHERE code_hash = @code_hash AND organization_id = @organization_id::uuid;
-
--- ==========================================================================
--- findOrCreateUser — same pattern as ldap (cross-schema account tables)
--- ==========================================================================
-
--- name: GetExternalIdentityUser :one
-SELECT user_id FROM account.external_identities
-WHERE organization_id = @organization_id AND provider = @provider AND connection_id = @connection_id::uuid
-  AND subject = @subject;
-
--- name: GetUserByEmail :one
-SELECT id FROM account.users WHERE LOWER(email) = LOWER(@email) AND deleted_at IS NULL;
-
--- name: InsertUserWithEmail :one
-INSERT INTO account.users (organization_id, email, email_verified_at, display_name, status)
-VALUES (@organization_id, @email, NOW(), sqlc.narg('display_name'), 'active')
-RETURNING id;
-
--- name: LinkExternalIdentity :exec
-INSERT INTO account.external_identities (user_id, organization_id, provider, connection_id, subject, email)
-VALUES (@user_id, @organization_id, @provider, @connection_id::uuid, @subject, @email)
-ON CONFLICT (organization_id, provider, connection_id, subject) DO NOTHING;
 
 -- ==========================================================================
 -- IdP-side: Qeet as SAML provider (idp.go)

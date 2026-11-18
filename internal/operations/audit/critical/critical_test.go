@@ -85,7 +85,7 @@ func TestCriticalEventsSayWhenCut(t *testing.T) {
 		}
 		h := &Handler{Service: NewService(&fakeAudit{rows: rows}, &fakeAnomalies{})}
 		organizationID := uuid.New()
-		req := httptest.NewRequest(http.MethodGet, "/v1/tenants/"+organizationID.String()+"/critical-events", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/organizations/"+organizationID.String()+"/critical-events", nil)
 		req = req.WithContext(httpx.WithPrincipal(req.Context(), &httpx.Principal{OrganizationID: &organizationID}))
 		rec := httptest.NewRecorder()
 		h.list(rec, req)

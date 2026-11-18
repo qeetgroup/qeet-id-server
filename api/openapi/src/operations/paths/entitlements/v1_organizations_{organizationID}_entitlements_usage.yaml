@@ -1,0 +1,40 @@
+get:
+  operationId: getEntitlementUsage
+  description: >-
+    Returns the organization's current consumption for each metered resource, such as
+    seats, applications, and API keys, for display against the plan's limits.
+    seats counts the people holding a role in the organization, directly or through a
+    group that carries one, each once, plus its pending invitations; an account
+    holding no role, such as a customer signing in to the organization's applications,
+    holds no seat. mau counts the people active in the organization so far this
+    calendar month (UTC): each person who signed in to it, or renewed a session
+    in it, at least once, counted once. API keys, service principals and AI
+    agents are not counted. It complements the entitlements endpoint, which
+    resolves the plan's capability set, by running the underlying count queries
+    only when the usage view needs them. Scoped to the organization named in the path.
+  summary: Get organization resource usage against plan limits
+  tags:
+    - Entitlements
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  responses:
+    '200':
+      description: Resource usage by limit key
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - usage
+            properties:
+              usage:
+                type: object
+                additionalProperties:
+                  type: integer
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml

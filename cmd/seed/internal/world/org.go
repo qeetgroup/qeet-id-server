@@ -1,11 +1,10 @@
 package world
 
 import (
-	"time"
+	"slices"
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/identity/organization"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 )
 
@@ -17,17 +16,14 @@ type OrgSpec struct {
 	Industry   string
 	City       string // headquarters, e.g. "Mumbai"
 	Country    string // ISO 3166-1 alpha-2
-	TimeZone   string // IANA zone of the headquarters
 	Region     string // data region
 	Plan       string // free | starter | pro | enterprise
 	Currency   string
-	// Billing is the subscription's state: active, trialing, past_due or
-	// canceled (a lapsed paid plan, now free).
+	// Billing is the subscription's state: active (paid), trialing, unpaid
+	// (its invoice is open) or canceled (ends with the period).
 	Billing  string
-	Annual   bool
-	Since    time.Time // when the organization signed up
-	Size     int       // people whose home is the organization, owner included
-	Locales  []Locale  // where its people come from, weighted by repetition
+	Size     int      // people whose home is the organization, owner included
+	Locales  []Locale // where its people come from, weighted by repetition
 	Brand    Brand
 	Features Features
 	Depts    []Dept
@@ -42,11 +38,11 @@ type Brand struct {
 // Features is how an organization signs its people in and connects its
 // systems. A feature its plan lacks is never set.
 type Features struct {
-	SSO         string   // SAML identity provider: okta, entra, google, onelogin, or "" for none
+	SSO         string   // SAML identity provider: okta, entra, google, or "" for none
 	SSOStatus   string   // active | draft
-	SCIM        bool     // users provisioned from the identity provider
+	SCIM        bool     // people provisioned from the identity provider
 	LDAP        bool     // an on-premises directory
-	Social      []string // organization social providers: google, microsoft
+	Social      []string // organization social providers
 	MagicLink   bool
 	Passkeys    bool
 	SelfSignup  bool   // hosted self-registration
@@ -69,38 +65,19 @@ type Dept struct {
 
 // Org is a seeded organization.
 type Org struct {
-	Spec         OrgSpec
-	ID           uuid.UUID
-	Organization *organization.Organization
-	Owner        *Person
-	People       []*Person // home members, owner first
-	Guests       []*Person // members whose home is another organization
-	Roles        map[string]uuid.UUID
-	Groups       map[string]uuid.UUID // department and team names
-	// Loc is the headquarters' time zone.
-	Loc *time.Location
+	Spec   OrgSpec
+	ID     uuid.UUID
+	Owner  *Person
+	People []*Person // home members, owner first
+	Guests []*Person // members whose home is another organization
+	Roles  map[string]uuid.UUID
+	Groups map[string]uuid.UUID // department and team names
 }
 
 // Has reports whether the organization's plan includes a paid feature.
 func (o *Org) Has(plan string) bool {
 	rank := map[string]int{"free": 0, "starter": 1, "pro": 2, "enterprise": 3}
-	effective := o.Spec.Plan
-	if o.Spec.Billing == "canceled" {
-		effective = "free"
-	}
-	return rank[effective] >= rank[plan]
-}
-
-// Members is everyone holding a role in the organization: its people who
-// are still members, then its guests.
-func (o *Org) Members() []*Person {
-	var out []*Person
-	for _, p := range o.People {
-		if p.Status != StatusDeleted {
-			out = append(out, p)
-		}
-	}
-	return append(out, o.Guests...)
+	return rank[o.Spec.Plan] >= rank[plan]
 }
 
 // Active is the organization's people who can sign in today.
@@ -114,39 +91,22 @@ func (o *Org) Active() []*Person {
 	return out
 }
 
-// WithRole is the organization's active people holding role.
-func (o *Org) WithRole(role string) []*Person {
-	var out []*Person
-	for _, p := range o.Active() {
-		if p.Role == role {
-			out = append(out, p)
+// First is the first active person, guests included, matching one of prefs
+// (tried in order), else the owner.
+func (o *Org) First(prefs ...func(*Person) bool) *Person {
+	for _, pref := range prefs {
+		for _, p := range append(o.Active(), o.Guests...) {
+			if pref(p) {
+				return p
+			}
 		}
 	}
-	return out
+	return o.Owner
 }
 
-// Admins is the active people who can administer the organization: its owner
-// and every Admin.
-func (o *Org) Admins() []*Person {
-	var out []*Person
-	for _, p := range o.Active() {
-		if p.Role == RoleOwner || p.Role == RoleAdmin {
-			out = append(out, p)
-		}
-	}
-	return out
-}
-
-// InDept is the organization's active people in dept.
-func (o *Org) InDept(dept string) []*Person {
-	var out []*Person
-	for _, p := range o.Active() {
-		if p.Department == dept {
-			out = append(out, p)
-		}
-	}
-	return out
-}
+// Admin is who makes an administrative change in o: an IT administrator,
+// else an Admin, else the owner.
+func (o *Org) Admin() *Person { return o.First(HasRole(RoleITAdmin), HasRole(RoleAdmin)) }
 
 // Person returns the organization's person with email, or nil.
 func (o *Org) Person(email string) *Person {
@@ -156,6 +116,26 @@ func (o *Org) Person(email string) *Person {
 		}
 	}
 	return nil
+}
+
+// HasRole matches people holding one of roles in their home organization.
+func HasRole(roles ...string) func(*Person) bool {
+	return func(p *Person) bool { return slices.Contains(roles, p.Role) }
+}
+
+// InDept matches people in dept.
+func InDept(dept string) func(*Person) bool {
+	return func(p *Person) bool { return p.Department == dept }
+}
+
+// InTeam matches people in team.
+func InTeam(team string) func(*Person) bool {
+	return func(p *Person) bool { return p.Team == team }
+}
+
+// Email matches the person with address e.
+func Email(e string) func(*Person) bool {
+	return func(p *Person) bool { return p.Email == e }
 }
 
 // Role names every organization on a paid plan has. Free plans allow no custom
@@ -191,33 +171,25 @@ type Person struct {
 	Team       string
 	City       string
 	Country    string // ISO 3166-1 alpha-2
-	Loc        *time.Location
 	Phone      string // E.164 from a fictional range; empty for some
 	EmployeeID string
 	Manager    *Person
 	Role       string // role in the home organization
-	Joined     time.Time
-	// Guest roles held in other organizations.
+	// GuestOf are the roles held in other organizations.
 	GuestOf []GuestRole
 
-	// Status is the account's state today. Since is when it left active.
-	Status string
-	Since  time.Time
-	// Reason is the suspension reason (users.suspension_reason) and Source who
-	// suspended it (manual, scim, ldap, policy).
-	Reason, Source string
+	// Status is the account's state today; Reason is why it was suspended.
+	Status, Reason string
 	Unverified     bool   // has never verified the email address
-	Provisioned    string // how the account arrived: "" (invited or created), scim, ldap, saml
+	Provisioned    bool   // pushed by the identity provider over SCIM
 	ExternalID     string // the identity provider's id, for provisioned accounts
 
-	// MFA lists the factors enrolled: totp, recovery, email, sms, push,
-	// passkey. MFASince is when the first was.
-	MFA      []string
-	MFASince time.Time
-	// Activity is the average number of sign-ins per working day.
-	Activity float64
-	// Device is the person's usual computer and Phone their phone, for
-	// sessions and trusted devices.
+	// MFA lists the factors to enrol: totp, recovery, push. TOTPSecret and
+	// RecoveryCodes are what the enrolment returned.
+	MFA           []string
+	TOTPSecret    string
+	RecoveryCodes []string
+	// Device is the person's usual computer and Mobile their phone.
 	Device, Mobile Device
 
 	// Login is set for a test account, with what it demonstrates; the summary
@@ -227,9 +199,8 @@ type Person struct {
 
 // GuestRole is a role a person holds in an organization other than their own.
 type GuestRole struct {
-	Org   *Org
-	Role  string
-	Since time.Time
+	Org  *Org
+	Role string
 }
 
 // Name is the person's display name.
@@ -242,22 +213,13 @@ func (p *Person) Actor() audit.Actor {
 }
 
 // HasFactor reports whether the person enrolled factor.
-func (p *Person) HasFactor(factor string) bool {
-	for _, f := range p.MFA {
-		if f == factor {
-			return true
-		}
-	}
-	return false
-}
+func (p *Person) HasFactor(factor string) bool { return slices.Contains(p.MFA, factor) }
 
 // Device is a browser or app a person signs in from.
 type Device struct {
-	Kind      string // desktop | mobile | tablet
 	Label     string // e.g. "Chrome on macOS"
 	UserAgent string
 	IP        string
-	City      string
 	Country   string
 }
 

@@ -25,7 +25,7 @@ Passkeys first, standards throughout (OpenID Connect, SAML, SCIM, WebAuthn), Pos
 
 Qeet ID is an Identity and Access Management platform that combines authentication, authorization, enterprise federation, user lifecycle management, and machine identity behind one API. It gives product teams standards-based identity, with users, credentials and policy in one place, instead of stitching sign-in, authorization and federation together from separate services.
 
-The backend is a Go modular monolith backed by PostgreSQL. Five bounded contexts share a small platform layer, while a composition root wires HTTP routes, policy enforcement, persistence, event delivery, and background work. The default API process runs as a single binary and embeds its continuous workers; dedicated worker and scheduler entrypoints are available when those workloads need to scale independently.
+The backend is a Go modular monolith backed by PostgreSQL. Five bounded contexts share a small platform layer, while a composition root wires HTTP routes, policy enforcement, persistence, event delivery, and background work. The API process runs as a single binary and runs its continuous workers itself; a scheduler entrypoint can run the maintenance jobs on their own.
 
 ## ✨ Key Features
 
@@ -63,7 +63,7 @@ flowchart TB
     end
 
     Platform["platform · config · crypto · events · observability"]
-    Workers["Continuous workers<br/>embedded or cmd/worker"]
+    Workers["Continuous workers<br/>inside the API"]
     Scheduler["Maintenance scheduler<br/>cmd/scheduler"]
     Postgres[(PostgreSQL)]
     NATS["NATS · optional event fan-out"]
@@ -91,13 +91,13 @@ flowchart TB
 
 - **Modular monolith** with explicit boundaries across five domain contexts.
 - **PostgreSQL as the source of truth** with organization-scoped persistence.
-- **Single API artifact** with embedded workers and separate worker/scheduler entrypoints.
+- **Single API artifact** with embedded workers and a separate scheduler entrypoint.
 - **Transactional outbox** for durable events, with optional NATS fan-out.
 
 ### Repository layout
 
 ```text
-cmd/          api · worker · scheduler · migrate · seed   (five entrypoints)
+cmd/          api · scheduler · seed   (three entrypoints)
 internal/
   bootstrap/  composition root — every dependency, route and worker is wired here
   access/     authentication · authorization · mfa · passkeys · recovery · risk · threat
@@ -106,7 +106,7 @@ internal/
   developer/  api-keys · principal · agents · webhooks · auth-hooks · credentials
   operations/ audit · billing · analytics · gdpr · retention · siem · notifications · qeetai · …
   platform/   config · crypto · database · http · events · jobs · messaging · observability · ai · cache
-api/          openapi (five specs) · postman · qeetai (AI tool manifest)
+api/          openapi (five specs) · qeetai (AI tool manifest)
 tests/        architecture · integration · performance · security · fixtures
 docs/llm/     architecture documentation for coding agents
 ```
@@ -169,21 +169,22 @@ That is the whole setup. Everything else on this page is reference.
   SAML IdP key/certificate pair into `.secrets/` (gitignored, idempotent — it skips whatever already
   exists). It then starts the API, which **applies database migrations on startup**. There is no
   separate migrate step to remember.
-- **`make seed`** loads fictional, production-shaped demo data in about a minute, so every console
-  and hosted-login screen has something to show:
+- **`make seed`** loads fictional, production-shaped demo data into an empty database in about a
+  minute, so every console and hosted-login screen has something to show:
   - Ten organizations: Qeet Group, whose own products (Qeet Pay, Qeet People, Qeet Notify, Qeet Logs,
     Qeet AI and the Qeet Circle staff console) are its applications, and customers on every plan
-    and stage (Enterprise on Okta or Microsoft Entra with SCIM, a Pro trial, a past-due Starter, a
+    and stage (Enterprise on Okta or Microsoft Entra with SCIM, a Pro trial, an unpaid Starter, a
     cancelled one, a brand-new Free one).
   - About 300 people with roles, teams and managers, and the organizations' SSO (SAML and OpenID
     Connect, with group mappings and break-glass members), SCIM, LDAP, social sign-in (Google,
     Microsoft, GitHub, Apple, Discord, Facebook and X), applications, API keys, webhooks, agents,
     policies, access requests and compliance owners and audits.
-  - 90 days of sessions, sign-ins, access decisions, audit, webhook, email and billing history.
+  - Sign-ins, sessions, lockouts and the audit trail they leave, all written just now through the
+    server's own services: the seed runs no SQL and dates nothing back.
 
   It needs `SECRETS_KEY` set, so the API can read what it encrypts. **It prints what you need to
   test, so read its output**: test accounts for each role, TOTP secrets, hosted sign-in URLs for each
-  organization's app, API keys and invitation links. `make seed-reset` empties the database first.
+  organization's app, API keys and invitation links. `make seed-reset` recreates the database first.
   The kit's DEV runs the same seed with `bash macos/dev/seed.sh`. To add a feature to it, see
   [docs/llm/workflows.md](docs/llm/workflows.md#add-a-feature-to-the-demo-data).
 
@@ -209,7 +210,7 @@ which makes the app **log** emails instead of sending them. To capture them in M
 | Your `.env` edits appear to be ignored | You ran `go run ./cmd/api` directly. **Only the `Makefile` loads `.env`** — nothing in the Go code does, so a direct `go run` silently uses built-in defaults. Use `make dev` |
 | `address already in use` on `:4001` | `make kill` frees the port |
 | A passkey ceremony fails with `passkey.attestation_invalid` | The browser origin is missing from `WEBAUTHN_RP_ORIGINS`. CORS being correct is not enough |
-| You want a clean slate | `make db-reset` (drops the volume), then `make dev`, then `make seed` |
+| You want a clean slate | `make seed-reset` (drops the volume, then seeds), or `make db-reset`, then `make dev` |
 | `database schema … isn't recorded as built from the migration files this build carries` at startup | The database was migrated by an earlier build, from an earlier copy of the migrations, or by the `migrate` CLI. `make db-reset`, then `make dev`. For a migration of your own that isn't merged yet: `make migrate-down`, then `make dev` |
 
 ## 🛠️ Development
@@ -230,10 +231,10 @@ Every target in the [Makefile](./Makefile) — there are no others.
 | `make db-up` / `db-down` | Start or stop PostgreSQL, NATS and Mailpit |
 | `make db-reset` | Recreate the local database volume |
 | `make migrate-down` | Roll one migration back, to try its down file; needs the `migrate` CLI. The server applies migrations at start |
-| `make seed` / `seed-reset` | Load, or destructively reload, development demo data |
+| `make seed` / `seed-reset` | Load development demo data into an empty database, or recreate the database and load it |
 | `make kill` | Free a stuck `:4001` |
 
-Run a single test with `go test ./internal/access/authentication/... -run TestName`.
+Run a single test with `go test ./internal/access/auth/... -run TestName`.
 
 Before opening a pull request:
 
@@ -255,7 +256,6 @@ other Go test suites or sqlc/gosec gates.
 - **A route added without a matching specification entry fails the local test gate** —
   `internal/bootstrap/openapi_coverage_test.go` asserts every mounted route is documented. Update the
   spec in the same change as the route and run `make ci` before pushing.
-- [api/postman/](./api/postman/) provides an importable collection and environment.
 - [Documentation](https://docs.qeet.in) covers product concepts and integration guidance.
 
 ## 🧠 Working in this repository
@@ -299,7 +299,7 @@ Qeet ID validates production configuration at startup and refuses development-on
 trusted-header, origin, URL, sandbox-payment, or ephemeral-key settings outside the development
 environment.
 
-- Passwords and MFA recovery codes use Argon2id, with transparent verification and upgrade of legacy bcrypt hashes; random machine secrets (API keys, service-principal, agent and OAuth client secrets) are stored as their SHA-256.
+- Passwords and MFA recovery codes use Argon2id; random machine secrets (API keys, service-principal, agent and OAuth client secrets) are stored as their SHA-256.
 - Passkeys use `go-webauthn`; access and ID tokens are signed ES256 (an EC P-256 key) or RS256 (an RSA key), with `kid`-based JWKS verification and retired-key support.
 - The secrets vault uses AES-GCM with a static key or AWS KMS-backed data-key provider. Every stored value names the data key that sealed it, so the key can be rotated: previous keys stay readable (`SECRETS_PREVIOUS_KEYS`) while a background job moves stored values to the current one (steps on `SecretsKey` in `internal/platform/config/config.go`).
 - Organization routes are checked against the authenticated principal and persistence queries carry organization scope.

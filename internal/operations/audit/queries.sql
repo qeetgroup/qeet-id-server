@@ -1,8 +1,8 @@
 -- Queries for the audit domain.
 --
--- The hash-chained append-only audit log.  Static queries are here; dynamic
--- ones stay hand-written in the respective .go files:
---   - Reader.List (http.go): dynamic WHERE clause with optional action, resource
+-- The hash-chained append-only audit log.  Static queries are here; two stay
+-- hand-written in Go:
+--   - Reader.List (list.go): dynamic WHERE clause with optional action, resource
 --     type, actor, free-text search, and cursor filters.
 --   - Record advisory-lock call (audit.go): pg_advisory_xact_lock is a
 --     void-returning side-effect function; it stays as a raw tx.Exec call.
@@ -250,3 +250,15 @@ WHERE organization_id = @organization_id::uuid;
 -- a purge has moved it since.
 UPDATE platform.audit_purge_checkpoints SET key_id = @key_id, mac = @mac
 WHERE organization_id = @organization_id AND event_id = @event_id;
+
+-- The names of what an event is about, as they are now, in the event's
+-- organization: no row for an event with none (a NULL @organization_id).
+
+-- name: GetRoleName :one
+SELECT name FROM rbac.roles WHERE id = @id AND organization_id = sqlc.narg('organization_id');
+
+-- name: GetGroupName :one
+SELECT name FROM organization.groups WHERE id = @id AND organization_id = sqlc.narg('organization_id');
+
+-- name: GetABACPolicyName :one
+SELECT name FROM auth.abac_policies WHERE id = @id AND organization_id = sqlc.narg('organization_id');

@@ -8,6 +8,6 @@ const (
 )
 
 var (
-	ErrUpgradeRequired = New(CodeUpgradeRequired, "This feature isn't included in your plan. Upgrade to unlock it.") // metadata: feature, plan
-	ErrPlanLimit       = New(CodePlanLimit, "You've reached your plan's limit. Upgrade to add more.")                // metadata: resource, limit, plan
+	ErrUpgradeRequired = New(CodeUpgradeRequired, KindPaymentRequired, "This feature isn't included in your plan. Upgrade to unlock it.") // metadata: feature, plan
+	ErrPlanLimit       = New(CodePlanLimit, KindPaymentRequired, "You've reached your plan's limit. Upgrade to add more.")                // metadata: resource, limit, plan
 )

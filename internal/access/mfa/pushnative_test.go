@@ -201,13 +201,11 @@ func TestFCMUnregisteredMeansTheAppIsGone(t *testing.T) {
 	}
 }
 
-func TestDeliverPushRoutesByToken(t *testing.T) {
-	var expo, apns, fcm atomic.Int32
-	expoSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		expo.Add(1)
-		_, _ = io.WriteString(w, `{"data":[{"status":"ok"}]}`)
-	}))
-	t.Cleanup(expoSrv.Close)
+// TestDeliverPushRoutesByPlatform checks that a phone is sent to through its platform's
+// service, APNs for iOS and FCM for Android, and that a phone whose service isn't configured
+// is not sent to.
+func TestDeliverPushRoutesByPlatform(t *testing.T) {
+	var apns, fcm atomic.Int32
 	apnsClient, _ := testAPNs(t, func(http.ResponseWriter, *http.Request) { apns.Add(1) })
 	fcmClient, _ := testFCM(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/token" {
@@ -216,22 +214,24 @@ func TestDeliverPushRoutesByToken(t *testing.T) {
 		}
 		fcm.Add(1)
 	})
-	s := &Service{pushURL: expoSrv.URL, apns: apnsClient, fcm: fcmClient}
-	ch := uuid.New()
+	s := &Service{apns: apnsClient, fcm: fcmClient}
+	m := signInMessage(uuid.New(), "sign_in")
 	for _, target := range []pushTarget{
-		{token: "ExponentPushToken[abc]", platform: "ios"}, // the React Native app, on either platform
 		{token: apnsDeviceToken, platform: "ios"},
 		{token: "fcm-registration-token", platform: "android"},
 	} {
-		if err := s.deliverPush(t.Context(), target, ch, "sign_in"); err != nil {
+		if err := s.deliverPush(t.Context(), target, m); err != nil {
 			t.Errorf("deliver %s: %v", target.platform, err)
 		}
 	}
-	if expo.Load() != 1 || apns.Load() != 1 || fcm.Load() != 1 {
-		t.Errorf("sent expo/apns/fcm = %d/%d/%d, want 1/1/1", expo.Load(), apns.Load(), fcm.Load())
+	if apns.Load() != 1 || fcm.Load() != 1 {
+		t.Errorf("sent apns/fcm = %d/%d, want 1/1", apns.Load(), fcm.Load())
+	}
+	if err := s.deliverPush(t.Context(), pushTarget{token: "fcm-registration-token", platform: "web"}, m); !errors.Is(err, errPushNotConfigured) {
+		t.Errorf("an unknown platform: err = %v, want errPushNotConfigured", err)
 	}
 	bare := &Service{}
-	if err := bare.deliverPush(t.Context(), pushTarget{token: apnsDeviceToken, platform: "ios"}, ch, "sign_in"); !errors.Is(err, errPushNotConfigured) {
+	if err := bare.deliverPush(t.Context(), pushTarget{token: apnsDeviceToken, platform: "ios"}, m); !errors.Is(err, errPushNotConfigured) {
 		t.Errorf("unconfigured APNs: err = %v", err)
 	}
 	if bare.pushConfigured() || !s.pushConfigured() {
@@ -249,5 +249,51 @@ func TestEnablingPushRefusesUnusableCredentials(t *testing.T) {
 	}
 	if s.apns != nil || s.fcm != nil {
 		t.Error("a refused service was enabled")
+	}
+}
+
+// TestSignInPayloadsStayAsTheAppsExpect pins the sign-in request the native apps read, and
+// checks a notice carries its own words: active, not time-sensitive, and its text in the
+// Android data so the app can show it.
+func TestSignInPayloadsStayAsTheAppsExpect(t *testing.T) {
+	id := uuid.MustParse("6f1c2b8a-3d4e-4f5a-8b9c-0d1e2f3a4b5c")
+	raw, err := apnsPayload(signInMessage(id, "sign_in"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var apns map[string]any
+	_ = json.Unmarshal(raw, &apns)
+	aps := apns["aps"].(map[string]any)
+	if apns["type"] != pushPayloadType || apns["challenge_id"] != id.String() || apns["action"] != "sign_in" ||
+		aps["interruption-level"] != "time-sensitive" || aps["thread-id"] != "sign-in" {
+		t.Errorf("sign-in APNs payload %s", raw)
+	}
+	raw, _ = fcmPayload("token", signInMessage(id, "sign_in"))
+	var fcm struct {
+		Message struct {
+			Data    map[string]string `json:"data"`
+			Android map[string]any    `json:"android"`
+		} `json:"message"`
+	}
+	_ = json.Unmarshal(raw, &fcm)
+	if len(fcm.Message.Data) != 3 || fcm.Message.Data["type"] != pushPayloadType || fcm.Message.Data["challenge_id"] != id.String() ||
+		fcm.Message.Android["ttl"] != "120s" || fcm.Message.Android["collapse_key"] != id.String() {
+		t.Errorf("sign-in FCM payload %s", raw)
+	}
+
+	notice := pushMessage{kind: "access_request", collapseID: "r1", title: "Access request", body: "Arjun Rao asks for Finance",
+		data: map[string]string{"kind": "access_request", "access_request_id": "r1"}, ttl: noticeTTL, thread: "access_request", textInData: true}
+	raw, _ = apnsPayload(notice)
+	apns = nil
+	_ = json.Unmarshal(raw, &apns)
+	aps = apns["aps"].(map[string]any)
+	alert := aps["alert"].(map[string]any)
+	if apns["type"] != "access_request" || apns["access_request_id"] != "r1" || aps["interruption-level"] != "active" || alert["body"] != "Arjun Rao asks for Finance" {
+		t.Errorf("notice APNs payload %s", raw)
+	}
+	raw, _ = fcmPayload("token", notice)
+	_ = json.Unmarshal(raw, &fcm)
+	if fcm.Message.Data["title"] != "Access request" || fcm.Message.Data["body"] != "Arjun Rao asks for Finance" || fcm.Message.Android["ttl"] != "86400s" {
+		t.Errorf("notice FCM payload %s", raw)
 	}
 }

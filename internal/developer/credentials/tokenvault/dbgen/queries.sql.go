@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const deleteConnectState = `-- name: DeleteConnectState :one
@@ -91,6 +90,42 @@ func (q *Queries) DeleteProviderGrants(ctx context.Context, arg DeleteProviderGr
 	return err
 }
 
+const getProviderConfig = `-- name: GetProviderConfig :one
+SELECT client_id, client_secret_ct, client_secret_nonce, authorize_url, token_url, scopes
+FROM organization.token_vault_providers
+WHERE organization_id = $1 AND provider = $2
+`
+
+type GetProviderConfigParams struct {
+	OrganizationID uuid.UUID
+	Provider       string
+}
+
+type GetProviderConfigRow struct {
+	ClientID          string
+	ClientSecretCt    []byte
+	ClientSecretNonce []byte
+	AuthorizeUrl      string
+	TokenUrl          string
+	Scopes            string
+}
+
+// GetProviderConfig reads what calling a provider takes: its client, sealed
+// client secret, endpoints and scopes.
+func (q *Queries) GetProviderConfig(ctx context.Context, arg GetProviderConfigParams) (GetProviderConfigRow, error) {
+	row := q.db.QueryRow(ctx, getProviderConfig, arg.OrganizationID, arg.Provider)
+	var i GetProviderConfigRow
+	err := row.Scan(
+		&i.ClientID,
+		&i.ClientSecretCt,
+		&i.ClientSecretNonce,
+		&i.AuthorizeUrl,
+		&i.TokenUrl,
+		&i.Scopes,
+	)
+	return i, err
+}
+
 const getTokenGrant = `-- name: GetTokenGrant :one
 SELECT access_token_ct, access_token_nonce, refresh_token_ct, refresh_token_nonce, expires_at
 FROM organization.token_vault_grants
@@ -108,7 +143,7 @@ type GetTokenGrantRow struct {
 	AccessTokenNonce  []byte
 	RefreshTokenCt    []byte
 	RefreshTokenNonce []byte
-	ExpiresAt         pgtype.Timestamptz
+	ExpiresAt         *time.Time
 }
 
 func (q *Queries) GetTokenGrant(ctx context.Context, arg GetTokenGrantParams) (GetTokenGrantRow, error) {
@@ -154,6 +189,7 @@ const listGrants = `-- name: ListGrants :many
 SELECT provider, external_account_id, scope, expires_at, created_at, updated_at
 FROM organization.token_vault_grants
 WHERE organization_id = $1 AND user_id = $2 ORDER BY provider
+LIMIT 1001
 `
 
 type ListGrantsParams struct {
@@ -165,11 +201,12 @@ type ListGrantsRow struct {
 	Provider          string
 	ExternalAccountID *string
 	Scope             *string
-	ExpiresAt         pgtype.Timestamptz
+	ExpiresAt         *time.Time
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 }
 
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListGrants(ctx context.Context, arg ListGrantsParams) ([]ListGrantsRow, error) {
 	rows, err := q.db.Query(ctx, listGrants, arg.OrganizationID, arg.UserID)
 	if err != nil {
@@ -201,6 +238,7 @@ const listProviders = `-- name: ListProviders :many
 
 SELECT id, provider, client_id, authorize_url, token_url, scopes, created_at, updated_at
 FROM organization.token_vault_providers WHERE organization_id = $1 ORDER BY provider
+LIMIT 1001
 `
 
 type ListProvidersRow struct {
@@ -214,9 +252,9 @@ type ListProvidersRow struct {
 	UpdatedAt    time.Time
 }
 
-// Queries for the token-vault domain.
-// storeGrant (upsert with nullable []byte params) is converted below using
-// pointer types; the encrypt/decrypt/HTTP-exchange logic stays in the Service.
+// Queries for the token-vault domain. Tokens and client secrets are stored
+// sealed; the service opens them.
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListProviders(ctx context.Context, organizationID uuid.UUID) ([]ListProvidersRow, error) {
 	rows, err := q.db.Query(ctx, listProviders, organizationID)
 	if err != nil {
@@ -290,7 +328,7 @@ type LockTokenGrantRow struct {
 	AccessTokenNonce  []byte
 	RefreshTokenCt    []byte
 	RefreshTokenNonce []byte
-	ExpiresAt         pgtype.Timestamptz
+	ExpiresAt         *time.Time
 }
 
 // LockTokenGrant reads a grant to refresh it, locking its row until the
@@ -326,6 +364,70 @@ func (q *Queries) ProviderHasGrants(ctx context.Context, arg ProviderHasGrantsPa
 	return column_1, err
 }
 
+const upsertProvider = `-- name: UpsertProvider :one
+INSERT INTO organization.token_vault_providers
+    (organization_id, provider, client_id, client_secret_ct, client_secret_nonce, authorize_url, token_url, scopes)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+ON CONFLICT (organization_id, provider) DO UPDATE SET
+    client_id = EXCLUDED.client_id,
+    client_secret_ct = EXCLUDED.client_secret_ct,
+    client_secret_nonce = EXCLUDED.client_secret_nonce,
+    authorize_url = EXCLUDED.authorize_url,
+    token_url = EXCLUDED.token_url,
+    scopes = EXCLUDED.scopes,
+    updated_at = NOW()
+RETURNING id, provider, client_id, authorize_url, token_url, scopes, created_at, updated_at
+`
+
+type UpsertProviderParams struct {
+	OrganizationID    uuid.UUID
+	Provider          string
+	ClientID          string
+	ClientSecretCt    []byte
+	ClientSecretNonce []byte
+	AuthorizeUrl      string
+	TokenUrl          string
+	Scopes            string
+}
+
+type UpsertProviderRow struct {
+	ID           uuid.UUID
+	Provider     string
+	ClientID     string
+	AuthorizeUrl string
+	TokenUrl     string
+	Scopes       string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+// UpsertProvider stores the organization's settings for a provider, replacing
+// those it had.
+func (q *Queries) UpsertProvider(ctx context.Context, arg UpsertProviderParams) (UpsertProviderRow, error) {
+	row := q.db.QueryRow(ctx, upsertProvider,
+		arg.OrganizationID,
+		arg.Provider,
+		arg.ClientID,
+		arg.ClientSecretCt,
+		arg.ClientSecretNonce,
+		arg.AuthorizeUrl,
+		arg.TokenUrl,
+		arg.Scopes,
+	)
+	var i UpsertProviderRow
+	err := row.Scan(
+		&i.ID,
+		&i.Provider,
+		&i.ClientID,
+		&i.AuthorizeUrl,
+		&i.TokenUrl,
+		&i.Scopes,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const upsertTokenGrant = `-- name: UpsertTokenGrant :execrows
 INSERT INTO organization.token_vault_grants
     (organization_id, user_id, provider, access_token_ct, access_token_nonce,
@@ -356,7 +458,7 @@ type UpsertTokenGrantParams struct {
 	RefreshTokenNonce []byte
 	TokenType         string
 	Scope             *string
-	ExpiresAt         pgtype.Timestamptz
+	ExpiresAt         *time.Time
 	OrganizationID    uuid.UUID
 	Provider          string
 	TokenUrl          string

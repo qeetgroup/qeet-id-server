@@ -3,171 +3,49 @@
 package social
 
 import (
-	"bytes"
-	"encoding/json"
+	"crypto/rand"
+	"crypto/rsa"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
-	"sync"
 	"testing"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
-	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
-	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authpolicy"
-	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
-	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/oidcrp/oidcrptest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
-// identityProvider is a fake OIDC provider. Each authorization code it will
-// accept is registered with expect, with the PKCE challenge it was issued for
-// and the person it signs in.
+// identityProvider is a fake OIDC provider whose clients' secret is
+// "idp-client-secret". Each authorization code it will accept is registered
+// with expect.
 type identityProvider struct {
-	*httptest.Server
-	mu    sync.Mutex
-	codes map[string]pendingCode
-}
-
-// pendingCode is an authorization code the provider will accept.
-type pendingCode struct {
-	challenge string
-	person    userInfo
+	*oidcrptest.Provider
+	t *testing.T
 }
 
 // newIdentityProvider starts the provider until t ends.
 func newIdentityProvider(t *testing.T) *identityProvider {
-	p := &identityProvider{codes: map[string]pendingCode{}}
-	mux := http.NewServeMux()
-	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(discoveryDoc{
-			AuthorizationEndpoint: "https://idp.example.test/authorize",
-			TokenEndpoint:         p.URL + "/token",
-			UserinfoEndpoint:      p.URL + "/userinfo",
-		})
-	})
-	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
-		_ = r.ParseForm()
-		p.mu.Lock()
-		pending, ok := p.codes[r.PostForm.Get("code")]
-		p.mu.Unlock()
-		if !ok || r.PostForm.Get("client_secret") != "idp-client-secret" || codes.Hash(r.PostForm.Get("code_verifier")) != pending.challenge {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "at-" + r.PostForm.Get("code")})
-	})
-	mux.HandleFunc("/userinfo", func(w http.ResponseWriter, r *http.Request) {
-		p.mu.Lock()
-		pending, ok := p.codes[strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer at-")]
-		p.mu.Unlock()
-		if !ok {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		_ = json.NewEncoder(w).Encode(pending.person)
-	})
-	p.Server = httptest.NewServer(mux)
-	t.Cleanup(p.Close)
-	return p
+	return &identityProvider{Provider: oidcrptest.New(t, "qeet", "idp-client-secret"), t: t}
 }
 
-// expect makes the provider accept code for the sign-in authURL began, as
-// person.
+// expect makes the provider accept code for the sign-in authURL began, with
+// its PKCE challenge, as person: an ID token carrying the sign-in's nonce,
+// and person as userinfo.
 func (p *identityProvider) expect(t *testing.T, authURL, code string, person userInfo) {
 	t.Helper()
 	u, err := url.Parse(authURL)
-	if err != nil || !strings.HasPrefix(authURL, "https://idp.example.test/authorize?") || u.Query().Get("code_challenge_method") != "S256" {
-		t.Fatalf("authorization URL %q; want the provider's, with PKCE", authURL)
+	if err != nil || !strings.HasPrefix(authURL, oidcrptest.AuthorizeEndpoint+"?") || u.Query().Get("code_challenge_method") != "S256" || u.Query().Get("nonce") == "" {
+		t.Fatalf("authorization URL %q; want the provider's, with PKCE and a nonce", authURL)
 	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.codes[code] = pendingCode{challenge: u.Query().Get("code_challenge"), person: person}
-}
-
-// browse sends a request as a browser holding cookies.
-func browse(t *testing.T, h http.Handler, method, target string, cookies []*http.Cookie, body any) *httptest.ResponseRecorder {
-	t.Helper()
-	var raw []byte
-	if body != nil {
-		raw, _ = json.Marshal(body)
-	}
-	req := httptest.NewRequestWithContext(dbtest.Context(t), method, target, bytes.NewReader(raw))
-	req.Header.Set("Content-Type", "application/json")
-	for _, c := range cookies {
-		req.AddCookie(c)
-	}
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	return rec
-}
-
-// socialFixture is a social sign-in service with a fake provider, its public
-// and authenticated routes.
-type socialFixture struct {
-	svc    *Service
-	idp    *identityProvider
-	public http.Handler
-	mount  func(chi.Router)
-}
-
-// newSocialFixture returns the fixture, allowing return to app.example.test.
-func newSocialFixture(t *testing.T) *socialFixture {
-	t.Helper()
-	pool := dbtest.Pool(t)
-	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
-	authSvc.SetRegistrationPolicy(authpolicy.NewService(pool))
-	svc := NewService(pool, authSvc, "https://console.example.test", egress.DevelopmentPolicy())
-	box, err := envelope.New([]byte("0123456789abcdef0123456789abcdef"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	svc.SetCipher(box)
-	svc.SetAllowedReturnOrigins("https://app.example.test")
-	h := &Handler{Service: svc, LoginBaseURL: "https://login.example.test", PublicBaseURL: "https://id.example.test",
-		ActOnCheck: rbac.NewRepository(pool).CheckActOn}
-	public := chi.NewRouter()
-	h.MountPublic(public)
-	return &socialFixture{svc: svc, idp: newIdentityProvider(t), public: public, mount: h.Mount}
-}
-
-// signIn runs a browser through a sign-in begun at start, the provider
-// answering as person, and returns the callback's response.
-func (f *socialFixture) signIn(t *testing.T, provider, start string, person userInfo) *httptest.ResponseRecorder {
-	t.Helper()
-	begun := browse(t, f.public, http.MethodGet, start, nil, nil)
-	if begun.Code != http.StatusFound {
-		t.Fatalf("start %s: %d %s", start, begun.Code, begun.Header().Get("Location"))
-	}
-	authURL := begun.Header().Get("Location")
-	code := uuid.NewString()
-	f.idp.expect(t, authURL, code, person)
-	return browse(t, f.public, http.MethodGet, "/social/"+provider+"/callback?state="+url.QueryEscape(stateOf(authURL))+"&code="+code, begun.Result().Cookies(), nil)
-}
-
-// redirectQuery returns a redirect's target and query.
-func redirectQuery(t *testing.T, rec *httptest.ResponseRecorder) (string, url.Values) {
-	t.Helper()
-	u, err := url.Parse(rec.Header().Get("Location"))
-	if rec.Code != http.StatusFound || err != nil {
-		t.Fatalf("want a redirect, got %d %s", rec.Code, rec.Body.String())
-	}
-	return u.Scheme + "://" + u.Host + u.Path, u.Query()
-}
-
-// verified marks a's address verified and returns the provider's claims for a.
-func verified(t *testing.T, a dbtest.Account) userInfo {
-	t.Helper()
-	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `UPDATE account.users SET email_verified_at = NOW() WHERE id = $1`, a.ID); err != nil {
-		t.Fatal(err)
-	}
-	return userInfo{Subject: "sub-" + a.ID.String(), Email: a.Email, EmailVerified: true, Name: "Asha"}
+	client := u.Query().Get("client_id")
+	claims := p.Claims(u.Query().Get("nonce"), person.Subject, person.Email)
+	claims["aud"] = client
+	p.Expect(code, oidcrptest.Grant{ClientID: client, Challenge: u.Query().Get("code_challenge"), IDToken: p.Sign(t, claims, nil, ""), Userinfo: person})
 }
 
 // TestOrganizationSocialSignIn checks an organization's own provider end to
@@ -193,7 +71,7 @@ func TestOrganizationSocialSignIn(t *testing.T) {
 	if rec := dbtest.Do(t, asAdmin, http.MethodPost, "/social/providers", map[string]string{"provider": "okta", "client_id": "qeet-2", "discovery_url": f.idp.URL + "/.well-known/openid-configuration"}); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"qeet-2"`) {
 		t.Errorf("replace keeping the secret: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec := dbtest.Do(t, asAdmin, http.MethodGet, "/tenants/"+organization.String()+"/social/providers", nil); !strings.Contains(rec.Body.String(), `"okta"`) || strings.Contains(rec.Body.String(), "idp-client-secret") {
+	if rec := dbtest.Do(t, asAdmin, http.MethodGet, "/organizations/"+organization.String()+"/social/providers", nil); !strings.Contains(rec.Body.String(), `"okta"`) || strings.Contains(rec.Body.String(), "idp-client-secret") {
 		t.Errorf("providers: %s", rec.Body.String())
 	}
 	if rec := dbtest.Do(t, asAdmin, http.MethodPost, "/social/providers", map[string]string{"provider": "evil", "client_id": "x", "client_secret": "y", "discovery_url": "ftp://idp.example.test"}); rec.Code/100 != 4 {
@@ -205,7 +83,7 @@ func TestOrganizationSocialSignIn(t *testing.T) {
 	domain := dbtest.Domain(t, organization)
 	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, organization, organization)
 	person := verified(t, member)
-	start := "/social/okta/start?tenant_id=" + organization.String()
+	start := "/social/okta/start?organization_id=" + organization.String()
 	target, q := redirectQuery(t, f.signIn(t, "okta", start, person))
 	if target != "https://console.example.test/auth/social/callback" || q.Get("code") == "" {
 		t.Fatalf("callback went to %s %v; want the console with a one-time code", target, q)
@@ -248,7 +126,7 @@ func TestOrganizationSocialSignIn(t *testing.T) {
 	}
 
 	if _, q := redirectQuery(t, f.signIn(t, "okta", start, userInfo{Subject: "newcomer", Email: dbtest.Unique("new") + "@example.test", EmailVerified: true})); q.Get("error") != "registration_closed" {
-		t.Errorf("a newcomer to a closed organisation: %v, want registration_closed", q)
+		t.Errorf("a newcomer to a closed organization: %v, want registration_closed", q)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'social.signup_refused'`, organization); n != 1 {
 		t.Errorf("%d refused sign-ups recorded, want 1", n)
@@ -269,10 +147,10 @@ func TestOrganizationSocialSignIn(t *testing.T) {
 	if len(identities.Items) != 1 {
 		t.Fatalf("member's identities %+v, want 1", identities.Items)
 	}
-	if rec := dbtest.Do(t, asAdmin, http.MethodDelete, "/social/providers/okta", nil); !strings.Contains(rec.Body.String(), errs.CodeSocialProviderInUse) {
+	if rec := dbtest.Do(t, asAdmin, http.MethodDelete, "/social/providers/okta", nil); !strings.Contains(rec.Body.String(), CodeProviderInUse) {
 		t.Errorf("delete a provider people sign in with only: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec := dbtest.Do(t, asAdmin, http.MethodPatch, "/social/providers/okta", map[string]bool{"enabled": false}); !strings.Contains(rec.Body.String(), errs.CodeSocialProviderInUse) || !strings.Contains(rec.Body.String(), `"people":`) {
+	if rec := dbtest.Do(t, asAdmin, http.MethodPatch, "/social/providers/okta", map[string]bool{"enabled": false}); !strings.Contains(rec.Body.String(), CodeProviderInUse) || !strings.Contains(rec.Body.String(), `"people":`) {
 		t.Errorf("switch off a provider people sign in with only: %d %s, want refused with the count", rec.Code, rec.Body.String())
 	}
 	if rec := dbtest.Do(t, asAdmin, http.MethodDelete, "/social/identities/"+identities.Items[0].ID.String(), nil); !strings.Contains(rec.Body.String(), errs.CodeAuthLastSignInMethod) {
@@ -296,118 +174,75 @@ func TestOrganizationSocialSignIn(t *testing.T) {
 	other := dbtest.Organization(t)
 	otherAdmin := dbtest.User(t, other, other)
 	if rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(otherAdmin.ID, other), f.mount), http.MethodPatch, "/social/providers/okta", map[string]bool{"enabled": true}); rec.Code != http.StatusNotFound {
-		t.Errorf("another organisation switching the provider on: %d, want 404", rec.Code)
+		t.Errorf("another organization switching the provider on: %d, want 404", rec.Code)
 	}
 	if rec := dbtest.Do(t, asAdmin, http.MethodDelete, "/social/providers/okta", nil); rec.Code != http.StatusNoContent {
 		t.Errorf("delete provider: %d %s", rec.Code, rec.Body.String())
 	}
 }
 
-// TestSocialCodeOfAProviderTurnedOffDoesNotExchange checks that a login code
-// issued just before its provider was switched off or deleted signs nobody in.
-func TestSocialCodeOfAProviderTurnedOffDoesNotExchange(t *testing.T) {
+// TestSocialOIDCProviderProvesTheSignInWithItsIDToken checks that an OpenID
+// Connect provider signs someone in only with an ID token its published key
+// signed, from its issuer, for this client, carrying the sign-in's nonce,
+// about the subject its userinfo names.
+func TestSocialOIDCProviderProvesTheSignInWithItsIDToken(t *testing.T) {
 	f := newSocialFixture(t)
 	organization := dbtest.Organization(t)
-	asAdmin := dbtest.Serve(dbtest.Principal(dbtest.User(t, organization, organization).ID, organization), f.mount)
+	addProvider(t, f, organization, "okta")
 	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+dbtest.Domain(t, organization), organization, organization)
 	person := verified(t, member)
-	for _, tc := range []struct{ provider, change, want string }{
-		{"okta", `UPDATE organization.social_providers SET enabled = false WHERE organization_id = $1 AND provider = $2`, errs.CodeSocialProviderNotConfigured},
-		{"keycloak", `DELETE FROM organization.social_providers WHERE organization_id = $1 AND provider = $2`, errs.CodeSocialLoginCodeInvalid},
-	} {
-		if rec := dbtest.Do(t, asAdmin, http.MethodPost, "/social/providers", map[string]string{
-			"provider": tc.provider, "client_id": "qeet", "client_secret": "idp-client-secret",
-			"discovery_url": f.idp.URL + "/.well-known/openid-configuration",
-		}); rec.Code != http.StatusOK {
-			t.Fatalf("add provider: %d %s", rec.Code, rec.Body.String())
-		}
-		_, q := redirectQuery(t, f.signIn(t, tc.provider, "/social/"+tc.provider+"/start?tenant_id="+organization.String(), person))
-		if q.Get("code") == "" {
-			t.Fatalf("sign-in: %v, want a one-time code", q)
-		}
-		if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), tc.change, organization, tc.provider); err != nil {
+	stranger, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := "/social/okta/start?organization_id=" + organization.String()
+	// answer runs a sign-in, the provider answering with the ID token token
+	// makes of the sign-in's nonce ("" for none).
+	answer := func(token func(nonce string) string) *httptest.ResponseRecorder {
+		t.Helper()
+		begun := browse(t, f.public, http.MethodGet, start, nil, nil)
+		u, err := url.Parse(begun.Header().Get("Location"))
+		if err != nil {
 			t.Fatal(err)
 		}
-		if rec := browse(t, f.public, http.MethodPost, "/social/exchange", nil, map[string]string{"code": q.Get("code")}); rec.Code == http.StatusOK || !strings.Contains(rec.Body.String(), tc.want) {
-			t.Errorf("%s %s, then exchange its code: %d %.80s, want %s", tc.change, tc.provider, rec.Code, rec.Body.String(), tc.want)
+		q := u.Query()
+		code := uuid.NewString()
+		f.idp.Expect(code, oidcrptest.Grant{Challenge: q.Get("code_challenge"), IDToken: token(q.Get("nonce")), Userinfo: person})
+		return browse(t, f.public, http.MethodGet, "/social/okta/callback?state="+url.QueryEscape(q.Get("state"))+"&code="+code, begun.Result().Cookies(), nil)
+	}
+	// signed returns a token changed by change, signed by signer under kid (nil: the provider's key).
+	signed := func(change func(jwt.MapClaims), signer *rsa.PrivateKey, kid string) func(string) string {
+		return func(nonce string) string {
+			claims := f.idp.Claims(nonce, person.Subject, person.Email)
+			if change != nil {
+				change(claims)
+			}
+			if signer == nil {
+				return f.idp.Sign(t, claims, nil, "")
+			}
+			return f.idp.Sign(t, claims, signer, kid)
 		}
 	}
-}
-
-// TestPlatformSocialSignIn checks the console's own sign-in: sign-up creates
-// an account only when asked to, sign-in needs one, and a signed-in person can
-// link the provider to their account, which only they can complete and unlink.
-func TestPlatformSocialSignIn(t *testing.T) {
-	f := newSocialFixture(t)
-	f.svc.SetPlatformProvider("google", "qeet", "idp-client-secret", f.idp.URL+"/.well-known/openid-configuration")
-	if names := f.svc.PlatformProviderNames(); len(names) != 1 || names[0] != "google" {
-		t.Errorf("platform providers %v", names)
+	signedIn := func(rec *httptest.ResponseRecorder) bool {
+		u, err := url.Parse(rec.Header().Get("Location"))
+		return err == nil && rec.Code == http.StatusFound && u.Path == "/auth/social/callback" && u.Query().Get("code") != ""
 	}
-	newcomer := userInfo{Subject: "g-" + uuid.NewString(), Email: dbtest.Unique("g") + "@example.test", EmailVerified: true, Name: "Ravi"}
-
-	if target, q := redirectQuery(t, f.signIn(t, "google", "/social/google/start", newcomer)); target != "https://console.example.test/sign-in" || q.Get("social_error") != "no_account" {
-		t.Errorf("sign in without an account: %s %v, want no_account", target, q)
+	if rec := answer(signed(nil, nil, "")); !signedIn(rec) {
+		t.Fatalf("a correct ID token: %d %s, want signed in", rec.Code, rec.Header().Get("Location"))
 	}
-	target, q := redirectQuery(t, f.signIn(t, "google", "/social/google/start?intent=signup", newcomer))
-	if target != "https://console.example.test/sign-in" || q.Get("social_code") == "" {
-		t.Fatalf("sign up: %s %v", target, q)
-	}
-	rec := browse(t, f.public, http.MethodPost, "/social/exchange", nil, map[string]string{"code": q.Get("social_code")})
-	var pair auth.TokenPair
-	dbtest.Decode(t, rec, &pair)
-	if rec.Code != http.StatusOK || pair.AccessToken == "" {
-		t.Fatalf("exchange: %d %s", rec.Code, rec.Body.String())
-	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, newcomer.Email); n != 1 {
-		t.Errorf("%d accounts for the newcomer, want 1", n)
-	}
-	if _, q := redirectQuery(t, f.signIn(t, "google", "/social/google/start", newcomer)); q.Get("social_code") == "" {
-		t.Errorf("sign in again: %v", q)
-	}
-
-	organization := dbtest.Organization(t)
-	a := dbtest.User(t, organization, organization)
-	dbtest.SetPassword(t, a.ID, "Kx7mQ2vLp9Wz")
-	asA := dbtest.Serve(dbtest.Principal(a.ID, organization), f.mount)
-	link := func(code string) string {
-		t.Helper()
-		rec := dbtest.Do(t, asA, http.MethodPost, "/social/google/link/start", nil)
-		var started struct {
-			AuthorizeURL string `json:"authorize_url"`
+	for name, token := range map[string]func(string) string{
+		"signed by another key":        signed(nil, stranger, "key-1"),
+		"from another issuer":          signed(func(c jwt.MapClaims) { c["iss"] = "https://evil.example.test" }, nil, ""),
+		"for another client":           signed(func(c jwt.MapClaims) { c["aud"] = "other-client" }, nil, ""),
+		"with another sign-in's nonce": signed(func(c jwt.MapClaims) { c["nonce"] = "someone-elses" }, nil, ""),
+		"about another subject":        signed(func(c jwt.MapClaims) { c["sub"] = "someone-else" }, nil, ""),
+		"left out":                     func(string) string { return "" },
+	} {
+		if rec := answer(token); signedIn(rec) {
+			t.Errorf("an ID token %s signed the person in", name)
 		}
-		dbtest.Decode(t, rec, &started)
-		f.idp.expect(t, started.AuthorizeURL, code, userInfo{Subject: "g-" + a.ID.String(), Email: a.Email, EmailVerified: true})
-		target, q := redirectQuery(t, browse(t, f.public, http.MethodGet, "/social/google/callback?state="+url.QueryEscape(stateOf(started.AuthorizeURL))+"&code="+code, nil, nil))
-		if target != "https://console.example.test/account/security" || q.Get("link_code") == "" {
-			t.Fatalf("link callback: %s %v", target, q)
-		}
-		return q.Get("link_code")
 	}
-	b := dbtest.User(t, organization, organization)
-	stolen := link("link-1")
-	if rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(b.ID, organization), f.mount), http.MethodPost, "/social/link/complete", map[string]string{"code": stolen}); !strings.Contains(rec.Body.String(), errs.CodeSocialLinkAccountMismatch) {
-		t.Errorf("another account completing the link: %d %s", rec.Code, rec.Body.String())
-	}
-	if rec := dbtest.Do(t, asA, http.MethodPost, "/social/link/complete", map[string]string{"code": stolen}); !strings.Contains(rec.Body.String(), errs.CodeSocialLinkCodeInvalid) {
-		t.Errorf("a link code another account tried: %d %s, want spent", rec.Code, rec.Body.String())
-	}
-	if rec := dbtest.Do(t, asA, http.MethodPost, "/social/link/complete", map[string]string{"code": link("link-2")}); rec.Code != http.StatusOK {
-		t.Fatalf("complete the link: %d %s", rec.Code, rec.Body.String())
-	}
-	var mine struct {
-		Items []ExternalIdentity `json:"items"`
-	}
-	dbtest.Decode(t, dbtest.Do(t, asA, http.MethodGet, "/me/social/identities", nil), &mine)
-	if len(mine.Items) != 1 || mine.Items[0].Provider != "google" {
-		t.Fatalf("my identities %+v; want google", mine.Items)
-	}
-	if rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(b.ID, organization), f.mount), http.MethodDelete, "/me/social/identities/"+mine.Items[0].ID.String(), nil); rec.Code == http.StatusNoContent {
-		t.Error("another account unlinked my identity")
-	}
-	if rec := dbtest.Do(t, asA, http.MethodDelete, "/me/social/identities/"+mine.Items[0].ID.String(), nil); rec.Code != http.StatusNoContent {
-		t.Errorf("unlink mine: %d %s", rec.Code, rec.Body.String())
-	}
-	if rec := browse(t, f.public, http.MethodGet, "/social/platform/providers", nil, nil); !strings.Contains(rec.Body.String(), "google") {
-		t.Errorf("platform providers: %s", rec.Body.String())
+	if n := dbtest.Count(t, `SELECT count(*) FROM auth.login_codes WHERE user_id = $1`, member.ID); n != 1 {
+		t.Errorf("%d login codes issued, want only the correct token's", n)
 	}
 }

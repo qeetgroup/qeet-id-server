@@ -16,7 +16,7 @@ import (
 
 	"github.com/go-playground/validator/v10"
 
-	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
@@ -66,10 +66,10 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 		switch {
 		case errors.As(err, &domain):
 			e = domain
-		case pgxerr.IsLastOwner(err):
+		case postgres.IsLastOwner(err):
 			// The database's own guard (migration 0151): whichever path tried to
 			// take away the organization's last active owner is told why.
-			e = errs.ErrOrganizationLastOwner
+			e = ErrOrganizationLastOwner
 		case errors.Is(err, context.Canceled) && r.Context().Err() != nil:
 			// The client hung up or gave up waiting, cancelling the request's work.
 			// Not a server fault: noted, and answered 499 (nginx's "client closed
@@ -90,7 +90,7 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 			}
 			if p := PrincipalFromCtx(r.Context()); p != nil {
 				if p.OrganizationID != nil {
-					attrs = append(attrs, "tenant_id", p.OrganizationID.String())
+					attrs = append(attrs, "organization_id", p.OrganizationID.String())
 				}
 				if p.UserID != nil {
 					attrs = append(attrs, "user_id", p.UserID.String())
@@ -128,7 +128,7 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	body.Error.Fields = e.Fields
 	body.Error.Metadata = e.Metadata
 	body.Error.ReqID = RequestID(r)
-	WriteJSON(w, statusForCode(e.Code), body)
+	WriteJSON(w, ErrorStatus(e), body)
 }
 
 // ValidationError turns validator.ValidationErrors into a 422 validation_failed
@@ -225,7 +225,7 @@ func DecodeStrictJSON(r *http.Request, out any) error {
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || (mediaType != "application/json" &&
 		(!strings.HasPrefix(mediaType, "application/") || !strings.HasSuffix(mediaType, "+json"))) {
-		return errs.ErrUnsupportedMediaType
+		return ErrUnsupportedMediaType
 	}
 	return DecodeJSON(r, out)
 }

@@ -1,0 +1,75 @@
+delete:
+  operationId: revokeAllScimTokens
+  summary: Revoke SCIM token
+  tags:
+    - SCIM
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  description: >-
+    Revokes every SCIM token of the organization that still works, which stops
+    provisioning; 404 when none does. To stop one token of several, use DELETE
+    /v1/organizations/{organizationID}/scim/tokens/{id}. Requires connection.write. Needs a
+    recent step-up.
+  responses:
+    '204':
+      description: No Content
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+post:
+  operationId: replaceAllScimTokens
+  summary: Rotate SCIM token
+  tags:
+    - SCIM
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  description: >-
+    Issues a new SCIM token, named "SCIM token", and revokes every earlier one
+    at once; the token is shown only in this answer. To switch an identity
+    provider over without a gap, rotate one token with POST
+    /v1/organizations/{organizationID}/scim/tokens/{id}/rotate instead, which keeps the old
+    one working for an overlap. Requires connection.write. Needs a recent
+    step-up.
+  responses:
+    '201':
+      description: Created
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - config
+              - token
+            properties:
+              config:
+                $ref: ../../components/schemas/ConfigView.yaml
+              token:
+                type: string
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

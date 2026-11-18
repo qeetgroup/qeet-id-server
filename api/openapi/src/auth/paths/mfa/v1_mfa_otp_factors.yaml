@@ -63,7 +63,7 @@ post:
     or number over every account; past that the call answers 429
     mfa.code_send_limited with retry_after (seconds). A new code makes the
     factor's earlier unused code stop working. A code sent here only confirms
-    the new factor. An SMS code needs an organisation whose plan includes SMS
+    the new factor. An SMS code needs an organization whose plan includes SMS
     (403 upgrade_required). Each code sent is audited as mfa.otp_sent.
   responses:
     '201':

@@ -7,7 +7,7 @@ post:
     same journey, so the user need not type the address again. Answers the same
     whatever the token names, and is bounded like the start call (429). As
     there, the link is stored and emailed after the answer, so whether the email
-    could be delivered does not change it. On a domain whose organisation
+    could be delivered does not change it. On a domain whose organization
     requires single sign-on, the resend is refused with 403 auth.sso_required
     and no link is sent (see the SSORequired response).
   tags:

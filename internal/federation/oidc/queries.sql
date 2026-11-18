@@ -1,5 +1,4 @@
--- Queries for the OIDC domain.
--- All queries are STATIC. Dynamic patterns (buildUpdate etc.) do not exist here.
+-- Queries for the OIDC domain, compiled by sqlc into ./dbgen.
 
 -- ==========================================================================
 -- OIDC clients
@@ -588,12 +587,6 @@ SET attempts = attempts + 1, last_error = @last_error,
     failed_at = CASE WHEN @final::bool THEN NOW() END
 WHERE id = @id;
 
--- UpgradeOIDCClientSecretHash replaces an Argon2id secret hash from before with
--- its SHA-256 form, once the secret has verified.
--- name: UpgradeOIDCClientSecretHash :exec
-UPDATE auth.oidc_clients SET client_secret_hash = @new_hash
-WHERE id = @id AND organization_id = @organization_id AND client_secret_hash = @old_hash;
-
 -- name: GetClientWebOrigins :one
 -- The web origins an application set; NULL: its redirect URIs' origins.
 SELECT web_origins FROM auth.oidc_clients WHERE id = @id AND organization_id = @organization_id;
@@ -622,3 +615,7 @@ SELECT (EXISTS (
             WHERE rt.login_session_id = @session_id AND rt.organization_id = @organization_id AND rt.client_id = @client_id
               AND rt.user_id = @user_id AND rt.revoked_at IS NULL AND rt.expires_at > NOW()
               AND (rt.grant_expires_at IS NULL OR rt.grant_expires_at > NOW())))::boolean AS live;
+
+-- name: ListSigningKeyDates :many
+-- When the key registry created and activated each signing key.
+SELECT kid, created_at, activated_at FROM platform.jwt_signing_keys;

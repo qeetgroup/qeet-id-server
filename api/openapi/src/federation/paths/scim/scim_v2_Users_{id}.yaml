@@ -1,8 +1,8 @@
 delete:
   operationId: deleteScimUser
   description: >-
-    Deprovisions a user by id for the tenant identified by the SCIM bearer
-    token, soft-deleting the account after confirming it belongs to the tenant
+    Deprovisions a user by id for the organization identified by the SCIM bearer
+    token, soft-deleting the account after confirming it belongs to the organization
     and ending every way it signs in (sessions, hosted-login sessions,
     remembered devices, application grants, pending authorizations and unused
     recovery links), with Qeet acting as the SCIM server. As an
@@ -12,7 +12,7 @@ delete:
     SCIM response is unchanged. Mounted at the root
     under /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope
     rather than the standard Qeet error shape. An account that owns the
-    organisation is never deleted by the directory (403).
+    organization is never deleted by the directory (403).
   summary: '[scim] Delete user'
   tags:
     - SCIM
@@ -35,7 +35,7 @@ delete:
 get:
   operationId: getScimUser
   description: >-
-    Returns a single provisioned user by id for the tenant identified by the
+    Returns a single provisioned user by id for the organization identified by the
     SCIM bearer token, with Qeet acting as the SCIM server. Mounted at the root
     under /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope
     rather than the standard Qeet error shape.
@@ -65,18 +65,18 @@ get:
 patch:
   operationId: patchScimUser
   description: >-
-    Applies a SCIM PatchOp to a user for the tenant identified by the SCIM
+    Applies a SCIM PatchOp to a user for the organization identified by the SCIM
     bearer token; setting active to false (a boolean, or the string Entra sends)
     is the deprovisioning path IdPs rely on and suspends the account, ending
     every way it signs in as an administrator's suspension does; displayName,
     name.givenName/familyName/formatted, externalId and userName (or the primary
-    email) are applied too, a new userName only on a domain the tenant has
+    email) are applied too, a new userName only on a domain the organization has
     verified (400 invalidValue otherwise), counted verified, with links sent to
     the old address ending; and displayName may also be updated, with Qeet
     acting as the SCIM server. Mounted at the root under /scim/v2, not under
     /v1. Errors use the RFC 7644 SCIM error envelope, not the standard Qeet
-    error shape. An account that owns the organisation is never changed or
-    deleted by the directory (403). A new userName for an account that administers the organisation (any
+    error shape. An account that owns the organization is never changed or
+    deleted by the directory (403). A new userName for an account that administers the organization (any
     administrative permission, directly or through a group) is refused with
     403 and nothing changes: its address is changed in the console, as single
     sign-on never moves it either. Setting active to true lifts only a
@@ -117,11 +117,11 @@ put:
   operationId: replaceScimUser
   description: >-
     Replaces a user's attributes wholesale with the supplied SCIM representation
-    for the tenant identified by the SCIM bearer token, with Qeet acting as the
+    for the organization identified by the SCIM bearer token, with Qeet acting as the
     SCIM server. Use PATCH for targeted changes such as deprovisioning. Mounted
     at the root under /scim/v2; errors use the RFC 7644 SCIM error envelope, not
-    the standard Qeet error shape. An account that owns the organisation is
-    never changed or deleted by the directory (403). A new userName for an account that administers the organisation (any
+    the standard Qeet error shape. An account that owns the organization is
+    never changed or deleted by the directory (403). A new userName for an account that administers the organization (any
     administrative permission, directly or through a group) is refused with
     403 and nothing changes: its address is changed in the console, as single
     sign-on never moves it either. Setting active to true

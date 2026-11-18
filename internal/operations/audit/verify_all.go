@@ -13,7 +13,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
-	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/audit/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/strutil"
 )
 
 // ErrChainBroken is VerifyAll's error when a chain doesn't verify.
@@ -93,7 +94,7 @@ func (v *Verifier) verifyAll(ctx context.Context, fromStart bool) (VerificationR
 	}
 	if len(run.Broken) > 0 {
 		first := run.Broken[0]
-		arg.BrokenOrganizationID, arg.FirstBrokenLink, arg.BrokenReason = pgUUIDNullable(first.OrganizationID), pgUUIDNullable(first.EventID), &first.Reason
+		arg.BrokenOrganizationID, arg.FirstBrokenLink, arg.BrokenReason = first.OrganizationID, first.EventID, &first.Reason
 	}
 	if run.Err != "" {
 		arg.Error = &run.Err
@@ -153,15 +154,15 @@ func (v *Verifier) walkAll(ctx context.Context, run *VerificationRun, fromStart 
 			run.Outcome = "broken"
 			run.Broken = append(run.Broken, BrokenChain{OrganizationID: c.organization, Shard: c.shard, EventID: res.BrokenAtID, Reason: res.BrokenReason})
 			slog.Error("audit chain verification failed: chain broken",
-				"tenant_id", c.label(), "event_id", res.BrokenAtID, "reason", res.BrokenReason)
+				"organization_id", c.label(), "event_id", res.BrokenAtID, "reason", res.BrokenReason)
 		}
 		if err := v.keepCheckpoint(ctx, c, from, last, res.OK); err != nil {
-			slog.Error("audit chain verification: store the checkpoint", "tenant_id", c.label(), "err", err)
+			slog.Error("audit chain verification: store the checkpoint", "organization_id", c.label(), "err", err)
 			unsaved = err
 		}
 		if res.OK && c.organization != nil {
 			if err := v.signPurgeCheckpoint(ctx, *c.organization); err != nil {
-				slog.Error("audit chain verification: sign the purge checkpoint", "tenant_id", c.label(), "err", err)
+				slog.Error("audit chain verification: sign the purge checkpoint", "organization_id", c.label(), "err", err)
 				unsaved = err
 			}
 		}
@@ -187,9 +188,9 @@ func (v *Verifier) checkpoints(ctx context.Context) (map[chainKey]checkpoint, er
 	}
 	out := make(map[chainKey]checkpoint, len(rows))
 	for _, r := range rows {
-		out[chain{organization: toUUIDPtr(r.OrganizationID), shard: r.ChainShard}.key()] = checkpoint{
+		out[chain{organization: r.OrganizationID, shard: r.ChainShard}.key()] = checkpoint{
 			EventID: r.EventID, CreatedAt: r.EventCreatedAt, RowHash: trimmed(&r.RowHash),
-			KeyID: deref(r.KeyID), MAC: r.Mac, Broken: r.Broken,
+			KeyID: strutil.Deref(r.KeyID), MAC: r.Mac, Broken: r.Broken,
 		}
 	}
 	return out, nil
@@ -200,7 +201,7 @@ func (v *Verifier) checkpoints(ctx context.Context) (map[chainKey]checkpoint, er
 // another run has moved it since; one that didn't move is signed again when
 // another key signed it. A broken chain's checkpoint is marked broken instead.
 func (v *Verifier) keepCheckpoint(ctx context.Context, c chain, began, last *checkpoint, intact bool) error {
-	tid := pgUUIDNullable(c.organization)
+	tid := c.organization
 	switch {
 	case began != nil && began.Broken:
 		return nil
@@ -213,7 +214,7 @@ func (v *Verifier) keepCheckpoint(ctx context.Context, c chain, began, last *che
 	}
 	keyID, mac := signCheckpoint(v.key, chainCheckpointKind, c.organization, c.shard, last)
 	switch {
-	case began != nil && last.EventID == began.EventID && deref(keyID) == began.KeyID:
+	case began != nil && last.EventID == began.EventID && strutil.Deref(keyID) == began.KeyID:
 		return nil
 	case began == nil:
 		return v.q.InsertAuditChainCheckpoint(ctx, dbgen.InsertAuditChainCheckpointParams{

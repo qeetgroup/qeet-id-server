@@ -1,0 +1,98 @@
+post:
+  operationId: checkIpAddress
+  summary: Check an address
+  tags:
+    - IP Rules
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: false
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - ip
+          properties:
+            ip:
+              type: string
+  description: >-
+    Says what the address rules make of an address ({"ip": "…"}): enabled,
+    allowed, and the reason. The same decision every sign-in gets while the
+    rules are on; an address that can't be read is refused.
+  responses:
+    '200':
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - allowed
+              - enabled
+              - reason
+              - reason_code
+            properties:
+              allowed:
+                type: boolean
+              enabled:
+                type: boolean
+              reason:
+                type: string
+                description: The reason in English. Show reason_code's meaning instead.
+              reason_code:
+                type: string
+                enum:
+                  - ip.allowed
+                  - ip.deny_rule
+                  - ip.not_in_allow_rules
+                  - ip.address_unknown
+                  - ip.enforcement_disabled
+                description: >-
+                  Allowed; refused by a deny rule; outside every allow rule;
+                  refused as the address can't be read; or allowed because the
+                  rules are off.
+              reason_params:
+                type: object
+                additionalProperties: true
+                description: For ip.deny_rule, the rule's cidr.
+              rules:
+                type: object
+                required:
+                  - allowed
+                  - reason
+                  - reason_code
+                description: >-
+                  What the organization's rules decide whatever the enforcement
+                  flag, so they can be tried before they are turned on; with
+                  enforcement on it matches the fields above.
+                properties:
+                  allowed:
+                    type: boolean
+                  reason:
+                    type: string
+                    description: The reason in English.
+                  reason_code:
+                    type: string
+                    enum:
+                      - ip.allowed
+                      - ip.deny_rule
+                      - ip.not_in_allow_rules
+                      - ip.address_unknown
+                  reason_params:
+                    type: object
+                    additionalProperties: true
+                    description: For ip.deny_rule, the rule's cidr.
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

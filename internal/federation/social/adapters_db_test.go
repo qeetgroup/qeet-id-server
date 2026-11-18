@@ -18,8 +18,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 )
 
 // oauth2Provider is a fake OAuth 2.0 provider for the adapters: it accepts a
@@ -116,7 +116,7 @@ func TestOrganizationAdaptersSignIn(t *testing.T) {
 
 	start := func(provider string) (*httptest.ResponseRecorder, *url.URL) {
 		t.Helper()
-		rec := browse(t, f.public, http.MethodGet, "/social/"+provider+"/start?tenant_id="+organization.String(), nil, nil)
+		rec := browse(t, f.public, http.MethodGet, "/social/"+provider+"/start?organization_id="+organization.String(), nil, nil)
 		u, err := url.Parse(rec.Header().Get("Location"))
 		if rec.Code != http.StatusFound || err != nil {
 			t.Fatalf("start %s: %d %s", provider, rec.Code, rec.Body.String())

@@ -12,7 +12,7 @@ post:
         format: uuid
   description: >-
     Creates every group in the template in one transaction, optionally under an
-    existing parent. The parent must belong to the caller's tenant. Group names
+    existing parent. The parent must belong to the caller's organization. Group names
     are unique in an organization, ignoring case, so applying a template whose
     groups already exist, including applying it a second time, answers 409
     group.name_exists with the first colliding name in the error detail, and

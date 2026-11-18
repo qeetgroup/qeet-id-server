@@ -1,12 +1,12 @@
 type: object
 required:
   - reason
-  - tenant_id
+  - organization_id
   - user_id
 properties:
   reason:
     type: string
-  tenant_id:
+  organization_id:
     type: string
     format: uuid
   user_id:

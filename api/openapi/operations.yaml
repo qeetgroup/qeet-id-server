@@ -15,7 +15,7 @@ info:
 
     ## Authentication
 
-    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session). CSRF protection applies only to cookie sessions (`ssoCookie`): requests authorised by `bearerAuth` or `apiKeyAuth` bypass it, as do the client-credentials token exchange (POST /v1/oauth/token) and the directory sign-in (POST /ldap/{id}/authenticate), which carry their credentials in the request. Basic credentials do not bypass it. A request that fails the check is refused with 403 `csrf_failed`.
+    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>` — legacy scheme), `scimBearer` (per-organization SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session). CSRF protection applies only to cookie sessions (`ssoCookie`): requests authorised by `bearerAuth` or `apiKeyAuth` bypass it, as do the token endpoint (POST /v1/oauth/token) and the directory sign-in (POST /ldap/{id}/authenticate), which carry their credentials in the request. Basic credentials do not bypass it. A request that fails the check is refused with 403 `csrf_failed`.
 
     Responses that carry a token, a sign-in session or a newly created secret are sent with `Cache-Control: no-store` and `Pragma: no-cache`; no operation in this API returns one.
 
@@ -24,7 +24,7 @@ info:
     ## Related APIs
 
     - **Authentication & Access API** — login, passkeys, MFA, authorization
-    - **Identity Management API** — tenants, users, groups, invitations
+    - **Identity Management API** — organizations, users, groups, invitations
     - **Federation API** — OIDC/OAuth provider, SAML, SCIM, LDAP, social
     - **Developer API** — API keys, agents, webhooks, vaults
 
@@ -40,17 +40,17 @@ tags:
   - name: Health
     description: Liveness, readiness, and Prometheus metrics.
   - name: Activity
-    description: Live Activity feed — a real-time SSE event stream and cursor-paginated history, both sourced from the hash-chained audit log and the NATS outbox. Tenant-scoped; requires audit.read. The SSE stream fans out domain events from the transactional outbox; reconnects replay missed events via Last-Event-ID.
+    description: Live Activity feed — a real-time SSE event stream and cursor-paginated history, both sourced from the hash-chained audit log and the NATS outbox. Organization-scoped; requires audit.read. The SSE stream fans out domain events from the transactional outbox; reconnects replay missed events via Last-Event-ID.
   - name: Analytics
-    description: Per-tenant usage analytics.
+    description: Per-organization usage analytics.
   - name: Search
-    description: Universal tenant-scoped fuzzy search across all resource types. Results are RBAC-gated per type — the caller only sees resources their role allows them to read.
+    description: Universal organization-scoped fuzzy search across all resource types. Results are RBAC-gated per type — the caller only sees resources their role allows them to read.
   - name: Audit
     description: Append-only, hash-chained audit log query and integrity verification.
   - name: Compliance
-    description: SOC 2 and ISO 27001 live evidence generation from real tenant system state.
+    description: SOC 2 and ISO 27001 live evidence generation from real organization system state.
   - name: Data Retention
-    description: Per-tenant auto-purge of soft-deleted users.
+    description: Per-organization auto-purge of soft-deleted users.
   - name: GDPR
     description: Right-to-erasure purge requests.
   - name: Log Sinks
@@ -58,15 +58,15 @@ tags:
   - name: Notifications
     description: In-app notifications — list notifications and mark them read.
   - name: Rate Limits
-    description: Per-tenant rate-limit overrides (tenant / user / API-key buckets).
+    description: Per-organization rate-limit overrides (organization / user / API-key buckets).
   - name: Email Templates
-    description: Per-tenant transactional email template overrides.
+    description: Per-organization transactional email template overrides.
   - name: Qeet AI
     description: AI qeetai inference service — streaming conversation turns, conversation management, and configuration status. Tool execution runs client-side under the user's own token (RBAC/RLS/audit inherited). API key is server-side only and never returned by any endpoint.
   - name: Billing
     description: Subscription plans, subscriptions, and invoices.
   - name: Entitlements
-    description: A tenant's resolved plan capability set — boolean feature flags and numeric limits. Read by the console to gate the UI off the same source of truth the backend enforces on. Gated create endpoints return 402 with a stable code (billing.plan_limit / billing.upgrade_required) when a plan cap is reached.
+    description: An organization's resolved plan capability set — boolean feature flags and numeric limits. Read by the console to gate the UI off the same source of truth the backend enforces on. Gated create endpoints return 402 with a stable code (billing.plan_limit / billing.upgrade_required) when a plan cap is reached.
   - name: Sales
     description: Contact-sales lead capture (public marketing endpoint).
 paths:
@@ -168,7 +168,7 @@ paths:
     get:
       operationId: listActivity
       summary: Activity history
-      description: Returns a cursor-paginated list of ActivityEvent derived from the tenant-scoped audit log, with total, how many match (counted up to 10,000; total_capped says when there are more). Every filter, severity and category included, is applied in the query, so every page but the last is full. An unknown severity or category, or a malformed resource_id or ip, is refused with 400. Tenant is derived from the JWT principal only — never from URL or body.
+      description: Returns a cursor-paginated list of ActivityEvent derived from the organization-scoped audit log, with total, how many match (counted up to 10,000; total_capped says when there are more). Every filter, severity and category included, is applied in the query, so every page but the last is full. An unknown severity or category, or a malformed resource_id or ip, is refused with 400. Organization is derived from the JWT principal only — never from URL or body.
       tags:
         - Activity
       parameters:
@@ -294,13 +294,13 @@ paths:
       operationId: streamActivity
       summary: Live activity stream (SSE)
       description: |-
-        Opens a Server-Sent Events stream of ActivityEvent frames for the caller's tenant: the audit records themselves, every kind (sign-ins and MFA included), each with its own audit id, so a live event can be opened and related like one from the history. The server follows the audit log every two seconds, or at once when the organisation acts. Each frame is `id: <cursor>\nevent: activity\ndata: <json>\n\n`; periodic `: keep-alive` comments prevent proxy timeouts.
+        Opens a Server-Sent Events stream of ActivityEvent frames for the caller's organization: the audit records themselves, every kind (sign-ins and MFA included), each with its own audit id, so a live event can be opened and related like one from the history. The server follows the audit log every two seconds, or at once when the organization acts. Each frame is `id: <cursor>\nevent: activity\ndata: <json>\n\n`; periodic `: keep-alive` comments prevent proxy timeouts.
 
         When `Last-Event-ID` is supplied (the `id` of the last frame received, an opaque cursor, not the event's UUID) the server replays every audit event newer than it, in chronological order, before switching to the live stream. One connection replays at most 1,000 audit rows: further behind, it sends the cursor of the last row read and a `retry:` frame and ends, and the client's reconnect carries on from there. A frame may carry only an `id` (no event): the cursor of rows the filters passed over, kept as the client's Last-Event-ID. A live frame's id sits ten seconds before its event, to cover records whose transaction committed late; the stream sends each record once, and a reconnect may repeat one, recognisable by its id. Delivery is at least once: a reconnect may repeat an event but doesn't skip one, and a client too slow for the live stream is sent a `retry:` frame and disconnected, to catch up from the audit log on reconnect.
 
         The stream lasts only as long as the access it was opened with. It ends when the access token or API key expires, and within 30 seconds of the reader losing access: their session ended, audit.read no longer theirs (or no longer the key's), the API key revoked, the service principal or agent disabled. It also ends if that check can't be made. A new request is then refused as any other would be.
 
-        Server-side filters (`?types`, `?severity`, `?category`) are applied to both the replay and the live stream. The connection tenant is derived from the JWT principal only — never from the URL or body.
+        Server-side filters (`?types`, `?severity`, `?category`) are applied to both the replay and the live stream. The connection organization is derived from the JWT principal only — never from the URL or body.
 
         The write deadline is extended to 1 hour. Set `X-Accel-Buffering: no` is already set by the server (Nginx/Caddy proxy buffering disabled).
       tags:
@@ -355,7 +355,7 @@ paths:
     get:
       operationId: getActivitySummary
       summary: Activity summary
-      description: Aggregate counts over the same filters as the history endpoint (types, actor, subject, from/to, q, resource_type, resource_id, ip, category, severity and min_severity), so category and severity together total the events of both; by_severity and by_category then show the spread within what the filters match. Without an explicit `from` the window defaults to the last 24h; it is capped at 366 days, with buckets of up to a week. Tenant is derived from the JWT principal only.
+      description: Aggregate counts over the same filters as the history endpoint (types, actor, subject, from/to, q, resource_type, resource_id, ip, category, severity and min_severity), so category and severity together total the events of both; by_severity and by_category then show the spread within what the filters match. Without an explicit `from` the window defaults to the last 24h; it is capped at 366 days, with buckets of up to a week. Organization is derived from the JWT principal only.
       tags:
         - Activity
       parameters:
@@ -464,7 +464,7 @@ paths:
     get:
       operationId: listRelatedActivity
       summary: Related activity events
-      description: Returns the anchor event plus events correlated with it by request_id and by the same actor within a symmetric time window. The anchor lookup is tenant-scoped — an unknown id or a foreign tenant's id both return 404. An event never appears in both correlation lists.
+      description: Returns the anchor event plus events correlated with it by request_id and by the same actor within a symmetric time window. The anchor lookup is organization-scoped — an unknown id or a foreign organization's id both return 404. An event never appears in both correlation lists.
       tags:
         - Activity
       parameters:
@@ -502,15 +502,15 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/tenants/{tenantID}/activity/{id}:
+  /v1/organizations/{organizationID}/activity/{id}:
     get:
       operationId: getActivityEvent
       summary: One activity event
-      description: One of the organisation's activity events by its id (an audit.events row id), with its metadata, actor name and email, address and browser, as in the history. 404 for an unknown id or another organisation's. Needs audit.read.
+      description: One of the organization's activity events by its id (an audit.events row id), with its metadata, actor name and email, address and browser, as in the history. 404 for an unknown id or another organization's. Needs audit.read.
       tags:
         - Activity
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -535,18 +535,18 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/tenants/{tenantID}/service-health:
+  /v1/organizations/{organizationID}/service-health:
     get:
       operationId: getServiceHealth
       summary: Service health
       tags:
         - Health
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: The state of each part of the service the organisation uses, from its own recent figures, and the incidents operators posted that are open or were resolved in the last 14 days. A component is operational, degraded, outage, maintenance or not_configured (a part the organisation doesn't use); an open incident makes it no better than the incident's impact (reason incident). api is an outage while the database is unreachable (api.database_unreachable); sign_in while tokens can't be signed (sign_in.keys_unavailable); email is degraded when the provider refused at least a quarter of the organisation's emails of the last hour (email.failing); webhooks while a subscription's deliveries are failing or one was disabled for failing (webhooks.failing); directory while a directory operation of the last day failed and is still open (directory.failing). status is the worst state of the components. Requires tenant.read.
+      description: The state of each part of the service the organization uses, from its own recent figures, and the incidents operators posted that are open or were resolved in the last 14 days. A component is operational, degraded, outage, maintenance or not_configured (a part the organization doesn't use); an open incident makes it no better than the incident's impact (reason incident). api is an outage while the database is unreachable (api.database_unreachable); sign_in while tokens can't be signed (sign_in.keys_unavailable); email is degraded when the provider refused at least a quarter of the organization's emails of the last hour (email.failing); webhooks while a subscription's deliveries are failing or one was disabled for failing (webhooks.failing); directory while a directory operation of the last day failed and is still open (directory.failing). status is the worst state of the components. Requires organization.read.
       responses:
         '200':
           description: OK
@@ -647,14 +647,14 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-  /v1/tenants/{tenantID}/analytics/overview:
+  /v1/organizations/{organizationID}/analytics/overview:
     get:
       operationId: getAnalyticsOverview
-      summary: Tenant analytics overview
+      summary: Organization analytics overview
       tags:
         - Analytics
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: from
           in: query
           required: false
@@ -686,7 +686,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Returns the organisation''s dashboard figures: sign-ins, failures, active users and their trends. Sign-ins and active users are counted from the sign-in log, which outlives the sessions: a person who switched to the organisation, created it or accepted an invitation to it is active in it, but only a sign-in that proved a factor counts as one. Requires analytics.read.'
+      description: 'Returns the organization''s dashboard figures: sign-ins, failures, active users and their trends. Sign-ins and active users are counted from the sign-in log, which outlives the sessions: a person who switched to the organization, created it or accepted an invitation to it is active in it, but only a sign-in that proved a factor counts as one. Requires analytics.read.'
       responses:
         '200':
           description: OK
@@ -708,7 +708,7 @@ paths:
     get:
       operationId: search
       summary: Universal search
-      description: Tenant-scoped, RBAC-enforced fuzzy search that fans out across user, organization, group, role, oidc_client, and audit_event resource types. Each type is gated behind its read permission (user.read, tenant.read, group.read, role.read, connection.read, audit.read); types the caller cannot read are silently excluded. Matching uses ILIKE '%q%' (parameterised). Results are scored and returned in descending relevance order. Pagination is cursor-based and opaque.
+      description: Organization-scoped, RBAC-enforced fuzzy search that fans out across user, organization, group, role, oidc_client, and audit_event resource types. Each type is gated behind its read permission (user.read, organization.read, group.read, role.read, connection.read, audit.read); types the caller cannot read are silently excluded. Matching uses ILIKE '%q%' (parameterised). Results are scored and returned in descending relevance order. Pagination is cursor-based and opaque.
       tags:
         - Search
       parameters:
@@ -755,15 +755,15 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-  /v1/tenants/{tenantID}/audit:
+  /v1/organizations/{organizationID}/audit:
     get:
       operationId: listAuditEvents
-      description: Returns the tenant's audit events in reverse chronological order with cursor-based pagination and optional filters for action, resource type, actor, and a free-text query. The audit log is append-only and hash-chained, so results reflect an immutable record of activity. Events are kept for the plan's audit_retention_days (7, 30, 90 days, or for good), then deleted. Pass the returned cursor to page through history; access is restricted to the tenant named in the path.
+      description: Returns the organization's audit events in reverse chronological order with cursor-based pagination and optional filters for action, resource type, actor, and a free-text query. The audit log is append-only and hash-chained, so results reflect an immutable record of activity. Events are kept for the plan's audit_retention_days (7, 30, 90 days, or for good), then deleted. Pass the returned cursor to page through history; access is restricted to the organization named in the path.
       summary: List audit events
       tags:
         - Audit
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: q
           in: query
           required: false
@@ -834,13 +834,13 @@ paths:
         - apiKeyAuth: []
       responses:
         '200':
-          description: '{ items: AuditEvent[], next_cursor: string }; next_cursor is empty on the last page.'
+          description: '{ items: AuditEvent[], next_cursor?: string, total, total_capped }; next_cursor is absent on the last page.'
           content:
             application/json:
               example:
                 items:
                   - id: 018f2a90-1b2c-7d3e-8f40-5a6b7c8d9e01
-                    tenant_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
+                    organization_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
                     action: user.created
                     resource_type: user
                     resource_id: 018f2a70-1a2b-7c3d-9e4f-5a6b7c8d9e0f
@@ -851,9 +851,9 @@ paths:
                     request_id: api-1/Kx9fQ2mW7a-000124
                     created_at: '2026-09-24T10:15:04Z'
                   - id: 018f2a90-0a1b-7c2d-8e3f-4a5b6c7d8e00
-                    tenant_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
-                    action: tenant.created
-                    resource_type: tenant
+                    organization_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
+                    action: organization.created
+                    resource_type: organization
                     resource_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
                     actor_type: user
                     actor_user_id: 018f2a70-1a2b-7c3d-9e4f-5a6b7c8d9e0f
@@ -868,7 +868,6 @@ paths:
                 type: object
                 required:
                   - items
-                  - next_cursor
                   - total
                   - total_capped
                 properties:
@@ -877,7 +876,7 @@ paths:
                     items:
                       $ref: '#/components/schemas/Row'
                   next_cursor:
-                    type: string
+                    $ref: '#/components/schemas/NextCursor'
                   total:
                     type: integer
                     description: How many events match, up to 10,000.
@@ -896,7 +895,7 @@ paths:
     get:
       operationId: verifyPlatformAuditChain
       summary: Verify platform audit chain (public)
-      description: Verifies the platform-level audit hash chains (the rows with no tenant, spread over 16 chains so their writers don't queue on one) and returns only whether they are all intact and how many rows were checked. Each chain must have a row, and every platform row must be on one of them. Unauthenticated by design so any external party can independently confirm the platform has not tampered with its audit log; per-tenant verification is at /v1/tenants/{tenantID}/audit/verify and requires auth.
+      description: Verifies the platform-level audit hash chains (the rows with no organization, spread over 16 chains so their writers don't queue on one) and returns only whether they are all intact and how many rows were checked. Each chain must have a row, and every platform row must be on one of them. Unauthenticated by design so any external party can independently confirm the platform has not tampered with its audit log; per-organization verification is at /v1/organizations/{organizationID}/audit/verify and requires auth.
       tags:
         - Audit
       security: []
@@ -917,15 +916,15 @@ paths:
                   - rows_checked
         '429':
           $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/audit/verification:
+  /v1/organizations/{organizationID}/audit/verification:
     get:
       operationId: getAuditVerification
       summary: The audit chain's last verification
-      description: 'How the scheduled audit-chain verification (every six hours, going on from where it left each chain, with a full walk at least weekly) last left the organisation''s chain, read rather than walked: whether it has reached it yet, when it last verified it and up to which event, whether a break was found and when, and when the latest run finished and its scope. GET /v1/tenants/{tenantID}/audit/verify still walks the whole chain on request. Needs audit.read.'
+      description: 'How the scheduled audit-chain verification (every six hours, going on from where it left each chain, with a full walk at least weekly) last left the organization''s chain, read rather than walked: whether it has reached it yet, when it last verified it and up to which event, whether a break was found and when, and when the latest run finished and its scope. GET /v1/organizations/{organizationID}/audit/verify still walks the whole chain on request. Needs audit.read.'
       tags:
         - Audit
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -980,15 +979,15 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-  /v1/tenants/{tenantID}/audit/verify:
+  /v1/organizations/{organizationID}/audit/verify:
     get:
       operationId: verifyAuditChain
       summary: Verify audit chain
-      description: Walks the tenant's hash chain from the seed and recomputes each row's hash, returning the first broken link (if any). No side effects. Once events older than the plan keeps them (audit_retention_days) have been deleted, the walk starts from the last one deleted, whose hash the first one kept links to.
+      description: Walks the organization's hash chain from the seed and recomputes each row's hash, returning the first broken link (if any). No side effects. Once events older than the plan keeps them (audit_retention_days) have been deleted, the walk starts from the last one deleted, whose hash the first one kept links to.
       tags:
         - Audit
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -1003,15 +1002,15 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-  /v1/tenants/{tenantID}/audit/anomalies:
+  /v1/organizations/{organizationID}/audit/anomalies:
     get:
       operationId: listAuditAnomalies
       summary: List audit anomalies
-      description: Flagged deviations from a behavioral baseline built per (tenant, actor) over audit.events — a first-time action type, an unusual hour, or a new IP. Scored by a background sweep, not synchronously on write.
+      description: Flagged deviations from a behavioral baseline built per (organization, actor) over audit.events — a first-time action type, an unusual hour, or a new IP. Scored by a background sweep, not synchronously on write.
       tags:
         - Audit
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: status
           in: query
           required: false
@@ -1023,8 +1022,12 @@ paths:
         - name: limit
           in: query
           required: false
+          description: Page size. Defaults to 50; the server clamps values above 200.
           schema:
             type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
         - $ref: '#/components/parameters/Cursor'
       security:
         - bearerAuth: []
@@ -1047,15 +1050,15 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-  /v1/tenants/{tenantID}/audit/anomalies/summary:
+  /v1/organizations/{organizationID}/audit/anomalies/summary:
     get:
       operationId: getAuditAnomalySummary
-      description: Returns aggregate counts of detected anomalies for the tenant, including currently open anomalies, those resolved in the last seven days, and the number scored as high severity. Anomalies come from scoring the append-only audit log against a per-actor behavioral baseline. Intended to drive an at-a-glance security dashboard.
+      description: Returns aggregate counts of detected anomalies for the organization, including currently open anomalies, those resolved in the last seven days, and the number scored as high severity. Anomalies come from scoring the append-only audit log against a per-actor behavioral baseline. Intended to drive an at-a-glance security dashboard.
       summary: Audit anomaly summary
       tags:
         - Audit
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -1070,15 +1073,15 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-  /v1/tenants/{tenantID}/audit/anomalies/{id}/resolve:
+  /v1/organizations/{organizationID}/audit/anomalies/{id}/resolve:
     post:
       operationId: resolveAuditAnomaly
-      description: Marks the identified anomaly as resolved and records the acting administrator, removing it from the open queue. Returns 404 when no matching open anomaly exists for the tenant. This is a review action only and does not alter the underlying audit events that triggered detection.
+      description: Marks the identified anomaly as resolved and records the acting administrator, removing it from the open queue. Returns 404 when no matching open anomaly exists for the organization. This is a review action only and does not alter the underlying audit events that triggered detection.
       summary: Resolve an audit anomaly
       tags:
         - Audit
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -1097,15 +1100,15 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/tenants/{tenantID}/audit/anomaly-settings:
+  /v1/organizations/{organizationID}/audit/anomaly-settings:
     get:
       operationId: getAuditAnomalySettings
-      description: Returns the tenant's anomaly-detection configuration, including whether scoring is enabled, the score threshold above which an event is flagged, and the minimum number of baseline events required before scoring begins. Platform defaults are reported when the tenant has not customized the settings.
+      description: Returns the organization's anomaly-detection configuration, including whether scoring is enabled, the score threshold above which an event is flagged, and the minimum number of baseline events required before scoring begins. Platform defaults are reported when the organization has not customized the settings.
       summary: Get anomaly-detection settings
       tags:
         - Audit
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -1122,12 +1125,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
     put:
       operationId: setAuditAnomalySettings
-      description: Replaces the tenant's anomaly-detection configuration. The score threshold must be between 0 and 1 and the minimum baseline count must be non-negative, otherwise the request is rejected as unprocessable. Changes take effect on the next background scoring pass, and the stored settings are returned.
+      description: Replaces the organization's anomaly-detection configuration. The score threshold must be between 0 and 1 and the minimum baseline count must be non-negative, otherwise the request is rejected as unprocessable. Changes take effect on the next background scoring pass, and the stored settings are returned.
       summary: Update anomaly-detection settings
       tags:
         - Audit
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -1150,15 +1153,15 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/Unprocessable'
-  /v1/tenants/{tenantID}/compliance/{framework}/evidence:
+  /v1/organizations/{organizationID}/compliance/{framework}/evidence:
     post:
       operationId: generateComplianceEvidence
       summary: Generate compliance evidence
-      description: Runs all controls for the framework against live tenant state (MFA policy, audit log, RBAC, retention, SIEM config, secrets vault, etc.), persists an immutable evidence run, and returns the full per-control report. framework must be 'soc2' or 'iso27001'.
+      description: Runs all controls for the framework against live organization state (MFA policy, audit log, RBAC, retention, SIEM config, secrets vault, etc.), persists an immutable evidence run, and returns the full per-control report. framework must be 'soc2' or 'iso27001'.
       tags:
         - Compliance
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: framework
           in: path
           required: true
@@ -1190,7 +1193,7 @@ paths:
       tags:
         - Compliance
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: framework
           in: path
           required: true
@@ -1220,15 +1223,15 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-  /v1/tenants/{tenantID}/compliance/controls/owners:
+  /v1/organizations/{organizationID}/compliance/controls/owners:
     get:
       operationId: listControlOwners
       summary: List control owners
-      description: The person each of the organisation's compliance controls is owned by, for the controls that have one; evidence runs name the owner on each control too. Requires audit.read.
+      description: The person each of the organization's compliance controls is owned by, for the controls that have one; evidence runs name the owner on each control too. Requires audit.read.
       tags:
         - Compliance
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -1252,15 +1255,15 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/tenants/{tenantID}/compliance/controls/{controlID}/owner:
+  /v1/organizations/{organizationID}/compliance/controls/{controlID}/owner:
     put:
       operationId: setControlOwner
       summary: Set a control's owner
-      description: Makes one of the organisation's people (its own, or holding a role there) answer for a control of either framework's catalog; another organisation's person is refused with 422, an unknown control with 404. Audited as compliance.control_owner_set. Requires audit.write.
+      description: Makes one of the organization's people (its own, or holding a role there) answer for a control of either framework's catalog; another organization's person is refused with 422, an unknown control with 404. Audited as compliance.control_owner_set. Requires audit.write.
       tags:
         - Compliance
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: controlID
           in: path
           required: true
@@ -1299,7 +1302,7 @@ paths:
       tags:
         - Compliance
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: controlID
           in: path
           required: true
@@ -1317,15 +1320,15 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/tenants/{tenantID}/compliance/audits:
+  /v1/organizations/{organizationID}/compliance/audits:
     get:
       operationId: listExternalAudits
       summary: List external audits
-      description: The external audits and certificates recorded for the organisation, latest first, up to 1,000 (truncated when there are more), of one framework when asked. Requires audit.read.
+      description: The external audits and certificates recorded for the organization, latest first, up to 1,000 (truncated when there are more), of one framework when asked. Requires audit.read.
       tags:
         - Compliance
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: framework
           in: query
           required: false
@@ -1364,7 +1367,7 @@ paths:
       tags:
         - Compliance
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -1420,15 +1423,15 @@ paths:
           $ref: '#/components/responses/NotFound'
         '422':
           $ref: '#/components/responses/Unprocessable'
-  /v1/tenants/{tenantID}/compliance/audits/{id}:
+  /v1/organizations/{organizationID}/compliance/audits/{id}:
     delete:
       operationId: deleteExternalAudit
       summary: Delete an external audit
-      description: Removes a recorded external audit or certificate of the organisation. Audited as compliance.audit_deleted. Requires audit.write.
+      description: Removes a recorded external audit or certificate of the organization. Audited as compliance.audit_deleted. Requires audit.write.
       tags:
         - Compliance
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -1447,15 +1450,15 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/tenants/{tenantID}/compliance/evidence/{id}:
+  /v1/organizations/{organizationID}/compliance/evidence/{id}:
     get:
       operationId: getComplianceEvidence
       summary: Get compliance evidence run (full report)
-      description: Returns the full evidence run including per-control results. Carries a Content-Disposition header so browsers treat it as a downloadable JSON evidence report. tenant-scoped; 404 when the run belongs to a different tenant.
+      description: Returns the full evidence run including per-control results. Carries a Content-Disposition header so browsers treat it as a downloadable JSON evidence report. organization-scoped; 404 when the run belongs to a different organization.
       tags:
         - Compliance
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -1478,18 +1481,18 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/tenants/{tenantID}/retention:
+  /v1/organizations/{organizationID}/retention:
     get:
       operationId: getRetentionPolicy
       summary: Get retention policy
       tags:
         - Data Retention
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Returns the organisation's data-retention policy. Requires policy.read.
+      description: Returns the organization's data-retention policy. Requires policy.read.
       responses:
         '200':
           description: OK
@@ -1513,7 +1516,7 @@ paths:
       tags:
         - Data Retention
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -1523,7 +1526,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/RetentionPolicy'
-      description: Replaces the organisation's data-retention policy. Requires policy.write.
+      description: Replaces the organization's data-retention policy. Requires policy.write.
       responses:
         '200':
           description: OK
@@ -1541,14 +1544,14 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/retention/preview:
+  /v1/organizations/{organizationID}/retention/preview:
     post:
       operationId: previewRetention
       summary: Preview ripe users
       tags:
         - Data Retention
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -1578,14 +1581,14 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/retention/run:
+  /v1/organizations/{organizationID}/retention/run:
     post:
       operationId: runRetention
       summary: Run purge now
       tags:
         - Data Retention
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -1675,18 +1678,18 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/gdpr/purge:
+  /v1/organizations/{organizationID}/gdpr/purge:
     get:
       operationId: listPurgeRequests
       summary: List purge requests
       tags:
         - GDPR
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Lists the organisation's erasure requests and their state. Requires gdpr.write.
+      description: Lists the organization's erasure requests and their state. Requires gdpr.write.
       responses:
         '200':
           description: OK
@@ -1746,18 +1749,18 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/gdpr/export:
+  /v1/organizations/{organizationID}/gdpr/export:
     get:
       operationId: listExportRequests
       summary: List GDPR export requests
       tags:
         - GDPR
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Lists the organisation's data-export requests and their state. Requires gdpr.write.
+      description: Lists the organization's data-export requests and their state. Requires gdpr.write.
       responses:
         '200':
           description: OK
@@ -1784,14 +1787,14 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/gdpr/export/{id}:
+  /v1/organizations/{organizationID}/gdpr/export/{id}:
     get:
       operationId: getExportRequest
       summary: Get a GDPR export request (payload once ready)
       tags:
         - GDPR
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -1822,7 +1825,7 @@ paths:
   /v1/account/export:
     post:
       operationId: exportMyAccount
-      description: Assembles the authenticated user's own portable data across every organization they belong to and returns it synchronously as a downloadable JSON attachment, supporting the data-portability right. The caller is identified from the session or key, so no user identifier is supplied and no tenant scope is required.
+      description: Assembles the authenticated user's own portable data across every organization they belong to and returns it synchronously as a downloadable JSON attachment, supporting the data-portability right. The caller is identified from the session or key, so no user identifier is supplied and no organization scope is required.
       summary: Export the authenticated user's portable account data
       tags:
         - GDPR
@@ -1935,15 +1938,15 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '503':
           $ref: '#/components/responses/Overloaded'
-  /v1/tenants/{tenantID}/log-sinks:
+  /v1/organizations/{organizationID}/log-sinks:
     get:
       operationId: listLogSinks
-      description: Returns the tenant's configured log sinks, each describing an external destination that receives forwarded audit events, along with its enabled state, last-forwarded timestamp, and last delivery error. Destination credentials such as tokens are never returned. Use this to review which SIEM integrations are active for the tenant.
+      description: Returns the organization's configured log sinks, each describing an external destination that receives forwarded audit events, along with its enabled state, last-forwarded timestamp, and last delivery error. Destination credentials such as tokens are never returned. Use this to review which SIEM integrations are active for the organization.
       summary: List log sinks
       tags:
         - Log Sinks
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -1967,12 +1970,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
     post:
       operationId: createLogSink
-      description: Registers a destination that forwards the tenant's audit events to an external SIEM (Splunk HEC, Datadog, or a generic HTTP endpoint). The endpoint must be valid and the sink type recognized, otherwise the request is rejected as unprocessable. Any supplied token is encrypted at rest; forwarding starts from creation time with no backfill of historical events, and delivery is at-least-once. Each event carries its actor, resource, address, user agent, request id and metadata. One instance at a time forwards a sink, in batches until it catches up; a sink that refuses or can't be reached waits longer after each failure (10 seconds, doubling, up to an hour) and shows last_error until a batch is delivered.
+      description: Registers a destination that forwards the organization's audit events to an external SIEM (Splunk HEC, Datadog, or a generic HTTP endpoint). The endpoint must be valid and the sink type recognized, otherwise the request is rejected as unprocessable. Any supplied token is encrypted at rest; forwarding starts from creation time with no backfill of historical events, and delivery is at-least-once. Each event carries its actor, resource, address, user agent, request id and metadata. One instance at a time forwards a sink, in batches until it catches up; a sink that refuses or can't be reached waits longer after each failure (10 seconds, doubling, up to an hour) and shows last_error until a batch is delivered.
       summary: Create log sink
       tags:
         - Log Sinks
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -2010,15 +2013,15 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/Unprocessable'
-  /v1/tenants/{tenantID}/log-sinks/test:
+  /v1/organizations/{organizationID}/log-sinks/test:
     post:
       operationId: testUnsavedLogSink
       summary: Send a test event to an unsaved log stream
-      description: Sends one test audit event (action siem.test, metadata.test true; no organisation data) to the destination in the body, which takes the fields and checks of creating one and isn't saved, and reports how it answered. Audited as siem.sink_tested. Needs audit.write and a recent step-up, as creating one does.
+      description: Sends one test audit event (action siem.test, metadata.test true; no organization data) to the destination in the body, which takes the fields and checks of creating one and isn't saved, and reports how it answered. Audited as siem.sink_tested. Needs audit.write and a recent step-up, as creating one does.
       tags:
         - Log Sinks
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -2072,15 +2075,15 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-  /v1/tenants/{tenantID}/log-sinks/{id}/test:
+  /v1/organizations/{organizationID}/log-sinks/{id}/test:
     post:
       operationId: testLogSink
       summary: Send a test event to a log stream
-      description: 'Sends one test audit event (action siem.test, metadata.test true; no organisation data) to one of the organisation''s saved destinations and reports how it answered. It changes nothing on the destination: its cursor, last_error and back-off are untouched. Audited as siem.sink_tested. Needs audit.write and a recent step-up.'
+      description: 'Sends one test audit event (action siem.test, metadata.test true; no organization data) to one of the organization''s saved destinations and reports how it answered. It changes nothing on the destination: its cursor, last_error and back-off are untouched. Audited as siem.sink_tested. Needs audit.write and a recent step-up.'
       tags:
         - Log Sinks
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -2118,15 +2121,15 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/tenants/{tenantID}/log-sinks/{id}:
+  /v1/organizations/{organizationID}/log-sinks/{id}:
     patch:
       operationId: updateLogSink
-      description: Toggles whether the identified log sink actively forwards events, without deleting its configuration or resetting its position. Returns 404 when the sink does not exist for the tenant. Re-enabling resumes forwarding from where the sink last left off.
+      description: Toggles whether the identified log sink actively forwards events, without deleting its configuration or resetting its position. Returns 404 when the sink does not exist for the organization. Re-enabling resumes forwarding from where the sink last left off.
       summary: Enable/disable sink
       tags:
         - Log Sinks
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -2156,12 +2159,12 @@ paths:
           $ref: '#/components/responses/NotFound'
     delete:
       operationId: deleteLogSink
-      description: Permanently removes the identified log sink and stops any further forwarding to its destination. Returns 404 when the sink does not exist for the tenant. Stored credentials for the destination are discarded; already-delivered events are unaffected.
+      description: Permanently removes the identified log sink and stops any further forwarding to its destination. Returns 404 when the sink does not exist for the organization. Stored credentials for the destination are discarded; already-delivered events are unaffected.
       summary: Delete sink
       tags:
         - Log Sinks
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -2183,7 +2186,7 @@ paths:
   /v1/notifications:
     get:
       operationId: listNotifications
-      description: Returns the authenticated user's most recent notifications together with the current unread count. Results are scoped to the calling user, and no tenant is required. Pair with the mark-all-read operation to clear the unread state.
+      description: Returns the authenticated user's most recent notifications together with the current unread count. Results are scoped to the calling user, and no organization is required. Pair with the mark-all-read operation to clear the unread state.
       summary: List notifications
       tags:
         - Notifications
@@ -2221,15 +2224,15 @@ paths:
           description: All notifications marked read
         '401':
           $ref: '#/components/responses/Unauthorized'
-  /v1/tenants/{tenantID}/rate-limits:
+  /v1/organizations/{organizationID}/rate-limits:
     get:
       operationId: getRateLimits
       summary: Get rate limits
-      description: Returns the effective per-bucket limits (tenant, user, api_key) — the platform defaults merged with any tenant-specific overrides.
+      description: Returns the effective per-bucket limits (organization, user, api_key) — the platform defaults merged with any organization-specific overrides.
       tags:
         - Rate Limits
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -2239,19 +2242,19 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TenantRateLimits'
+                $ref: '#/components/schemas/OrganizationRateLimits'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
     put:
       operationId: setRateLimits
-      description: Stores per-tenant overrides for the request rate limits applied to the tenant, its users, and its API keys, replacing any previous override. Values are validated before being persisted. Overrides take precedence over the platform defaults; remove them with the reset operation to fall back to those defaults.
+      description: Stores per-organization overrides for the request rate limits applied to the organization, its users, and its API keys, replacing any previous override. Values are validated before being persisted. Overrides take precedence over the platform defaults; remove them with the reset operation to fall back to those defaults.
       summary: Set rate limits
       tags:
         - Rate Limits
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -2260,14 +2263,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/TenantRateLimits'
+              $ref: '#/components/schemas/OrganizationRateLimits'
       responses:
         '200':
           description: Updated effective limits
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TenantRateLimits'
+                $ref: '#/components/schemas/OrganizationRateLimits'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2276,12 +2279,12 @@ paths:
           $ref: '#/components/responses/Unprocessable'
     delete:
       operationId: resetRateLimits
-      description: Removes the tenant's rate-limit overrides so the platform default limits apply again. Succeeds even when no override is currently set. The change is written to the audit log and propagated to the limiter.
+      description: Removes the organization's rate-limit overrides so the platform default limits apply again. Succeeds even when no override is currently set. The change is written to the audit log and propagated to the limiter.
       summary: Reset rate limits
       tags:
         - Rate Limits
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -2292,15 +2295,15 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-  /v1/tenants/{tenantID}/email/messages:
+  /v1/organizations/{organizationID}/email/messages:
     get:
       operationId: listEmailMessages
       summary: Email delivery to an address
-      description: Lists the organisation's most recent emails to one address with what happened to each (sent, delivered, bounced, complained, suppressed or failed, with the provider's reason), and whether the address is suppressed. Addresses are stored hashed, so the lookup is by exact address. A suppression caused by this organisation's mail (own true) carries its id, reason, provider detail and date, since only that organisation may clear it; one caused by other mail carries only own false. Records are kept 90 days.
+      description: Lists the organization's most recent emails to one address with what happened to each (sent, delivered, bounced, complained, suppressed or failed, with the provider's reason), and whether the address is suppressed. Addresses are stored hashed, so the lookup is by exact address. A suppression caused by this organization's mail (own true) carries its id, reason, provider detail and date, since only that organization may clear it; one caused by other mail carries only own false. Records are kept 90 days.
       tags:
         - Email Templates
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: to
           in: query
           required: true
@@ -2340,7 +2343,7 @@ paths:
                     properties:
                       own:
                         type: boolean
-                        description: This organisation's mail caused the suppression; the other fields are present only then.
+                        description: This organization's mail caused the suppression; the other fields are present only then.
                       id:
                         type: string
                         format: uuid
@@ -2360,15 +2363,15 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-  /v1/tenants/{tenantID}/email/suppressions:
+  /v1/organizations/{organizationID}/email/suppressions:
     get:
       operationId: listEmailSuppressions
       summary: Suppressed addresses
-      description: 'Lists the addresses no mail goes to because this organisation''s mail to them hard-bounced or was reported as spam, newest first, each with a masked address. A suppression holds platform-wide: no organisation''s mail reaches the address until it is cleared.'
+      description: 'Lists the addresses no mail goes to because this organization''s mail to them hard-bounced or was reported as spam, newest first, each with a masked address. A suppression holds platform-wide: no organization''s mail reaches the address until it is cleared.'
       tags:
         - Email Templates
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: limit
           in: query
           required: false
@@ -2399,15 +2402,15 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-  /v1/tenants/{tenantID}/email/suppressions/{id}:
+  /v1/organizations/{organizationID}/email/suppressions/{id}:
     delete:
       operationId: deleteEmailSuppression
       summary: Clear a suppression
-      description: 'Lifts a suppression this organisation''s mail caused, so mail can reach the address again; audited as email.suppression_cleared. Check the address first: mailing a dead address again harms delivery for every organisation. A suppression another organisation''s mail caused is not found here.'
+      description: 'Lifts a suppression this organization''s mail caused, so mail can reach the address again; audited as email.suppression_cleared. Check the address first: mailing a dead address again harms delivery for every organization. A suppression another organization''s mail caused is not found here.'
       tags:
         - Email Templates
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: id
           in: path
           required: true
@@ -2426,18 +2429,18 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/tenants/{tenantID}/email-templates:
+  /v1/organizations/{organizationID}/email-templates:
     get:
       operationId: listEmailTemplates
       summary: List templates
       tags:
         - Email Templates
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Lists the tenant-scoped catalogue and overrides. Capabilities indicate rich-text/localization support and whether a mail transport is configured for test delivery. delivery_scope distinguishes tenant invitations/magic links from platform-account security email.
+      description: Lists the organization-scoped catalogue and overrides. Capabilities indicate rich-text/localization support and whether a mail transport is configured for test delivery. delivery_scope distinguishes organization invitations/magic links from platform-account security email.
       responses:
         '200':
           description: OK
@@ -2469,14 +2472,14 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/email-templates/{key}:
+  /v1/organizations/{organizationID}/email-templates/{key}:
     delete:
       operationId: resetEmailTemplate
       summary: Reset to default
       tags:
         - Email Templates
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: key
           in: path
           required: true
@@ -2485,7 +2488,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Deletes the organisation's version of an email template, so the default is sent again. Requires branding.write.
+      description: Deletes the organization's version of an email template, so the default is sent again. Requires branding.write.
       responses:
         '200':
           description: Built-in default after removing the override and its options
@@ -2509,7 +2512,7 @@ paths:
       tags:
         - Email Templates
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: key
           in: path
           required: true
@@ -2518,7 +2521,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Returns an email template as the organisation sends it: its own version, or the default. Requires branding.write.'
+      description: 'Returns an email template as the organization sends it: its own version, or the default. Requires branding.write.'
       responses:
         '200':
           description: OK
@@ -2542,7 +2545,7 @@ paths:
       tags:
         - Email Templates
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: key
           in: path
           required: true
@@ -2558,7 +2561,7 @@ paths:
             schema:
               $ref: '#/components/schemas/EmailEditorInput'
         description: Subject, plain-text alternative, and optional rich HTML, preheader, design and language variants. HTML is sanitized. Only catalogue variables are accepted.
-      description: Saves the template and options atomically with its audit event. Tenant invitations and magic links use saved overrides; platform-account recovery, verification and MFA remain platform-managed.
+      description: Saves the template and options atomically with its audit event. Organization invitations and magic links use saved overrides; platform-account recovery, verification and MFA remain platform-managed.
       responses:
         '200':
           description: OK
@@ -2576,14 +2579,14 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/email-templates/{key}/preview:
+  /v1/organizations/{organizationID}/email-templates/{key}/preview:
     post:
       operationId: previewEmailTemplate
       summary: Preview template
       tags:
         - Email Templates
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: key
           in: path
           required: true
@@ -2638,7 +2641,7 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/email-templates/{key}/test:
+  /v1/organizations/{organizationID}/email-templates/{key}/test:
     post:
       operationId: sendTestEmail
       summary: Send the current draft to the operator's verified email
@@ -2648,13 +2651,13 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: key
           in: path
           required: true
           schema:
             type: string
-      description: Requires branding.write, a user principal with a verified active account, and a configured mail transport. The destination is resolved server-side, never accepted from input. Sends inert sample links and codes; limited to one request per tenant/user per minute on each server instance. Records an audit event before attempting delivery. An accepted response means the provider accepted the message, not that it reached the inbox.
+      description: Requires branding.write, a user principal with a verified active account, and a configured mail transport. The destination is resolved server-side, never accepted from input. Sends inert sample links and codes; limited to one request per organization/user per minute on each server instance. Records an audit event before attempting delivery. An accepted response means the provider accepted the message, not that it reached the inbox.
       requestBody:
         required: true
         content:
@@ -2690,15 +2693,15 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/qeetai/usage:
+  /v1/organizations/{organizationID}/qeetai/usage:
     get:
       operationId: getQeetAiUsage
       summary: Qeet AI usage
-      description: 'What the organisation''s Qeet AI used: this UTC month''s messages (turns answered) and tokens as its provider reported them, the last use, and the twelve most recent months. Requires secret.read, as the provider configuration does.'
+      description: 'What the organization''s Qeet AI used: this UTC month''s messages (turns answered) and tokens as its provider reported them, the last use, and the twelve most recent months. Requires secret.read, as the provider configuration does.'
       tags:
         - Qeet AI
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -2755,15 +2758,15 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-  /v1/tenants/{tenantID}/qeetai/settings:
+  /v1/organizations/{organizationID}/qeetai/settings:
     get:
       operationId: getQeetAiSettings
       summary: Qeet AI settings
-      description: How long the organisation keeps its Qeet AI conversations, and the last change. Requires secret.read.
+      description: How long the organization keeps its Qeet AI conversations, and the last change. Requires secret.read.
       tags:
         - Qeet AI
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -2797,11 +2800,11 @@ paths:
     put:
       operationId: setQeetAiSettings
       summary: Set Qeet AI settings
-      description: Sets how many days (1 to 3,650) an untouched conversation is kept, or null to keep them. Every day a job deletes the conversations untouched for longer, with their messages, and audits each organisation's deletion as qeetai.conversations_purged. The change is audited as qeetai.settings_updated. Requires secret.write.
+      description: Sets how many days (1 to 3,650) an untouched conversation is kept, or null to keep them. Every day a job deletes the conversations untouched for longer, with their messages, and audits each organization's deletion as qeetai.conversations_purged. The change is audited as qeetai.settings_updated. Requires secret.write.
       tags:
         - Qeet AI
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -2869,7 +2872,7 @@ paths:
     get:
       operationId: listConversations
       summary: List conversations
-      description: Returns all qeetai conversations for the authenticated user within their tenant, ordered by pinned-first then most-recently-updated.
+      description: Returns all qeetai conversations for the authenticated user within their organization, ordered by pinned-first then most-recently-updated.
       tags:
         - Qeet AI
       security:
@@ -3021,7 +3024,7 @@ paths:
 
         Requires `QEETAI_PROVIDER` configured server-side; returns `409 qeetai_unconfigured` otherwise.
 
-        A conversation answers one turn at a time: a message while its previous turn is still running, on any instance, is refused with `409 qeetai.turn_in_progress` (retryable) and not stored. A turn sends the model only the conversation's latest messages (`QEETAI_HISTORY_MESSAGES`, within `QEETAI_HISTORY_BYTES`), from a message of the user's, so earlier ones are left out; a turn whose own messages are larger ends with an `error` frame of code `history_too_long` (start a new conversation). A reply longer than `QEETAI_MAX_OUTPUT_BYTES` is cut there and kept, as at the model's own token limit. A turn runs for at most 10 minutes.
+        A conversation answers one turn at a time: a message while its previous turn is still running, on any instance, is refused with `409 qeetai.turn_in_progress` (retryable) and not stored. A turn sends the model only the conversation's latest 40 messages, within 256 KiB, from a message of the user's, so earlier ones are left out; a turn whose own messages are larger ends with an `error` frame of code `history_too_long` (start a new conversation). A reply longer than 64 KiB is cut there and kept, as at the model's own token limit. A turn runs for at most 10 minutes.
       tags:
         - Qeet AI
       parameters:
@@ -3087,8 +3090,8 @@ paths:
   /v1/qeetai/provider-config:
     get:
       operationId: getAiProviderConfig
-      description: Returns the tenant's bring-your-own-key AI provider configuration with any secret values masked. Absence of a configuration means the deployment's platform fallback, or none, is in effect. Scoped to the caller's tenant and restricted to organization administrators.
-      summary: Get masked tenant AI provider configuration
+      description: Returns the organization's bring-your-own-key AI provider configuration with any secret values masked. Absence of a configuration means the deployment's platform fallback, or none, is in effect. Scoped to the caller's organization and restricted to organization administrators.
+      summary: Get masked organization AI provider configuration
       tags:
         - Qeet AI
       security:
@@ -3096,7 +3099,7 @@ paths:
         - apiKeyAuth: []
       responses:
         '200':
-          description: The organisation's effective provider configuration, its key masked.
+          description: The organization's effective provider configuration, its key masked.
           content:
             application/json:
               schema:
@@ -3113,17 +3116,17 @@ paths:
                   source:
                     type: string
                     enum:
-                      - tenant
+                      - organization
                       - platform
                       - none
-                    description: 'Whose key answers: the organisation''s own, the deployment''s, or none.'
+                    description: 'Whose key answers: the organization''s own, the deployment''s, or none.'
                   provider:
                     type: string
                   model:
                     type: string
                   base_url:
                     type: string
-                    description: The organisation's own endpoint; empty for the Qeet-managed provider, whose endpoint is not shown.
+                    description: The organization's own endpoint; empty for the Qeet-managed provider, whose endpoint is not shown.
                   max_tokens:
                     type: integer
                   last4:
@@ -3136,8 +3139,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
     put:
       operationId: setAiProviderConfig
-      description: Stores the tenant's own AI provider credentials so the assistant runs against the tenant's key rather than the platform fallback, which unlocks it regardless of plan. Secrets are encrypted at rest and are never returned in full by the read endpoint. Restricted to organization administrators; validate the credentials with the test operation before saving.
-      summary: Store tenant AI provider configuration
+      description: Stores the organization's own AI provider credentials so the assistant runs against the organization's key rather than the platform fallback, which unlocks it regardless of plan. Secrets are encrypted at rest and are never returned in full by the read endpoint. Restricted to organization administrators; validate the credentials with the test operation before saving.
+      summary: Store organization AI provider configuration
       tags:
         - Qeet AI
       security:
@@ -3152,7 +3155,7 @@ paths:
               additionalProperties: true
       responses:
         '200':
-          description: The organisation's effective provider configuration, its key masked.
+          description: The organization's effective provider configuration, its key masked.
           content:
             application/json:
               schema:
@@ -3169,17 +3172,17 @@ paths:
                   source:
                     type: string
                     enum:
-                      - tenant
+                      - organization
                       - platform
                       - none
-                    description: 'Whose key answers: the organisation''s own, the deployment''s, or none.'
+                    description: 'Whose key answers: the organization''s own, the deployment''s, or none.'
                   provider:
                     type: string
                   model:
                     type: string
                   base_url:
                     type: string
-                    description: The organisation's own endpoint; empty for the Qeet-managed provider, whose endpoint is not shown.
+                    description: The organization's own endpoint; empty for the Qeet-managed provider, whose endpoint is not shown.
                   max_tokens:
                     type: integer
                   last4:
@@ -3192,8 +3195,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
     delete:
       operationId: deleteAiProviderConfig
-      description: Removes the tenant's bring-your-own-key AI provider configuration, reverting to the deployment's platform fallback where one is available. Restricted to organization administrators. Once removed, assistant availability again depends on the tenant's plan.
-      summary: Delete tenant AI provider configuration
+      description: Removes the organization's bring-your-own-key AI provider configuration, reverting to the deployment's platform fallback where one is available. Restricted to organization administrators. Once removed, assistant availability again depends on the organization's plan.
+      summary: Delete organization AI provider configuration
       tags:
         - Qeet AI
       security:
@@ -3208,7 +3211,7 @@ paths:
     post:
       operationId: testAiProviderConfig
       description: 'Validates candidate AI provider credentials with a live call and reports whether they work, without persisting them. Use this before saving a new key to confirm the provider accepts it. A failed test answers 400 naming the reason: qeetai_provider_unreachable, qeetai_provider_key_invalid, qeetai_provider_model_invalid or qeetai_provider_error.'
-      summary: Test tenant AI provider credentials
+      summary: Test organization AI provider credentials
       tags:
         - Qeet AI
       security:
@@ -3258,7 +3261,7 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
-  /v1/tenants/{tenantID}/billing/checkout:
+  /v1/organizations/{organizationID}/billing/checkout:
     post:
       operationId: startCheckout
       summary: Start checkout
@@ -3266,7 +3269,7 @@ paths:
       tags:
         - Billing
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - $ref: '#/components/parameters/IdempotencyKey'
       security:
         - bearerAuth: []
@@ -3407,18 +3410,18 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/billing/invoices:
+  /v1/organizations/{organizationID}/billing/invoices:
     get:
       operationId: listInvoices
       summary: List invoices
       tags:
         - Billing
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Lists the organisation's invoices, newest first. Each keeps the billing profile it was issued to (billed_to) and the supplier's GSTIN and SAC, and is emailed to that profile's billing email when issued. Requires billing.read.
+      description: Lists the organization's invoices, newest first. Each keeps the billing profile it was issued to (billed_to) and the supplier's GSTIN and SAC, and is emailed to that profile's billing email when issued. Requires billing.read.
       responses:
         '200':
           description: OK
@@ -3445,7 +3448,7 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/billing/invoices/{invoiceID}/pay:
+  /v1/organizations/{organizationID}/billing/invoices/{invoiceID}/pay:
     post:
       operationId: payInvoice
       summary: Pay an open invoice
@@ -3453,7 +3456,7 @@ paths:
       tags:
         - Billing
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: invoiceID
           in: path
           required: true
@@ -3508,15 +3511,15 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/billing/payment-method:
+  /v1/organizations/{organizationID}/billing/payment-method:
     get:
       operationId: getPaymentMethod
       summary: Get the payment method
-      description: 'Returns what the organisation''s most recent completed checkout was paid with, as its provider reported it, or null. No card is kept with the provider: each checkout collects its own, so there is nothing to manage between payments. Razorpay reports a card''s network and last four digits but not its expiry. Requires billing.read.'
+      description: 'Returns what the organization''s most recent completed checkout was paid with, as its provider reported it, or null. No card is kept with the provider: each checkout collects its own, so there is nothing to manage between payments. Razorpay reports a card''s network and last four digits but not its expiry. Requires billing.read.'
       tags:
         - Billing
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -3542,18 +3545,18 @@ paths:
           $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/billing/subscription:
+  /v1/organizations/{organizationID}/billing/subscription:
     get:
       operationId: getSubscription
       summary: Get subscription
       tags:
         - Billing
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Returns the organisation''s subscription. A trial grants its plan until trial_end, and a plan marked to cancel until current_period_end. Any other plan renews at current_period_end: a free one starts its next period, and a paid one is billed with an open renewal invoice and turns past_due, keeping its plan for the payment grace (7 days unless configured) while that invoice is paid, through POST /v1/tenants/{tenantID}/billing/invoices/{invoiceID}/pay or by bank transfer. Paid, it is active for the new period; still unpaid after the grace, or ended by a trial or a cancellation, it is canceled, with ended_at, and the organisation is on the free plan. Each change is audited as billing.subscription_renewed, billing.subscription_past_due or billing.subscription_ended. Requires billing.read.'
+      description: 'Returns the organization''s subscription. A trial grants its plan until trial_end, and a plan marked to cancel until current_period_end. Any other plan renews at current_period_end: a free one starts its next period, and a paid one is billed with an open renewal invoice and turns past_due, keeping its plan for the payment grace (7 days unless configured) while that invoice is paid, through POST /v1/organizations/{organizationID}/billing/invoices/{invoiceID}/pay or by bank transfer. Paid, it is active for the new period; still unpaid after the grace, or ended by a trial or a cancellation, it is canceled, with ended_at, and the organization is on the free plan. Each change is audited as billing.subscription_renewed, billing.subscription_past_due or billing.subscription_ended. Requires billing.read.'
       responses:
         '200':
           description: OK
@@ -3577,7 +3580,7 @@ paths:
       tags:
         - Billing
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -3595,7 +3598,7 @@ paths:
                   type: string
                 plan_code:
                   type: string
-      description: Puts the tenant on plan_code, priced in currency; no payment is taken here. A free plan starts a new period with a zero invoice. A paid plan that costs no more than the tenant's active subscription in the same currency and billing interval takes over the period already paid for, while it lasts, with no new invoice; the current plan itself changes nothing. Any other paid plan, such as one that costs more, must go through checkout (POST /v1/tenants/{tenantID}/billing/checkout) and is refused with 402 billing.checkout_required, unless invoice-only billing (BILLING_ALLOW_UNPAID_ACTIVATION) is on and no card provider serves the currency, which activates it with an open invoice.
+      description: Puts the organization on plan_code, priced in currency; no payment is taken here. A free plan starts a new period with a zero invoice. A paid plan that costs no more than the organization's active subscription in the same currency and billing interval takes over the period already paid for, while it lasts, with no new invoice; the current plan itself changes nothing. Any other paid plan, such as one that costs more, must go through checkout (POST /v1/organizations/{organizationID}/billing/checkout) and is refused with 402 billing.checkout_required, unless invoice-only billing (BILLING_ALLOW_UNPAID_ACTIVATION) is on and no card provider serves the currency, which activates it with an open invoice.
       responses:
         '200':
           description: OK
@@ -3615,14 +3618,14 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/billing/subscription/cancel:
+  /v1/organizations/{organizationID}/billing/subscription/cancel:
     post:
       operationId: cancelSubscription
       summary: Cancel at period end
       tags:
         - Billing
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -3652,8 +3655,8 @@ paths:
   /v1/signup/checkout:
     post:
       operationId: startSignUpCheckout
-      description: Begins a hosted payment for a plan chosen during signup, before any organization exists. The organization is created only once payment completes, so an abandoned checkout never leaves a dangling tenant. Scoped to the authenticated user; the organization name and slug are required and the return URLs must be valid absolute URLs. Returns the details needed to redirect the browser to the payment provider. When invoice tax is configured, the provider charges the total tax included, taxed by the billing country given, and the new organization's paid invoice shows that charge.
-      summary: Start paid-plan checkout before tenant creation
+      description: Begins a hosted payment for a plan chosen during signup, before any organization exists. The organization is created only once payment completes, so an abandoned checkout never leaves a dangling organization. Scoped to the authenticated user; the organization name and slug are required and the return URLs must be valid absolute URLs. Returns the details needed to redirect the browser to the payment provider. When invoice tax is configured, the provider charges the total tax included, taxed by the billing country given, and the new organization's paid invoice shows that charge.
+      summary: Start paid-plan checkout before organization creation
       tags:
         - Billing
       security:
@@ -3735,18 +3738,18 @@ paths:
           $ref: '#/components/responses/NotFound'
         '413':
           description: Form body too large
-  /v1/tenants/{tenantID}/billing/profile:
+  /v1/organizations/{organizationID}/billing/profile:
     get:
       operationId: getBillingProfile
-      description: Returns the tenant's billing profile, such as the legal entity, address, and tax identifiers used on invoices. Scoped to the tenant named in the path. Populate or amend it with the corresponding update operation before generating tax-compliant invoices.
-      summary: Get tenant billing profile
+      description: Returns the organization's billing profile, such as the legal entity, address, and tax identifiers used on invoices. Scoped to the organization named in the path. Populate or amend it with the corresponding update operation before generating tax-compliant invoices.
+      summary: Get organization billing profile
       tags:
         - Billing
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       responses:
         '200':
           description: Billing profile
@@ -3760,15 +3763,15 @@ paths:
           $ref: '#/components/responses/Forbidden'
     put:
       operationId: setBillingProfile
-      description: Creates or replaces the tenant's billing profile and returns the stored result. Scoped to the tenant named in the path. These details feed invoice generation, so keep them accurate for the tenant's jurisdiction.
-      summary: Update tenant billing profile
+      description: Creates or replaces the organization's billing profile and returns the stored result. Scoped to the organization named in the path. These details feed invoice generation, so keep them accurate for the organization's jurisdiction.
+      summary: Update organization billing profile
       tags:
         - Billing
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       requestBody:
         required: true
         content:
@@ -3786,18 +3789,18 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-  /v1/tenants/{tenantID}/billing/trial:
+  /v1/organizations/{organizationID}/billing/trial:
     post:
       operationId: startTrial
-      description: Starts a time-limited trial of the requested plan for the tenant and returns the resulting subscription. Scoped to the tenant named in the path. When the trial expires the subscription follows the normal billing lifecycle unless a paid plan is selected first.
-      summary: Start a tenant plan trial
+      description: Starts a time-limited trial of the requested plan for the organization and returns the resulting subscription. Scoped to the organization named in the path. When the trial expires the subscription follows the normal billing lifecycle unless a paid plan is selected first.
+      summary: Start an organization plan trial
       tags:
         - Billing
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       requestBody:
         required: true
         content:
@@ -3824,15 +3827,15 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-  /v1/tenants/{tenantID}/entitlements:
+  /v1/organizations/{organizationID}/entitlements:
     get:
       operationId: getEntitlements
       summary: Get plan entitlements
       tags:
         - Entitlements
-      description: 'Returns the tenant''s resolved entitlements: the effective plan code, the boolean feature flags, and the numeric limits (-1 = unlimited). Resolved from the active subscription (falling back to the tenant''s plan label), so an in-app upgrade is reflected immediately. A subscription grants its plan only until current_period_end (a trial until trial_end): nothing renews it, so after that the tenant has the free plan''s entitlements until it pays again. Readable by any authenticated member of the tenant; scoped to the caller''s own tenant. audit_retention_days is enforced: once a day, the tenant''s audit events older than that are deleted (all but the newest, its chain kept verifiable) and the deletion is recorded as audit.events_purged; -1 keeps them all.'
+      description: 'Returns the organization''s resolved entitlements: the effective plan code, the boolean feature flags, and the numeric limits (-1 = unlimited). Resolved from the active subscription (falling back to the organization''s plan label), so an in-app upgrade is reflected immediately. A subscription grants its plan only until current_period_end (a trial until trial_end): nothing renews it, so after that the organization has the free plan''s entitlements until it pays again. Readable by any authenticated member of the organization; scoped to the caller''s own organization. audit_retention_days is enforced: once a day, the organization''s audit events older than that are deleted (all but the newest, its chain kept verifiable) and the deletion is recorded as audit.events_purged; -1 keeps them all.'
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -3901,18 +3904,18 @@ paths:
           $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/entitlements/usage:
+  /v1/organizations/{organizationID}/entitlements/usage:
     get:
       operationId: getEntitlementUsage
-      description: 'Returns the tenant''s current consumption for each metered resource, such as seats, applications, and API keys, for display against the plan''s limits. seats counts the people holding a role in the tenant, directly or through a group that carries one, each once, plus its pending invitations; an account holding no role, such as a customer signing in to the tenant''s applications, holds no seat. mau counts the people active in the tenant so far this calendar month (UTC): each person who signed in to it, or renewed a session in it, at least once, counted once. API keys, service principals and AI agents are not counted. It complements the entitlements endpoint, which resolves the plan''s capability set, by running the underlying count queries only when the usage view needs them. Scoped to the tenant named in the path.'
-      summary: Get tenant resource usage against plan limits
+      description: 'Returns the organization''s current consumption for each metered resource, such as seats, applications, and API keys, for display against the plan''s limits. seats counts the people holding a role in the organization, directly or through a group that carries one, each once, plus its pending invitations; an account holding no role, such as a customer signing in to the organization''s applications, holds no seat. mau counts the people active in the organization so far this calendar month (UTC): each person who signed in to it, or renewed a session in it, at least once, counted once. API keys, service principals and AI agents are not counted. It complements the entitlements endpoint, which resolves the plan''s capability set, by running the underlying count queries only when the usage view needs them. Scoped to the organization named in the path.'
+      summary: Get organization resource usage against plan limits
       tags:
         - Entitlements
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
       responses:
         '200':
           description: Resource usage by limit key
@@ -3934,7 +3937,7 @@ paths:
   /v1/sales/leads:
     post:
       operationId: submitSalesLead
-      description: Records a contact-sales lead for follow-up and, on a best-effort basis, notifies the configured sales inbox; a delivery failure does not fail the request because the lead is already persisted. Available to any authenticated user, including during onboarding before an organization exists, with tenant and user recorded when known. Returns 202 to acknowledge the lead was accepted for processing.
+      description: Records a contact-sales lead for follow-up and, on a best-effort basis, notifies the configured sales inbox; a delivery failure does not fail the request because the lead is already persisted. Available to any authenticated user, including during onboarding before an organization exists, with organization and user recorded when known. Returns 202 to acknowledge the lead was accepted for processing.
       summary: Submit a contact-sales lead
       tags:
         - Sales
@@ -3952,15 +3955,15 @@ paths:
           description: Lead accepted
         '401':
           $ref: '#/components/responses/Unauthorized'
-  /v1/tenants/{tenantID}/critical-events:
+  /v1/organizations/{organizationID}/critical-events:
     get:
       operationId: listCriticalEvents
       summary: List critical events
-      description: 'The short list an on-call administrator triages, from a phone or the console: the organisation''s open anomaly alerts and its critical audit events (suspensions, lockouts, the AI agent kill switch, second factors reset or turned off, roles given, sign-in risk settings changed) of the last hours, newest first, at most 100 (truncated when there are more), with how many of those are high. Read only; the full trail is the audit log. Needs audit.read.'
+      description: 'The short list an on-call administrator triages, from a phone or the console: the organization''s open anomaly alerts and its critical audit events (suspensions, lockouts, the AI agent kill switch, second factors reset or turned off, roles given, sign-in risk settings changed) of the last hours, newest first, at most 100 (truncated when there are more), with how many of those are high. Read only; the full trail is the audit log. Needs audit.read.'
       tags:
         - Audit
       parameters:
-        - $ref: '#/components/parameters/TenantID'
+        - $ref: '#/components/parameters/OrganizationID'
         - name: hours
           in: query
           required: false
@@ -4009,11 +4012,11 @@ components:
       type: apiKey
       in: header
       name: Authorization
-      description: 'API key credential. Send `Authorization: ApiKey <key>` (note the `ApiKey ` prefix). Accepted on the same authenticated routes as bearerAuth. A key works only while its organisation is active, not while it is suspended or deleted.'
+      description: 'API key credential. Send `Authorization: ApiKey <key>` (note the `ApiKey ` prefix). Accepted on the same authenticated routes as bearerAuth. A key works only while its organization is active, not while it is suspended or deleted.'
     scimBearer:
       type: http
       scheme: bearer
-      description: 'An organisation''s SCIM provisioning token, presented by its identity provider: `Authorization: Bearer <scim-token>`. Distinct from user JWTs. An organisation can hold several, managed under /v1/tenants/{tenantID}/scim/tokens. A revoked or expired token, and every token of an organisation that is suspended or due for deletion, is refused with 401.'
+      description: 'An organization''s SCIM provisioning token, presented by its identity provider: `Authorization: Bearer <scim-token>`. Distinct from user JWTs. An organization can hold several, managed under /v1/organizations/{organizationID}/scim/tokens. A revoked or expired token, and every token of an organization that is suspended or due for deletion, is refused with 401.'
     clientCredentials:
       type: oauth2
       description: OAuth 2.0 client credentials. Clients authenticate at the token endpoint via form params (`client_id`/`client_secret`) or HTTP Basic. Revocation/introspection use the same client auth.
@@ -4049,7 +4052,7 @@ components:
       properties:
         type:
           type: string
-          description: Resource type (e.g. "user", "group", "tenant").
+          description: Resource type (e.g. "user", "group", "organization").
         id:
           type: string
           format: uuid
@@ -4529,7 +4532,7 @@ components:
             $ref: '#/components/schemas/WeeklyActivityPoint'
         range:
           type: object
-          description: The sign-ins day by day (UTC) over the chosen range, without organisation switches; present when from, to or days was given.
+          description: The sign-ins day by day (UTC) over the chosen range, without organization switches; present when from, to or days was given.
           properties:
             from:
               type: string
@@ -4629,7 +4632,7 @@ components:
         - request_id
         - resource_id
         - resource_type
-        - tenant_id
+        - organization_id
         - user_agent
       properties:
         action:
@@ -4662,7 +4665,7 @@ components:
           format: uuid
         resource_type:
           type: string
-        tenant_id:
+        organization_id:
           type:
             - string
             - 'null'
@@ -4675,6 +4678,9 @@ components:
           type: object
           additionalProperties: true
           description: What the event recorded beside its fields; geo is where the request came from.
+    NextCursor:
+      type: string
+      description: 'Present when there is another page: send it back as cursor to read that page. Absent on the last page.'
     AuditVerifyResult:
       type: object
       required:
@@ -4702,16 +4708,13 @@ components:
           description: 'Set when the chain is broken: the row''s link to the one before it is wrong, or its contents no longer match its hash; the row the chain''s last verification checkpoint names is gone; or a checkpoint the chain relies on (its last verification''s, or where it starts after a purge) doesn''t carry the server''s signature, as when the chain and its checkpoint were rewritten together.'
         rows_checked:
           type: integer
-    NextCursor:
-      type: string
-      description: 'Present when there is another page: send it back as cursor to read that page. Absent on the last page.'
     AuditAnomaly:
       type: object
       properties:
         id:
           type: string
           format: uuid
-        tenant_id:
+        organization_id:
           type: string
           format: uuid
         event_id:
@@ -4782,7 +4785,7 @@ components:
     AuditAnomalySettings:
       type: object
       properties:
-        tenant_id:
+        organization_id:
           type: string
           format: uuid
         enabled:
@@ -4798,7 +4801,7 @@ components:
       description: 'Present, and true, when the list was cut at its limit (1,000 items unless the operation says otherwise): there are more than were answered.'
     ControlOwner:
       type: object
-      description: The person the organisation has made answer for a control, as it is now.
+      description: The person the organization has made answer for a control, as it is now.
       properties:
         control_id:
           type: string
@@ -4861,12 +4864,12 @@ components:
           $ref: '#/components/schemas/ControlOwner'
     EvidenceRun:
       type: object
-      description: Immutable snapshot of one compliance evidence generation pass for a tenant+framework pair. Controls are populated on GetRun; omitted on ListRuns.
+      description: Immutable snapshot of one compliance evidence generation pass for a organization+framework pair. Controls are populated on GetRun; omitted on ListRuns.
       properties:
         id:
           type: string
           format: uuid
-        tenant_id:
+        organization_id:
           type: string
           format: uuid
         framework:
@@ -4896,7 +4899,7 @@ components:
             $ref: '#/components/schemas/EvidenceControlResult'
     ExternalAudit:
       type: object
-      description: An audit an external body carried out on the organisation, or a certificate it issued.
+      description: An audit an external body carried out on the organization, or a certificate it issued.
       properties:
         id:
           type: string
@@ -4958,12 +4961,12 @@ components:
       type: object
       required:
         - reason
-        - tenant_id
+        - organization_id
         - user_id
       properties:
         reason:
           type: string
-        tenant_id:
+        organization_id:
           type: string
           format: uuid
         user_id:
@@ -4979,7 +4982,7 @@ components:
         - reason
         - requested_by
         - status
-        - tenant_id
+        - organization_id
         - user_id
       properties:
         completed_at:
@@ -5007,7 +5010,7 @@ components:
           format: uuid
         status:
           type: string
-        tenant_id:
+        organization_id:
           type: string
           format: uuid
         user_id:
@@ -5033,10 +5036,10 @@ components:
     ExportInput:
       type: object
       required:
-        - tenant_id
+        - organization_id
         - user_id
       properties:
-        tenant_id:
+        organization_id:
           type: string
           format: uuid
         user_id:
@@ -5050,7 +5053,7 @@ components:
         - id
         - requested_by
         - status
-        - tenant_id
+        - organization_id
         - user_id
       properties:
         completed_at:
@@ -5069,7 +5072,7 @@ components:
         payload:
           type: object
           additionalProperties: true
-          description: 'The person''s data in the organisation, while status is ready: profile (with metadata), sessions, passkeys, roles, mfa_totp_enabled, identities (linked social and single sign-on accounts), otp_factors (destinations masked), app_consents, app_grants, groups, sign_ins (the latest 1000) and generated_at.'
+          description: 'The person''s data in the organization, while status is ready: profile (with metadata), sessions, passkeys, roles, mfa_totp_enabled, identities (linked social and single sign-on accounts), otp_factors (destinations masked), app_consents, app_grants, groups, sign_ins (the latest 1000) and generated_at.'
         requested_by:
           type:
             - string
@@ -5078,7 +5081,7 @@ components:
         status:
           type: string
           description: pending, ready, failed, or expired once the payload has been deleted (seven days after it was built, or when the person was erased or their account deleted).
-        tenant_id:
+        organization_id:
           type: string
           format: uuid
         user_id:
@@ -5149,21 +5152,21 @@ components:
     RateLimitBuckets:
       type: object
       required:
-        - tenant
+        - organization
         - user
         - api_key
       properties:
-        tenant:
+        organization:
           $ref: '#/components/schemas/RateLimitBucket'
         user:
           $ref: '#/components/schemas/RateLimitBucket'
         api_key:
           $ref: '#/components/schemas/RateLimitBucket'
-    TenantRateLimits:
+    OrganizationRateLimits:
       type: object
-      description: 'Per-bucket rate limits for a tenant. On GET these are the effective values (defaults merged with overrides); on PUT, any bucket supplied is upserted as an override. The answer also carries the defaults, the ceiling an override may reach (the defaults themselves: an organisation may tighten its limits, never lift them), the lowest rate an override may set, and the built-in limits every organisation shares; those are read-only and ignored on PUT.'
+      description: 'Per-bucket rate limits for an organization. On GET these are the effective values (defaults merged with overrides); on PUT, any bucket supplied is upserted as an override. The answer also carries the defaults, the ceiling an override may reach (the defaults themselves: an organization may tighten its limits, never lift them), the lowest rate an override may set, and the built-in limits every organization shares; those are read-only and ignored on PUT.'
       properties:
-        tenant:
+        organization:
           $ref: '#/components/schemas/RateLimitBucket'
         user:
           $ref: '#/components/schemas/RateLimitBucket'
@@ -5182,7 +5185,7 @@ components:
         built_in:
           type: array
           readOnly: true
-          description: The platform's fixed limits, the same for every organisation.
+          description: The platform's fixed limits, the same for every organization.
           items:
             type: object
             required:
@@ -5341,7 +5344,7 @@ components:
             delivery_scope:
               type: string
               enum:
-                - tenant
+                - organization
                 - platform
     QeetAIStatus:
       type: object
@@ -5358,12 +5361,12 @@ components:
           description: Model identifier (e.g. "claude-sonnet-5"); empty when not configured.
     QeetAIConversation:
       type: object
-      description: A named qeetai conversation thread (tenant + user scoped).
+      description: A named qeetai conversation thread (organization + user scoped).
       properties:
         id:
           type: string
           format: uuid
-        tenant_id:
+        organization_id:
           type: string
           format: uuid
         user_id:
@@ -5386,7 +5389,7 @@ components:
         id:
           type: string
           format: uuid
-        tenant_id:
+        organization_id:
           type: string
           format: uuid
         conversation_id:
@@ -5859,11 +5862,11 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
   parameters:
-    TenantID:
-      name: tenantID
+    OrganizationID:
+      name: organizationID
       in: path
       required: true
-      description: 'The organisation''s ID. On an authenticated route it must be the organisation of the caller''s credential: another is refused with 403, and a value that is not a UUID with 400.'
+      description: 'The organization''s ID. On an authenticated route it must be the organization of the caller''s credential: another is refused with 403, and a value that is not a UUID with 400.'
       schema:
         type: string
         format: uuid

@@ -19,10 +19,10 @@ post:
     renewal after either is refused with 401 auth.session_timed_out and the
     session ends, recorded as an expiry and announced to session.revoked
     subscribers with the reason expired. A renewal from an address the
-    organisation's address rules refuse answers 403 auth.address_not_allowed;
+    organization's address rules refuse answers 403 auth.address_not_allowed;
     the session stays, and renews again from an allowed address. A session in a
-    tenant that has since been suspended or deleted is refused (403
-    auth.tenant_inactive).
+    organization that has since been suspended or deleted is refused (403
+    auth.organization_inactive).
   summary: Refresh
   tags:
     - Auth
@@ -54,7 +54,7 @@ post:
             idle_expires_at: '2026-10-01T10:29:00Z'
             session_id: '018f2a70-5b6c-7d8e-9f01-2a3b4c5d6e7f'
             user_id: '018f2a70-1a2b-7c3d-9e4f-5a6b7c8d9e0f'
-            tenant_id: '018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00'
+            organization_id: '018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00'
           schema:
             $ref: ../../../shared/schemas/TokenPair.yaml
     '401':

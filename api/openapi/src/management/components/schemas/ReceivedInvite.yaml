@@ -5,9 +5,9 @@ required:
   - expires_at
   - id
   - role_id
-  - tenant_id
-  - tenant_name
-  - tenant_slug
+  - organization_id
+  - organization_name
+  - organization_slug
 properties:
   created_at:
     type: string
@@ -25,10 +25,10 @@ properties:
       - string
       - 'null'
     format: uuid
-  tenant_id:
+  organization_id:
     type: string
     format: uuid
-  tenant_name:
+  organization_name:
     type: string
-  tenant_slug:
+  organization_slug:
     type: string

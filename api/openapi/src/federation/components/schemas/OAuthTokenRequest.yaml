@@ -10,6 +10,7 @@ properties:
       - urn:ietf:params:oauth:grant-type:device_code
       - urn:ietf:params:oauth:grant-type:token-exchange
       - urn:openid:params:grant-type:ciba
+      - client_credentials
   code:
     type: string
   redirect_uri:
@@ -31,12 +32,12 @@ properties:
     type: string
     format: uri
     description: >-
-      RFC 8707 resource indicator. Grant-agnostic — accepted on
-      authorization_code, refresh_token, and token-exchange — and binds the
-      issued access token's audience to this resource (e.g. an MCP server) in
-      addition to the platform's own audience. On refresh_token, omitting it
-      preserves the resource bound at the original grant; supplying it switches
-      the bound resource.
+      RFC 8707 resource indicator, accepted on authorization_code,
+      refresh_token and token-exchange: the issued access token's audience is
+      this resource alone (e.g. an MCP server). On refresh_token, omitting it
+      carries the resource bound at the original grant forward, and naming
+      another is refused with invalid_target. Refused with invalid_target on
+      client_credentials, device_code and CIBA.
   subject_token:
     type: string
     description: >-
@@ -59,7 +60,14 @@ properties:
     type: string
   scope:
     type: string
+    description: >-
+      The scopes asked for, on token-exchange. Ignored on client_credentials:
+      the token always carries every scope the service principal or agent
+      holds.
   client_id:
     type: string
+    description: >-
+      The application's client_id, or on client_credentials the service
+      principal's or agent's id. Sent here or as the HTTP Basic user.
   client_secret:
     type: string

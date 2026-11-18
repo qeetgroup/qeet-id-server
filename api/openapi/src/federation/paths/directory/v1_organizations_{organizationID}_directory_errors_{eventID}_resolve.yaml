@@ -1,0 +1,37 @@
+post:
+  operationId: resolveDirectoryError
+  summary: Resolve a directory error
+  description: >-
+    Requires connection.write. Atomically closes an open error with an audit
+    record. Does not retry its original operation.
+  tags:
+    - Directory
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: eventID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    '200':
+      description: Error resolved
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              succeeded:
+                type: boolean
+    '401':
+      description: Authentication required
+    '403':
+      description: Organization mismatch or missing connection.write
+    '404':
+      description: Error not found in this organization
+    '409':
+      description: Error already closed

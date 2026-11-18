@@ -105,10 +105,10 @@ func TestEditorRejectsInvalidContent(t *testing.T) {
 func TestEmailTestThrottle(t *testing.T) {
 	var limits testEmailLimits
 	now := time.Now()
-	if !limits.allow("tenant-a:user-a", now) || limits.allow("tenant-a:user-a", now) {
+	if !limits.allow("organization-a:user-a", now) || limits.allow("organization-a:user-a", now) {
 		t.Fatal("test email rate limit not enforced")
 	}
-	if !limits.allow("tenant-b:user-a", now) || !limits.allow("tenant-a:user-a", now.Add(time.Minute)) {
+	if !limits.allow("organization-b:user-a", now) || !limits.allow("organization-a:user-a", now.Add(time.Minute)) {
 		t.Fatal("rate limit not scoped or expiring")
 	}
 }

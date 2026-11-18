@@ -1,6 +1,6 @@
 type: object
 properties:
-  tenant_name:
+  organization_name:
     type: string
   capabilities:
     type: array
@@ -24,7 +24,7 @@ properties:
         type: string
       background_color:
         type: string
-        description: Optional hosted-login page background from tenant branding settings.
+        description: Optional hosted-login page background from organization branding settings.
   scim_base_url:
     type: string
     format: uri

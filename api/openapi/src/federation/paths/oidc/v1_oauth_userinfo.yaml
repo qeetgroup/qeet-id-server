@@ -3,7 +3,7 @@ get:
   description: >-
     Returns the OpenID Connect UserInfo claims for the signed-in user of the
     presented bearer access token, with Qeet acting as the OpenID provider: sub
-    and tenant_id, plus the standard claims the token's scopes grant: email
+    and organization_id, plus the standard claims the token's scopes grant: email
     gives email and email_verified; profile gives name, picture, locale (where
     known) and updated_at; phone gives phone_number and phone_number_verified.
     No claim is returned without its scope. A token without the openid scope is
@@ -32,7 +32,7 @@ get:
               sub:
                 type: string
                 format: uuid
-              tenant_id:
+              organization_id:
                 type: string
                 format: uuid
               email:
@@ -60,7 +60,7 @@ post:
   description: >-
     Returns the OpenID Connect UserInfo claims for the signed-in user of the
     presented bearer access token, with Qeet acting as the OpenID provider: sub
-    and tenant_id, plus the standard claims the token's scopes grant: email
+    and organization_id, plus the standard claims the token's scopes grant: email
     gives email and email_verified; profile gives name, picture, locale (where
     known) and updated_at; phone gives phone_number and phone_number_verified.
     No claim is returned without its scope. A token without the openid scope is
@@ -89,7 +89,7 @@ post:
               sub:
                 type: string
                 format: uuid
-              tenant_id:
+              organization_id:
                 type: string
                 format: uuid
               email:

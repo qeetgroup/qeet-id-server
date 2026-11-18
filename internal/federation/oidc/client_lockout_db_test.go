@@ -32,7 +32,7 @@ func TestWrongSecretsFromAnotherAddressDontLockTheApplicationOut(t *testing.T) {
 	unknownGrant := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {"not-a-token"}}.Encode()
 	answer := func(from, pass string) string {
 		t.Helper()
-		req := httptest.NewRequestWithContext(dbtest.Context(t), http.MethodPost, "/oauth/token-code", strings.NewReader(unknownGrant))
+		req := httptest.NewRequestWithContext(dbtest.Context(t), http.MethodPost, "/oauth/token", strings.NewReader(unknownGrant))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.SetBasicAuth(client.ClientID, pass)
 		req.RemoteAddr = from

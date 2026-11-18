@@ -2,7 +2,7 @@ get:
   operationId: listMyAccessRequests
   summary: List my access requests
   description: >-
-    The signed-in person's requests for a role in the organisation they're
+    The signed-in person's requests for a role in the organization they're
     signed in to, newest first (up to 100), with their answers.
   tags:
     - RBAC
@@ -28,7 +28,7 @@ post:
   operationId: createAccessRequest
   summary: Ask for a role
   description: >-
-    Asks the organisation for one of its roles, for duration_hours (1 to 2160,
+    Asks the organization for one of its roles, for duration_hours (1 to 2160,
     90 days) or, without it, for good, with a reason the people who can grant
     roles see. They're told in the app and on their linked phones. Any role but
     the owner role can be asked for (404 otherwise). A role held directly is

@@ -3,7 +3,7 @@ get:
   summary: List conversations
   description: >-
     Returns all qeetai conversations for the authenticated user within their
-    tenant, ordered by pinned-first then most-recently-updated.
+    organization, ordered by pinned-first then most-recently-updated.
   tags:
     - Qeet AI
   security:

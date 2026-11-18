@@ -43,10 +43,11 @@ organization or product understanding; this repository does not restate them.
 ## Working style in this repository
 
 - **Read before editing.** Over a hundred packages, and similar names mean different things —
-  `internal/access/risk/ipallow` is not `internal/access/threat/risk`.
+  `internal/access/ipallow` is not `internal/access/threat/risk`.
 - **Prefer `rg`/`grep` over guessing a path.** Use the architecture map.
-- **Match the neighbouring package's shape** rather than introducing an abstraction: `queries.sql` +
-  `sqlc.yaml` + generated `dbgen/` + service + handler.
+- **Match the neighbouring package's shape** rather than introducing an abstraction: `queries.sql`
+  (an entry in the root `sqlc.yaml`) + generated `dbgen/` + service + handler. NULL-able uuid and
+  time columns are `*uuid.UUID` / `*time.Time`: no `pgtype` conversions.
 - **Never hand-edit `dbgen/`** — it is sqlc output.
 - **Never hand-edit `api/openapi/*.yaml`** — edit `api/openapi/src/` and run `make openapi`.
 - **Do not read `.env` or `.secrets/`** into anything you write. Both are gitignored and hold real

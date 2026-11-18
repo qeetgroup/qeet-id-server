@@ -141,6 +141,25 @@ func (q *Queries) LockRiskSettings(ctx context.Context, organizationID uuid.UUID
 	return i, err
 }
 
+const purgeSignInHistory = `-- name: PurgeSignInHistory :execrows
+DELETE FROM auth.login_context_history WHERE ctid = ANY(ARRAY(
+    SELECT h.ctid FROM auth.login_context_history h WHERE h.seen_at < $1 LIMIT $2))
+`
+
+type PurgeSignInHistoryParams struct {
+	Cutoff  time.Time
+	MaxRows int32
+}
+
+// Deletes at most @max_rows sign-in history entries seen before @cutoff.
+func (q *Queries) PurgeSignInHistory(ctx context.Context, arg PurgeSignInHistoryParams) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeSignInHistory, arg.Cutoff, arg.MaxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const upsertRiskSettings = `-- name: UpsertRiskSettings :exec
 INSERT INTO auth.risk_settings (
     organization_id, medium_threshold, high_threshold, force_mfa_at_level,

@@ -2,7 +2,7 @@ get:
   operationId: listNotifications
   description: >-
     Returns the authenticated user's most recent notifications together with the
-    current unread count. Results are scoped to the calling user, and no tenant
+    current unread count. Results are scoped to the calling user, and no organization
     is required. Pair with the mark-all-read operation to clear the unread
     state.
   summary: List notifications

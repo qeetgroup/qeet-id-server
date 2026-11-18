@@ -2,7 +2,7 @@ type: object
 required:
   - email
   - role_id
-  - tenant_id
+  - organization_id
 properties:
   email:
     type: string
@@ -11,6 +11,6 @@ properties:
       - string
       - 'null'
     format: uuid
-  tenant_id:
+  organization_id:
     type: string
     format: uuid

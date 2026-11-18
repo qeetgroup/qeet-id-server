@@ -5,11 +5,11 @@
   },
   "exclude-rules": [
     {
-      "path": "/internal/platform/http/errs/[^/]+\\.go$",
+      "path": "/internal/(platform/http/errs/[^/]+|.+/(api)?errors)\\.go$",
       "rules": [
         "G101"
       ],
-      "reason": "Every constant here is a public API error code such as \"oidc.refresh_token_invalid\"; G101 matches words like token, secret and cred in their names. No credentials live in this package."
+      "reason": "These files declare error codes: the shared ones in errs, and each package's own in its errors.go. Every constant is a public API error code such as \"oidc.refresh_token_invalid\"; G101 matches words like token, secret and cred in their names. No credentials live in them."
     },
     {
       "path": "/cmd/seed/",

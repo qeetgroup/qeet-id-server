@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const assignRoleToGroup = `-- name: AssignRoleToGroup :one
@@ -32,7 +31,7 @@ type AssignRoleToGroupParams struct {
 	GroupID        uuid.UUID
 	RoleID         uuid.UUID
 	OrganizationID uuid.UUID
-	GrantedBy      pgtype.UUID
+	GrantedBy      *uuid.UUID
 }
 
 func (q *Queries) AssignRoleToGroup(ctx context.Context, arg AssignRoleToGroupParams) (*bool, error) {
@@ -86,7 +85,7 @@ type AssignUserRoleParams struct {
 	RoleID         uuid.UUID
 	OrganizationID uuid.UUID
 	UserID         uuid.UUID
-	GrantedBy      pgtype.UUID
+	GrantedBy      *uuid.UUID
 }
 
 // AssignUserRole grants a role to a user only when the role belongs to the
@@ -230,7 +229,7 @@ type ExplainAllGrantsParams struct {
 type ExplainAllGrantsRow struct {
 	Permission string
 	Via        string
-	GroupID    pgtype.UUID
+	GroupID    *uuid.UUID
 	GroupName  *string
 	RoleID     uuid.UUID
 	RoleName   string
@@ -292,7 +291,7 @@ type ExplainGrantsParams struct {
 
 type ExplainGrantsRow struct {
 	Via       string
-	GroupID   pgtype.UUID
+	GroupID   *uuid.UUID
 	GroupName *string
 	RoleID    uuid.UUID
 	RoleName  string
@@ -351,7 +350,7 @@ INSERT INTO rbac.role_permissions (role_id, permission_id)
 SELECT ro.id, p.id
 FROM rbac.roles ro
 JOIN rbac.permissions p ON ro.name = 'owner'
-                        OR (ro.name = 'admin' AND p.key <> 'tenant.delete')
+                        OR (ro.name = 'admin' AND p.key <> 'organization.delete')
                         OR (ro.name = 'viewer' AND p.key LIKE '%.read' AND p.key <> 'secret.read')
 WHERE ro.is_system
 ON CONFLICT DO NOTHING
@@ -395,6 +394,62 @@ type GrantPermissionsParams struct {
 func (q *Queries) GrantPermissions(ctx context.Context, arg GrantPermissionsParams) error {
 	_, err := q.db.Exec(ctx, grantPermissions, arg.RoleID, arg.PermissionIds)
 	return err
+}
+
+const groupGrantScope = `-- name: GroupGrantScope :one
+SELECT COALESCE(bool_or(ro.is_system AND ro.name = 'owner'), false)::boolean AS owner_role,
+       COALESCE(array_agg(DISTINCT p.key) FILTER (WHERE p.key IS NOT NULL), '{}')::text[] AS keys
+FROM rbac.group_roles gr
+JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.organization_id = gr.organization_id
+LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
+LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
+WHERE gr.group_id = $1 AND gr.organization_id = $2
+`
+
+type GroupGrantScopeParams struct {
+	GroupID        uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+type GroupGrantScopeRow struct {
+	OwnerRole bool
+	Keys      []string
+}
+
+// Whether the organization's group holds its owner role, and the permissions
+// its roles carry, by key: none for a group that isn't the organization's.
+func (q *Queries) GroupGrantScope(ctx context.Context, arg GroupGrantScopeParams) (GroupGrantScopeRow, error) {
+	row := q.db.QueryRow(ctx, groupGrantScope, arg.GroupID, arg.OrganizationID)
+	var i GroupGrantScopeRow
+	err := row.Scan(&i.OwnerRole, &i.Keys)
+	return i, err
+}
+
+const isOwner = `-- name: IsOwner :one
+SELECT EXISTS (
+    SELECT 1 FROM rbac.user_roles ur
+    JOIN rbac.roles ro ON ro.id = ur.role_id AND ro.is_system AND ro.name = 'owner'
+    WHERE ur.user_id = $1 AND ur.organization_id = $2 AND ro.organization_id = $2
+    UNION ALL
+    SELECT 1 FROM organization.group_members gm
+    JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.organization_id = gm.organization_id
+    JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.is_system AND ro.name = 'owner'
+    WHERE gm.user_id = $1 AND gm.organization_id = $2 AND ro.organization_id = $2
+)::boolean AS owner
+`
+
+type IsOwnerParams struct {
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+// Whether the person holds the organization's owner role, directly or through
+// a group.
+func (q *Queries) IsOwner(ctx context.Context, arg IsOwnerParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isOwner, arg.UserID, arg.OrganizationID)
+	var owner bool
+	err := row.Scan(&owner)
+	return owner, err
 }
 
 const leftOrganization = `-- name: LeftOrganization :one
@@ -782,6 +837,37 @@ func (q *Queries) RevokePermissions(ctx context.Context, arg RevokePermissionsPa
 	return err
 }
 
+const roleGrantScope = `-- name: RoleGrantScope :one
+
+SELECT (ro.is_system AND ro.name = 'owner')::boolean AS owner_role,
+       COALESCE(array_agg(p.key ORDER BY p.key) FILTER (WHERE p.key IS NOT NULL), '{}')::text[] AS keys
+FROM rbac.roles ro
+LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
+LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
+WHERE ro.id = $1 AND ro.organization_id = $2
+GROUP BY ro.id, ro.is_system, ro.name
+`
+
+type RoleGrantScopeParams struct {
+	RoleID         uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+type RoleGrantScopeRow struct {
+	OwnerRole bool
+	Keys      []string
+}
+
+// Grant checks (grantcheck.go).
+// Whether the organization's role is its owner role, and the permissions it
+// carries, by key. No row when the role isn't the organization's.
+func (q *Queries) RoleGrantScope(ctx context.Context, arg RoleGrantScopeParams) (RoleGrantScopeRow, error) {
+	row := q.db.QueryRow(ctx, roleGrantScope, arg.RoleID, arg.OrganizationID)
+	var i RoleGrantScopeRow
+	err := row.Scan(&i.OwnerRole, &i.Keys)
+	return i, err
+}
+
 const roleHolderCounts = `-- name: RoleHolderCounts :many
 SELECT ro.id AS role_id,
        (SELECT count(DISTINCT ur.user_id) FROM rbac.user_roles ur
@@ -830,6 +916,23 @@ func (q *Queries) RoleHolderCounts(ctx context.Context, organizationID uuid.UUID
 		return nil, err
 	}
 	return items, nil
+}
+
+const roleIsSystem = `-- name: RoleIsSystem :one
+SELECT is_system FROM rbac.roles WHERE id = $1 AND organization_id = $2
+`
+
+type RoleIsSystemParams struct {
+	RoleID         uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+// Whether the organization's role is a built-in one.
+func (q *Queries) RoleIsSystem(ctx context.Context, arg RoleIsSystemParams) (bool, error) {
+	row := q.db.QueryRow(ctx, roleIsSystem, arg.RoleID, arg.OrganizationID)
+	var is_system bool
+	err := row.Scan(&is_system)
+	return is_system, err
 }
 
 const roleUse = `-- name: RoleUse :one

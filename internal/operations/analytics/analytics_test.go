@@ -58,19 +58,10 @@ func TestOverview_JSONShape(t *testing.T) {
 	}
 	got := string(b)
 	for _, fragment := range want {
-		if !contains(got, fragment) {
+		if !strings.Contains(got, fragment) {
 			t.Errorf("JSON missing %q\n--- got ---\n%s", fragment, got)
 		}
 	}
-}
-
-func contains(haystack, needle string) bool {
-	for i := 0; i+len(needle) <= len(haystack); i++ {
-		if haystack[i:i+len(needle)] == needle {
-			return true
-		}
-	}
-	return false
 }
 
 // TestCountedActionsAreRecorded checks that every audit action the dashboard

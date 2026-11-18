@@ -10,7 +10,7 @@ required:
   - phone
   - phone_verified_at
   - status
-  - tenant_id
+  - organization_id
   - updated_at
 properties:
   avatar_url:
@@ -61,7 +61,7 @@ properties:
       type: string
   status:
     type: string
-  tenant_id:
+  organization_id:
     type: string
     format: uuid
   updated_at:

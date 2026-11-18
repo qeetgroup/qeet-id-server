@@ -8,9 +8,29 @@ INSERT INTO organization.domains (organization_id, domain, verification_token)
 VALUES ($1, $2, $3)
 RETURNING id, domain, verification_token, verified_at, created_at;
 
+-- ListDomains lists an organization's domains with their switches and the
+-- outcome of their last check.
 -- name: ListDomains :many
-SELECT id, domain, verification_token, verified_at, created_at
-FROM organization.domains WHERE organization_id = $1 ORDER BY created_at DESC;
+SELECT id, domain, verification_token, verified_at, created_at,
+       last_checked_at, COALESCE(last_error, '')::text AS last_error, sso_enabled, jit_enabled
+FROM organization.domains
+WHERE organization_id = $1
+ORDER BY domain;
+
+-- UpdateDomainSettings sets the switches given; a NULL one keeps its value.
+-- name: UpdateDomainSettings :one
+UPDATE organization.domains SET
+    sso_enabled = COALESCE(sqlc.narg('sso_enabled')::boolean, sso_enabled),
+    jit_enabled = COALESCE(sqlc.narg('jit_enabled')::boolean, jit_enabled)
+WHERE id = @id AND organization_id = @organization_id
+RETURNING id, domain, verification_token, verified_at, created_at,
+          last_checked_at, COALESCE(last_error, '')::text AS last_error, sso_enabled, jit_enabled;
+
+-- RecordDomainCheck stamps a verification attempt: its failure, or NULL for
+-- one that found the record.
+-- name: RecordDomainCheck :exec
+UPDATE organization.domains SET last_checked_at = NOW(), last_error = sqlc.narg('last_error')
+WHERE id = @id AND organization_id = @organization_id;
 
 -- name: GetDomainForVerify :one
 SELECT id, domain, verification_token, verified_at, created_at
@@ -135,3 +155,7 @@ ON CONFLICT (organization_id, user_id) DO NOTHING;
 
 -- name: DeleteBreakGlassMember :execrows
 DELETE FROM organization.break_glass_members WHERE organization_id = $1 AND user_id = $2;
+
+-- LoginHost is the organization's custom login hostname as stored; '' for none.
+-- name: LoginHost :one
+SELECT COALESCE(custom_domain, '')::text FROM organization.branding WHERE organization_id = $1;

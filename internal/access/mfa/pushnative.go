@@ -1,8 +1,8 @@
 package mfa
 
-// Native push delivery: Apple Push Notification service for the iOS app and Firebase Cloud
-// Messaging for the Android app, beside Expo for the React Native app. Each is optional; a
-// phone whose service isn't configured is simply not sent to (and logged), as with Expo.
+// Push delivery: Apple Push Notification service for the iOS app and Firebase Cloud Messaging
+// for the Android app. Each is optional; a phone whose service isn't configured is simply not
+// sent to (and logged).
 
 import (
 	"bytes"
@@ -25,6 +25,8 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+
+	"github.com/qeetgroup/qeet-id-server/internal/access/mfa/dbgen"
 )
 
 // pushTarget is one linked phone to send a request to: its push token, and the platform it
@@ -69,30 +71,13 @@ func signInMessage(challengeID uuid.UUID, action string) pushMessage {
 	}
 }
 
-// isExpoToken reports whether a push token was issued by Expo (the React Native app). Native
-// apps send the platform's own token instead: hex from APNs, an opaque string from FCM.
-func isExpoToken(token string) bool {
-	return strings.HasPrefix(token, "ExponentPushToken[") || strings.HasPrefix(token, "ExpoPushToken[")
-}
-
 // pushConfigured reports whether any push service can deliver.
 func (s *Service) pushConfigured() bool {
-	return s.pushURL != "" || s.apns != nil || s.fcm != nil
+	return s.apns != nil || s.fcm != nil
 }
 
-// deliverPush sends one sign-in request to one phone through the service that issued its token.
-func (s *Service) deliverPush(ctx context.Context, t pushTarget, challengeID uuid.UUID, action string) error {
-	if isExpoToken(t.token) {
-		if s.pushURL == "" {
-			return errPushNotConfigured
-		}
-		return s.sendExpoPush(ctx, t.token, challengeID, action)
-	}
-	return s.deliverNative(ctx, t, signInMessage(challengeID, action))
-}
-
-// deliverNative sends m to one phone of the native apps, through APNs or FCM.
-func (s *Service) deliverNative(ctx context.Context, t pushTarget, m pushMessage) error {
+// deliverPush sends m to one phone through the service of its platform: APNs or FCM.
+func (s *Service) deliverPush(ctx context.Context, t pushTarget, m pushMessage) error {
 	switch t.platform {
 	case "ios":
 		if s.apns == nil {
@@ -489,8 +474,7 @@ const noticeTTL = 24 * time.Hour
 // NotifyPhones tells userID's linked phones about something waiting for them, such as an access
 // request to answer: an alert on iOS, a data message the Android app shows. data names it ("kind",
 // and its id as "<kind>_id"); the phone opens it from there. Best effort, after the action that
-// caused it: a failure is logged, and a phone its service says is gone is retired. Phones linked
-// by the retired React Native app (Expo tokens) aren't sent notices.
+// caused it: a failure is logged, and a phone its service says is gone is retired.
 func (s *Service) NotifyPhones(ctx context.Context, userID uuid.UUID, title, body string, data map[string]string) {
 	if s.apns == nil && s.fcm == nil {
 		return
@@ -517,10 +501,7 @@ func (s *Service) NotifyPhones(ctx context.Context, userID uuid.UUID, title, bod
 	m := pushMessage{kind: kind, collapseID: collapse, title: title, body: body, data: data,
 		ttl: noticeTTL, thread: kind, textInData: true}
 	for _, t := range tokens {
-		if isExpoToken(t.token) {
-			continue
-		}
-		switch err := s.deliverNative(ctx, t, m); {
+		switch err := s.deliverPush(ctx, t, m); {
 		case err == nil, errors.Is(err, errPushNotConfigured):
 		case errors.Is(err, errPushDeviceGone):
 			s.retirePushToken(ctx, userID, t.token)
@@ -529,4 +510,25 @@ func (s *Service) NotifyPhones(ctx context.Context, userID uuid.UUID, title, bod
 				"device_ref", pushTokenRef(t.token), "err", err)
 		}
 	}
+}
+
+// Approval requests reach a phone through Apple's or Google's push service
+// (pushnative.go).
+const (
+	pushSendTimeout = 10 * time.Second // one call to the push service; a sign-in waits on it
+	pushRequestTTL  = 2 * time.Minute  // delivery retries, as long as a challenge can be answered
+)
+
+// errPushDeviceGone means the push service reports the app is not installed on
+// that phone.
+var errPushDeviceGone = errors.New("push device not registered")
+
+// pushTokenRef names a push token in logs without revealing it.
+func pushTokenRef(pushToken string) string { return secretHash(pushToken)[:12] }
+
+// retirePushToken stops sending to a phone the app is gone from: its device
+// credential is expired, so it is neither sent requests nor offered at
+// sign-in. Linking the phone again renews it. Best effort.
+func (s *Service) retirePushToken(ctx context.Context, userID uuid.UUID, pushToken string) {
+	_ = s.q.RetirePushToken(ctx, dbgen.RetirePushTokenParams{UserID: userID, PushTokenHash: secretHash(pushToken)})
 }

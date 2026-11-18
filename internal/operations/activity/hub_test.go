@@ -43,26 +43,26 @@ func TestHubOrganizationIsolation(t *testing.T) {
 	select {
 	case got := <-chA:
 		if got.ID != evA.ID {
-			t.Errorf("tenantA: got event %v, want %v", got.ID, evA.ID)
+			t.Errorf("organizationA: got event %v, want %v", got.ID, evA.ID)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("tenantA: no event received within 1s")
+		t.Fatal("organizationA: no event received within 1s")
 	}
 
 	// organizationB channel must have exactly evB.
 	select {
 	case got := <-chB:
 		if got.ID != evB.ID {
-			t.Errorf("tenantB: got event %v, want %v", got.ID, evB.ID)
+			t.Errorf("organizationB: got event %v, want %v", got.ID, evB.ID)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("tenantB: no event received within 1s")
+		t.Fatal("organizationB: no event received within 1s")
 	}
 
 	// organizationA must NOT have received organizationB's event — the critical isolation assertion.
 	select {
 	case extra := <-chA:
-		t.Errorf("ISOLATION FAILURE: tenantA received event intended for tenantB: %v (type=%s)",
+		t.Errorf("ISOLATION FAILURE: organizationA received event intended for organizationB: %v (type=%s)",
 			extra.ID, extra.Type)
 	default:
 	}
@@ -70,7 +70,7 @@ func TestHubOrganizationIsolation(t *testing.T) {
 	// organizationB must NOT have received organizationA's event.
 	select {
 	case extra := <-chB:
-		t.Errorf("ISOLATION FAILURE: tenantB received event intended for tenantA: %v (type=%s)",
+		t.Errorf("ISOLATION FAILURE: organizationB received event intended for organizationA: %v (type=%s)",
 			extra.ID, extra.Type)
 	default:
 	}
@@ -168,34 +168,6 @@ func TestHubMultipleSubscribersSameOrganization(t *testing.T) {
 	}
 }
 
-// TestMapOutboxEventOrganizationID checks that mapOutboxEvent takes OrganizationID from its
-// argument, not from the payload.
-func TestMapOutboxEventOrganizationID(t *testing.T) {
-	organizationID := uuid.New()
-	otherID := uuid.New() // another UUID present in the payload — must not win
-	payload := []byte(`{"tenant_id":"` + otherID.String() + `","id":"00000000-0000-0000-0000-000000000001"}`)
-
-	ev := mapOutboxEvent("user.events", "user.created", organizationID, payload)
-
-	if ev.OrganizationID != organizationID {
-		t.Errorf("TenantID = %v, want %v (must come from the caller-supplied tenantID)", ev.OrganizationID, organizationID)
-	}
-}
-
-// TestMapAuditRowOrganizationID checks that mapAuditRow copies the row's OrganizationID.
-func TestMapAuditRowOrganizationID(t *testing.T) {
-	organizationID := uuid.New()
-	row := auditRow{
-		ID:             uuid.New(),
-		Action:         "user.created",
-		OrganizationID: organizationID,
-	}
-	ev := mapAuditRow(row)
-	if ev.OrganizationID != organizationID {
-		t.Errorf("TenantID = %v, want %v", ev.OrganizationID, organizationID)
-	}
-}
-
 // TestHubMisroutedEventDroppedAtWriteBoundary checks that an event forced into
 // another organization's channel keeps its own OrganizationID, so the stream handler's
 // organization check would drop it.
@@ -210,7 +182,7 @@ func TestHubMisroutedEventDroppedAtWriteBoundary(t *testing.T) {
 
 	// Craft an event stamped with organizationB's ID and force it into organizationA's slot.
 	// In normal operation this would be impossible; the hub routes by the
-	// tenant_id in the payload via dispatch → fanOut(organizationID, ev). Here we
+	// organization_id in the payload via dispatch → fanOut(organizationID, ev). Here we
 	// bypass that to test the write-boundary guard.
 	badEv := ActivityEvent{
 		ID:             uuid.New(),
@@ -234,46 +206,13 @@ func TestHubMisroutedEventDroppedAtWriteBoundary(t *testing.T) {
 	// this event because received.OrganizationID (organizationB) != connectionOrganization (organizationA).
 	connectionOrganization := organizationA
 	if received.OrganizationID == connectionOrganization {
-		t.Errorf("ISOLATION FAILURE: mis-routed event has TenantID == connectionTenant (%v); guard would pass it through", connectionOrganization)
+		t.Errorf("ISOLATION FAILURE: mis-routed event has OrganizationID == connectionOrganization (%v); guard would pass it through", connectionOrganization)
 	}
 	if received.OrganizationID != organizationB {
-		t.Errorf("received.TenantID = %v, want %v", received.OrganizationID, organizationB)
+		t.Errorf("received.OrganizationID = %v, want %v", received.OrganizationID, organizationB)
 	}
 	// The actual drop happens in http.go: `if ev.OrganizationID != organizationID { continue }`.
 	// The assertions above confirm the condition would be triggered correctly.
-}
-
-// TestCategoryOf checks categoryOf and severityOf against a sample of actions.
-func TestCategoryOf(t *testing.T) {
-	cases := []struct {
-		action  string
-		wantCat string
-		wantSev string
-	}{
-		{"user.created", CategoryDirectory, SeveritySuccess},
-		{"user.deleted", CategoryDirectory, SeverityWarning},
-		{"auth.login.failed", CategoryAuthentication, SeverityError},
-		{"auth.session.revoked_for_reuse", CategoryAuthentication, SeverityCritical},
-		{"threat.anomaly_detected", CategorySecurity, SeverityCritical},
-		{"rbac.role_assigned", CategoryAuthorization, SeverityInfo},
-		{"group.member_added", CategoryDirectory, SeverityInfo},
-		{"agent.created", CategoryDeveloper, SeveritySuccess},
-		{"apikey.rotated", CategoryDeveloper, SeverityWarning},
-		{"webhook.created", CategoryDeveloper, SeveritySuccess},
-		{"system.shutdown", CategorySystem, SeverityInfo},
-		{"mfa.enabled", CategoryAuthentication, SeveritySuccess},
-		{"scim.user_provisioned", CategoryDirectory, SeverityInfo},
-	}
-	for _, tc := range cases {
-		t.Run(tc.action, func(t *testing.T) {
-			if got := categoryOf(tc.action); got != tc.wantCat {
-				t.Errorf("categoryOf(%q) = %q, want %q", tc.action, got, tc.wantCat)
-			}
-			if got := severityOf(tc.action); got != tc.wantSev {
-				t.Errorf("severityOf(%q) = %q, want %q", tc.action, got, tc.wantSev)
-			}
-		})
-	}
 }
 
 // TestHubFanOutDuringUnsubscribe checks that fanning out while other

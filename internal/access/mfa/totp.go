@@ -8,12 +8,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/totp"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
@@ -22,16 +23,8 @@ import (
 // code authenticating twice (RFC 6238 §5.2); a single conditional UPDATE lets
 // only one of two concurrent submissions win.
 func consumeTOTPStep(ctx context.Context, tx pgx.Tx, userID uuid.UUID, step int64) (bool, error) {
-	tag, err := tx.Exec(ctx, `
-		UPDATE auth.mfa_totp
-		SET last_used_step = $2
-		WHERE user_id = $1
-		  AND (last_used_step IS NULL OR last_used_step < $2)
-	`, userID, step)
-	if err != nil {
-		return false, err
-	}
-	return tag.RowsAffected() == 1, nil
+	n, err := dbgen.New(tx).ConsumeTOTPStep(ctx, dbgen.ConsumeTOTPStepParams{UserID: userID, Step: &step})
+	return n == 1, err
 }
 
 // Enrollment is a started authenticator-app setup. Replacing reports that the
@@ -46,11 +39,27 @@ type Enrollment struct {
 // confirmed one may wait for its confirming code before the setup is ignored.
 const pendingTOTPTTL = 30 * time.Minute
 
-// StartEnroll starts setting up an authenticator app. While the account holds
-// a confirmed app, the new one waits beside it (pending_secret_*) until a code
-// from it confirms it, so starting a setup never switches the working app off;
-// a pending setup left unconfirmed for pendingTOTPTTL is ignored.
-func (s *Service) StartEnroll(ctx context.Context, tx pgx.Tx, userID uuid.UUID, account string) (*Enrollment, error) {
+// StartEnroll starts setting up an authenticator app for userID, named account
+// in the app, recorded as by's. While the account holds a confirmed app, the
+// new one waits beside it (pending_secret_*) until a code from it confirms it,
+// so starting a setup never switches the working app off; a pending setup left
+// unconfirmed for pendingTOTPTTL is ignored.
+func (s *Service) StartEnroll(ctx context.Context, userID uuid.UUID, account string, by Caller) (*Enrollment, error) {
+	var out *Enrollment
+	err := s.inTx(ctx, func(tx pgx.Tx) (err error) {
+		if out, err = s.startEnroll(ctx, tx, userID, account); err != nil {
+			return err
+		}
+		return audit.Record(ctx, tx, by.event("mfa.totp_enroll_started", userID, map[string]any{"replacing": out.Replacing}))
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// startEnroll is StartEnroll inside tx, unaudited.
+func (s *Service) startEnroll(ctx context.Context, tx pgx.Tx, userID uuid.UUID, account string) (*Enrollment, error) {
 	secret, err := totp.NewSecret()
 	if err != nil {
 		return nil, err
@@ -62,28 +71,15 @@ func (s *Service) StartEnroll(ctx context.Context, tx pgx.Tx, userID uuid.UUID, 
 	if err != nil {
 		return nil, err
 	}
-	var replacing bool
-	err = tx.QueryRow(ctx, `SELECT confirmed_at IS NOT NULL FROM auth.mfa_totp WHERE user_id = $1 FOR UPDATE`, userID).
-		Scan(&replacing)
+	q := s.q.WithTx(tx)
+	replacing, err := q.LockTOTPConfirmed(ctx, userID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
 	if replacing {
-		_, err = tx.Exec(ctx, `
-			UPDATE auth.mfa_totp
-			SET pending_secret_ct = $2, pending_secret_nonce = $3, pending_started_at = NOW()
-			WHERE user_id = $1
-		`, userID, ciphertext, nonce)
+		err = q.StagePendingTOTP(ctx, dbgen.StagePendingTOTPParams{UserID: userID, PendingSecretCt: ciphertext, PendingSecretNonce: nonce})
 	} else {
-		_, err = tx.Exec(ctx, `
-			INSERT INTO auth.mfa_totp
-			    (user_id, secret_ct, secret_nonce)
-			VALUES ($1, $2, $3)
-			ON CONFLICT (user_id) DO UPDATE SET
-			    secret_ct = EXCLUDED.secret_ct, secret_nonce = EXCLUDED.secret_nonce,
-			    confirmed_at = NULL, pending_secret_ct = NULL, pending_secret_nonce = NULL,
-			    pending_started_at = NULL
-		`, userID, ciphertext, nonce)
+		err = q.StartTOTP(ctx, dbgen.StartTOTPParams{UserID: userID, SecretCt: ciphertext, SecretNonce: nonce})
 	}
 	if err != nil {
 		return nil, err
@@ -98,15 +94,37 @@ func (s *Service) StartEnroll(ctx context.Context, tx pgx.Tx, userID uuid.UUID, 
 	}, nil
 }
 
-// ConfirmEnroll completes an authenticator-app enrolment with a code from the
-// app and returns the new recovery codes.
-func (s *Service) ConfirmEnroll(ctx context.Context, tx pgx.Tx, attempt Attempt, code string) ([]string, error) {
+// ConfirmEnroll completes userID's authenticator-app enrolment with a code from
+// the app, recorded as by's, and returns the new recovery codes. Proving the
+// app steps up by's session, so its next sensitive action needs no second
+// code. Each try spends one of the person's setup attempts.
+func (s *Service) ConfirmEnroll(ctx context.Context, userID uuid.UUID, code string, by Caller) ([]string, error) {
+	var minted []string
+	err := s.withAttempt(ctx, userID, PurposeTOTPEnroll, func(attempt Attempt) error {
+		return s.inTx(ctx, func(tx pgx.Tx) (err error) {
+			if minted, err = s.confirmEnroll(ctx, tx, attempt, code); err != nil {
+				return err
+			}
+			if err := s.recordStepUp(ctx, tx, userID, by, "totp"); err != nil {
+				return err
+			}
+			return audit.Record(ctx, tx, by.event("mfa.totp_enrolled", userID, map[string]any{"recovery_codes_minted": len(minted)}))
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return minted, nil
+}
+
+// confirmEnroll is ConfirmEnroll inside tx with a reserved attempt, unaudited.
+func (s *Service) confirmEnroll(ctx context.Context, tx pgx.Tx, attempt Attempt, code string) ([]string, error) {
 	codes, ok, err := s.confirmTOTP(ctx, tx, attempt.userID, code)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		return nil, attemptError(errs.ErrMFATOTPCodeInvalid, attempt.remaining)
+		return nil, attemptError(ErrTOTPCodeInvalid, attempt.remaining)
 	}
 	return codes, nil
 }
@@ -116,23 +134,17 @@ func (s *Service) ConfirmEnroll(ctx context.Context, tx pgx.Tx, attempt Attempt,
 // replacement replaces the confirmed app only here, once its code is right.
 func (s *Service) confirmTOTP(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code string) ([]string, bool, error) {
 	qtx := s.q.WithTx(tx)
-	var pendingCT, pendingNonce []byte
-	var pendingStarted pgtype.Timestamptz
-	var confirmed bool
-	err := tx.QueryRow(ctx, `
-		SELECT pending_secret_ct, pending_secret_nonce, pending_started_at, confirmed_at IS NOT NULL
-		FROM auth.mfa_totp WHERE user_id = $1 FOR UPDATE
-	`, userID).Scan(&pendingCT, &pendingNonce, &pendingStarted, &confirmed)
+	setup, err := qtx.LockTOTPSetup(ctx, userID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, false, errs.ErrMFAEnrollNotStarted
 	}
 	if err != nil {
 		return nil, false, err
 	}
-	if pendingCT != nil {
-		return s.confirmReplacementTOTP(ctx, tx, userID, code, pendingCT, pendingNonce, pendingStarted.Time)
+	if setup.PendingSecretCt != nil {
+		return s.confirmReplacementTOTP(ctx, tx, userID, code, setup.PendingSecretCt, setup.PendingSecretNonce, postgres.ZeroIfNull(setup.PendingStartedAt))
 	}
-	if confirmed {
+	if setup.Confirmed {
 		// Nothing is being set up: the confirmed app needs no confirming.
 		return nil, false, errs.ErrMFAEnrollNotStarted
 	}
@@ -183,13 +195,7 @@ func (s *Service) confirmReplacementTOTP(ctx context.Context, tx pgx.Tx, userID 
 	if !ok {
 		return nil, false, nil
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE auth.mfa_totp
-		SET secret_ct = pending_secret_ct, secret_nonce = pending_secret_nonce,
-		    confirmed_at = NOW(), last_used_step = $2,
-		    pending_secret_ct = NULL, pending_secret_nonce = NULL, pending_started_at = NULL
-		WHERE user_id = $1
-	`, userID, step); err != nil {
+	if err := s.q.WithTx(tx).PromotePendingTOTP(ctx, dbgen.PromotePendingTOTPParams{UserID: userID, Step: &step}); err != nil {
 		return nil, false, err
 	}
 	if err := clearMFAAttempt(ctx, tx, userID, PurposeTOTPEnroll); err != nil {
@@ -199,22 +205,16 @@ func (s *Service) confirmReplacementTOTP(ctx context.Context, tx pgx.Tx, userID 
 	return codes, err == nil, err
 }
 
-func (s *Service) loadTOTP(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (string, pgtype.Timestamptz, error) {
-	var confirmedAt pgtype.Timestamptz
-	var ciphertext, nonce []byte
-	err := tx.QueryRow(ctx, `
-		SELECT secret_ct, secret_nonce, confirmed_at
-		FROM auth.mfa_totp
-		WHERE user_id = $1
-	`, userID).Scan(&ciphertext, &nonce, &confirmedAt)
+func (s *Service) loadTOTP(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (string, *time.Time, error) {
+	row, err := s.q.WithTx(tx).GetTOTPSecret(ctx, userID)
 	if err != nil {
-		return "", confirmedAt, err
+		return "", nil, err
 	}
 	if s.box == nil {
-		return "", confirmedAt, errors.New("MFA secret encryption is unavailable")
+		return "", row.ConfirmedAt, errors.New("MFA secret encryption is unavailable")
 	}
-	plain, err := s.box.Open(userID, "mfa-totp", userID.String(), ciphertext, nonce)
-	return string(plain), confirmedAt, err
+	plain, err := s.box.Open(userID, "mfa-totp", userID.String(), row.SecretCt, row.SecretNonce)
+	return string(plain), row.ConfirmedAt, err
 }
 
 const recoveryCodeCount = 10
@@ -259,7 +259,7 @@ func (s *Service) TOTPStatus(ctx context.Context, userID uuid.UUID) (*TOTPStatus
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
-	return &TOTPStatus{Enrolled: err == nil && ts.Valid}, nil
+	return &TOTPStatus{Enrolled: err == nil && ts != nil}, nil
 }
 
 // RecoveryStatus summarises a user's backup codes for the account UI.
@@ -276,7 +276,7 @@ func (s *Service) RecoveryStatus(ctx context.Context, userID uuid.UUID) (*Recove
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
-	st.Enrolled = err == nil && ts.Valid
+	st.Enrolled = err == nil && ts != nil
 	stats, err := s.q.GetMFARecoveryCodeStats(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -286,24 +286,51 @@ func (s *Service) RecoveryStatus(ctx context.Context, userID uuid.UUID) (*Recove
 	return &st, nil
 }
 
-// Regenerate issues a fresh set of recovery codes, invalidating the old set.
-// Requires confirmed TOTP — recovery codes are a backup for an enrolled factor.
-func (s *Service) Regenerate(ctx context.Context, tx pgx.Tx, userID uuid.UUID) ([]string, error) {
+// Regenerate issues userID a fresh set of recovery codes, invalidating the old
+// set, recorded as by's. Requires confirmed TOTP — recovery codes are a backup
+// for an enrolled factor.
+func (s *Service) Regenerate(ctx context.Context, userID uuid.UUID, by Caller) ([]string, error) {
+	var out []string
+	err := s.inTx(ctx, func(tx pgx.Tx) (err error) {
+		if out, err = s.regenerate(ctx, tx, userID); err != nil {
+			return err
+		}
+		return audit.Record(ctx, tx, by.event("mfa.recovery_codes_regenerated", userID, map[string]any{"count": len(out)}))
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// regenerate is Regenerate inside tx, unaudited.
+func (s *Service) regenerate(ctx context.Context, tx pgx.Tx, userID uuid.UUID) ([]string, error) {
 	ts, err := s.q.WithTx(tx).GetMFATOTPConfirmed(ctx, userID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrMFANotEnrolled
+		return nil, ErrNotEnrolled
 	}
 	if err != nil {
 		return nil, err
 	}
-	if !ts.Valid {
-		return nil, errs.ErrMFANotConfirmed
+	if ts == nil {
+		return nil, ErrNotConfirmed
 	}
 	return s.mintRecoveryCodes(ctx, tx, userID)
 }
 
-// Disable removes the user's authenticator app and recovery codes.
-func (s *Service) Disable(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
+// Disable removes userID's authenticator app and recovery codes, recorded as
+// by's.
+func (s *Service) Disable(ctx context.Context, userID uuid.UUID, by Caller) error {
+	return s.inTx(ctx, func(tx pgx.Tx) error {
+		if err := s.disable(ctx, tx, userID); err != nil {
+			return err
+		}
+		return audit.Record(ctx, tx, by.event("mfa.totp_disabled", userID, nil))
+	})
+}
+
+// disable is Disable inside tx, unaudited.
+func (s *Service) disable(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
 	qtx := s.q.WithTx(tx)
 	if err := qtx.DeleteMFATOTP(ctx, userID); err != nil {
 		return err
@@ -315,16 +342,45 @@ func (s *Service) Disable(ctx context.Context, tx pgx.Tx, userID uuid.UUID) erro
 }
 
 // VerifyResult tells the caller whether the supplied code matched a TOTP
-// or a recovery code. The handler audits accordingly.
+// or a recovery code.
 type VerifyResult struct {
 	UsedRecoveryCode bool
 	RecoveryCodeID   *uuid.UUID
 }
 
-// Verify accepts a TOTP code or a one-time recovery code. Recovery codes
-// are consumed on use. The caller passes a tx so the consumption and any
-// audit row commit together.
-func (s *Service) Verify(ctx context.Context, tx pgx.Tx, attempt Attempt, code string) (*VerifyResult, error) {
+// Verify accepts a TOTP code or a one-time recovery code of userID's and steps
+// up by's session by the factor met. A recovery code is consumed on use and
+// recorded as by's; an authenticator code, used far more often, is not
+// recorded. Each try spends one of the person's verification attempts.
+func (s *Service) Verify(ctx context.Context, userID uuid.UUID, code string, by Caller) (*VerifyResult, error) {
+	var result *VerifyResult
+	err := s.withAttempt(ctx, userID, PurposeFactorVerify, func(attempt Attempt) error {
+		return s.inTx(ctx, func(tx pgx.Tx) (err error) {
+			if result, err = s.verify(ctx, tx, attempt, code); err != nil {
+				return err
+			}
+			method := "totp"
+			if result.UsedRecoveryCode {
+				method = "recovery_code"
+			}
+			if err := s.recordStepUp(ctx, tx, userID, by, method); err != nil || !result.UsedRecoveryCode {
+				return err
+			}
+			meta := map[string]any{}
+			if result.RecoveryCodeID != nil {
+				meta["recovery_code_id"] = *result.RecoveryCodeID
+			}
+			return audit.Record(ctx, tx, by.event("mfa.recovery_code_used", userID, meta))
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// verify is Verify inside tx with a reserved attempt, unaudited.
+func (s *Service) verify(ctx context.Context, tx pgx.Tx, attempt Attempt, code string) (*VerifyResult, error) {
 	userID := attempt.userID
 	result, err := s.verifyCode(ctx, tx, userID, code)
 	if err != nil {
@@ -345,13 +401,13 @@ func (s *Service) verifyCode(ctx context.Context, tx pgx.Tx, userID uuid.UUID, c
 
 	secret, confirmedAt, err := s.loadTOTP(ctx, tx, userID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrMFANotEnrolled
+		return nil, ErrNotEnrolled
 	}
 	if err != nil {
 		return nil, err
 	}
-	if !confirmedAt.Valid {
-		return nil, errs.ErrMFANotConfirmed
+	if confirmedAt == nil {
+		return nil, ErrNotConfirmed
 	}
 	if step, ok := totp.VerifyStep(secret, code); ok {
 		fresh, cerr := consumeTOTPStep(ctx, tx, userID, step)
@@ -384,14 +440,11 @@ func (s *Service) verifyCode(ctx context.Context, tx pgx.Tx, userID uuid.UUID, c
 	if matchedID == nil {
 		return nil, errs.ErrMFACodeInvalid
 	}
-	tag, err := tx.Exec(ctx, `
-		UPDATE auth.mfa_recovery_codes SET used_at = NOW()
-		WHERE id = $1 AND used_at IS NULL
-	`, *matchedID)
+	n, err := qtx.MarkRecoveryCodeUsed(ctx, *matchedID)
 	if err != nil {
 		return nil, err
 	}
-	if tag.RowsAffected() != 1 {
+	if n != 1 {
 		return nil, errs.ErrMFACodeInvalid
 	}
 	return &VerifyResult{UsedRecoveryCode: true, RecoveryCodeID: matchedID}, nil
@@ -407,7 +460,7 @@ func (s *Service) IsEnrolled(ctx context.Context, userID uuid.UUID) (bool, error
 	if err != nil {
 		return false, err
 	}
-	return ts.Valid, nil
+	return ts != nil, nil
 }
 
 // VerifyForLoginTx checks an authenticator-app, recovery or email/SMS code for
@@ -440,26 +493,27 @@ func (s *Service) VerifyForLoginTx(ctx context.Context, tx pgx.Tx, userID uuid.U
 // unused pairing codes) and what they earned: trusted devices and step-ups.
 // It lifts a lock of their second-factor sign-in. Passkeys stay. It returns the count removed per kind, for the audit record.
 func (s *Service) ResetForUser(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (map[string]int64, error) {
+	q := s.q.WithTx(tx)
 	removed := map[string]int64{}
 	for _, step := range []struct {
-		kind string
-		sql  string
+		kind  string
+		reset func(context.Context, uuid.UUID) (int64, error)
 	}{
-		{"totp", `DELETE FROM auth.mfa_totp WHERE user_id = $1`},
-		{"recovery_codes", `DELETE FROM auth.mfa_recovery_codes WHERE user_id = $1`},
-		{"otp_factors", `DELETE FROM auth.mfa_otp_factors WHERE user_id = $1`},
-		{"push_devices", `DELETE FROM auth.mfa_push_devices WHERE user_id = $1`},
-		{"push_challenges", `DELETE FROM auth.mfa_push_challenges WHERE user_id = $1 AND status = 'pending'`},
-		{"push_pairings", `DELETE FROM auth.mfa_push_pairings WHERE user_id = $1 AND used_at IS NULL AND expires_at > NOW()`},
-		{"trusted_devices", `DELETE FROM auth.trusted_devices WHERE user_id = $1`},
-		{"step_ups", `DELETE FROM auth.mfa_verifications WHERE user_id = $1`},
-		{"failure_streaks", `DELETE FROM auth.mfa_failure_streaks WHERE user_id = $1`},
+		{"totp", q.ResetTOTP},
+		{"recovery_codes", q.ResetRecoveryCodes},
+		{"otp_factors", q.ResetOTPFactors},
+		{"push_devices", q.ResetPushDevices},
+		{"push_challenges", q.ResetPendingPushChallenges},
+		{"push_pairings", q.ResetLivePushPairings},
+		{"trusted_devices", q.ResetTrustedDevices},
+		{"step_ups", q.ResetStepUps},
+		{"failure_streaks", q.ResetFailureStreaks},
 	} {
-		tag, err := tx.Exec(ctx, step.sql, userID)
+		n, err := step.reset(ctx, userID)
 		if err != nil {
 			return nil, err
 		}
-		removed[step.kind] = tag.RowsAffected()
+		removed[step.kind] = n
 	}
 	return removed, nil
 }

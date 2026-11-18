@@ -12,21 +12,21 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/organization/branding/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/dbutil"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 // Branding is an organization's theming, custom domain and email sender.
 type Branding struct {
-	OrganizationID uuid.UUID `json:"tenant_id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
 	LogoURL        *string   `json:"logo_url"`
 	PrimaryColor   *string   `json:"primary_color"`
 	SecondaryColor *string   `json:"secondary_color"`
@@ -42,7 +42,7 @@ type Branding struct {
 type Repository struct {
 	pool       *pgxpool.Pool
 	q          *dbgen.Queries
-	gate       PlanGate
+	gate       entitlements.PlanGate
 	publicBase string // this API's public origin, for links to an uploaded logo
 }
 
@@ -51,14 +51,8 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool, q: dbgen.New(pool)}
 }
 
-// PlanGate reports whether a boolean plan feature is in the organization's plan.
-// Satisfied by *entitlements.Service.
-type PlanGate interface {
-	FeatureAllowed(ctx context.Context, organizationID uuid.UUID, feature string) (bool, error)
-}
-
 // SetPlanGate sets the plan-feature gate (nil allows all features).
-func (r *Repository) SetPlanGate(g PlanGate) { r.gate = g }
+func (r *Repository) SetPlanGate(g entitlements.PlanGate) { r.gate = g }
 
 // brandingAllowed reports whether the organization's plan includes custom branding;
 // a gate that can't answer counts as no, so the default look is shown.
@@ -70,9 +64,6 @@ func (r *Repository) brandingAllowed(ctx context.Context, organizationID uuid.UU
 	return err == nil && ok
 }
 
-// Pool returns the connection pool, for handlers that run their own transaction.
-func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
-
 func toDomain(organizationID uuid.UUID, row dbgen.GetBrandingRow) *Branding {
 	return &Branding{
 		OrganizationID: row.OrganizationID,
@@ -81,7 +72,7 @@ func toDomain(organizationID uuid.UUID, row dbgen.GetBrandingRow) *Branding {
 		SecondaryColor: row.SecondaryColor,
 		CustomDomain:   row.CustomDomain,
 		EmailFromName:  row.EmailFromName,
-		Settings:       dbutil.Metadata(row.Settings),
+		Settings:       postgres.Metadata(row.Settings),
 	}
 }
 
@@ -97,11 +88,15 @@ func (r *Repository) Get(ctx context.Context, organizationID uuid.UUID) (*Brandi
 	return toDomain(organizationID, row), nil
 }
 
+// LoginBrandingReader returns an organization's hosted-login logo and colors.
+// Satisfied by *Repository.
+type LoginBrandingReader interface {
+	LoginBranding(ctx context.Context, organizationID uuid.UUID) (logoURL, primaryColor, secondaryColor, backgroundColor string)
+}
+
 // LoginBranding returns the organization's hosted-login logo and colors as plain
 // strings, empty when unset, on error, or when its plan lacks custom branding
-// (the stored values are kept for an upgrade). It satisfies
-// oidc.BrandingLister, which takes primitives so federation doesn't depend on
-// this package.
+// (the stored values are kept for an upgrade).
 func (r *Repository) LoginBranding(ctx context.Context, organizationID uuid.UUID) (logoURL, primaryColor, secondaryColor, backgroundColor string) {
 	if !r.brandingAllowed(ctx, organizationID) {
 		return "", "", "", ""
@@ -190,10 +185,33 @@ func normalizeAppearance(b *Branding) error {
 	return nil
 }
 
-// Upsert persists branding. The INSERT ON CONFLICT uses a COALESCE/NULLIF
-// expression for the JSONB settings column that sqlc cannot parse reliably, so
-// this method stays hand-written on the caller-supplied pgx.Tx.
-func (r *Repository) Upsert(ctx context.Context, tx pgx.Tx, b Branding) error {
+// Save stores the organization's branding as actor's, with its
+// branding.updated audit row, in one transaction.
+func (r *Repository) Save(ctx context.Context, b Branding, actor audit.Actor) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := r.upsert(ctx, tx, b); err != nil {
+		return err
+	}
+	meta := map[string]any{}
+	if b.CustomDomain != nil {
+		meta["custom_domain"] = *b.CustomDomain
+	}
+	if b.PrimaryColor != nil {
+		meta["primary_color"] = *b.PrimaryColor
+	}
+	if err := audit.Record(ctx, tx, actor.Event(b.OrganizationID, "branding.updated", "organization", b.OrganizationID, meta)); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// upsert stores branding in tx, refused while the organization's plan lacks
+// custom branding.
+func (r *Repository) upsert(ctx context.Context, tx pgx.Tx, b Branding) error {
 	if err := normalizeAppearance(&b); err != nil {
 		return err
 	}
@@ -207,101 +225,13 @@ func (r *Repository) Upsert(ctx context.Context, tx pgx.Tx, b Branding) error {
 			return errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "custom_branding"})
 		}
 	}
-	settings, _ := json.Marshal(b.Settings)
-	_, err := tx.Exec(ctx, `
-		INSERT INTO organization.branding (
-			organization_id, logo_url, primary_color, secondary_color, custom_domain,
-			email_from_name, email_from_address, settings
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE(NULLIF($8::jsonb,'null'::jsonb), '{}'::jsonb))
-		ON CONFLICT (organization_id) DO UPDATE SET
-			logo_url = EXCLUDED.logo_url,
-			primary_color = EXCLUDED.primary_color,
-			secondary_color = EXCLUDED.secondary_color,
-			custom_domain = EXCLUDED.custom_domain,
-			email_from_name = EXCLUDED.email_from_name,
-			email_from_address = EXCLUDED.email_from_address,
-			settings = EXCLUDED.settings,
-			updated_at = NOW()
-	`, b.OrganizationID, b.LogoURL, b.PrimaryColor, b.SecondaryColor, b.CustomDomain,
-		b.EmailFromName, nil, settings) // email_from_address is no longer kept
-	return err
-}
-
-// Handler serves the branding HTTP API.
-type Handler struct {
-	Repo *Repository
-}
-
-// Mount registers the branding routes on r.
-func (h *Handler) Mount(r chi.Router) {
-	r.Get("/tenants/{tenantID}/branding", h.get)
-	r.Put("/tenants/{tenantID}/branding", h.put)
-}
-
-func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
-	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	settings, err := json.Marshal(b.Settings)
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
-		return
+		return err
 	}
-	b, err := h.Repo.Get(r.Context(), tid)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, b)
-}
-
-func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
-	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
-	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
-		return
-	}
-	in, err := decodeBranding(r)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	in.OrganizationID = tid
-	ctx := r.Context()
-	tx, err := h.Repo.Pool().Begin(ctx)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	defer tx.Rollback(ctx)
-	if err := h.Repo.Upsert(ctx, tx, in); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	actorID, actorType := audit.ActorOf(r).Identity()
-	target := tid
-	meta := map[string]any{}
-	if in.CustomDomain != nil {
-		meta["custom_domain"] = *in.CustomDomain
-	}
-	if in.PrimaryColor != nil {
-		meta["primary_color"] = *in.PrimaryColor
-	}
-	if err := audit.Record(ctx, tx, audit.Event{
-		OrganizationID: &target,
-		ActorUserID:    actorID,
-		ActorType:      actorType,
-		Action:         "branding.updated",
-		ResourceType:   "tenant",
-		ResourceID:     &target,
-		IP:             httpx.ClientIP(r),
-		UserAgent:      r.UserAgent(),
-		RequestID:      httpx.RequestID(r),
-		Metadata:       meta,
-	}); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, in)
+	return r.q.WithTx(tx).UpsertBranding(ctx, dbgen.UpsertBrandingParams{
+		OrganizationID: b.OrganizationID, LogoUrl: b.LogoURL, PrimaryColor: b.PrimaryColor,
+		SecondaryColor: b.SecondaryColor, CustomDomain: b.CustomDomain, EmailFromName: b.EmailFromName,
+		Settings: settings,
+	})
 }

@@ -105,7 +105,7 @@ func (handler *Handler) observeMutations(next http.Handler) http.Handler {
 			OrganizationID: organizationID, Operation: strings.ToLower(request.Method), Resource: resource, ResourceID: resourceID,
 			Status: status, Reason: writer.reason, Started: started, Duration: time.Since(started),
 		}); err != nil {
-			slog.Warn("SCIM operation telemetry unavailable", "tenant_id", organizationID, "err", err)
+			slog.Warn("SCIM operation telemetry unavailable", "organization_id", organizationID, "err", err)
 		}
 	})
 }

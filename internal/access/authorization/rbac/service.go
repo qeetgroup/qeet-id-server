@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -19,8 +20,8 @@ import (
 type Service struct {
 	repo    *Repository
 	emitter EventEmitter
-	limits  PlanLimiter
-	seats   SeatGuard
+	limits  entitlements.PlanLimiter
+	seats   entitlements.SeatGuard
 	signals *sessionsignal.Signaller // announces sessions a lost membership ends (nil: none)
 }
 
@@ -28,19 +29,8 @@ type Service struct {
 // ending ends (session.revoked webhooks).
 func (s *Service) SetSessionSignals(sig *sessionsignal.Signaller) { s.signals = sig }
 
-// SeatGuard keeps the people holding a role in an organization within its plan's
-// seats. Satisfied by *invite.Service.
-type SeatGuard interface {
-	// SeatLimit returns the organization's seat cap, negative for none; it reads on
-	// the pool, so it is asked before the transaction.
-	SeatLimit(ctx context.Context, organizationID uuid.UUID) (int, error)
-	// WithinSeats runs change in tx and refuses it when it gives someone a
-	// first role beyond limit.
-	WithinSeats(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, limit int, change func() error) error
-}
-
 // SetSeatGuard wires the seat limit (nil disables it).
-func (s *Service) SetSeatGuard(g SeatGuard) { s.seats = g }
+func (s *Service) SetSeatGuard(g entitlements.SeatGuard) { s.seats = g }
 
 // seatLimit returns the organization's seat cap, or -1 without a seat guard.
 func (s *Service) seatLimit(ctx context.Context, organizationID uuid.UUID) (int, error) {
@@ -61,14 +51,8 @@ func (s *Service) withinSeats(ctx context.Context, tx pgx.Tx, organizationID uui
 // NewService returns the role and permission service.
 func NewService(repo *Repository) *Service { return &Service{repo: repo} }
 
-// PlanLimiter returns the cap for a plan-gated resource (negative: unlimited).
-// It is satisfied by operations/entitlements.Service.
-type PlanLimiter interface {
-	Limit(ctx context.Context, organizationID uuid.UUID, resource string) (int, error)
-}
-
 // SetPlanLimiter wires the plan-limit checker (nil disables the gate).
-func (s *Service) SetPlanLimiter(l PlanLimiter) { s.limits = l }
+func (s *Service) SetPlanLimiter(l entitlements.PlanLimiter) { s.limits = l }
 
 // EventEmitter delivers a webhook event to an organization's subscriptions, as the
 // webhooks service's Enqueue does, without rbac importing that package.
@@ -91,7 +75,7 @@ func (s *Service) CreateRole(ctx context.Context, organizationID uuid.UUID, name
 	// Plan gate: custom roles are capped by plan (Free allows none — built-in
 	// roles don't count). Refuse once the cap is reached.
 	if s.limits != nil {
-		lim, err := s.limits.Limit(ctx, organizationID, "custom_roles")
+		lim, err := s.limits.Limit(ctx, organizationID, entitlements.LimitCustomRoles)
 		if err != nil {
 			return nil, err
 		}
@@ -101,7 +85,7 @@ func (s *Service) CreateRole(ctx context.Context, organizationID uuid.UUID, name
 				return nil, err
 			}
 			if int(n) >= lim {
-				return nil, errs.ErrPlanLimit.WithMetadata(map[string]any{"resource": "custom_roles", "limit": lim})
+				return nil, errs.ErrPlanLimit.WithMetadata(map[string]any{"resource": entitlements.LimitCustomRoles, "limit": lim})
 			}
 		}
 	}
@@ -128,30 +112,20 @@ func (s *Service) CreateRole(ctx context.Context, organizationID uuid.UUID, name
 // GrantPermission adds a permission to organizationID's role roleID, recorded as
 // actor's in the organization's audit log. The caller checks the role is organizationID's.
 func (s *Service) GrantPermission(ctx context.Context, organizationID, roleID, permID uuid.UUID, actor audit.Actor) error {
-	tx, err := s.repo.Pool().Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-
-	key, err := s.repo.PermissionKey(ctx, tx, permID)
-	if err != nil {
-		return err
-	}
-	if err := s.repo.GrantPermission(ctx, tx, roleID, permID); err != nil {
-		return err
-	}
-	if err := audit.Record(ctx, tx, actor.Event(organizationID, "role.permission_granted", "role", roleID,
-		map[string]any{"permission_id": permID, "permission": key})); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
+	return s.changePermission(ctx, organizationID, roleID, permID, actor, "role.permission_granted", s.repo.GrantPermission)
 }
 
 // RevokePermission removes a permission from organizationID's role roleID, recorded
 // as actor's in the organization's audit log. The caller checks the role is
 // organizationID's.
 func (s *Service) RevokePermission(ctx context.Context, organizationID, roleID, permID uuid.UUID, actor audit.Actor) error {
+	return s.changePermission(ctx, organizationID, roleID, permID, actor, "role.permission_revoked", s.repo.RevokePermission)
+}
+
+// changePermission runs change on roleID and permID in one transaction with
+// its audit record, action.
+func (s *Service) changePermission(ctx context.Context, organizationID, roleID, permID uuid.UUID, actor audit.Actor, action string,
+	change func(ctx context.Context, tx pgx.Tx, roleID, permID uuid.UUID) error) error {
 	tx, err := s.repo.Pool().Begin(ctx)
 	if err != nil {
 		return err
@@ -162,10 +136,10 @@ func (s *Service) RevokePermission(ctx context.Context, organizationID, roleID, 
 	if err != nil {
 		return err
 	}
-	if err := s.repo.RevokePermission(ctx, tx, roleID, permID); err != nil {
+	if err := change(ctx, tx, roleID, permID); err != nil {
 		return err
 	}
-	if err := audit.Record(ctx, tx, actor.Event(organizationID, "role.permission_revoked", "role", roleID,
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, action, "role", roleID,
 		map[string]any{"permission_id": permID, "permission": key})); err != nil {
 		return err
 	}
@@ -191,7 +165,11 @@ func (s *Service) AssignRole(ctx context.Context, userID, organizationID, roleID
 	}); err != nil {
 		if errors.Is(err, errs.ErrRBACUserOrRoleNotFound) {
 			_ = tx.Rollback(ctx)
-			if aerr := s.recordAssignRefused(ctx, userID, organizationID, roleID, actor); aerr != nil {
+			// In its own transaction, after the assignment's has rolled back, so
+			// repeated attempts with another organization's ids stay visible.
+			// The supplied ids are recorded as given.
+			if aerr := audit.RecordAlone(ctx, s.repo.Pool(), actor.Event(organizationID, "role.assign_refused", "user", userID,
+				map[string]any{"role_id": roleID})); aerr != nil {
 				return aerr
 			}
 		}
@@ -240,22 +218,6 @@ func (s *Service) AssignRoleInTx(ctx context.Context, tx pgx.Tx, limit int, user
 			"user_id": userID, "role_id": roleID, "change": "role_assigned",
 		})
 	}, nil
-}
-
-// recordAssignRefused audits a refused role assignment in its own transaction,
-// after the assignment's has rolled back, so repeated attempts with another
-// organization's ids stay visible. The supplied ids are recorded as given.
-func (s *Service) recordAssignRefused(ctx context.Context, userID, organizationID, roleID uuid.UUID, actor audit.Actor) error {
-	tx, err := s.repo.Pool().Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-	if err := audit.Record(ctx, tx, actor.Event(organizationID, "role.assign_refused", "user", userID,
-		map[string]any{"role_id": roleID})); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
 }
 
 // UnassignRole takes a role away from a user in the organization, recorded as
@@ -314,7 +276,7 @@ func (s *Service) AssignRoleToGroup(ctx context.Context, groupID, organizationID
 	if err := s.withinSeats(ctx, tx, organizationID, limit, func() error {
 		valid, err := s.repo.AssignRoleToGroup(ctx, tx, groupID, organizationID, roleID, grantedBy)
 		if err == nil && !valid {
-			err = errs.ErrRBACGroupOrRoleNotFound
+			err = ErrGroupOrRoleNotFound
 		}
 		return err
 	}); err != nil {

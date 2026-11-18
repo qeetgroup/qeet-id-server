@@ -12,9 +12,9 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
 
 - Sign-in requests reach the native Qeet ID apps: Apple Push Notification service for iOS (token-based,
   `APNS_AUTH_KEY`, `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_BUNDLE_ID`, `APNS_SANDBOX`) and Firebase Cloud Messaging
-  for Android (`FCM_SERVICE_ACCOUNT`). Each phone is sent through the service that issued its token; Expo tokens
-  still go to Expo. A service without credentials is off; a phone it would serve is not sent the request but
-  finds it when the app opens, and the sign-in no longer fails for that phone alone.
+  for Android (`FCM_SERVICE_ACCOUNT`). Each phone is sent through its platform's service. A service without
+  credentials is off; a phone it would serve is not sent the request but finds it when the app opens, and the
+  sign-in no longer fails for that phone alone.
 - `POST /v1/mfa/push/devices/{id}/push-token`: a linked phone replaces the push token its platform rotated,
   with its unexpired device credential.
 - `POST /v1/mfa/push/devices/{id}/pending`: a linked phone lists the sign-in requests waiting on its account,
@@ -22,13 +22,13 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
 - The pairing claim answers the linked account's email (`account.email`), so the app can name it.
 - A sign-in or step-up request for a phone records where it came from (`context.location`, such as
   "Bengaluru, India"), from the trusted proxy's country and city headers, so the phone can show it.
-- Access requests: a person asks their organisation for one of its roles, for up to 90 days or for good,
+- Access requests: a person asks their organization for one of its roles, for up to 90 days or for good,
   with a reason (`/v1/me/access-requests`, the roles they can ask for, cancel); the people who can give roles
   are told in the app and on their linked phones, and approve (step-up; held to the rule for giving the role
-  directly; nobody answers their own) or deny with a note (`/v1/tenants/{tenantID}/access-requests`). A
+  directly; nobody answers their own) or deny with a note (`/v1/organizations/{organizationID}/access-requests`). A
   time-limited role is taken back when its time is up, and a request nobody answers lapses after 14 days
   (the `access-request-sweep` job). Every step is audited (`access_request.*`).
-- `GET /v1/tenants/{tenantID}/critical-events`: the organisation's open anomaly alerts and critical audit
+- `GET /v1/organizations/{organizationID}/critical-events`: the organization's open anomaly alerts and critical audit
   events (suspensions, lockouts, the AI agent kill switch, second factors reset or turned off, roles given,
   sign-in risk settings changed) of the last hours, newest first, levelled high or medium, for an on-call
   administrator. Needs `audit.read`.
@@ -43,37 +43,154 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
 
 ### Changed
 
+- One sqlc configuration, `sqlc.yaml` at the root, lists every package (`make sqlc-check` also fails on a
+  `queries.sql` it doesn't list). A NULL-able uuid, timestamptz or date column is now a `*uuid.UUID` or
+  `*time.Time` in generated code, and the hand-written `pgtype` converters are gone.
+- Shared helpers for handlers: `httpx.PathUUID` for a UUID route parameter, `paging.Limit` / `paging.Clamp`
+  for a page size and the `paging.Result` list body (`next_cursor` only when there is another page),
+  `audit.Actor.EventIn` and `audit.RecordAlone`. The activity cursor is the one every other list uses.
+- An audit event about no particular resource records none, where `compliance.control_owner_removed` and
+  `siem.sink_tested` stored the nil UUID. The email message and suppression lists clamp a `limit` over 100
+  to 100 (it fell back to 50).
+- The members list (`GET /v1/users`) pages by cursor alone, in its default order; any other order answers its
+  first page. `next_cursor` is left out on the last page of the members list, the organizations list
+  (`GET /v1/organizations`) and the organization picker (`GET /v1/me/organizations`), as on every other list. The
+  picker answers at most 200 for a larger or malformed `limit` instead of refusing it.
+- An email address or phone number a code goes to is masked by one rule wherever it is shown or audited:
+  the first character of the address and its domain (`a****@example.com`), or the number's last three
+  digits (`*********123`). The GDPR export (which wrote `a***@example.com` and `***123`) and the emailed
+  sign-in confirmation (`a***@example.com`) now follow the rule MFA factors already used.
+- Helpers that existed in several copies are one each: the Server-Sent Events writer of the activity stream
+  and Qeet AI (`internal/platform/http/sse`; the activity stream's keep-alive comment is now `: ping`, as
+  Qeet AI's), random codes and tokens and the hash they are stored as (`internal/platform/crypto/codes`,
+  moved from `platform/http`; every stored hash is unchanged), rotating an API key, service-principal or
+  agent secret (`internal/developer/rotation`), the plan, seat, notifier, address, password, sign-in
+  method, branding and database-handle interfaces, and the small string helpers (`internal/platform/strutil`).
+- One OAuth token endpoint, `POST /v1/oauth/token`, serves every grant, chosen by `grant_type`:
+  authorization_code, refresh_token, device_code, token exchange and CIBA for applications, and
+  client_credentials for service principals and AI agents. Discovery's `token_endpoint` names it and
+  `grant_types_supported` lists client_credentials. `POST /v1/oauth/token-code` and `POST /v1/agents/token`
+  are removed: an agent now sends `grant_type=client_credentials` with its id as `client_id` and its secret
+  as `client_secret`, in the form or by HTTP Basic, and its refusals take the RFC 6749 §5.2 shape
+  (`invalid_client`, or `unauthorized_client` for an agent that isn't active) in place of the error
+  envelope. A client_credentials answer carries `expires_at` beside `expires_in`, and its token's claims are
+  unchanged. Every `invalid_client` answer is described alike, whatever kind of client the id names. The
+  agent's token is rate-limited with the other token traffic, no longer with sign-in. A `resource` sent
+  with client_credentials is refused with `invalid_target` rather than ignored. The operation is
+  `requestToken`; `requestClientCredentialsToken` and `mintAgentToken` are gone, and so is the
+  `principal.grant_unsupported` error code.
+- The device and CIBA grants collect an approval through one step: both re-check the client's grant, spend
+  the request and store the refresh token in one transaction.
+- A `limit` above a list's maximum is capped at the maximum, no longer answered with the default page
+  size: the SCIM console lists (`/v1/organizations/{organizationID}/scim/users` and `/scim/groups`, at most
+  200) and the OAuth grants (`/v1/organizations/{organizationID}/oauth/grants`, at most 500).
+- A SCIM token rotated through the admin portal is recorded as the console's rotation is: `scim.token_rotated`
+  names the new token and `"replaced": "all"`. Resolving or retrying a directory error, and changing a
+  directory mapping, record the caller's user agent with the rest of the request.
+- The federation packages (OIDC, SAML, SCIM, LDAP, social, admin portal, directory, identity links) keep
+  every static query in their `queries.sql`, checked by sqlc against the schema; only the directory's
+  filtered event and error lists build their SQL. Their services own each transaction and the audit row it
+  commits with.
+
+- The development seed (`cmd/seed`) writes only through the server's services and handlers: no SQL, and
+  nothing dated back, so it is a third of its former size and follows every schema change by itself. It keeps
+  the ten demo organizations, their people, roles, groups, SSO, SCIM, applications, API keys, webhooks, agents
+  and second factors; states only time reaches (expired invitations, a past-due renewal, months of sign-in
+  history) are gone. It seeds an empty database only: `make seed-reset` recreates the local database, then
+  seeds, and `-reset` is removed. Applications get the client IDs the server mints, printed in its summary.
 - The server records the checksum of each migration file it applies (`public.schema_migration_checksums`)
   and refuses to start on a database whose applied migrations aren't recorded as the files it carries: one
   built before a baseline file was edited, one migrated with the `migrate` tool, and, once, every database
   migrated by a build from before the records. The refusal names the file and the way out
-  (`make db-reset`); the scheduler and the worker refuse too, and `qeet-id-server schema-check` answers not
+  (`make db-reset`); the scheduler refuses too, and `qeet-id-server schema-check` answers not
   compatible. Before, such a database had the same migration number, so the server started on it and
-  failed query by query. `make migrate-up` is gone, and `cmd/migrate` no longer applies migrations by
-  default: the server and the seed apply them.
+  failed query by query. `make migrate-up` and `cmd/migrate` are gone: the server and the seed apply
+  migrations, and `make migrate-down` calls the `migrate` CLI itself.
 - The database schema is one baseline of 12 migrations (`0001`–`0012`: one file per schema, every table in its
   final shape) in place of 243 incremental ones. A database the earlier migrations built is refused at start
   as newer than this build and has to be recreated (`make db-reset`); no release has shipped, so nothing is
   carried over.
 - The schema `"user"` is named `account`, so it no longer has to be quoted.
-- Inside the server the word is organization, not tenant. The schema `tenant` is `organization`,
-  `tenant.tenants` is `organization.organizations`, every `tenant_id` column is `organization_id`, the
+- Inside the server the word is organization, not organization. The schema `organization` is `organization`,
+  `organization.organizations` is `organization.organizations`, every `organization_id` column is `organization_id`, the
   row-security policy is `organization_isolation`, and the Go code, SQL and comments follow. The API is
   unchanged: its paths, JSON fields, token claim and its permission, event and error names still say
-  tenant, and are renamed in one later change.
+  organization, and are renamed in one later change.
 - A secret is stored only encrypted. The plaintext columns left from before encryption, and the code that read
   them and encrypted them on first use, are gone: webhook and auth hook signing secrets, Token Vault and
   social provider client secrets, LDAP bind passwords, SIEM tokens, authenticator app secrets and push tokens.
 - The one-time sign-in codes of SAML, OIDC connection, social and console sign-in are one table
   (`auth.login_codes`), and the sign-in states of the last three are one (`auth.oauth_states`). A code or a
-  state is accepted only by the flow that issued it.
+  state is accepted only by the flow that issued it. One store spends each (`internal/federation/logincode`,
+  `internal/federation/oauthstate`): a code is spent by its first exchange even when it is refused, so one
+  whose connection is turned back on stays spent.
+- SAML, LDAP, OIDC single sign-on and social sign-in find, adopt and create accounts through one flow
+  (`internal/federation/provision`) under the strictest checks any of them applied, and OIDC single sign-on
+  and social sign-in share one OpenID Connect relying party (`internal/federation/oidcrp`). A linked
+  identity's next sign-in records the address the provider now gives on the link, for every protocol.
+- OIDC single sign-on keeps an account in step with the ID token as SAML and LDAP keep it with theirs: the
+  display name, the address when the provider vouches for it on the organization's domain, and the groups
+  the groups claim reaches through a SCIM group's external id or the connection's group mappings. A token
+  that says it leaves the groups out (Microsoft Entra ID's overage), or a connection that reads no groups
+  claim, changes no membership.
 - Every table with an `organization_id` has an index leading on it and, unless it is an append-only log or outlives
   its organization, a foreign key to the organization; ten indexes another index already covered are dropped;
   eleven columns whose values are a fixed list have a CHECK.
 - Dropped, as nothing used them: the `pgcrypto` extension, `auth.passkey_challenges`, `auth.agents.disabled_at`,
   and `organization.security_policies.password_min_length` and `password_complexity`.
+- The webhook deliveries list (`GET /v1/webhooks/{id}/deliveries`) leaves `next_cursor` out on its last page,
+  where it sent an empty one, and takes a `limit` above 200 as 200 rather than 50.
+- The audit log list (`GET /v1/organizations/{organizationID}/audit`) leaves out `next_cursor` on its last
+  page, as the other lists do. A `limit` above a list's maximum now reads the maximum instead of the default:
+  the audit log, its anomalies and the activity history (200), and search (50).
+- A compliance evidence run's audit event (`compliance.evidence_generated`) records the request's address,
+  user agent and request ID, and an API key or agent as its actor, as other events do.
+- The bot detection overview (`GET /v1/organizations/{organizationID}/security/bots`) lists its detections in
+  `items`, as every list does, in place of `recent`, and leaves `next_cursor` out on the last page.
+- A `limit` above a list's maximum asks for the maximum rather than the default (security anomalies and bot
+  detections, authorization decisions and access requests: 200; relation-tuple objects and role holders: 500),
+  and a malformed one asks for the default: the role holders and access requests lists no longer answer 400
+  for it.
+- The audit rows of failed password sign-ins, magic-link requests (a resent link's too, which now also has
+  the user agent), and push pairing codes created and claimed carry the request ID as well as the client
+  address and user agent.
+- A second-factor change or proof (authenticator app, recovery codes, email or SMS code) commits with its audit
+  rows in the service, and one that fails for a reason other than a wrong code, its audit row included, no
+  longer costs the person one of their attempts.
+
+### Removed
+
+- `offset` on `GET /v1/users`: the members list pages by cursor.
+- `cmd/worker` and `EMBEDDED_WORKERS`: no image built the standalone worker, so the API always runs the
+  background workers. A leftover `EMBEDDED_WORKERS` is ignored.
+- `JWT_SECRET`: nothing signed or verified with it, yet the server required it and checked its strength. Tokens
+  are signed with `JWT_SIGNING_KEY`; stored secrets are sealed with `SECRETS_KEY`. A leftover value is ignored.
+- Push through Expo (`EXPO_PUSH_URL`, `EXPO_ACCESS_TOKEN`), which served the retired React Native app. Sign-in
+  requests go through APNs and FCM only.
+- `api/postman`: the OpenAPI documents in `api/openapi/` are the only API contract.
+- Settings no environment set, now fixed in the code: the sign-in lockout (`LOGIN_LOCKOUT_*`, `LOGIN_SPRAY_*`),
+  the application secret lockout (`CLIENT_AUTH_LOCKOUT_*`), the password hasher's limits (`PASSWORD_HASH_*`),
+  the Qeet AI turn limits (`QEETAI_HISTORY_MESSAGES`, `QEETAI_HISTORY_BYTES`, `QEETAI_MAX_OUTPUT_BYTES`) and
+  `TOKEN_EXCHANGE_MAX_DEPTH`, each at its former default. An organization still tunes its own lockout in its
+  authentication policy. A leftover value is ignored.
+- Reading data no database holds, since every database is built from the baseline: bcrypt password hashes,
+  Argon2id hashes of machine secrets (API keys, service-principal, agent and OAuth client secrets) and their
+  upgrade to SHA-256, and the two envelope schemes before the one that names its key. Such a value is refused.
+- The error codes a domain answered for a `{organizationID}` path that is malformed or names another organization
+  (`adminportal`, `agent`, `analytics`, `audit`, `authhook`, `billing`, `email`, `gdpr`, `oidc`, `retention`,
+  `saml`, `scim`, `siem` and `webhook` `.organization_mismatch`, `.organization_invalid` or `.organization_id_invalid`). The
+  organization check in front of every such route answers first, with `bad_request` or `forbidden`, so they
+  could not be returned.
 
 ### Fixed
+
+- The audit rows of an administrator's suspension, reactivation, suspension review, deletion and member
+  removal record the caller's browser (user agent) too, and those of a second-factor reset, a passkey removal,
+  an ended session and signing someone out everywhere record the caller's actor type (an API key's or a
+  service's), where they always said user.
+- A device code approved by a person who then left the application's organization still bought tokens;
+  collecting it now needs the person to be an active member, as an authorization code and a backchannel
+  approval do, and a refusal spends it.
 
 - A migration that gave up waiting for a busy table left the database marked half-applied, so nothing
   started on it until someone put the version back by hand. It changed nothing, so the database now stays
@@ -102,36 +219,52 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
   the request's time is up: the permanent assignment clears the request's end.
 - The authorization endpoint (`/v1/oauth/authorize`) takes its parameters by form POST as well as by GET, as
   OpenID Connect Core requires: a POST is answered 303 to the same request by GET.
-- The development seed (`make seed`) runs again: one demo organisation asked for a lockout window shorter than
+- The development seed (`make seed`) runs again: one demo organization asked for a lockout window shorter than
   the 15 minutes the sign-in policy now allows.
 
 ### Security
 
-- An organisation's OpenID Connect social provider (any provider found by its `discovery_url`) verifies an
-  address only on a domain the organisation has verified. Elsewhere it creates the account with the address
+- A vault secret is created, changed or deleted only together with its audit record, and revealed or read
+  through `/v1/vault/{name}` only once the read is recorded; so is a Token Vault access token. When the record
+  can't be written the request fails and nothing changes or leaves, where before the change stood or the value
+  was returned unrecorded. Retrying a webhook's given-up deliveries is likewise kept only with its record.
+- An organization's OpenID Connect social provider, and an OpenID Connect provider of the console's own
+  sign-in, signs someone in only with an ID token its published key signed, from its issuer, for the client,
+  carrying the sign-in's nonce, about the subject its userinfo names, as OIDC single sign-on already
+  required. Every request to such a provider follows the outbound policy, so a client secret is never sent
+  over plain http or to a local address.
+- A refused account adoption or creation through SAML, LDAP or social sign-in is recorded as a failed
+  sign-in (`auth.sign_in_failed`, with the error code as its reason), as OIDC single sign-on already did. The
+  record names the account only when it is the organization's own.
+- A SAML sign-in to a suspended or deleted account gets no one-time code, as OIDC and social sign-in don't.
+- An ID token's signature is checked only against the published key it names (`kid`), and Sign in with Apple's
+  keys are fetched again at most once in ten seconds for a key not yet seen, as for every other provider.
+
+- An organization's OpenID Connect social provider (any provider found by its `discovery_url`) verifies an
+  address only on a domain the organization has verified. Elsewhere it creates the account with the address
   unverified and never signs in to an existing account by its address, so a provider pointed at a server of
-  the organisation's own can't make verified accounts for other people's addresses or open the invitations
+  the organization's own can't make verified accounts for other people's addresses or open the invitations
   sent to them. GitHub, X, Discord and Apple sign-ins are unchanged.
-- No social provider creates an account on a domain another organisation has verified, or on one whose
-  organisation requires single sign-on.
-- No social provider signs in to an account that owns or administers its organisation by matching the
+- No social provider creates an account on a domain another organization has verified, or on one whose
+  organization requires single sign-on.
+- No social provider signs in to an account that owns or administers its organization by matching the
   address (`social.account_administers`), as SAML, LDAP and OIDC single sign-on already refuse. Such an
   account keeps its own credentials and can connect the provider from its account.
 - Self-service sign-up (password sign-up, hosted registration, passkey sign-up and the console's own social
-  sign-up) creates no account on a domain an organisation has verified, unless it is that organisation's own
-  registration, so nobody can claim a colleague's address before their organisation's single sign-on or
+  sign-up) creates no account on a domain an organization has verified, unless it is that organization's own
+  registration, so nobody can claim a colleague's address before their organization's single sign-on or
   directory creates it. The answer is the same neutral one an address with an account gets.
-- A hosted password sign-in that names another organisation's application is held to a lockout no looser than
-  the platform's, so an organisation with a lenient lockout can't be used to guess other people's passwords
-  faster, and the account's own organisation's "password sign-in off" switch applies whichever application is
-  named. An organisation's lockout settings may now only be stricter than the platform's (threshold 3–5,
+- A hosted password sign-in that names another organization's application is held to a lockout no looser than
+  the platform's, so an organization with a lenient lockout can't be used to guess other people's passwords
+  faster, and the account's own organization's "password sign-in off" switch applies whichever application is
+  named. An organization's lockout settings may now only be stricter than the platform's (threshold 3–5,
   window and lock 15 minutes to 24 hours) and govern the lock on one network: the lock on every network always
-  uses the platform's settings, so a strict organisation can't lock someone else out everywhere.
+  uses the platform's settings, so a strict organization can't lock someone else out everywhere.
   `LOGIN_LOCKOUT_THRESHOLD_MAX`, `LOGIN_LOCKOUT_WINDOW_MIN` and `LOGIN_LOCKOUT_DURATION_MIN` are removed.
-- A magic link always follows the account's own organisation's rules (whether links are allowed, how long
-  they last), whichever organisation's sign-in page asked. The asking organisation brands the email and sees the
+- A magic link always follows the account's own organization's rules (whether links are allowed, how long
+  they last), whichever organization's sign-in page asked. The asking organization brands the email and sees the
   request in its audit log only for its own members, so naming it no longer reveals whether an address has an
-  account, or puts another organisation's wording around someone's link.
+  account, or puts another organization's wording around someone's link.
 - Email templates may place a one-time link (`reset_url`, `magic_url`, `invite_url`) only as a whole link in
   the HTML and on a line of its own in the text, never in the subject, preheader or among other words. The
   built-in default texts now put the link on its own line.
@@ -145,11 +278,11 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
   directory didn't provision it), by a create that adopts it, a replace, or a patch of its external ID or
   address, every credential and sign-in set up on it is removed and recorded as `auth.credentials_removed`, so
   the directory no longer vouches for a squatter's working password or passkey.
-- An organisation that requires single sign-on on its domain can no longer be sidestepped: no social provider
+- An organization that requires single sign-on on its domain can no longer be sidestepped: no social provider
   (its own or the console's) signs in, adopts or links an account there, no session is switched into that
-  organisation, and a member can't move their address off its domains (`verification.email_managed`). Nor can an
-  address the organisation's directory or single sign-on provides be changed, or any address be moved onto a
-  domain another organisation manages. Break-glass members are unaffected.
+  organization, and a member can't move their address off its domains (`verification.email_managed`). Nor can an
+  address the organization's directory or single sign-on provides be changed, or any address be moved onto a
+  domain another organization manages. Break-glass members are unaffected.
 - Taking authority away through a group is held to the rule for giving it: removing someone from a group or
   deleting it needs what the group's roles carry, removing someone also needs to outrank them, and taking a role
   off a group needs that role. Removing a group member and deleting a group now need a fresh second factor, so
@@ -158,16 +291,16 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
   administrator can no longer erase or export a co-owner, or anyone else who outranks them.
 - Rotating a service principal's or an agent's secret needs every scope it carries, as creating one does, so
   `apikey.write` alone no longer hands over an owner's credential. API-key rotation now checks the key's scopes
-  however many keys the organisation has (it skipped the check past the first 1,001).
-- SCIM no longer changes the address of an account that administers its organisation (403): moving it to a
+  however many keys the organization has (it skipped the check past the first 1,001).
+- SCIM no longer changes the address of an account that administers its organization (403): moving it to a
   fresh mailbox on the domain would have sent that account's password reset to whoever controls the directory.
 - Changing what a connection trusts (a SAML certificate or entity ID, metadata from elsewhere, an OIDC
-  connection's issuer, discovery URL, client or allowed tenants, an LDAP connection's server, bind or base DN,
+  connection's issuer, discovery URL, client or allowed organizations, an LDAP connection's server, bind or base DN,
   filter or TLS settings, an OpenID Connect social provider's discovery URL) now needs a caller who outranks
   every administrator linked to it (`rbac.trust_change_outranks_caller`), as the changed connection could sign
   in as them; admin-portal sessions can't make such a change once an administrator is linked.
-- Single sign-on, domain capture and group sync now count as an administrator anyone who owns the organisation
-  or holds any permission other than the plain reads (organisation, people, roles, groups, connections, API keys,
+- Single sign-on, domain capture and group sync now count as an administrator anyone who owns the organization
+  or holds any permission other than the plain reads (organization, people, roles, groups, connections, API keys,
   webhooks, billing, policy, audit and analytics). A permission added later counts too, so a role holding only
   `gdpr.write`, `secret.read`, `billing.write` or `branding.write` is no longer adopted by its address, captured
   by the domain's identity provider or given through an identity provider group.
@@ -177,7 +310,7 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
   (`verification.code_send_limited`, 429), a new code replaces the earlier ones, a code the provider refuses
   is withdrawn, and email-change codes have eight digits.
 - Phone verification is held to the same limits as MFA text messages: the number must be in E.164 form, SMS must
-  be in the plan of the organisation the session is in (`billing.upgrade_required`; a session in no organisation
+  be in the plan of the organization the session is in (`billing.upgrade_required`; a session in no organization
   is refused), an SMS provider must be set up (`verification.delivery_unavailable`, 503), and a code goes at most
   every 30 seconds, ten an hour to one person and five an hour to one number (`verification.code_send_limited`).
 - A sign-out request (`/v1/oauth/logout`) skips its confirmation only for an `id_token_hint` that is a real ID
@@ -192,28 +325,28 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
   follows the same rule as resetting their second factor: only an owner can do it to an owner
   (`rbac.target_is_owner`), and nobody can do it to someone holding a permission they don't
   (`rbac.target_outranks_caller`).
-- Suspending or deleting an organisation now stops its machine credentials at once, as it already ended its
+- Suspending or deleting an organization now stops its machine credentials at once, as it already ended its
   people's sessions: its API keys no longer authenticate, its service principals and agents get no new tokens,
   and the service and agent tokens already issued are refused (and introspect as inactive). Reactivating the
-  organisation restores them.
+  organization restores them.
 - A personal API key now does only what both its scopes and its person's current permissions allow: once the
   person loses a permission (a role removed or changed), the key loses it too, and reading the secrets vault
   needs the person's `secret.read`. Keys that act for no one are unchanged.
 - An invitation is accepted only while the person who sent it may still give it: their account active, still
-  in the organisation and still able to give its role. Otherwise every way of accepting it (password, passkey,
-  signed-in link or inbox) and its preview answer `invite.invalid`. Removing someone from an organisation, or
+  in the organization and still able to give its role. Otherwise every way of accepting it (password, passkey,
+  signed-in link or inbox) and its preview answer `invite.invalid`. Removing someone from an organization, or
   deleting their account, withdraws the invitations they sent there.
-- Qeet ID acting as a SAML identity provider now applies the organisation's address rules and its second-factor
+- Qeet ID acting as a SAML identity provider now applies the organization's address rules and its second-factor
   requirement before it signs an assertion, as OpenID Connect sign-in already does: a refused address gets
   `auth.address_not_allowed` (recorded), and a session that didn't meet a required second factor is sent to sign
   in again, then refused (`step_up_required` or `mfa.enrollment_required`) if that sign-in still didn't.
-- Approving a backchannel (CIBA) sign-in request now meets the application's organisation's rules, as approving
+- Approving a backchannel (CIBA) sign-in request now meets the application's organization's rules, as approving
   a device does: the person must still be a member of it, approve from an address its rules allow, and through a
   session that met the second factor it requires. Collecting the tokens needs the application still to hold the
   CIBA grant and the person still to be a member, and a request is spent only together with its refresh token.
 - Starting a passkey sign-up (`/v1/signup/passkey/begin` and `/v1/register/passkey/begin`) now answers alike
   whether or not the address has an account, and no longer holds the address while the ceremony runs. An
-  address that is taken, or on a domain another organisation manages, is refused when the ceremony finishes,
+  address that is taken, or on a domain another organization manages, is refused when the ceremony finishes,
   with the same neutral answer as before, so the status code no longer reveals which addresses have accounts.
 - A relationship (ReBAC) check now expands at most 1,000 distinct object#relation pairs, and the checks of one
   request (an AuthZEN evaluation or batch, or a relation check with its explanation) read at most 5,000
@@ -225,7 +358,7 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
   secret is changed, calls carry a signature with the old secret too (the hook shows
   `previous_secret_expires_at`), so the endpoint can move over without refusing calls. A receiver that checked
   the old body-only signature must switch to the new scheme.
-- Plans' audit retention is now enforced: once a day, each organisation's audit events older than its plan's
+- Plans' audit retention is now enforced: once a day, each organization's audit events older than its plan's
   `audit_retention_days` (7, 30 or 90 days; unlimited keeps everything) are deleted in batches, and the purge is
   recorded as `audit.events_purged`. A purge checkpoint written with each batch keeps the hash chain verifiable
   from the first event kept. A chain found broken is left for investigation.
@@ -239,9 +372,9 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
   as OpenID Connect codes already do: switching a connection off, putting it back to draft, switching a provider
   off or deleting either stops the codes it issued in the last five minutes. Codes issued before the upgrade no
   longer trade.
-- An organisation registers an API resource on a host only once it has verified that host or a domain above it
+- An organization registers an API resource on a host only once it has verified that host or a domain above it
   (`oidc.resource_domain_unverified`), and never the platform's own token issuer or audience, their host or the
-  API's public host (`oidc.resource_reserved`), so no organisation gets tokens whose audience another's service
+  API's public host (`oidc.resource_reserved`), so no organization gets tokens whose audience another's service
   or the platform trusts. Identifiers without a host, such as URNs, are unaffected.
 - A signed SAML sign-in request on the Redirect binding is read exactly as signed: a query that gives
   `SAMLRequest`, `RelayState`, `SigAlg` or `Signature` twice, or under a percent-encoded name, is refused
@@ -256,19 +389,19 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
   application's redirect must match what it registered exactly, so a local process listening on another port
   can't receive its authorization codes.
 - A request whose path carries an encoded slash or backslash (`%2F`, `%5C`) is refused with 400 `bad_request`, so
-  the router and every check that matches a path (permissions, step-up, organisation scoping, CSRF and
+  the router and every check that matches a path (permissions, step-up, organization scoping, CSRF and
   idempotency) always see the same route.
-- An organisation that requires a second factor of its administrators now requires it of everyone holding an
+- An organization that requires a second factor of its administrators now requires it of everyone holding an
   administrative permission, the same ones single sign-on never adopts by address (such as `user.credentials`,
   `user.suspend`, `session.revoke` and `member.invite`), not only of holders of a `*.write` permission.
-- No hosted-login session opens from an address the account's own organisation refuses, whichever way the person
-  signed in (passkey, password, a password through another organisation's application, a sign-in link, social or
+- No hosted-login session opens from an address the account's own organization refuses, whichever way the person
+  signed in (passkey, password, a password through another organization's application, a sign-in link, social or
   single sign-on): the session reaches the account's self-service routes, so its own address rules apply.
 - Resending an invitation, which revives an expired one, needs every permission of the role it grants, as
   creating it does (`rbac.grant_exceeds_caller`), so `member.invite` alone can no longer reissue an invitation to a
   role above the caller's.
 - Service principals, SCIM tokens, webhooks, auth hooks and OpenID Connect applications record who created them.
-  Deleting an administrator, removing one from an organisation or deprovisioning one through SCIM revokes the
+  Deleting an administrator, removing one from an organization or deprovisioning one through SCIM revokes the
   admin-portal links and pending invitations they issued there and records the critical
   `user.integrations_left` event with how many of each, and the integrations they created that still work, so
   someone reviews them.
@@ -277,15 +410,15 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
 - A SAML assertion valid for longer than a day can no longer be replayed after a day: its response and assertion
   IDs are kept against replay until it expires (plus the allowed clock skew), not a fixed 24 hours.
 - An authorization code or an approved backchannel (CIBA) request buys no token once its person has left the
-  application's organisation, as the token endpoint already promised, nor once the application has lost the grant
+  application's organization, as the token endpoint already promised, nor once the application has lost the grant
   (or, for CIBA, is no longer confidential).
 - Sign-in lockout counts an address as the account lookup reads it (the database's own lowercasing), so case
   variants of an address with non-ASCII letters can no longer get counters of their own.
 - A machine secret (API key, service principal, agent or application secret) still stored in the old Argon2id
   form now waits for the bounded password hasher and is answered "try again" when it is full, so a flood of wrong
   secrets can no longer starve everyone's sign-in.
-- Taking a guest's last role in an organisation, which ends their membership, now ends their sessions there, as
-  removing them from the organisation does; an access request's time-limited role ending does the same.
+- Taking a guest's last role in an organization, which ends their membership, now ends their sessions there, as
+  removing them from the organization does; an access request's time-limited role ending does the same.
 - `golang.org/x/crypto` is updated to v0.59.0 (with `x/sync`, `x/sys` and `x/text`), the first release past the
   advisory GO-2026-5932 in its unmaintained `openpgp` package, which this server never used; `govulncheck` now
   reports nothing, in the code or in the modules it requires.

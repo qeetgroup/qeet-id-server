@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const cancelPurgeRequest = `-- name: CancelPurgeRequest :one
@@ -34,285 +33,555 @@ func (q *Queries) CancelPurgeRequest(ctx context.Context, arg CancelPurgeRequest
 	return subject_id, err
 }
 
-const checkAuditEventCount = `-- name: CheckAuditEventCount :one
-SELECT count(*) FROM audit.events
-WHERE organization_id = $1 AND created_at >= now() - interval '30 days'
+const completeExportRequest = `-- name: CompleteExportRequest :execrows
+UPDATE account.export_requests
+SET status = 'ready', payload = $1, completed_at = NOW(),
+    lease_owner = NULL, lease_until = NULL
+WHERE id = $2 AND lease_owner = $3::uuid
 `
 
-func (q *Queries) CheckAuditEventCount(ctx context.Context, organizationID pgtype.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, checkAuditEventCount, organizationID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
+type CompleteExportRequestParams struct {
+	Payload    []byte
+	ID         uuid.UUID
+	LeaseOwner uuid.UUID
 }
 
-const checkExportRequestCount = `-- name: CheckExportRequestCount :one
-SELECT count(*) FROM account.export_requests WHERE organization_id = $1
-`
-
-func (q *Queries) CheckExportRequestCount(ctx context.Context, organizationID uuid.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, checkExportRequestCount, organizationID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
-const checkIPRulesConfig = `-- name: CheckIPRulesConfig :one
-SELECT enabled FROM organization.ip_rules_config WHERE organization_id = $1
-`
-
-func (q *Queries) CheckIPRulesConfig(ctx context.Context, organizationID uuid.UUID) (bool, error) {
-	row := q.db.QueryRow(ctx, checkIPRulesConfig, organizationID)
-	var enabled bool
-	err := row.Scan(&enabled)
-	return enabled, err
-}
-
-const checkIPRulesCount = `-- name: CheckIPRulesCount :one
-SELECT count(*) FROM organization.ip_rules WHERE organization_id = $1
-`
-
-func (q *Queries) CheckIPRulesCount(ctx context.Context, organizationID uuid.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, checkIPRulesCount, organizationID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
-const checkLogSinksCount = `-- name: CheckLogSinksCount :one
-SELECT count(*) AS enabled,
-       count(*) FILTER (WHERE last_error = '' AND last_forwarded_at > NOW() - INTERVAL '1 day') AS delivering
-FROM organization.log_sinks WHERE organization_id = $1 AND enabled
-`
-
-type CheckLogSinksCountRow struct {
-	Enabled    int64
-	Delivering int64
-}
-
-// CheckLogSinksCount counts the enabled log sinks, and of those the ones
-// delivering: forwarded within a day and not failing now.
-func (q *Queries) CheckLogSinksCount(ctx context.Context, organizationID uuid.UUID) (CheckLogSinksCountRow, error) {
-	row := q.db.QueryRow(ctx, checkLogSinksCount, organizationID)
-	var i CheckLogSinksCountRow
-	err := row.Scan(&i.Enabled, &i.Delivering)
-	return i, err
-}
-
-const checkMFAEnforcement = `-- name: CheckMFAEnforcement :one
-
-SELECT mfa_enforcement, mfa_grace_days, mfa_enforced_since
-FROM organization.security_policies WHERE organization_id = $1
-`
-
-type CheckMFAEnforcementRow struct {
-	MfaEnforcement   string
-	MfaGraceDays     int32
-	MfaEnforcedSince pgtype.Timestamptz
-}
-
-// -----------------------------------------------------------------------
-// Control check queries — each check function has one query here.
-// -----------------------------------------------------------------------
-func (q *Queries) CheckMFAEnforcement(ctx context.Context, organizationID uuid.UUID) (CheckMFAEnforcementRow, error) {
-	row := q.db.QueryRow(ctx, checkMFAEnforcement, organizationID)
-	var i CheckMFAEnforcementRow
-	err := row.Scan(&i.MfaEnforcement, &i.MfaGraceDays, &i.MfaEnforcedSince)
-	return i, err
-}
-
-const checkPasswordComplexity = `-- name: CheckPasswordComplexity :one
-SELECT password_require_uppercase, password_require_number, password_require_symbol
-FROM organization.auth_policy WHERE organization_id = $1
-`
-
-type CheckPasswordComplexityRow struct {
-	PasswordRequireUppercase bool
-	PasswordRequireNumber    bool
-	PasswordRequireSymbol    bool
-}
-
-func (q *Queries) CheckPasswordComplexity(ctx context.Context, organizationID uuid.UUID) (CheckPasswordComplexityRow, error) {
-	row := q.db.QueryRow(ctx, checkPasswordComplexity, organizationID)
-	var i CheckPasswordComplexityRow
-	err := row.Scan(&i.PasswordRequireUppercase, &i.PasswordRequireNumber, &i.PasswordRequireSymbol)
-	return i, err
-}
-
-const checkPasswordMinLength = `-- name: CheckPasswordMinLength :one
-SELECT password_min_length FROM organization.auth_policy WHERE organization_id = $1
-`
-
-func (q *Queries) CheckPasswordMinLength(ctx context.Context, organizationID uuid.UUID) (int32, error) {
-	row := q.db.QueryRow(ctx, checkPasswordMinLength, organizationID)
-	var password_min_length int32
-	err := row.Scan(&password_min_length)
-	return password_min_length, err
-}
-
-const checkPurgeRequestCount = `-- name: CheckPurgeRequestCount :one
-SELECT count(*) FROM account.purge_requests WHERE organization_id = $1
-`
-
-func (q *Queries) CheckPurgeRequestCount(ctx context.Context, organizationID uuid.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, checkPurgeRequestCount, organizationID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
-const checkRBACAssignments = `-- name: CheckRBACAssignments :one
-SELECT count(*) FROM rbac.user_roles WHERE organization_id = $1
-`
-
-func (q *Queries) CheckRBACAssignments(ctx context.Context, organizationID uuid.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, checkRBACAssignments, organizationID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
-const checkRBACRoles = `-- name: CheckRBACRoles :one
-SELECT count(*) FROM rbac.roles WHERE organization_id = $1
-`
-
-func (q *Queries) CheckRBACRoles(ctx context.Context, organizationID uuid.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, checkRBACRoles, organizationID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
-const checkRetentionPolicy = `-- name: CheckRetentionPolicy :one
-SELECT deleted_users_enabled, deleted_users_days
-FROM organization.retention_policy WHERE organization_id = $1
-`
-
-type CheckRetentionPolicyRow struct {
-	DeletedUsersEnabled bool
-	DeletedUsersDays    int32
-}
-
-func (q *Queries) CheckRetentionPolicy(ctx context.Context, organizationID uuid.UUID) (CheckRetentionPolicyRow, error) {
-	row := q.db.QueryRow(ctx, checkRetentionPolicy, organizationID)
-	var i CheckRetentionPolicyRow
-	err := row.Scan(&i.DeletedUsersEnabled, &i.DeletedUsersDays)
-	return i, err
-}
-
-const checkRiskSettings = `-- name: CheckRiskSettings :one
-SELECT medium_threshold, high_threshold
-FROM auth.risk_settings WHERE organization_id = $1
-`
-
-type CheckRiskSettingsRow struct {
-	MediumThreshold float64
-	HighThreshold   float64
-}
-
-func (q *Queries) CheckRiskSettings(ctx context.Context, organizationID uuid.UUID) (CheckRiskSettingsRow, error) {
-	row := q.db.QueryRow(ctx, checkRiskSettings, organizationID)
-	var i CheckRiskSettingsRow
-	err := row.Scan(&i.MediumThreshold, &i.HighThreshold)
-	return i, err
-}
-
-const checkSecretsCount = `-- name: CheckSecretsCount :one
-SELECT count(*) FROM organization.secrets WHERE organization_id = $1
-`
-
-func (q *Queries) CheckSecretsCount(ctx context.Context, organizationID uuid.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, checkSecretsCount, organizationID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
-const checkSessionTimeout = `-- name: CheckSessionTimeout :one
-SELECT extract(epoch FROM session_max_age)::float8 AS session_seconds
-FROM organization.security_policies WHERE organization_id = $1
-`
-
-func (q *Queries) CheckSessionTimeout(ctx context.Context, organizationID uuid.UUID) (float64, error) {
-	row := q.db.QueryRow(ctx, checkSessionTimeout, organizationID)
-	var session_seconds float64
-	err := row.Scan(&session_seconds)
-	return session_seconds, err
-}
-
-const completePurgeRequest = `-- name: CompletePurgeRequest :exec
-UPDATE account.purge_requests
-SET status = 'completed', completed_at = NOW(), subject_email = NULL, subject_name = NULL
-WHERE id = $1
-`
-
-func (q *Queries) CompletePurgeRequest(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, completePurgeRequest, id)
-	return err
-}
-
-const countUsersWithoutSecondFactor = `-- name: CountUsersWithoutSecondFactor :one
-SELECT count(*)::int
-FROM account.users u
-WHERE u.organization_id = $1 AND u.deleted_at IS NULL
-  AND NOT EXISTS (SELECT 1 FROM auth.mfa_totp t WHERE t.user_id = u.id AND t.confirmed_at IS NOT NULL)
-  AND NOT EXISTS (SELECT 1 FROM auth.mfa_recovery_codes r WHERE r.user_id = u.id AND r.used_at IS NULL)
-  AND NOT EXISTS (SELECT 1 FROM auth.mfa_otp_factors f WHERE f.user_id = u.id AND f.verified_at IS NOT NULL)
-  AND NOT EXISTS (SELECT 1 FROM auth.mfa_push_devices d WHERE d.user_id = u.id)
-  AND NOT (
-      COALESCE((SELECT ap.passkey_enabled FROM organization.auth_policy ap WHERE ap.organization_id = u.organization_id), TRUE)
-      AND EXISTS (SELECT 1 FROM auth.passkey_credentials p WHERE p.user_id = u.id)
-  )
-`
-
-// CountUsersWithoutSecondFactor counts the organization's accounts holding no
-// factor a sign-in challenge can be met with (as auth.LoginFactors reads
-// them): they set one up at their next sign-in.
-func (q *Queries) CountUsersWithoutSecondFactor(ctx context.Context, organizationID pgtype.UUID) (int32, error) {
-	row := q.db.QueryRow(ctx, countUsersWithoutSecondFactor, organizationID)
-	var column_1 int32
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
-const deleteComplianceAudit = `-- name: DeleteComplianceAudit :one
-DELETE FROM organization.compliance_audits WHERE id = $1 AND organization_id = $2
-RETURNING framework, kind, body
-`
-
-type DeleteComplianceAuditParams struct {
-	ID             uuid.UUID
-	OrganizationID uuid.UUID
-}
-
-type DeleteComplianceAuditRow struct {
-	Framework string
-	Kind      string
-	Body      string
-}
-
-func (q *Queries) DeleteComplianceAudit(ctx context.Context, arg DeleteComplianceAuditParams) (DeleteComplianceAuditRow, error) {
-	row := q.db.QueryRow(ctx, deleteComplianceAudit, arg.ID, arg.OrganizationID)
-	var i DeleteComplianceAuditRow
-	err := row.Scan(&i.Framework, &i.Kind, &i.Body)
-	return i, err
-}
-
-const deleteControlOwner = `-- name: DeleteControlOwner :execrows
-DELETE FROM organization.compliance_control_owners WHERE organization_id = $1 AND control_id = $2
-`
-
-type DeleteControlOwnerParams struct {
-	OrganizationID uuid.UUID
-	ControlID      string
-}
-
-func (q *Queries) DeleteControlOwner(ctx context.Context, arg DeleteControlOwnerParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteControlOwner, arg.OrganizationID, arg.ControlID)
+// Stores the payload of a request @lease_owner holds and marks it ready.
+func (q *Queries) CompleteExportRequest(ctx context.Context, arg CompleteExportRequestParams) (int64, error) {
+	result, err := q.db.Exec(ctx, completeExportRequest, arg.Payload, arg.ID, arg.LeaseOwner)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const completePurgeRequest = `-- name: CompletePurgeRequest :execrows
+UPDATE account.purge_requests
+SET status = 'completed', completed_at = NOW(), lease_owner = NULL, lease_until = NULL,
+    subject_email = NULL, subject_name = NULL
+WHERE id = $1 AND status = 'pending' AND lease_owner = $2::uuid
+`
+
+type CompletePurgeRequestParams struct {
+	ID         uuid.UUID
+	LeaseOwner uuid.UUID
+}
+
+// Completes a leased request and forgets who it was filed for.
+func (q *Queries) CompletePurgeRequest(ctx context.Context, arg CompletePurgeRequestParams) (int64, error) {
+	result, err := q.db.Exec(ctx, completePurgeRequest, arg.ID, arg.LeaseOwner)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteHomeAccount = `-- name: DeleteHomeAccount :exec
+DELETE FROM account.users WHERE id = $1 AND organization_id = $2::uuid
+`
+
+type DeleteHomeAccountParams struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+func (q *Queries) DeleteHomeAccount(ctx context.Context, arg DeleteHomeAccountParams) error {
+	_, err := q.db.Exec(ctx, deleteHomeAccount, arg.ID, arg.OrganizationID)
+	return err
+}
+
+const deletePendingSignUps = `-- name: DeletePendingSignUps :exec
+DELETE FROM auth.webauthn_sessions WHERE pending_organization_id = $1
+`
+
+// A sign-up waiting on the organization names it in another column.
+func (q *Queries) DeletePendingSignUps(ctx context.Context, organizationID *uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deletePendingSignUps, organizationID)
+	return err
+}
+
+const deletePurgedOrganization = `-- name: DeletePurgedOrganization :exec
+DELETE FROM organization.organizations WHERE id = $1 AND status = 'deleted'
+`
+
+// What is left of the organization holds a foreign key that cascades.
+func (q *Queries) DeletePurgedOrganization(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deletePurgedOrganization, id)
+	return err
+}
+
+const detachHomeAccount = `-- name: DetachHomeAccount :exec
+UPDATE account.users SET organization_id = NULL WHERE id = $1 AND organization_id = $2::uuid
+`
+
+type DetachHomeAccountParams struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+func (q *Queries) DetachHomeAccount(ctx context.Context, arg DetachHomeAccountParams) error {
+	_, err := q.db.Exec(ctx, detachHomeAccount, arg.ID, arg.OrganizationID)
+	return err
+}
+
+const dropExportPayloads = `-- name: DropExportPayloads :exec
+UPDATE account.export_requests
+SET payload = NULL, lease_owner = NULL, lease_until = NULL,
+    status = CASE status WHEN 'pending' THEN 'failed' WHEN 'ready' THEN 'expired' ELSE status END,
+    error = CASE status WHEN 'pending' THEN 'The account was erased.' ELSE error END,
+    completed_at = COALESCE(completed_at, NOW())
+WHERE user_id = $1::uuid AND (payload IS NOT NULL OR status = 'pending')
+`
+
+func (q *Queries) DropExportPayloads(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, dropExportPayloads, userID)
+	return err
+}
+
+const eraseAIConversations = `-- name: EraseAIConversations :exec
+DELETE FROM qeetai.conversations WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseAIConversations(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseAIConversations, userID)
+	return err
+}
+
+const eraseAPIKeys = `-- name: EraseAPIKeys :exec
+DELETE FROM auth.api_keys WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseAPIKeys(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseAPIKeys, userID)
+	return err
+}
+
+const eraseActorBaseline = `-- name: EraseActorBaseline :exec
+DELETE FROM audit.actor_baselines WHERE actor_user_id = $1::uuid
+`
+
+func (q *Queries) EraseActorBaseline(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseActorBaseline, userID)
+	return err
+}
+
+const eraseAuthorizationCodes = `-- name: EraseAuthorizationCodes :exec
+DELETE FROM auth.oidc_authorization_codes WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseAuthorizationCodes(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseAuthorizationCodes, userID)
+	return err
+}
+
+const eraseBackchannelRequests = `-- name: EraseBackchannelRequests :exec
+DELETE FROM auth.oidc_ciba_requests WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseBackchannelRequests(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseBackchannelRequests, userID)
+	return err
+}
+
+const eraseBreakGlassMemberships = `-- name: EraseBreakGlassMemberships :exec
+DELETE FROM organization.break_glass_members WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseBreakGlassMemberships(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseBreakGlassMemberships, userID)
+	return err
+}
+
+const eraseConsentRequests = `-- name: EraseConsentRequests :exec
+DELETE FROM auth.oidc_consent_requests WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseConsentRequests(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseConsentRequests, userID)
+	return err
+}
+
+const eraseConsents = `-- name: EraseConsents :exec
+DELETE FROM auth.oidc_consents WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseConsents(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseConsents, userID)
+	return err
+}
+
+const eraseDeviceCodes = `-- name: EraseDeviceCodes :exec
+DELETE FROM auth.oidc_device_codes WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseDeviceCodes(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseDeviceCodes, userID)
+	return err
+}
+
+const eraseDirectoryAlerts = `-- name: EraseDirectoryAlerts :exec
+DELETE FROM organization.directory_alerts WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseDirectoryAlerts(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseDirectoryAlerts, userID)
+	return err
+}
+
+const eraseDirectoryProfiles = `-- name: EraseDirectoryProfiles :exec
+DELETE FROM organization.directory_profiles WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseDirectoryProfiles(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseDirectoryProfiles, userID)
+	return err
+}
+
+const eraseEmailVerifications = `-- name: EraseEmailVerifications :exec
+DELETE FROM account.email_verifications WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseEmailVerifications(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseEmailVerifications, userID)
+	return err
+}
+
+const eraseExternalIdentities = `-- name: EraseExternalIdentities :exec
+DELETE FROM account.external_identities WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseExternalIdentities(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseExternalIdentities, userID)
+	return err
+}
+
+const eraseGroupMemberships = `-- name: EraseGroupMemberships :exec
+DELETE FROM organization.group_members WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseGroupMemberships(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseGroupMemberships, userID)
+	return err
+}
+
+const eraseLoginAttemptsOf = `-- name: EraseLoginAttemptsOf :exec
+DELETE FROM auth.login_attempts WHERE email = $1::text
+`
+
+func (q *Queries) EraseLoginAttemptsOf(ctx context.Context, email string) error {
+	_, err := q.db.Exec(ctx, eraseLoginAttemptsOf, email)
+	return err
+}
+
+const eraseLoginCodes = `-- name: EraseLoginCodes :exec
+DELETE FROM auth.login_codes WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseLoginCodes(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseLoginCodes, userID)
+	return err
+}
+
+const eraseLoginContextHistory = `-- name: EraseLoginContextHistory :exec
+DELETE FROM auth.login_context_history WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseLoginContextHistory(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseLoginContextHistory, userID)
+	return err
+}
+
+const eraseLoginSessions = `-- name: EraseLoginSessions :exec
+DELETE FROM auth.login_sessions WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseLoginSessions(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseLoginSessions, userID)
+	return err
+}
+
+const eraseMFAAttemptBudgets = `-- name: EraseMFAAttemptBudgets :exec
+DELETE FROM auth.mfa_attempt_budgets WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseMFAAttemptBudgets(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseMFAAttemptBudgets, userID)
+	return err
+}
+
+const eraseMFAFailureStreaks = `-- name: EraseMFAFailureStreaks :exec
+DELETE FROM auth.mfa_failure_streaks WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseMFAFailureStreaks(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseMFAFailureStreaks, userID)
+	return err
+}
+
+const eraseMFALoginChallenges = `-- name: EraseMFALoginChallenges :exec
+DELETE FROM auth.mfa_login_challenges WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseMFALoginChallenges(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseMFALoginChallenges, userID)
+	return err
+}
+
+const eraseMFAOTPFactors = `-- name: EraseMFAOTPFactors :exec
+DELETE FROM auth.mfa_otp_factors WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseMFAOTPFactors(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseMFAOTPFactors, userID)
+	return err
+}
+
+const eraseMFAPushChallenges = `-- name: EraseMFAPushChallenges :exec
+DELETE FROM auth.mfa_push_challenges WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseMFAPushChallenges(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseMFAPushChallenges, userID)
+	return err
+}
+
+const eraseMFAPushDevices = `-- name: EraseMFAPushDevices :exec
+DELETE FROM auth.mfa_push_devices WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseMFAPushDevices(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseMFAPushDevices, userID)
+	return err
+}
+
+const eraseMFAPushPairings = `-- name: EraseMFAPushPairings :exec
+DELETE FROM auth.mfa_push_pairings WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseMFAPushPairings(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseMFAPushPairings, userID)
+	return err
+}
+
+const eraseMFARecoveryCodes = `-- name: EraseMFARecoveryCodes :exec
+DELETE FROM auth.mfa_recovery_codes WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseMFARecoveryCodes(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseMFARecoveryCodes, userID)
+	return err
+}
+
+const eraseMFATOTP = `-- name: EraseMFATOTP :exec
+DELETE FROM auth.mfa_totp WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseMFATOTP(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseMFATOTP, userID)
+	return err
+}
+
+const eraseMFAVerifications = `-- name: EraseMFAVerifications :exec
+DELETE FROM auth.mfa_verifications WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseMFAVerifications(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseMFAVerifications, userID)
+	return err
+}
+
+const eraseMagicLinksTo = `-- name: EraseMagicLinksTo :exec
+DELETE FROM auth.magic_links WHERE lower(email) = $1::text
+`
+
+func (q *Queries) EraseMagicLinksTo(ctx context.Context, email string) error {
+	_, err := q.db.Exec(ctx, eraseMagicLinksTo, email)
+	return err
+}
+
+const eraseNetworkLoginAttemptsOf = `-- name: EraseNetworkLoginAttemptsOf :exec
+DELETE FROM auth.login_attempts_by_network WHERE email = $1::text
+`
+
+func (q *Queries) EraseNetworkLoginAttemptsOf(ctx context.Context, email string) error {
+	_, err := q.db.Exec(ctx, eraseNetworkLoginAttemptsOf, email)
+	return err
+}
+
+const eraseNotifications = `-- name: EraseNotifications :exec
+DELETE FROM auth.notifications WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseNotifications(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseNotifications, userID)
+	return err
+}
+
+const eraseOAuthLinkStates = `-- name: EraseOAuthLinkStates :exec
+DELETE FROM auth.oauth_states WHERE link_user_id = $1::uuid
+`
+
+func (q *Queries) EraseOAuthLinkStates(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseOAuthLinkStates, userID)
+	return err
+}
+
+const erasePasskeyCredentials = `-- name: ErasePasskeyCredentials :exec
+
+DELETE FROM auth.passkey_credentials WHERE user_id = $1::uuid
+`
+
+// -----------------------------------------------------------------------
+// Erasure (erasure.go): what an erased account leaves outside its user row
+// and the audit trail, by its ID, then by its address (lowercased).
+// -----------------------------------------------------------------------
+func (q *Queries) ErasePasskeyCredentials(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, erasePasskeyCredentials, userID)
+	return err
+}
+
+const erasePasswordCredentials = `-- name: ErasePasswordCredentials :exec
+DELETE FROM auth.password_credentials WHERE user_id = $1::uuid
+`
+
+func (q *Queries) ErasePasswordCredentials(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, erasePasswordCredentials, userID)
+	return err
+}
+
+const erasePasswordResets = `-- name: ErasePasswordResets :exec
+DELETE FROM auth.password_resets WHERE user_id = $1::uuid
+`
+
+func (q *Queries) ErasePasswordResets(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, erasePasswordResets, userID)
+	return err
+}
+
+const erasePhoneVerifications = `-- name: ErasePhoneVerifications :exec
+DELETE FROM account.phone_verifications WHERE user_id = $1::uuid
+`
+
+func (q *Queries) ErasePhoneVerifications(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, erasePhoneVerifications, userID)
+	return err
+}
+
+const erasePlatformSocialIdentities = `-- name: ErasePlatformSocialIdentities :exec
+DELETE FROM auth.platform_social_identities WHERE user_id = $1::uuid
+`
+
+func (q *Queries) ErasePlatformSocialIdentities(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, erasePlatformSocialIdentities, userID)
+	return err
+}
+
+const erasePlatformSocialLinkCodes = `-- name: ErasePlatformSocialLinkCodes :exec
+DELETE FROM auth.platform_social_link_codes WHERE user_id = $1::uuid
+`
+
+func (q *Queries) ErasePlatformSocialLinkCodes(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, erasePlatformSocialLinkCodes, userID)
+	return err
+}
+
+const eraseRefreshTokens = `-- name: EraseRefreshTokens :exec
+DELETE FROM auth.oidc_refresh_tokens WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseRefreshTokens(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseRefreshTokens, userID)
+	return err
+}
+
+const eraseRoleAssignments = `-- name: EraseRoleAssignments :exec
+DELETE FROM rbac.user_roles WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseRoleAssignments(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseRoleAssignments, userID)
+	return err
+}
+
+const eraseSAMLAppAssignments = `-- name: EraseSAMLAppAssignments :exec
+DELETE FROM organization.saml_sp_user_assignments WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseSAMLAppAssignments(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseSAMLAppAssignments, userID)
+	return err
+}
+
+const eraseSAMLPersistentIDs = `-- name: EraseSAMLPersistentIDs :exec
+DELETE FROM organization.saml_idp_persistent_ids WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseSAMLPersistentIDs(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseSAMLPersistentIDs, userID)
+	return err
+}
+
+const eraseSessions = `-- name: EraseSessions :exec
+DELETE FROM auth.sessions WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseSessions(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseSessions, userID)
+	return err
+}
+
+const eraseSourceFailuresOf = `-- name: EraseSourceFailuresOf :exec
+DELETE FROM auth.login_source_failures WHERE email = $1::text
+`
+
+func (q *Queries) EraseSourceFailuresOf(ctx context.Context, email string) error {
+	_, err := q.db.Exec(ctx, eraseSourceFailuresOf, email)
+	return err
+}
+
+const eraseSpentInvitesTo = `-- name: EraseSpentInvitesTo :exec
+DELETE FROM organization.invites WHERE lower(email) = $1::text AND (status <> 'pending' OR expires_at <= NOW())
+`
+
+func (q *Queries) EraseSpentInvitesTo(ctx context.Context, email string) error {
+	_, err := q.db.Exec(ctx, eraseSpentInvitesTo, email)
+	return err
+}
+
+const eraseTokenVaultConnectStates = `-- name: EraseTokenVaultConnectStates :exec
+DELETE FROM organization.token_vault_connect_states WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseTokenVaultConnectStates(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseTokenVaultConnectStates, userID)
+	return err
+}
+
+const eraseTokenVaultGrants = `-- name: EraseTokenVaultGrants :exec
+DELETE FROM organization.token_vault_grants WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseTokenVaultGrants(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseTokenVaultGrants, userID)
+	return err
+}
+
+const eraseTrustedDevices = `-- name: EraseTrustedDevices :exec
+DELETE FROM auth.trusted_devices WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseTrustedDevices(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseTrustedDevices, userID)
+	return err
+}
+
+const eraseWebAuthnSessions = `-- name: EraseWebAuthnSessions :exec
+DELETE FROM auth.webauthn_sessions WHERE user_id = $1::uuid
+`
+
+func (q *Queries) EraseWebAuthnSessions(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, eraseWebAuthnSessions, userID)
+	return err
 }
 
 const expireReadyExports = `-- name: ExpireReadyExports :execrows
@@ -350,7 +619,7 @@ type FailExportRequestParams struct {
 	ErrorMsg       *string
 	ID             uuid.UUID
 	OrganizationID uuid.UUID
-	LeaseOwner     pgtype.UUID
+	LeaseOwner     *uuid.UUID
 }
 
 // Mark an export request the worker holds the lease on as failed.
@@ -365,36 +634,6 @@ func (q *Queries) FailExportRequest(ctx context.Context, arg FailExportRequestPa
 		return 0, err
 	}
 	return result.RowsAffected(), nil
-}
-
-const getEvidenceRun = `-- name: GetEvidenceRun :one
-SELECT id, organization_id, framework, generated_at, generated_by,
-       pass_count, fail_count, na_count, controls
-FROM organization.compliance_evidence_runs
-WHERE id = $1 AND organization_id = $2
-`
-
-type GetEvidenceRunParams struct {
-	ID             uuid.UUID
-	OrganizationID uuid.UUID
-}
-
-// Fetch a single evidence run with its full controls JSONB blob.
-func (q *Queries) GetEvidenceRun(ctx context.Context, arg GetEvidenceRunParams) (OrganizationComplianceEvidenceRun, error) {
-	row := q.db.QueryRow(ctx, getEvidenceRun, arg.ID, arg.OrganizationID)
-	var i OrganizationComplianceEvidenceRun
-	err := row.Scan(
-		&i.ID,
-		&i.OrganizationID,
-		&i.Framework,
-		&i.GeneratedAt,
-		&i.GeneratedBy,
-		&i.PassCount,
-		&i.FailCount,
-		&i.NaCount,
-		&i.Controls,
-	)
-	return i, err
 }
 
 const getExportRequest = `-- name: GetExportRequest :one
@@ -413,11 +652,11 @@ type GetExportRequestRow struct {
 	ID             uuid.UUID
 	OrganizationID uuid.UUID
 	SubjectID      uuid.UUID
-	RequestedBy    pgtype.UUID
+	RequestedBy    *uuid.UUID
 	Status         string
 	Payload        []byte
 	Error          *string
-	CompletedAt    pgtype.Timestamptz
+	CompletedAt    *time.Time
 	CreatedAt      time.Time
 }
 
@@ -435,6 +674,64 @@ func (q *Queries) GetExportRequest(ctx context.Context, arg GetExportRequestPara
 		&i.CompletedAt,
 		&i.CreatedAt,
 	)
+	return i, err
+}
+
+const getOwnProfileForExport = `-- name: GetOwnProfileForExport :one
+SELECT email, phone, display_name, avatar_url, metadata, status, email_verified_at, phone_verified_at, created_at
+FROM account.users
+WHERE id = $1
+`
+
+type GetOwnProfileForExportRow struct {
+	Email           string
+	Phone           *string
+	DisplayName     *string
+	AvatarUrl       *string
+	Metadata        []byte
+	Status          string
+	EmailVerifiedAt *time.Time
+	PhoneVerifiedAt *time.Time
+	CreatedAt       time.Time
+}
+
+// The person's own profile, whichever organization is their home.
+func (q *Queries) GetOwnProfileForExport(ctx context.Context, userID uuid.UUID) (GetOwnProfileForExportRow, error) {
+	row := q.db.QueryRow(ctx, getOwnProfileForExport, userID)
+	var i GetOwnProfileForExportRow
+	err := row.Scan(
+		&i.Email,
+		&i.Phone,
+		&i.DisplayName,
+		&i.AvatarUrl,
+		&i.Metadata,
+		&i.Status,
+		&i.EmailVerifiedAt,
+		&i.PhoneVerifiedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getPurgeableOrganization = `-- name: GetPurgeableOrganization :one
+SELECT slug, deleted_at::timestamptz AS deleted_at FROM organization.organizations
+WHERE id = $1 AND status = 'deleted' AND deleted_at IS NOT NULL AND deleted_at < $2::timestamptz
+`
+
+type GetPurgeableOrganizationParams struct {
+	ID            uuid.UUID
+	DeletedBefore time.Time
+}
+
+type GetPurgeableOrganizationRow struct {
+	Slug      string
+	DeletedAt time.Time
+}
+
+func (q *Queries) GetPurgeableOrganization(ctx context.Context, arg GetPurgeableOrganizationParams) (GetPurgeableOrganizationRow, error) {
+	row := q.db.QueryRow(ctx, getPurgeableOrganization, arg.ID, arg.DeletedBefore)
+	var i GetPurgeableOrganizationRow
+	err := row.Scan(&i.Slug, &i.DeletedAt)
 	return i, err
 }
 
@@ -463,7 +760,7 @@ WHERE id = $1 AND organization_id = $2
 
 type GetUserProfileForExportParams struct {
 	UserID         uuid.UUID
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 }
 
 type GetUserProfileForExportRow struct {
@@ -473,8 +770,8 @@ type GetUserProfileForExportRow struct {
 	AvatarUrl       *string
 	Status          string
 	Metadata        []byte
-	EmailVerifiedAt pgtype.Timestamptz
-	PhoneVerifiedAt pgtype.Timestamptz
+	EmailVerifiedAt *time.Time
+	PhoneVerifiedAt *time.Time
 	CreatedAt       time.Time
 }
 
@@ -498,132 +795,6 @@ func (q *Queries) GetUserProfileForExport(ctx context.Context, arg GetUserProfil
 	return i, err
 }
 
-const insertComplianceAudit = `-- name: InsertComplianceAudit :one
-INSERT INTO organization.compliance_audits (organization_id, framework, kind, body, scope, reference, issued_on, expires_on, created_by)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-RETURNING id, framework, kind, body, scope, reference, issued_on, expires_on, created_by, created_at
-`
-
-type InsertComplianceAuditParams struct {
-	OrganizationID uuid.UUID
-	Framework      string
-	Kind           string
-	Body           string
-	Scope          string
-	Reference      string
-	IssuedOn       pgtype.Date
-	ExpiresOn      pgtype.Date
-	CreatedBy      pgtype.UUID
-}
-
-type InsertComplianceAuditRow struct {
-	ID        uuid.UUID
-	Framework string
-	Kind      string
-	Body      string
-	Scope     string
-	Reference string
-	IssuedOn  pgtype.Date
-	ExpiresOn pgtype.Date
-	CreatedBy pgtype.UUID
-	CreatedAt time.Time
-}
-
-func (q *Queries) InsertComplianceAudit(ctx context.Context, arg InsertComplianceAuditParams) (InsertComplianceAuditRow, error) {
-	row := q.db.QueryRow(ctx, insertComplianceAudit,
-		arg.OrganizationID,
-		arg.Framework,
-		arg.Kind,
-		arg.Body,
-		arg.Scope,
-		arg.Reference,
-		arg.IssuedOn,
-		arg.ExpiresOn,
-		arg.CreatedBy,
-	)
-	var i InsertComplianceAuditRow
-	err := row.Scan(
-		&i.ID,
-		&i.Framework,
-		&i.Kind,
-		&i.Body,
-		&i.Scope,
-		&i.Reference,
-		&i.IssuedOn,
-		&i.ExpiresOn,
-		&i.CreatedBy,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
-const insertEvidenceRun = `-- name: InsertEvidenceRun :one
-
-
-INSERT INTO organization.compliance_evidence_runs
-    (organization_id, framework, generated_by, pass_count, fail_count, na_count, controls)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, organization_id, framework, generated_at, generated_by,
-          pass_count, fail_count, na_count
-`
-
-type InsertEvidenceRunParams struct {
-	OrganizationID uuid.UUID
-	Framework      string
-	GeneratedBy    pgtype.UUID
-	PassCount      int32
-	FailCount      int32
-	NaCount        int32
-	Controls       []byte
-}
-
-type InsertEvidenceRunRow struct {
-	ID             uuid.UUID
-	OrganizationID uuid.UUID
-	Framework      string
-	GeneratedAt    time.Time
-	GeneratedBy    pgtype.UUID
-	PassCount      int32
-	FailCount      int32
-	NaCount        int32
-}
-
-// Queries for the compliance domain (evidence.go + gdpr.go).
-// All queries are static.
-//
-// CreatePurgeRequest uses @grace_until (a pre-computed timestamptz from Go)
-// instead of NOW() + $5::interval to avoid the text→interval cast, whose
-// generated parameter type is ambiguous between text and pgtype.Interval.
-// The value is identical: time.Now().UTC().Add(s.grace).
-// -----------------------------------------------------------------------
-// Evidence runs (SOC 2 / ISO 27001)
-// -----------------------------------------------------------------------
-// Persist one compliance-check snapshot; controls are stored as JSONB so
-// the full report is retrievable without a JOIN.
-func (q *Queries) InsertEvidenceRun(ctx context.Context, arg InsertEvidenceRunParams) (InsertEvidenceRunRow, error) {
-	row := q.db.QueryRow(ctx, insertEvidenceRun,
-		arg.OrganizationID,
-		arg.Framework,
-		arg.GeneratedBy,
-		arg.PassCount,
-		arg.FailCount,
-		arg.NaCount,
-		arg.Controls,
-	)
-	var i InsertEvidenceRunRow
-	err := row.Scan(
-		&i.ID,
-		&i.OrganizationID,
-		&i.Framework,
-		&i.GeneratedAt,
-		&i.GeneratedBy,
-		&i.PassCount,
-		&i.FailCount,
-		&i.NaCount,
-	)
-	return i, err
-}
-
 const insertExportRequest = `-- name: InsertExportRequest :one
 
 INSERT INTO account.export_requests (organization_id, user_id, subject_id, requested_by)
@@ -634,16 +805,16 @@ RETURNING id, organization_id, subject_id, requested_by, status, completed_at, c
 type InsertExportRequestParams struct {
 	OrganizationID uuid.UUID
 	SubjectID      uuid.UUID
-	RequestedBy    pgtype.UUID
+	RequestedBy    *uuid.UUID
 }
 
 type InsertExportRequestRow struct {
 	ID             uuid.UUID
 	OrganizationID uuid.UUID
 	SubjectID      uuid.UUID
-	RequestedBy    pgtype.UUID
+	RequestedBy    *uuid.UUID
 	Status         string
-	CompletedAt    pgtype.Timestamptz
+	CompletedAt    *time.Time
 	CreatedAt      time.Time
 }
 
@@ -668,6 +839,7 @@ func (q *Queries) InsertExportRequest(ctx context.Context, arg InsertExportReque
 
 const insertPurgeRequest = `-- name: InsertPurgeRequest :one
 
+
 INSERT INTO account.purge_requests (organization_id, user_id, subject_id, requested_by, reason, grace_until,
                                    subject_email, subject_name)
 SELECT $1, $2::uuid, $2::uuid, $3, $4, $5, u.email, u.display_name
@@ -679,7 +851,7 @@ RETURNING id, organization_id, subject_id, requested_by, reason, status,
 type InsertPurgeRequestParams struct {
 	OrganizationID uuid.UUID
 	SubjectID      uuid.UUID
-	RequestedBy    pgtype.UUID
+	RequestedBy    *uuid.UUID
 	Reason         *string
 	GraceUntil     time.Time
 }
@@ -688,16 +860,24 @@ type InsertPurgeRequestRow struct {
 	ID             uuid.UUID
 	OrganizationID uuid.UUID
 	SubjectID      uuid.UUID
-	RequestedBy    pgtype.UUID
+	RequestedBy    *uuid.UUID
 	Reason         *string
 	Status         string
 	GraceUntil     time.Time
-	CompletedAt    pgtype.Timestamptz
+	CompletedAt    *time.Time
 	CreatedAt      time.Time
 	SubjectEmail   *string
 	SubjectName    *string
 }
 
+// Queries for the gdpr domain: erasure and export requests, the erasure
+// itself, the person's export and a deleted organization's purge.
+// All queries are static.
+//
+// InsertPurgeRequest uses @grace_until (a pre-computed timestamptz from Go)
+// instead of NOW() + $5::interval to avoid the text→interval cast, whose
+// generated parameter type is ambiguous between text and pgtype.Interval.
+// The value is identical: time.Now().UTC().Add(s.grace).
 // -----------------------------------------------------------------------
 // GDPR purge requests
 // -----------------------------------------------------------------------
@@ -730,104 +910,45 @@ func (q *Queries) InsertPurgeRequest(ctx context.Context, arg InsertPurgeRequest
 	return i, err
 }
 
-const isOrganizationMember = `-- name: IsOrganizationMember :one
-SELECT EXISTS (
-    SELECT 1 FROM account.users u WHERE u.id = $1 AND u.deleted_at IS NULL
-      AND (u.organization_id = $2 OR EXISTS (
-          SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.organization_id = $2))
+const leaseDuePurgeRequests = `-- name: LeaseDuePurgeRequests :many
+WITH candidates AS (
+    SELECT id
+    FROM account.purge_requests
+    WHERE status = 'pending' AND grace_until <= NOW()
+      AND (lease_until IS NULL OR lease_until <= NOW())
+    ORDER BY grace_until, created_at
+    LIMIT 50
+    FOR UPDATE SKIP LOCKED
 )
+UPDATE account.purge_requests AS request
+SET lease_owner = $1::uuid, lease_until = $2::timestamptz
+FROM candidates
+WHERE request.id = candidates.id
+RETURNING request.id, request.subject_id
 `
 
-type IsOrganizationMemberParams struct {
-	UserID         uuid.UUID
-	OrganizationID pgtype.UUID
+type LeaseDuePurgeRequestsParams struct {
+	LeaseOwner uuid.UUID
+	LeaseUntil time.Time
 }
 
-// Whether the user is one of the organization's people: its own, or holding a role
-// there.
-func (q *Queries) IsOrganizationMember(ctx context.Context, arg IsOrganizationMemberParams) (bool, error) {
-	row := q.db.QueryRow(ctx, isOrganizationMember, arg.UserID, arg.OrganizationID)
-	var exists bool
-	err := row.Scan(&exists)
-	return exists, err
-}
-
-const latestEvidenceControls = `-- name: LatestEvidenceControls :one
-
-SELECT controls, generated_at FROM organization.compliance_evidence_runs
-WHERE organization_id = $1 AND framework = $2
-ORDER BY generated_at DESC LIMIT 1
-`
-
-type LatestEvidenceControlsParams struct {
-	OrganizationID uuid.UUID
-	Framework      string
-}
-
-type LatestEvidenceControlsRow struct {
-	Controls    []byte
-	GeneratedAt time.Time
-}
-
-// -----------------------------------------------------------------------
-// Compliance controls: owners, the last run, external audits
-// -----------------------------------------------------------------------
-// The control results of the organization's latest run of a framework.
-func (q *Queries) LatestEvidenceControls(ctx context.Context, arg LatestEvidenceControlsParams) (LatestEvidenceControlsRow, error) {
-	row := q.db.QueryRow(ctx, latestEvidenceControls, arg.OrganizationID, arg.Framework)
-	var i LatestEvidenceControlsRow
-	err := row.Scan(&i.Controls, &i.GeneratedAt)
-	return i, err
-}
-
-const listComplianceAudits = `-- name: ListComplianceAudits :many
-SELECT id, framework, kind, body, scope, reference, issued_on, expires_on, created_by, created_at
-FROM organization.compliance_audits
-WHERE organization_id = $1 AND ($2::text IS NULL OR framework = $2)
-ORDER BY issued_on DESC, created_at DESC
-LIMIT 1001
-`
-
-type ListComplianceAuditsParams struct {
-	OrganizationID uuid.UUID
-	Framework      *string
-}
-
-type ListComplianceAuditsRow struct {
+type LeaseDuePurgeRequestsRow struct {
 	ID        uuid.UUID
-	Framework string
-	Kind      string
-	Body      string
-	Scope     string
-	Reference string
-	IssuedOn  pgtype.Date
-	ExpiresOn pgtype.Date
-	CreatedBy pgtype.UUID
-	CreatedAt time.Time
+	SubjectID uuid.UUID
 }
 
-// At most paging.MaxListItems+1 rows: the API truncates the rest.
-func (q *Queries) ListComplianceAudits(ctx context.Context, arg ListComplianceAuditsParams) ([]ListComplianceAuditsRow, error) {
-	rows, err := q.db.Query(ctx, listComplianceAudits, arg.OrganizationID, arg.Framework)
+// Leases to @lease_owner, until @lease_until, up to 50 pending requests whose
+// grace period has ended and that no other worker holds.
+func (q *Queries) LeaseDuePurgeRequests(ctx context.Context, arg LeaseDuePurgeRequestsParams) ([]LeaseDuePurgeRequestsRow, error) {
+	rows, err := q.db.Query(ctx, leaseDuePurgeRequests, arg.LeaseOwner, arg.LeaseUntil)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ListComplianceAuditsRow{}
+	items := []LeaseDuePurgeRequestsRow{}
 	for rows.Next() {
-		var i ListComplianceAuditsRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.Framework,
-			&i.Kind,
-			&i.Body,
-			&i.Scope,
-			&i.Reference,
-			&i.IssuedOn,
-			&i.ExpiresOn,
-			&i.CreatedBy,
-			&i.CreatedAt,
-		); err != nil {
+		var i LeaseDuePurgeRequestsRow
+		if err := rows.Scan(&i.ID, &i.SubjectID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -838,97 +959,45 @@ func (q *Queries) ListComplianceAudits(ctx context.Context, arg ListComplianceAu
 	return items, nil
 }
 
-const listControlOwners = `-- name: ListControlOwners :many
-SELECT o.control_id, o.user_id, u.email, u.display_name, o.updated_at
-FROM organization.compliance_control_owners o
-LEFT JOIN account.users u ON u.id = o.user_id
-WHERE o.organization_id = $1
-ORDER BY o.control_id
-LIMIT 1001
+const leasePendingExportRequests = `-- name: LeasePendingExportRequests :many
+WITH candidates AS (
+    SELECT id
+    FROM account.export_requests
+    WHERE status = 'pending' AND (lease_until IS NULL OR lease_until <= NOW())
+    ORDER BY created_at
+    LIMIT 20
+    FOR UPDATE SKIP LOCKED
+)
+UPDATE account.export_requests AS request
+SET lease_owner = $1::uuid, lease_until = $2::timestamptz
+FROM candidates
+WHERE request.id = candidates.id
+RETURNING request.id, request.organization_id, request.subject_id
 `
 
-type ListControlOwnersRow struct {
-	ControlID   string
-	UserID      uuid.UUID
-	Email       *string
-	DisplayName *string
-	UpdatedAt   time.Time
+type LeasePendingExportRequestsParams struct {
+	LeaseOwner uuid.UUID
+	LeaseUntil time.Time
 }
 
-// At most paging.MaxListItems+1 rows: the API truncates the rest.
-func (q *Queries) ListControlOwners(ctx context.Context, organizationID uuid.UUID) ([]ListControlOwnersRow, error) {
-	rows, err := q.db.Query(ctx, listControlOwners, organizationID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ListControlOwnersRow{}
-	for rows.Next() {
-		var i ListControlOwnersRow
-		if err := rows.Scan(
-			&i.ControlID,
-			&i.UserID,
-			&i.Email,
-			&i.DisplayName,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listEvidenceRuns = `-- name: ListEvidenceRuns :many
-SELECT id, organization_id, framework, generated_at, generated_by,
-       pass_count, fail_count, na_count
-FROM organization.compliance_evidence_runs
-WHERE organization_id = $1 AND framework = $2
-ORDER BY generated_at DESC
-LIMIT 1001
-`
-
-type ListEvidenceRunsParams struct {
-	OrganizationID uuid.UUID
-	Framework      string
-}
-
-type ListEvidenceRunsRow struct {
+type LeasePendingExportRequestsRow struct {
 	ID             uuid.UUID
 	OrganizationID uuid.UUID
-	Framework      string
-	GeneratedAt    time.Time
-	GeneratedBy    pgtype.UUID
-	PassCount      int32
-	FailCount      int32
-	NaCount        int32
+	SubjectID      uuid.UUID
 }
 
-// List previous runs for an organization+framework, most recent first.
-// Controls are excluded from the list response (use GetEvidenceRun for full report).
-// At most paging.MaxListItems+1 rows: the API truncates the rest.
-func (q *Queries) ListEvidenceRuns(ctx context.Context, arg ListEvidenceRunsParams) ([]ListEvidenceRunsRow, error) {
-	rows, err := q.db.Query(ctx, listEvidenceRuns, arg.OrganizationID, arg.Framework)
+// Leases to @lease_owner, until @lease_until, up to 20 pending requests no
+// other worker holds.
+func (q *Queries) LeasePendingExportRequests(ctx context.Context, arg LeasePendingExportRequestsParams) ([]LeasePendingExportRequestsRow, error) {
+	rows, err := q.db.Query(ctx, leasePendingExportRequests, arg.LeaseOwner, arg.LeaseUntil)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ListEvidenceRunsRow{}
+	items := []LeasePendingExportRequestsRow{}
 	for rows.Next() {
-		var i ListEvidenceRunsRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.OrganizationID,
-			&i.Framework,
-			&i.GeneratedAt,
-			&i.GeneratedBy,
-			&i.PassCount,
-			&i.FailCount,
-			&i.NaCount,
-		); err != nil {
+		var i LeasePendingExportRequestsRow
+		if err := rows.Scan(&i.ID, &i.OrganizationID, &i.SubjectID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -951,10 +1020,10 @@ type ListExportRequestsRow struct {
 	ID             uuid.UUID
 	OrganizationID uuid.UUID
 	SubjectID      uuid.UUID
-	RequestedBy    pgtype.UUID
+	RequestedBy    *uuid.UUID
 	Status         string
 	Error          *string
-	CompletedAt    pgtype.Timestamptz
+	CompletedAt    *time.Time
 	CreatedAt      time.Time
 }
 
@@ -988,6 +1057,155 @@ func (q *Queries) ListExportRequests(ctx context.Context, organizationID uuid.UU
 	return items, nil
 }
 
+const listHomeAccounts = `-- name: ListHomeAccounts :many
+SELECT u.id, EXISTS (
+    SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.organization_id <> $1::uuid
+)::boolean AS elsewhere
+FROM account.users u WHERE u.organization_id = $1::uuid
+`
+
+type ListHomeAccountsRow struct {
+	ID        uuid.UUID
+	Elsewhere bool
+}
+
+// The accounts whose home is the organization, and whether each still holds a
+// role in another one.
+func (q *Queries) ListHomeAccounts(ctx context.Context, organizationID uuid.UUID) ([]ListHomeAccountsRow, error) {
+	rows, err := q.db.Query(ctx, listHomeAccounts, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListHomeAccountsRow{}
+	for rows.Next() {
+		var i ListHomeAccountsRow
+		if err := rows.Scan(&i.ID, &i.Elsewhere); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOrganizationTables = `-- name: ListOrganizationTables :many
+SELECT c.oid::regclass::text AS table_name
+FROM pg_catalog.pg_class c
+JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid AND a.attname = 'organization_id' AND NOT a.attisdropped
+WHERE c.relkind = 'r' AND c.relnamespace::regnamespace::text NOT IN ('pg_catalog', 'information_schema')
+  AND c.oid NOT IN ('organization.organizations'::regclass, 'platform.organization_purges'::regclass)
+  AND NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_constraint k
+      WHERE k.conrelid = c.oid AND k.contype = 'f' AND k.confrelid = 'organization.organizations'::regclass
+        AND k.confdeltype = 'c' AND k.conkey = ARRAY[a.attnum])
+ORDER BY 1
+`
+
+// Every table with an organization_id whose foreign key to the organization
+// does not cascade, or that has none (the audit log among them).
+func (q *Queries) ListOrganizationTables(ctx context.Context) ([]string, error) {
+	rows, err := q.db.Query(ctx, listOrganizationTables)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var table_name string
+		if err := rows.Scan(&table_name); err != nil {
+			return nil, err
+		}
+		items = append(items, table_name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOwnRolesForExport = `-- name: ListOwnRolesForExport :many
+SELECT r.name AS role_name, t.name AS organization_name, ur.granted_at
+FROM rbac.user_roles ur
+JOIN rbac.roles r ON r.id = ur.role_id
+JOIN organization.organizations t ON t.id = ur.organization_id
+WHERE ur.user_id = $1
+ORDER BY ur.granted_at
+`
+
+type ListOwnRolesForExportRow struct {
+	RoleName         string
+	OrganizationName string
+	GrantedAt        time.Time
+}
+
+// The person's roles in every organization, with the organization's name.
+func (q *Queries) ListOwnRolesForExport(ctx context.Context, userID uuid.UUID) ([]ListOwnRolesForExportRow, error) {
+	rows, err := q.db.Query(ctx, listOwnRolesForExport, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListOwnRolesForExportRow{}
+	for rows.Next() {
+		var i ListOwnRolesForExportRow
+		if err := rows.Scan(&i.RoleName, &i.OrganizationName, &i.GrantedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOwnSessionsForExport = `-- name: ListOwnSessionsForExport :many
+SELECT id, COALESCE(host(ip), '')::text AS ip, user_agent, created_at, last_seen_at, revoked_at
+FROM auth.sessions
+WHERE user_id = $1
+ORDER BY created_at DESC
+`
+
+type ListOwnSessionsForExportRow struct {
+	ID         uuid.UUID
+	Ip         string
+	UserAgent  *string
+	CreatedAt  time.Time
+	LastSeenAt time.Time
+	RevokedAt  *time.Time
+}
+
+// The person's sessions in every organization.
+func (q *Queries) ListOwnSessionsForExport(ctx context.Context, userID uuid.UUID) ([]ListOwnSessionsForExportRow, error) {
+	rows, err := q.db.Query(ctx, listOwnSessionsForExport, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListOwnSessionsForExportRow{}
+	for rows.Next() {
+		var i ListOwnSessionsForExportRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Ip,
+			&i.UserAgent,
+			&i.CreatedAt,
+			&i.LastSeenAt,
+			&i.RevokedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPurgeRequests = `-- name: ListPurgeRequests :many
 SELECT id, organization_id, subject_id, requested_by, reason, status,
        grace_until, completed_at, created_at, subject_email, subject_name
@@ -1001,11 +1219,11 @@ type ListPurgeRequestsRow struct {
 	ID             uuid.UUID
 	OrganizationID uuid.UUID
 	SubjectID      uuid.UUID
-	RequestedBy    pgtype.UUID
+	RequestedBy    *uuid.UUID
 	Reason         *string
 	Status         string
 	GraceUntil     time.Time
-	CompletedAt    pgtype.Timestamptz
+	CompletedAt    *time.Time
 	CreatedAt      time.Time
 	SubjectEmail   *string
 	SubjectName    *string
@@ -1045,6 +1263,43 @@ func (q *Queries) ListPurgeRequests(ctx context.Context, organizationID uuid.UUI
 	return items, nil
 }
 
+const listPurgeableOrganizations = `-- name: ListPurgeableOrganizations :many
+
+SELECT id FROM organization.organizations
+WHERE status = 'deleted' AND deleted_at IS NOT NULL AND deleted_at < $1::timestamptz
+ORDER BY deleted_at LIMIT $2
+`
+
+type ListPurgeableOrganizationsParams struct {
+	DeletedBefore time.Time
+	MaxRows       int32
+}
+
+// -----------------------------------------------------------------------
+// Organization purge (organizationpurge.go); its per-table deletes are
+// dynamic and stay there.
+// -----------------------------------------------------------------------
+// Organizations deleted before @deleted_before, oldest first.
+func (q *Queries) ListPurgeableOrganizations(ctx context.Context, arg ListPurgeableOrganizationsParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listPurgeableOrganizations, arg.DeletedBefore, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUserConsentsForExport = `-- name: ListUserConsentsForExport :many
 SELECT c.client_id, COALESCE(cl.name, '')::text AS client_name, c.scopes, c.granted_at
 FROM auth.oidc_consents c
@@ -1055,7 +1310,7 @@ ORDER BY c.granted_at
 
 type ListUserConsentsForExportParams struct {
 	UserID         uuid.UUID
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 }
 
 type ListUserConsentsForExportRow struct {
@@ -1103,7 +1358,7 @@ ORDER BY t.issued_at
 
 type ListUserGrantsForExportParams struct {
 	UserID         uuid.UUID
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 }
 
 type ListUserGrantsForExportRow struct {
@@ -1153,7 +1408,7 @@ ORDER BY m.added_at
 
 type ListUserGroupsForExportParams struct {
 	UserID         uuid.UUID
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 }
 
 type ListUserGroupsForExportRow struct {
@@ -1196,7 +1451,7 @@ ORDER BY linked_at
 
 type ListUserIdentitiesForExportParams struct {
 	UserID         uuid.UUID
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 }
 
 type ListUserIdentitiesForExportRow struct {
@@ -1248,7 +1503,7 @@ ORDER BY created_at
 type ListUserOTPFactorsForExportRow struct {
 	Channel     string
 	Destination string
-	VerifiedAt  pgtype.Timestamptz
+	VerifiedAt  *time.Time
 	CreatedAt   time.Time
 }
 
@@ -1288,7 +1543,7 @@ type ListUserPasskeysForExportRow struct {
 	Name       *string
 	Transports []string
 	CreatedAt  time.Time
-	LastUsedAt pgtype.Timestamptz
+	LastUsedAt *time.Time
 }
 
 func (q *Queries) ListUserPasskeysForExport(ctx context.Context, userID uuid.UUID) ([]ListUserPasskeysForExportRow, error) {
@@ -1363,7 +1618,7 @@ ORDER BY created_at DESC
 
 type ListUserSessionsForExportParams struct {
 	UserID         uuid.UUID
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 }
 
 type ListUserSessionsForExportRow struct {
@@ -1372,7 +1627,7 @@ type ListUserSessionsForExportRow struct {
 	UserAgent  *string
 	CreatedAt  time.Time
 	LastSeenAt time.Time
-	RevokedAt  pgtype.Timestamptz
+	RevokedAt  *time.Time
 }
 
 // COALESCE ensures a non-null result for ip (inet is nullable; host() of NULL = NULL).
@@ -1418,7 +1673,7 @@ LIMIT 1000
 
 type ListUserSignInsForExportParams struct {
 	UserID         uuid.UUID
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 }
 
 type ListUserSignInsForExportRow struct {
@@ -1459,6 +1714,39 @@ func (q *Queries) ListUserSignInsForExport(ctx context.Context, arg ListUserSign
 	return items, nil
 }
 
+const lockAccountHome = `-- name: LockAccountHome :one
+SELECT organization_id FROM account.users WHERE id = $1 FOR UPDATE
+`
+
+// Locks an account, returning its home organization (NULL for none).
+func (q *Queries) LockAccountHome(ctx context.Context, id uuid.UUID) (*uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, lockAccountHome, id)
+	var organization_id *uuid.UUID
+	err := row.Scan(&organization_id)
+	return organization_id, err
+}
+
+const lockLeasedPurgeRequest = `-- name: LockLeasedPurgeRequest :one
+SELECT organization_id
+FROM account.purge_requests
+WHERE id = $1 AND subject_id = $2 AND status = 'pending' AND lease_owner = $3::uuid
+FOR UPDATE
+`
+
+type LockLeasedPurgeRequestParams struct {
+	ID         uuid.UUID
+	SubjectID  uuid.UUID
+	LeaseOwner uuid.UUID
+}
+
+// Locks a pending request @lease_owner holds, returning its organization.
+func (q *Queries) LockLeasedPurgeRequest(ctx context.Context, arg LockLeasedPurgeRequestParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, lockLeasedPurgeRequest, arg.ID, arg.SubjectID, arg.LeaseOwner)
+	var organization_id uuid.UUID
+	err := row.Scan(&organization_id)
+	return organization_id, err
+}
+
 const purgeUserPII = `-- name: PurgeUserPII :one
 UPDATE account.users u
 SET email              = 'redacted-' || u.id::text || '@gdpr.invalid',
@@ -1487,53 +1775,83 @@ func (q *Queries) PurgeUserPII(ctx context.Context, userID uuid.UUID) (string, e
 	return email, err
 }
 
-const readyExportRequest = `-- name: ReadyExportRequest :exec
-UPDATE account.export_requests
-SET status = 'ready', payload = $1, completed_at = NOW()
-WHERE id = $2
+const quarantinePurgeRequest = `-- name: QuarantinePurgeRequest :exec
+UPDATE account.purge_requests
+SET status = 'quarantined', quarantined_at = NOW(),
+    quarantine_reason = 'organization ownership mismatch detected by worker',
+    lease_owner = NULL, lease_until = NULL
+WHERE id = $1 AND status = 'pending' AND lease_owner = $2::uuid
 `
 
-type ReadyExportRequestParams struct {
-	Payload []byte
-	ID      uuid.UUID
+type QuarantinePurgeRequestParams struct {
+	ID         uuid.UUID
+	LeaseOwner uuid.UUID
 }
 
-func (q *Queries) ReadyExportRequest(ctx context.Context, arg ReadyExportRequestParams) error {
-	_, err := q.db.Exec(ctx, readyExportRequest, arg.Payload, arg.ID)
+// Sets aside a leased request whose account's home is not the request's
+// organization.
+func (q *Queries) QuarantinePurgeRequest(ctx context.Context, arg QuarantinePurgeRequestParams) error {
+	_, err := q.db.Exec(ctx, quarantinePurgeRequest, arg.ID, arg.LeaseOwner)
 	return err
 }
 
-const revokeUserSessions = `-- name: RevokeUserSessions :exec
-UPDATE auth.sessions
-SET revoked_at = COALESCE(revoked_at, NOW())
-WHERE user_id = $1
+const recordOrganizationPurge = `-- name: RecordOrganizationPurge :exec
+INSERT INTO platform.organization_purges (organization_id, slug, deleted_at, rows_purged, accounts_removed, accounts_detached)
+VALUES ($1, $2, $3, $4, $5::bigint, $6::bigint)
+ON CONFLICT (organization_id) DO UPDATE SET purged_at = NOW(), rows_purged = EXCLUDED.rows_purged,
+    accounts_removed = EXCLUDED.accounts_removed, accounts_detached = EXCLUDED.accounts_detached
 `
 
-func (q *Queries) RevokeUserSessions(ctx context.Context, userID uuid.UUID) error {
-	_, err := q.db.Exec(ctx, revokeUserSessions, userID)
-	return err
+type RecordOrganizationPurgeParams struct {
+	OrganizationID   uuid.UUID
+	Slug             string
+	DeletedAt        time.Time
+	RowsPurged       []byte
+	AccountsRemoved  int64
+	AccountsDetached int64
 }
 
-const upsertControlOwner = `-- name: UpsertControlOwner :exec
-INSERT INTO organization.compliance_control_owners (organization_id, control_id, user_id, updated_by, updated_at)
-VALUES ($1, $2, $3, $4, NOW())
-ON CONFLICT (organization_id, control_id) DO UPDATE SET
-    user_id = EXCLUDED.user_id, updated_by = EXCLUDED.updated_by, updated_at = NOW()
-`
-
-type UpsertControlOwnerParams struct {
-	OrganizationID uuid.UUID
-	ControlID      string
-	UserID         uuid.UUID
-	UpdatedBy      pgtype.UUID
-}
-
-func (q *Queries) UpsertControlOwner(ctx context.Context, arg UpsertControlOwnerParams) error {
-	_, err := q.db.Exec(ctx, upsertControlOwner,
+func (q *Queries) RecordOrganizationPurge(ctx context.Context, arg RecordOrganizationPurgeParams) error {
+	_, err := q.db.Exec(ctx, recordOrganizationPurge,
 		arg.OrganizationID,
-		arg.ControlID,
-		arg.UserID,
-		arg.UpdatedBy,
+		arg.Slug,
+		arg.DeletedAt,
+		arg.RowsPurged,
+		arg.AccountsRemoved,
+		arg.AccountsDetached,
 	)
 	return err
+}
+
+const revokeIssuedCredentials = `-- name: RevokeIssuedCredentials :exec
+UPDATE auth.credentials
+SET subject = 'erased', claims = '{}', revoked_at = COALESCE(revoked_at, NOW()), user_id = NULL
+WHERE user_id = $1::uuid
+`
+
+// A credential issued to the person is revoked and its claims cleared; the row
+// stays so a verifier still learns it is revoked.
+func (q *Queries) RevokeIssuedCredentials(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, revokeIssuedCredentials, userID)
+	return err
+}
+
+const userBelongsToOrganization = `-- name: UserBelongsToOrganization :one
+SELECT EXISTS (
+    SELECT 1 FROM account.users WHERE id = $1 AND organization_id = $2::uuid
+)
+`
+
+type UserBelongsToOrganizationParams struct {
+	UserID         uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+// Whether organization_id is the user's home organization, not merely one
+// where they hold a role.
+func (q *Queries) UserBelongsToOrganization(ctx context.Context, arg UserBelongsToOrganizationParams) (bool, error) {
+	row := q.db.QueryRow(ctx, userBelongsToOrganization, arg.UserID, arg.OrganizationID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }

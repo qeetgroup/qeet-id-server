@@ -1,0 +1,104 @@
+get:
+  operationId: listAdminPortalLinks
+  description: >-
+    Lists the admin-portal links an organization admin has generated for external IT
+    admins, returning metadata only; the raw link token is shown just once at
+    generation and is never returned again. Generate a link with POST to this
+    path and revoke one with the delete endpoint.
+  summary: List admin portal links
+  tags:
+    - Admin Portal
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: >-
+        Links (metadata only — the raw token is never returned again after
+        generation)
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              truncated:
+                $ref: ../../../shared/schemas/Truncated.yaml
+              items:
+                type: array
+                items:
+                  $ref: ../../components/schemas/AdminPortalLink.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+post:
+  operationId: createAdminPortalLink
+  summary: Generate an admin portal link
+  description: >-
+    Mints a one-time link an external IT admin (no Qeet ID account) can exchange
+    for a short-lived portal session, scoped to the given capabilities and
+    expiring after ttl_seconds (900 to 86400, default 3600 when omitted; a value
+    out of range is refused with 422 adminportal.ttl_out_of_range, whose
+    metadata carries min_seconds and max_seconds). The raw token/url is returned
+    exactly once; the URL opens the hosted enterprise-setup page
+    ({LOGIN_BASE_URL}/enterprise-setup) and carries the token only in its
+    fragment.
+  tags:
+    - Admin Portal
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - capabilities
+          properties:
+            capabilities:
+              type: array
+              items:
+                type: string
+                enum:
+                  - saml
+                  - scim
+                  - domain_verification
+            ttl_seconds:
+              type: integer
+              maximum: 86400
+              description: >-
+                How long the link lasts, in seconds, from 900 to 86400. Omitted
+                or 0 means an hour.
+  responses:
+    '201':
+      description: Link generated
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              link:
+                $ref: ../../components/schemas/AdminPortalLink.yaml
+              token:
+                type: string
+                description: The raw token — shown only here. Not recoverable afterward.
+              url:
+                type: string
+                format: uri
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml

@@ -5,11 +5,13 @@ package retention
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -112,14 +114,7 @@ func TestSweepIsAudited(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
 	organization := dbtest.Organization(t)
 	svc := NewService(pool)
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := svc.Update(ctx, tx, organization, Policy{DeletedUsersEnabled: true, DeletedUsersDays: 30}, nil); err != nil {
-		t.Fatal(err)
-	}
-	if err := tx.Commit(ctx); err != nil {
+	if _, err := svc.Update(ctx, organization, Policy{DeletedUsersEnabled: true, DeletedUsersDays: 30}, audit.Actor{Type: "system"}); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
@@ -149,7 +144,7 @@ func TestThePolicySaysWhoLastChangedIt(t *testing.T) {
 	organization := dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
 	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: NewService(dbtest.Pool(t))}).Mount)
-	path := "/tenants/" + organization.String() + "/retention"
+	path := "/organizations/" + organization.String() + "/retention"
 	var p Policy
 	dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, path, nil), &p)
 	if p.UpdatedAt != nil || p.UpdatedBy != nil {
@@ -161,5 +156,51 @@ func TestThePolicySaysWhoLastChangedIt(t *testing.T) {
 	dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, path, nil), &p)
 	if p.UpdatedAt == nil || p.UpdatedBy == nil || *p.UpdatedBy != admin.ID || p.UpdatedByEmail == nil || *p.UpdatedByEmail != admin.Email {
 		t.Errorf("the policy after a change: %+v, want when and by the admin", p)
+	}
+}
+
+// refuseAudit makes the organization's audit writes of action fail until t
+// ends, as an audit store that is down would.
+func refuseAudit(t *testing.T, organization uuid.UUID, action string) {
+	t.Helper()
+	owner, name := dbtest.Owner(t), "refuse_"+strings.ReplaceAll(uuid.NewString(), "-", "")
+	if _, err := owner.Exec(dbtest.Context(t), `
+		CREATE FUNCTION pg_temp.`+name+`() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit store down'; END $$;
+		CREATE TRIGGER `+name+` BEFORE INSERT ON audit.events FOR EACH ROW
+		WHEN (NEW.organization_id = '`+organization.String()+`' AND NEW.action = '`+action+`') EXECUTE FUNCTION pg_temp.`+name+`()`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = owner.Exec(context.Background(), `DROP FUNCTION pg_temp.`+name+`() CASCADE`) })
+}
+
+// TestPolicyChangeCommitsWithItsAuditEvent checks that a retention policy
+// change is undone when its audit event can't be written, and recorded once,
+// as the person who made it, when it can.
+func TestPolicyChangeCommitsWithItsAuditEvent(t *testing.T) {
+	ctx := dbtest.Context(t)
+	svc := NewService(dbtest.Pool(t))
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	actor := audit.Actor{UserID: &admin.ID, Type: "user"}
+	policy := Policy{DeletedUsersEnabled: true, DeletedUsersDays: 45}
+
+	refuseAudit(t, organization, "retention.policy_updated")
+	if _, err := svc.Update(ctx, organization, policy, actor); err == nil {
+		t.Fatal("change the policy while its audit event can't be written: no error")
+	}
+	if p, err := svc.Get(ctx, organization); err != nil || p.DeletedUsersEnabled || p.UpdatedAt != nil {
+		t.Errorf("policy after a failed audit write: %+v, %v; want the default", p, err)
+	}
+
+	other := dbtest.Organization(t)
+	if _, err := svc.Update(ctx, other, policy, actor); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := svc.Get(ctx, other); err != nil || !p.DeletedUsersEnabled || p.DeletedUsersDays != 45 {
+		t.Errorf("policy after a change: %+v, %v; want purging after 45 days", p, err)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'retention.policy_updated'
+		AND actor_user_id = $2 AND metadata->>'deleted_users_days' = '45'`, other, admin.ID); n != 1 {
+		t.Errorf("%d policy changes recorded as the admin's, want 1", n)
 	}
 }

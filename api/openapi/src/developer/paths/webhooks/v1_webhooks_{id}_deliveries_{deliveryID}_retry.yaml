@@ -1,7 +1,7 @@
 post:
   operationId: retryWebhookDelivery
   description: >-
-    Sends one of the organisation's webhook deliveries again now. A delivery
+    Sends one of the organization's webhook deliveries again now. A delivery
     that had finished, delivered or given up after its 60 attempts, starts a
     fresh set of attempts; one still retrying keeps its count. The delivery
     must be one of the webhook's in the path: any other, like one that doesn't

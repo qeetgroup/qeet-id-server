@@ -10,7 +10,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
@@ -25,7 +25,7 @@ func editableRole(ctx context.Context, q *dbgen.Queries, organizationID, roleID 
 		return row, err
 	}
 	if row.IsSystem {
-		return row, errs.ErrRBACSystemRoleFixed
+		return row, ErrSystemRoleFixed
 	}
 	return row, nil
 }
@@ -127,8 +127,8 @@ func (s *Service) UpdateRole(ctx context.Context, organizationID, roleID uuid.UU
 		return &role, nil
 	}
 	row, err := q.UpdateRole(ctx, next)
-	if pgxerr.IsUnique(err) {
-		return nil, errs.ErrRBACRoleNameExists
+	if postgres.IsUnique(err) {
+		return nil, ErrRoleNameExists
 	}
 	if err != nil {
 		return nil, err

@@ -18,14 +18,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/qeetai/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/qeetai/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/ai"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/ai/anthropic"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/ai/openai"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
@@ -34,9 +35,9 @@ import (
 type ConfigSource string
 
 const (
-	SourceNone         ConfigSource = "none"     // no organization or platform key
-	SourcePlatform     ConfigSource = "platform" // the deployment's QEETAI_* key
-	SourceOrganization ConfigSource = "tenant"   // the organization's own (BYOK) key
+	SourceNone         ConfigSource = "none"         // no organization or platform key
+	SourcePlatform     ConfigSource = "platform"     // the deployment's QEETAI_* key
+	SourceOrganization ConfigSource = "organization" // the organization's own (BYOK) key
 )
 
 // supportedProviders is the set of provider identifiers accepted on write.
@@ -133,8 +134,8 @@ func (c *ProviderConfig) encrypt(organizationID uuid.UUID, plaintext string) (ci
 	return c.box.Seal(organizationID, qeetaiKeyPurpose, qeetaiKeyResource, []byte(plaintext))
 }
 
-// decrypt opens an organization's provider key. envelope.Open also reads legacy rows
-// sealed without the organization context; ProviderFor then reseals them.
+// decrypt opens an organization's provider key, sealed with the current data key
+// or a previous one; ProviderFor then reseals one sealed with a previous key.
 func (c *ProviderConfig) decrypt(organizationID uuid.UUID, ciphertext, nonce []byte) (string, error) {
 	if c.box == nil {
 		return "", errs.ErrInternalServer.WithDetail("Qeet AI key encryption is unavailable")
@@ -146,8 +147,8 @@ func (c *ProviderConfig) decrypt(organizationID uuid.UUID, ciphertext, nonce []b
 	return string(plaintext), nil
 }
 
-// reseal seals a row again with the current key and scheme when it was sealed
-// otherwise. Best-effort: a failure here must not break the inference path
+// reseal seals a row again with the current key when a previous key sealed
+// it. Best-effort: a failure here must not break the inference path
 // that just decrypted fine.
 func (c *ProviderConfig) reseal(ctx context.Context, organizationID uuid.UUID, plaintext string, existing []byte) {
 	if c.box == nil || c.box.IsCurrent(existing) {
@@ -157,11 +158,7 @@ func (c *ProviderConfig) reseal(ctx context.Context, organizationID uuid.UUID, p
 	if err != nil {
 		return
 	}
-	_, _ = c.pool.Exec(ctx, `
-		UPDATE qeetai.provider_settings
-		SET key_ciphertext = $2, key_nonce = $3
-		WHERE organization_id = $1
-	`, organizationID, ct, nonce)
+	_ = c.q.ResealProviderKey(ctx, dbgen.ResealProviderKeyParams{OrganizationID: organizationID, KeyCiphertext: ct, KeyNonce: nonce})
 }
 
 // hint returns the last 4 characters of a key, but only when it is long enough
@@ -217,7 +214,7 @@ func (p PlatformProvider) view() EffectiveConfig {
 }
 
 // ProviderFor builds the ai.Provider a turn should stream through for an organization.
-// Returns errs.ErrQeetAIUnconfigured when neither an organization nor a platform key is
+// Returns ErrUnconfigured when neither an organization nor a platform key is
 // available.
 func (c *ProviderConfig) ProviderFor(ctx context.Context, organizationID uuid.UUID) (ai.Provider, error) {
 	row, ok, err := c.organizationRow(ctx, organizationID)
@@ -227,7 +224,7 @@ func (c *ProviderConfig) ProviderFor(ctx context.Context, organizationID uuid.UU
 	if ok && row.Enabled {
 		key, derr := c.decrypt(organizationID, row.KeyCiphertext, row.KeyNonce)
 		if derr != nil {
-			return nil, fmt.Errorf("qeetai: decrypt tenant provider key: %w", derr)
+			return nil, fmt.Errorf("qeetai: decrypt organization provider key: %w", derr)
 		}
 		c.reseal(ctx, organizationID, key, row.KeyCiphertext)
 		return c.buildProvider(row.Provider, key, row.BaseUrl, row.Model, int(row.MaxTokens)), nil
@@ -235,7 +232,7 @@ func (c *ProviderConfig) ProviderFor(ctx context.Context, organizationID uuid.UU
 	if c.platform.configured() {
 		return c.buildProvider(c.platform.Provider, c.platform.APIKey, c.platform.BaseURL, c.platform.Model, c.platform.MaxTokens), nil
 	}
-	return nil, errs.ErrQeetAIUnconfigured
+	return nil, ErrUnconfigured
 }
 
 // buildProvider returns the ai.Provider for provider; "azure" uses the
@@ -313,7 +310,7 @@ func (c *ProviderConfig) Set(ctx context.Context, organizationID uuid.UUID, in S
 		KeyNonce:       nonce,
 		KeyLast4:       hint(in.APIKey),
 		Enabled:        true,
-		UpdatedBy:      toPgUUID(in.UpdatedBy),
+		UpdatedBy:      postgres.NullIfZero(in.UpdatedBy),
 	})
 	if err != nil {
 		return EffectiveConfig{}, err
@@ -333,6 +330,13 @@ func (c *ProviderConfig) Set(ctx context.Context, organizationID uuid.UUID, in S
 func (c *ProviderConfig) Clear(ctx context.Context, organizationID uuid.UUID) error {
 	_, err := c.q.DeleteProviderSettings(ctx, organizationID)
 	return err
+}
+
+// RecordChange records action, a change to the organization's provider config
+// by actor, as an event of its own after the change; meta must hold no key
+// material.
+func (c *ProviderConfig) RecordChange(ctx context.Context, organizationID uuid.UUID, action string, meta map[string]any, actor audit.Actor) error {
+	return audit.RecordAlone(ctx, c.pool, actor.Event(organizationID, action, "qeetai_provider_config", organizationID, meta))
 }
 
 // Test performs a minimal live request against the provider to validate the
@@ -393,7 +397,7 @@ func (c *ProviderConfig) probeOpenAI(ctx context.Context, in SetProviderInput) e
 func (c *ProviderConfig) evalProbe(req *http.Request, provider string) error {
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return errs.ErrQeetAIProviderUnreachable.WithMessage("could not reach the provider endpoint: " + err.Error())
+		return ErrProviderUnreachable.WithMessage("could not reach the provider endpoint: " + err.Error())
 	}
 	defer func() { _, _ = io.Copy(io.Discard, resp.Body); _ = resp.Body.Close() }()
 
@@ -401,14 +405,14 @@ func (c *ProviderConfig) evalProbe(req *http.Request, provider string) error {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
 		return nil
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
-		return errs.ErrQeetAIProviderKeyInvalid
+		return ErrProviderKeyInvalid
 	case provider == "anthropic" && resp.StatusCode == http.StatusBadRequest:
 		// Anthropic authenticates before validating the body; a 400 here means
 		// the key is good but the model/body is off — surface as a model error.
-		return errs.ErrQeetAIProviderModelInvalid
+		return ErrProviderModelInvalid
 	default:
 		snippet := readSnippet(resp.Body)
-		return errs.ErrQeetAIProviderError.WithMessage(fmt.Sprintf("provider returned %d: %s", resp.StatusCode, snippet))
+		return ErrProviderError.WithMessage(fmt.Sprintf("provider returned %d: %s", resp.StatusCode, snippet))
 	}
 }
 
@@ -416,13 +420,4 @@ func (c *ProviderConfig) evalProbe(req *http.Request, provider string) error {
 func readSnippet(r io.Reader) string {
 	b, _ := io.ReadAll(io.LimitReader(r, 300))
 	return strings.TrimSpace(string(b))
-}
-
-// toPgUUID converts a uuid.UUID (uuid.Nil ⇒ NULL) to pgtype.UUID for the
-// nullable updated_by column.
-func toPgUUID(id uuid.UUID) pgtype.UUID {
-	if id == uuid.Nil {
-		return pgtype.UUID{}
-	}
-	return pgtype.UUID{Bytes: id, Valid: true}
 }

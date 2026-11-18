@@ -30,9 +30,8 @@ import (
 	"github.com/google/uuid"
 	dsig "github.com/russellhaering/goxmldsig"
 
-	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 // spKeys is an app's own signing and encryption key, as an SP holds it.
@@ -79,7 +78,7 @@ func createSP(t *testing.T, idp *IdP, organization uuid.UUID, in CreateSPInput) 
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	sp, err := idp.CreateSP(ctx, tx, organization, in)
+	sp, err := idp.createSP(ctx, tx, organization, in)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +94,7 @@ func updateSP(t *testing.T, idp *IdP, sp *ServiceProvider, in UpdateSPInput) (*S
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	out, err := idp.UpdateSP(ctx, tx, sp.ID, sp.OrganizationID, in)
+	out, err := idp.updateSP(ctx, tx, sp.ID, sp.OrganizationID, in)
 	if err != nil {
 		return nil, err
 	}
@@ -116,17 +115,17 @@ func TestAppCertificatesSayWhatTheyAreFor(t *testing.T) {
 
 	in := app("https://app.example.test/unused")
 	in.Certificate = keys.certPEM
-	if _, err := createSP(t, s.idp, organization, in); !errors.Is(err, errs.ErrSAMLCertificateUnused) {
+	if _, err := createSP(t, s.idp, organization, in); !errors.Is(err, ErrCertificateUnused) {
 		t.Errorf("a certificate for nothing: %v, want certificate_unused", err)
 	}
 	in = app("https://app.example.test/none")
 	in.EncryptAssertions = true
-	if _, err := createSP(t, s.idp, organization, in); !errors.Is(err, errs.ErrSAMLCertificateRequired) {
+	if _, err := createSP(t, s.idp, organization, in); !errors.Is(err, ErrCertificateRequired) {
 		t.Errorf("encryption with no certificate: %v, want certificate_required", err)
 	}
 	in = app("https://app.example.test/ec")
 	in.Certificate, in.EncryptAssertions = ecdsaCertPEM(t), true
-	if _, err := createSP(t, s.idp, organization, in); !errors.Is(err, errs.ErrSAMLEncryptionKeyUnsupported) {
+	if _, err := createSP(t, s.idp, organization, in); !errors.Is(err, ErrEncryptionKeyUnsupported) {
 		t.Errorf("encryption to an ECDSA key: %v, want encryption_key_unsupported", err)
 	}
 
@@ -141,11 +140,11 @@ func TestAppCertificatesSayWhatTheyAreFor(t *testing.T) {
 		t.Errorf("certificate details %+v, want its subject, SHA-256 fingerprint and validity", d)
 	}
 	off := false
-	if _, err := updateSP(t, s.idp, sp, UpdateSPInput{RequireSignedRequests: &off}); !errors.Is(err, errs.ErrSAMLCertificateUnused) {
+	if _, err := updateSP(t, s.idp, sp, UpdateSPInput{RequireSignedRequests: &off}); !errors.Is(err, ErrCertificateUnused) {
 		t.Errorf("turning off the certificate's only use: %v, want certificate_unused", err)
 	}
 	none := ""
-	if _, err := updateSP(t, s.idp, sp, UpdateSPInput{Certificate: &none}); !errors.Is(err, errs.ErrSAMLCertificateRequired) {
+	if _, err := updateSP(t, s.idp, sp, UpdateSPInput{Certificate: &none}); !errors.Is(err, ErrCertificateRequired) {
 		t.Errorf("removing the certificate signed requests need: %v, want certificate_required", err)
 	}
 	cleared, err := updateSP(t, s.idp, sp, UpdateSPInput{Certificate: &none, RequireSignedRequests: &off})
@@ -224,8 +223,8 @@ func TestSignedRequestsAreRequiredWhenAsked(t *testing.T) {
 	sso := "/saml/idp/" + organization.String() + "/sso"
 	refused := func(name string, rec *httptest.ResponseRecorder) {
 		t.Helper()
-		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeSAMLRequestSignatureInvalid) {
-			t.Errorf("%s: %d %s, want 403 %s", name, rec.Code, rec.Body.String(), errs.CodeSAMLRequestSignatureInvalid)
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), CodeRequestSignatureInvalid) {
+			t.Errorf("%s: %d %s, want 403 %s", name, rec.Code, rec.Body.String(), CodeRequestSignatureInvalid)
 		}
 	}
 
@@ -270,8 +269,8 @@ func TestRedirectSignatureCoversTheParsedRequest(t *testing.T) {
 		"the signature algorithm given twice":                          signed + "&SigAlg=x",
 	} {
 		rec := idpGet(t, s.router, sso+query, cookie)
-		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeSAMLRequestSignatureInvalid) {
-			t.Errorf("%s: %d %s, want 403 %s", name, rec.Code, rec.Body.String(), errs.CodeSAMLRequestSignatureInvalid)
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), CodeRequestSignatureInvalid) {
+			t.Errorf("%s: %d %s, want 403 %s", name, rec.Code, rec.Body.String(), CodeRequestSignatureInvalid)
 		}
 	}
 	if acs, _ := postedTo(t, idpGet(t, s.router, sso+signed, cookie)); acs != sp.ACSURL {

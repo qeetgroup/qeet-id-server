@@ -46,25 +46,14 @@ func TestCipherBindsOrganizationPurposeAndResource(t *testing.T) {
 	}
 }
 
-func TestCipherReadsLegacyAESGCM(t *testing.T) {
-	ciphertext, nonce := legacySeal(t, keyA, []byte("legacy"))
-	box, err := New(keyA)
-	if err != nil {
-		t.Fatalf("new cipher: %v", err)
-	}
-	plain, err := box.Open(uuid.New(), "secret", "resource", ciphertext, nonce)
-	if err != nil || string(plain) != "legacy" {
-		t.Fatalf("legacy open = %q, %v", plain, err)
-	}
-}
-
-// TestCipherReadsVersion1 opens a value sealed before ciphertexts named their
-// key (captured from that code), both while its key is current and after a
+// TestCipherReadsWhatItSealed opens a value sealed by an earlier build
+// (captured from that code), so the scheme's context and key derivation stay
+// as stored values need them, both while its key is current and after a
 // rotation made it a previous key.
-func TestCipherReadsVersion1(t *testing.T) {
+func TestCipherReadsWhatItSealed(t *testing.T) {
 	organization := uuid.MustParse("6f1c1f2e-3b4a-4c5d-8e9f-0a1b2c3d4e5f")
-	ciphertext := mustHex(t, "5145560128b35f55982a0c18dde54ccb2ad303810ca96ab6bb7a4a83a202b04a34bff505fa186b0a54")
-	nonce := mustHex(t, "e1b0eb3f352668ffdf9ffd11")
+	ciphertext := mustHex(t, "51455602ac73cc9080f8a11cb41a12419eb5da496cf0537b73f03e657f1fc5846d16a5460f4833c18f3655ebc287be")
+	nonce := mustHex(t, "02263814f9aaa679ac3b2394")
 	current, err := New(keyA)
 	if err != nil {
 		t.Fatal(err)
@@ -75,15 +64,38 @@ func TestCipherReadsVersion1(t *testing.T) {
 	}
 	for name, box := range map[string]*Cipher{"current": current, "previous": rotated} {
 		plain, err := box.Open(organization, "secret", "api-key", ciphertext, nonce)
-		if err != nil || string(plain) != "sealed before key ids" {
+		if err != nil || string(plain) != "sealed with key ids" {
 			t.Errorf("%s: open = %q, %v", name, plain, err)
 		}
-		if box.IsCurrent(ciphertext) {
-			t.Errorf("%s: a version 1 ciphertext reports current", name)
-		}
+	}
+	if !current.IsCurrent(ciphertext) || rotated.IsCurrent(ciphertext) {
+		t.Error("IsCurrent is wrong for a value sealed with keyA")
 	}
 	if _, err := current.Open(organization, "secret", "other", ciphertext, nonce); err == nil {
-		t.Error("version 1 ciphertext opened under the wrong context")
+		t.Error("the ciphertext opened under the wrong context")
+	}
+}
+
+// TestCipherRefusesOlderSchemes checks that ciphertexts of the schemes before
+// the current one, which nothing writes, don't open: one without a prefix
+// (AES-GCM under the data key itself) and a version 1 one, which names no key
+// (captured from that code).
+func TestCipherRefusesOlderSchemes(t *testing.T) {
+	box, err := New(keyA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unprefixed, unprefixedNonce := legacySeal(t, keyA, []byte("legacy"))
+	if _, err := box.Open(uuid.New(), "secret", "resource", unprefixed, unprefixedNonce); err == nil {
+		t.Error("a ciphertext without a prefix opened")
+	}
+	organization := uuid.MustParse("6f1c1f2e-3b4a-4c5d-8e9f-0a1b2c3d4e5f")
+	version1 := mustHex(t, "5145560128b35f55982a0c18dde54ccb2ad303810ca96ab6bb7a4a83a202b04a34bff505fa186b0a54")
+	if _, err := box.Open(organization, "secret", "api-key", version1, mustHex(t, "e1b0eb3f352668ffdf9ffd11")); err == nil {
+		t.Error("a version 1 ciphertext opened")
+	}
+	if box.IsCurrent(version1) || box.IsCurrent(unprefixed) {
+		t.Error("an older scheme's ciphertext reports current")
 	}
 }
 
@@ -131,17 +143,12 @@ func TestRotationKeepsPreviousKeysReadable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacy, legacyNonce := legacySeal(t, keyA, []byte("legacy"))
-
 	after, err := New(keyB, keyA)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if plain, err := after.Open(organization, "secret", "api-key", ciphertext, nonce); err != nil || string(plain) != "value" {
 		t.Fatalf("open under a previous key = %q, %v", plain, err)
-	}
-	if plain, err := after.Open(organization, "secret", "api-key", legacy, legacyNonce); err != nil || string(plain) != "legacy" {
-		t.Fatalf("legacy open under a previous key = %q, %v", plain, err)
 	}
 	if after.IsCurrent(ciphertext) {
 		t.Error("a value sealed with a previous key reports current")
@@ -154,9 +161,6 @@ func TestRotationKeepsPreviousKeysReadable(t *testing.T) {
 	_, err = removed.Open(organization, "secret", "api-key", ciphertext, nonce)
 	if !errors.Is(err, ErrUnknownKey) || !strings.Contains(err.Error(), before.KeyIDs()[0]) {
 		t.Errorf("open after removing its key = %v, want ErrUnknownKey naming %s", err, before.KeyIDs()[0])
-	}
-	if _, err := removed.Open(organization, "secret", "api-key", legacy, legacyNonce); err == nil {
-		t.Error("legacy value opened after its key was removed")
 	}
 }
 
@@ -202,7 +206,7 @@ func TestNewChecksEveryKey(t *testing.T) {
 
 // TestCipherRefusesANonceOfTheWrongLength: a stored nonce that was cut short
 // or replaced made the AEAD panic, taking down the request that read it. Open
-// now refuses it with an error, for current and legacy ciphertext alike.
+// now refuses it with an error.
 func TestCipherRefusesANonceOfTheWrongLength(t *testing.T) {
 	box, err := New(keyA, keyB)
 	if err != nil {
@@ -213,21 +217,15 @@ func TestCipherRefusesANonceOfTheWrongLength(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seal: %v", err)
 	}
-	version1 := mustHex(t, "5145560128b35f55982a0c18dde54ccb2ad303810ca96ab6bb7a4a83a202b04a34bff505fa186b0a54")
 	for _, bad := range [][]byte{nil, nonce[:4], append(append([]byte(nil), nonce...), 0)} {
 		if _, err := box.Open(organization, "secret", "api-key", ciphertext, bad); err == nil {
 			t.Errorf("open with a %d-byte nonce succeeded", len(bad))
 		}
-		if _, err := box.Open(organization, "secret", "api-key", version1, bad); err == nil {
-			t.Errorf("version 1 open with a %d-byte nonce succeeded", len(bad))
-		}
-		if _, err := box.Open(organization, "secret", "api-key", []byte("legacy-ciphertext"), bad); err == nil {
-			t.Errorf("legacy open with a %d-byte nonce succeeded", len(bad))
-		}
 	}
 }
 
-// legacySeal seals plaintext the oldest way: AES-GCM under the data key itself.
+// legacySeal seals plaintext the oldest way, which Open refuses: AES-GCM under
+// the data key itself.
 func legacySeal(t *testing.T, key, plaintext []byte) ([]byte, []byte) {
 	t.Helper()
 	block, err := aes.NewCipher(key)

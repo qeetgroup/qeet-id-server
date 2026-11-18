@@ -9,7 +9,6 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const countRelationObjects = `-- name: CountRelationObjects :one
@@ -340,7 +339,7 @@ WHERE u.id = ANY($1::uuid[]) AND u.deleted_at IS NULL
 
 type NamePeopleParams struct {
 	Ids            []uuid.UUID
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 }
 
 type NamePeopleRow struct {

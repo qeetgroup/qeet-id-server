@@ -16,28 +16,28 @@ post:
     inactive account also answers a wrong password with 401
     auth.invalid_credentials, counted like any wrong password; only the right
     password is refused with 403 auth.account_inactive. When the account's own
-    organisation has switched password sign-in off, a correct password is
+    organization has switched password sign-in off, a correct password is
     refused with 403 auth.method_disabled. Every sign-in is assessed for risk
     (bot-like clients, and impossible travel and new devices where the
-    organisation turns them on), and its country and device are kept 90 days for
+    organization turns them on), and its country and device are kept 90 days for
     later sign-ins to be compared against. A risky sign-in by someone with no
     second factor answers an mfa_token challenge met by a code sent to their
     verified email address (methods [email], the factor named by the challenge's
     own id), or 403 auth.risk_verification_unavailable when they have no
-    verified address. While the organisation's address rules are on, a sign-in
+    verified address. While the organization's address rules are on, a sign-in
     from an address they refuse is refused with 403 auth.address_not_allowed
     before any session is issued; the same holds on every other way of signing
-    in to the organisation (passkey, magic link, social, SAML, LDAP, invitation,
-    organisation switch, application authorization and the device flow). Each
-    failed attempt is recorded in the audit trail of the organisation the
+    in to the organization (passkey, magic link, social, SAML, LDAP, invitation,
+    organization switch, application authorization and the device flow). Each
+    failed attempt is recorded in the audit trail of the organization the
     sign-in was for (or the account's own) as auth.sign_in_failed: the account,
     or no one for an address with no account, the reason (wrong_password,
     unknown_account, account_locked or source_throttled) and the source, never
     what was submitted. The records are bounded per source network and per
-    organisation (sign_in_failures_unrecorded_total counts the rest). A lock a
+    organization (sign_in_failures_unrecorded_total counts the rest). A lock a
     failure sets is recorded as auth.account_locked with locked_until, when it
     lifts; a source throttle as auth.source_throttled. On a domain whose
-    organisation requires single sign-on, the sign-in is refused with 403
+    organization requires single sign-on, the sign-in is refused with 403
     auth.sso_required before any account is looked up or password checked, and
     nothing is counted against the lockout (see the SSORequired response).
   summary: Sign in
@@ -78,7 +78,7 @@ post:
                 idle_expires_at: '2026-10-01T10:15:00Z'
                 session_id: '018f2a70-5b6c-7d8e-9f01-2a3b4c5d6e7f'
                 user_id: '018f2a70-1a2b-7c3d-9e4f-5a6b7c8d9e0f'
-                tenant_id: '018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00'
+                organization_id: '018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00'
             mfaRequired:
               summary: A second factor is needed; complete it at POST /v1/auth/mfa
               value:

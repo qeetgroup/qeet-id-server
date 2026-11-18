@@ -3,11 +3,13 @@
 package email
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
@@ -35,10 +37,10 @@ func TestRecipientLocaleStaysWithItsOrganization(t *testing.T) {
 		address      string
 		want         string
 	}{
-		{"home organisation", home, anne.Email, "fr"},
+		{"home organization", home, anne.Email, "fr"},
 		{"address in another case", home, strings.ToUpper(anne.Email), "fr"},
 		{"member through a role", other, dirk.Email, "fr"},
-		{"organisation the account isn't in", stranger, anne.Email, ""},
+		{"organization the account isn't in", stranger, anne.Email, ""},
 		{"no account", home, "nobody@example.test", ""},
 	} {
 		got, err := service.RecipientLocale(ctx, test.organization, test.address)
@@ -51,17 +53,10 @@ func TestRecipientLocaleStaysWithItsOrganization(t *testing.T) {
 	}
 
 	for _, organization := range []uuid.UUID{home, stranger} {
-		tx, err := pool.Begin(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := service.UpsertEditor(ctx, tx, organization, "magic_link", EditorInput{Subject: "Sign in", Body: "Use this link:\n{{magic_url}}", Options: EditorOptions{
+		if _, err := service.UpsertEditor(ctx, organization, "magic_link", EditorInput{Subject: "Sign in", Body: "Use this link:\n{{magic_url}}", Options: EditorOptions{
 			Translations: map[string]LocalizedContent{"fr": {Subject: "Connexion", Body: "Utilisez ce lien :\n{{magic_url}}"}},
-		}}); err != nil {
+		}}, audit.Actor{Type: "system"}); err != nil {
 			t.Fatalf("save template: %v", err)
-		}
-		if err := tx.Commit(ctx); err != nil {
-			t.Fatal(err)
 		}
 	}
 	mailbox := &dbtest.Mailbox{}
@@ -74,5 +69,69 @@ func TestRecipientLocaleStaysWithItsOrganization(t *testing.T) {
 		if got := mailbox.Last(t).Subject; got != want {
 			t.Errorf("subject = %q, want %q", got, want)
 		}
+	}
+}
+
+func TestMain(m *testing.M) { dbtest.Main(m) }
+
+// refuseAudit makes the organization's audit writes of action fail until t
+// ends, as an audit store that is down would.
+func refuseAudit(t *testing.T, organization uuid.UUID, action string) {
+	t.Helper()
+	owner, name := dbtest.Owner(t), "refuse_"+strings.ReplaceAll(uuid.NewString(), "-", "")
+	if _, err := owner.Exec(dbtest.Context(t), `
+		CREATE FUNCTION pg_temp.`+name+`() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit store down'; END $$;
+		CREATE TRIGGER `+name+` BEFORE INSERT ON audit.events FOR EACH ROW
+		WHEN (NEW.organization_id = '`+organization.String()+`' AND NEW.action = '`+action+`') EXECUTE FUNCTION pg_temp.`+name+`()`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = owner.Exec(context.Background(), `DROP FUNCTION pg_temp.`+name+`() CASCADE`) })
+}
+
+// events counts the organization's audit events of action.
+func events(t *testing.T, organization uuid.UUID, action string) int {
+	t.Helper()
+	return dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = $2`, organization, action)
+}
+
+// TestTemplateChangesCommitWithTheirAuditEvents checks that saving and
+// resetting a template are each recorded in the transaction that makes them:
+// undone when the event can't be written, and recorded once when it can.
+func TestTemplateChangesCommitWithTheirAuditEvents(t *testing.T) {
+	ctx := dbtest.Context(t)
+	svc := NewService(dbtest.Pool(t))
+	organization := dbtest.Organization(t)
+	actor := audit.Actor{Type: "system"}
+	custom := func() bool {
+		t.Helper()
+		res, err := svc.Get(ctx, organization, "magic_link")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res.Custom
+	}
+	draft := EditorInput{Subject: "Sign in", Body: "Use this link:\n{{magic_url}}"}
+
+	refuseAudit(t, organization, "email_template.updated")
+	if _, err := svc.UpsertEditor(ctx, organization, "magic_link", draft, actor); err == nil {
+		t.Fatal("save while its audit event can't be written: no error")
+	}
+	if custom() {
+		t.Error("the template was saved without its audit event")
+	}
+
+	other := dbtest.Organization(t)
+	if _, err := svc.UpsertEditor(ctx, other, "magic_link", draft, actor); err != nil {
+		t.Fatal(err)
+	}
+	refuseAudit(t, other, "email_template.reset")
+	if _, err := svc.Reset(ctx, other, "magic_link", actor); err == nil {
+		t.Fatal("reset while its audit event can't be written: no error")
+	}
+	if res, err := svc.Get(ctx, other, "magic_link"); err != nil || !res.Custom {
+		t.Errorf("template after a failed reset: %+v, %v; want it still customised", res, err)
+	}
+	if n := events(t, other, "email_template.updated"); n != 1 {
+		t.Errorf("%d saves recorded, want 1", n)
 	}
 }

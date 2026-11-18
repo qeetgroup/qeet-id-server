@@ -6,7 +6,7 @@ post:
     (marking it verified). Returns the new email. Only a code from the
     start-email-change call counts. The previous address is sent a notice of the
     change, and the reset and magic links already sent to it stop working.
-    The organisation's rules of the start call are applied again here (403
+    The organization's rules of the start call are applied again here (403
     verification.email_managed), so a domain verified in between counts. Five
     wrong codes retire a code, and ten wrong codes in an hour, over every code
     asked for in between, refuse even the right one until the hour has passed

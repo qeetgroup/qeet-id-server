@@ -1,0 +1,110 @@
+get:
+  operationId: listScimTokens
+  summary: List SCIM tokens
+  tags:
+    - SCIM
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  description: >-
+    Lists the organization's SCIM tokens, newest first, including revoked and
+    expired ones, never the tokens themselves. Requires connection.read.
+  responses:
+    '200':
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - items
+            properties:
+              truncated:
+                $ref: ../../../shared/schemas/Truncated.yaml
+              items:
+                type: array
+                items:
+                  $ref: ../../components/schemas/SCIMToken.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+post:
+  operationId: createScimToken
+  summary: Create a SCIM token
+  tags:
+    - SCIM
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  description: >-
+    Issues a named SCIM token beside the organization's others, for a second
+    identity provider or a staged switch; the token is shown only in this answer
+    and only its hash is kept. Without expires_at it works until revoked or
+    rotated. An organization holds at most 10 working tokens that have not been
+    rotated (409 scim.token_limit). Requires connection.write. Needs a recent
+    step-up.
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - name
+          properties:
+            name:
+              type: string
+              minLength: 1
+              maxLength: 200
+            expires_at:
+              type:
+                - string
+                - 'null'
+              format: date-time
+              description: When the token stops working; in the future. Omit for none.
+  responses:
+    '201':
+      description: Created
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - scim_token
+              - token
+            properties:
+              scim_token:
+                $ref: ../../components/schemas/SCIMToken.yaml
+              token:
+                type: string
+                description: The token to give the identity provider, shown only here.
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '402':
+      description: The organization's plan does not include SCIM.
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '409':
+      $ref: ../../../shared/responses/Conflict.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

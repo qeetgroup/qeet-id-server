@@ -2,19 +2,19 @@ type: object
 required:
   - users
 properties:
-  tenant_id:
+  organization_id:
     type: string
     format: uuid
-    description: Optional; when present must match the caller's tenant.
+    description: Optional; when present must match the caller's organization.
   role_id:
     type: string
     format: uuid
     description: >-
-      A role of the organisation to give every user the import makes, with the
+      A role of the organization to give every user the import makes, with the
       user in one transaction, audited as role.assigned. The whole import is
       refused, making nobody, when the caller lacks role.write or the authority
       the role carries (403 rbac.permission_denied, rbac.grant_exceeds_caller,
-      rbac.owner_only), or the role isn't the organisation's (404). Each user's
+      rbac.owner_only), or the role isn't the organization's (404). Each user's
       role takes one of the plan's seats; once they are all taken, the rest of
       the rows are refused one by one with billing.plan_limit, making no
       account.

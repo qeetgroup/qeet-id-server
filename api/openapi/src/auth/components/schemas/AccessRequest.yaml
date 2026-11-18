@@ -1,5 +1,5 @@
 type: object
-description: A person's request for one of the organisation's roles, and its answer.
+description: A person's request for one of the organization's roles, and its answer.
 required:
   - id
   - requester

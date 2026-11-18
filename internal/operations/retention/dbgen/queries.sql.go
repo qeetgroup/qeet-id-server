@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const countRipeDeletedUsers = `-- name: CountRipeDeletedUsers :one
@@ -22,7 +21,7 @@ WHERE organization_id = $1
 `
 
 type CountRipeDeletedUsersParams struct {
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 	Days           int32
 }
 
@@ -47,7 +46,7 @@ type GetRetentionPolicyRow struct {
 	DeletedUsersEnabled bool
 	DeletedUsersDays    int32
 	UpdatedAt           time.Time
-	UpdatedBy           pgtype.UUID
+	UpdatedBy           *uuid.UUID
 	UpdatedByEmail      *string
 }
 
@@ -109,7 +108,7 @@ LIMIT $4
 `
 
 type ListRipeDeletedUsersParams struct {
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 	Days           int32
 	After          uuid.UUID
 	MaxRows        int32
@@ -151,7 +150,7 @@ WHERE id = $1 AND organization_id = $2
 
 type PurgeRipeDeletedUserParams struct {
 	ID             uuid.UUID
-	OrganizationID pgtype.UUID
+	OrganizationID *uuid.UUID
 	Days           int32
 }
 
@@ -159,6 +158,419 @@ type PurgeRipeDeletedUserParams struct {
 // users older than @days days.
 func (q *Queries) PurgeRipeDeletedUser(ctx context.Context, arg PurgeRipeDeletedUserParams) (int64, error) {
 	result, err := q.db.Exec(ctx, purgeRipeDeletedUser, arg.ID, arg.OrganizationID, arg.Days)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepAccessDecisions = `-- name: SweepAccessDecisions :execrows
+DELETE FROM auth.authz_decisions WHERE ctid = ANY(ARRAY(
+    SELECT d.ctid FROM auth.authz_decisions d WHERE d.decided_at < NOW() - INTERVAL '30 days' LIMIT $1))
+`
+
+func (q *Queries) SweepAccessDecisions(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepAccessDecisions, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepApplicationGrants = `-- name: SweepApplicationGrants :execrows
+DELETE FROM auth.oidc_refresh_tokens WHERE ctid = ANY(ARRAY(
+    SELECT t.ctid FROM auth.oidc_refresh_tokens t WHERE t.grant_expires_at < NOW() - INTERVAL '7 days'
+    ORDER BY t.issued_at, t.id LIMIT $1))
+`
+
+// Oldest first, so a token goes no later than the one it was renewed from.
+func (q *Queries) SweepApplicationGrants(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepApplicationGrants, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepApplicationSecretFailures = `-- name: SweepApplicationSecretFailures :execrows
+DELETE FROM auth.oidc_client_auth_lockouts WHERE ctid = ANY(ARRAY(
+    SELECT c.ctid FROM auth.oidc_client_auth_lockouts c
+    WHERE c.last_failure_at < NOW() - INTERVAL '7 days' AND (c.locked_until IS NULL OR c.locked_until < NOW())
+    LIMIT $1))
+`
+
+func (q *Queries) SweepApplicationSecretFailures(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepApplicationSecretFailures, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepAuditAnomalies = `-- name: SweepAuditAnomalies :execrows
+DELETE FROM audit.anomalies WHERE ctid = ANY(ARRAY(
+    SELECT a.ctid FROM audit.anomalies a
+    WHERE a.resolved_at < NOW() - INTERVAL '90 days' OR a.created_at < NOW() - INTERVAL '365 days'
+    LIMIT $1))
+`
+
+func (q *Queries) SweepAuditAnomalies(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepAuditAnomalies, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepAuthorizationCodes = `-- name: SweepAuthorizationCodes :execrows
+
+DELETE FROM auth.oidc_authorization_codes WHERE ctid = ANY(ARRAY(
+    SELECT c.ctid FROM auth.oidc_authorization_codes c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))
+`
+
+// -----------------------------------------------------------------------
+// Sweeps (sweeps.go): each deletes at most @max_rows rows nothing needs any
+// more from one table, and is run in batches until none are left.
+// -----------------------------------------------------------------------
+func (q *Queries) SweepAuthorizationCodes(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepAuthorizationCodes, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepBackchannelRequests = `-- name: SweepBackchannelRequests :execrows
+DELETE FROM auth.oidc_ciba_requests WHERE ctid = ANY(ARRAY(
+    SELECT c.ctid FROM auth.oidc_ciba_requests c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))
+`
+
+func (q *Queries) SweepBackchannelRequests(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepBackchannelRequests, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepBotDetections = `-- name: SweepBotDetections :execrows
+DELETE FROM auth.bot_events WHERE ctid = ANY(ARRAY(
+    SELECT e.ctid FROM auth.bot_events e WHERE e.created_at < NOW() - INTERVAL '30 days' LIMIT $1))
+`
+
+func (q *Queries) SweepBotDetections(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepBotDetections, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepConnectedAccountStates = `-- name: SweepConnectedAccountStates :execrows
+DELETE FROM organization.token_vault_connect_states WHERE ctid = ANY(ARRAY(
+    SELECT c.ctid FROM organization.token_vault_connect_states c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))
+`
+
+func (q *Queries) SweepConnectedAccountStates(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepConnectedAccountStates, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepConsentRequests = `-- name: SweepConsentRequests :execrows
+DELETE FROM auth.oidc_consent_requests WHERE ctid = ANY(ARRAY(
+    SELECT c.ctid FROM auth.oidc_consent_requests c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))
+`
+
+func (q *Queries) SweepConsentRequests(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepConsentRequests, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepDeviceCodes = `-- name: SweepDeviceCodes :execrows
+DELETE FROM auth.oidc_device_codes WHERE ctid = ANY(ARRAY(
+    SELECT c.ctid FROM auth.oidc_device_codes c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))
+`
+
+func (q *Queries) SweepDeviceCodes(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepDeviceCodes, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepDirectorySyncEvents = `-- name: SweepDirectorySyncEvents :execrows
+DELETE FROM organization.directory_events WHERE ctid = ANY(ARRAY(
+    SELECT e.ctid FROM organization.directory_events e WHERE e.started_at < NOW() - INTERVAL '90 days' LIMIT $1))
+`
+
+func (q *Queries) SweepDirectorySyncEvents(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepDirectorySyncEvents, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepEmailVerifications = `-- name: SweepEmailVerifications :execrows
+DELETE FROM account.email_verifications WHERE ctid = ANY(ARRAY(
+    SELECT c.ctid FROM account.email_verifications c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))
+`
+
+func (q *Queries) SweepEmailVerifications(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepEmailVerifications, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepFailedSignInCounts = `-- name: SweepFailedSignInCounts :execrows
+DELETE FROM auth.login_attempts WHERE ctid = ANY(ARRAY(
+    SELECT c.ctid FROM auth.login_attempts c
+    WHERE c.last_failed_at < NOW() - INTERVAL '7 days' AND (c.locked_until IS NULL OR c.locked_until < NOW())
+    LIMIT $1))
+`
+
+func (q *Queries) SweepFailedSignInCounts(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepFailedSignInCounts, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepFailedSignInCountsByNetwork = `-- name: SweepFailedSignInCountsByNetwork :execrows
+DELETE FROM auth.login_attempts_by_network WHERE ctid = ANY(ARRAY(
+    SELECT c.ctid FROM auth.login_attempts_by_network c
+    WHERE c.last_failed_at < NOW() - INTERVAL '7 days' AND (c.locked_until IS NULL OR c.locked_until < NOW())
+    LIMIT $1))
+`
+
+func (q *Queries) SweepFailedSignInCountsByNetwork(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepFailedSignInCountsByNetwork, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepFailedSignInsBySource = `-- name: SweepFailedSignInsBySource :execrows
+DELETE FROM auth.login_source_failures WHERE ctid = ANY(ARRAY(
+    SELECT c.ctid FROM auth.login_source_failures c WHERE c.last_failed_at < NOW() - INTERVAL '7 days' LIMIT $1))
+`
+
+func (q *Queries) SweepFailedSignInsBySource(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepFailedSignInsBySource, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepFederatedSignInCodes = `-- name: SweepFederatedSignInCodes :execrows
+DELETE FROM auth.login_codes WHERE ctid = ANY(ARRAY(
+    SELECT c.ctid FROM auth.login_codes c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))
+`
+
+func (q *Queries) SweepFederatedSignInCodes(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepFederatedSignInCodes, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepFederatedSignInStates = `-- name: SweepFederatedSignInStates :execrows
+DELETE FROM auth.oauth_states WHERE ctid = ANY(ARRAY(
+    SELECT c.ctid FROM auth.oauth_states c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))
+`
+
+func (q *Queries) SweepFederatedSignInStates(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepFederatedSignInStates, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepInvitations = `-- name: SweepInvitations :execrows
+DELETE FROM organization.invites WHERE ctid = ANY(ARRAY(
+    SELECT i.ctid FROM organization.invites i WHERE i.expires_at < NOW() - INTERVAL '90 days' LIMIT $1))
+`
+
+func (q *Queries) SweepInvitations(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepInvitations, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepLogoutDeliveries = `-- name: SweepLogoutDeliveries :execrows
+DELETE FROM auth.oidc_logout_deliveries WHERE ctid = ANY(ARRAY(
+    SELECT d.ctid FROM auth.oidc_logout_deliveries d
+    WHERE d.delivered_at < NOW() - INTERVAL '7 days' OR d.failed_at < NOW() - INTERVAL '7 days'
+    LIMIT $1))
+`
+
+func (q *Queries) SweepLogoutDeliveries(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepLogoutDeliveries, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepMonthlyActiveUsers = `-- name: SweepMonthlyActiveUsers :execrows
+DELETE FROM organization.monthly_active_users WHERE ctid = ANY(ARRAY(
+    SELECT m.ctid FROM organization.monthly_active_users m
+    WHERE m.month < (date_trunc('month', NOW() AT TIME ZONE 'UTC') - INTERVAL '13 months')::date LIMIT $1))
+`
+
+// 13 months, so a year-on-year comparison and the last invoice's month remain.
+func (q *Queries) SweepMonthlyActiveUsers(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepMonthlyActiveUsers, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepNotifications = `-- name: SweepNotifications :execrows
+DELETE FROM auth.notifications WHERE ctid = ANY(ARRAY(
+    SELECT n.ctid FROM auth.notifications n WHERE n.created_at < NOW() - INTERVAL '90 days' LIMIT $1))
+`
+
+func (q *Queries) SweepNotifications(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepNotifications, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepPasswordResets = `-- name: SweepPasswordResets :execrows
+DELETE FROM auth.password_resets WHERE ctid = ANY(ARRAY(
+    SELECT c.ctid FROM auth.password_resets c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))
+`
+
+func (q *Queries) SweepPasswordResets(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepPasswordResets, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepPhoneVerifications = `-- name: SweepPhoneVerifications :execrows
+DELETE FROM account.phone_verifications WHERE ctid = ANY(ARRAY(
+    SELECT c.ctid FROM account.phone_verifications c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))
+`
+
+func (q *Queries) SweepPhoneVerifications(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepPhoneVerifications, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepPlatformSocialLinkCodes = `-- name: SweepPlatformSocialLinkCodes :execrows
+DELETE FROM auth.platform_social_link_codes WHERE ctid = ANY(ARRAY(
+    SELECT c.ctid FROM auth.platform_social_link_codes c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))
+`
+
+func (q *Queries) SweepPlatformSocialLinkCodes(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepPlatformSocialLinkCodes, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepSAMLRequests = `-- name: SweepSAMLRequests :execrows
+DELETE FROM auth.saml_authn_requests WHERE ctid = ANY(ARRAY(
+    SELECT c.ctid FROM auth.saml_authn_requests c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))
+`
+
+func (q *Queries) SweepSAMLRequests(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepSAMLRequests, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepSecondFactorSignIns = `-- name: SweepSecondFactorSignIns :execrows
+DELETE FROM auth.mfa_login_challenges WHERE ctid = ANY(ARRAY(
+    SELECT c.ctid FROM auth.mfa_login_challenges c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))
+`
+
+func (q *Queries) SweepSecondFactorSignIns(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepSecondFactorSignIns, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepSecurityEvents = `-- name: SweepSecurityEvents :execrows
+DELETE FROM auth.security_events WHERE ctid = ANY(ARRAY(
+    SELECT e.ctid FROM auth.security_events e
+    WHERE e.resolved_at < NOW() - INTERVAL '90 days' OR e.created_at < NOW() - INTERVAL '365 days'
+    LIMIT $1))
+`
+
+func (q *Queries) SweepSecurityEvents(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepSecurityEvents, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepSignInLinks = `-- name: SweepSignInLinks :execrows
+DELETE FROM auth.magic_links WHERE ctid = ANY(ARRAY(
+    SELECT c.ctid FROM auth.magic_links c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))
+`
+
+func (q *Queries) SweepSignInLinks(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepSignInLinks, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepSourceThrottles = `-- name: SweepSourceThrottles :execrows
+DELETE FROM auth.login_source_throttles WHERE ctid = ANY(ARRAY(
+    SELECT c.ctid FROM auth.login_source_throttles c WHERE c.throttled_until < NOW() - INTERVAL '7 days' LIMIT $1))
+`
+
+func (q *Queries) SweepSourceThrottles(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepSourceThrottles, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepWebhookDeliveries = `-- name: SweepWebhookDeliveries :execrows
+DELETE FROM organization.webhook_deliveries WHERE ctid = ANY(ARRAY(
+    SELECT d.ctid FROM organization.webhook_deliveries d
+    WHERE d.delivered_at < NOW() - INTERVAL '30 days' OR d.dead_at < NOW() - INTERVAL '30 days'
+    LIMIT $1))
+`
+
+func (q *Queries) SweepWebhookDeliveries(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepWebhookDeliveries, maxRows)
 	if err != nil {
 		return 0, err
 	}
@@ -180,7 +592,7 @@ type UpsertRetentionPolicyParams struct {
 	OrganizationID      uuid.UUID
 	DeletedUsersEnabled bool
 	DeletedUsersDays    int32
-	UpdatedBy           pgtype.UUID
+	UpdatedBy           *uuid.UUID
 }
 
 type UpsertRetentionPolicyRow struct {

@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -37,7 +38,7 @@ func TestBrandingFollowsThePlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.Upsert(ctx, tx, Branding{OrganizationID: organization, LogoURL: &logo, PrimaryColor: &primary, EmailFromName: &name}); err != nil {
+	if err := repo.upsert(ctx, tx, Branding{OrganizationID: organization, LogoURL: &logo, PrimaryColor: &primary, EmailFromName: &name}); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -80,7 +81,7 @@ func TestUploadedLogoIsServedForEmailsAndHostedPages(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := repo.Upsert(ctx, tx, Branding{OrganizationID: id, LogoURL: &logo}); err != nil {
+		if err := repo.upsert(ctx, tx, Branding{OrganizationID: id, LogoURL: &logo}); err != nil {
 			t.Fatal(err)
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -116,7 +117,7 @@ func TestUploadedLogoIsServedForEmailsAndHostedPages(t *testing.T) {
 		t.Errorf("served without nosniff and a sandboxing CSP: %v", rec.Header())
 	}
 	if rec := get(linked); rec.Code != http.StatusNotFound {
-		t.Errorf("an organisation whose logo is a URL: %d, want 404", rec.Code)
+		t.Errorf("an organization whose logo is a URL: %d, want 404", rec.Code)
 	}
 	gate.on = false
 	if rec := get(organization); rec.Code != http.StatusNotFound {
@@ -136,7 +137,7 @@ func TestFromAddressIsNotKept(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.Upsert(ctx, tx, Branding{OrganizationID: organization, EmailFromAddress: &from, SecondaryColor: &accent}); err != nil {
+	if err := repo.upsert(ctx, tx, Branding{OrganizationID: organization, EmailFromAddress: &from, SecondaryColor: &accent}); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -151,5 +152,41 @@ func TestFromAddressIsNotKept(t *testing.T) {
 	}
 	if _, _, secondary, _ := repo.LoginBranding(ctx, organization); secondary != accent {
 		t.Errorf("the hosted pages get accent %q, want %q", secondary, accent)
+	}
+}
+
+// TestSaveCommitsWithItsAuditRow checks that saving branding records
+// branding.updated, with the actor's address, browser and request, and that a
+// save the plan refuses stores nothing and records nothing.
+func TestSaveCommitsWithItsAuditRow(t *testing.T) {
+	ctx := dbtest.Context(t)
+	organization := dbtest.Organization(t)
+	repo := NewRepository(dbtest.Pool(t))
+	admin := uuid.New()
+	actor := audit.Actor{UserID: &admin, Type: "user", IP: "198.51.100.11", UserAgent: "branding-test", RequestID: "req-branding"}
+	recorded := func() int {
+		return dbtest.Count(t, `
+			SELECT count(*) FROM audit.events
+			WHERE organization_id = $1 AND action = 'branding.updated' AND resource_id = $1 AND actor_user_id = $2
+			  AND host(ip) = $3 AND user_agent = $4 AND request_id = $5 AND metadata->>'primary_color' = '#445566'`,
+			organization, admin, actor.IP, actor.UserAgent, actor.RequestID)
+	}
+	stored := func() int {
+		return dbtest.Count(t, `SELECT count(*) FROM organization.branding WHERE organization_id = $1`, organization)
+	}
+	primary := "#445566"
+	repo.SetPlanGate(&planGate{on: false})
+	if err := repo.Save(ctx, Branding{OrganizationID: organization, PrimaryColor: &primary}, actor); err == nil {
+		t.Fatal("a plan without custom branding saved it")
+	}
+	if stored() != 0 || recorded() != 0 {
+		t.Errorf("a refused save stored %d rows and recorded %d, want none", stored(), recorded())
+	}
+	repo.SetPlanGate(&planGate{on: true})
+	if err := repo.Save(ctx, Branding{OrganizationID: organization, PrimaryColor: &primary}, actor); err != nil {
+		t.Fatal(err)
+	}
+	if stored() != 1 || recorded() != 1 {
+		t.Errorf("a save stored %d rows and recorded %d as the actor's, want 1 each", stored(), recorded())
 	}
 }

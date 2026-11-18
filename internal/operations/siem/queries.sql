@@ -68,3 +68,21 @@ WHERE organization_id = @organization_id
   AND (created_at > @after_at OR (created_at = @after_at AND id > @after_id))
 ORDER BY created_at ASC, id ASC
 LIMIT @row_limit;
+
+-- name: InsertLogSink :one
+-- A new destination starts from now: the nil cursor id sorts before every
+-- event of its first second.
+INSERT INTO organization.log_sinks
+    (id, organization_id, type, endpoint, token_ct, token_nonce, cursor_created_at, cursor_id)
+VALUES (@id, @organization_id, @type, @endpoint, @token_ct, @token_nonce, NOW(), '00000000-0000-0000-0000-000000000000')
+RETURNING id, type, endpoint, enabled, last_forwarded_at, last_error, created_at;
+
+-- name: ListEnabledLogSinks :many
+-- Every organization's enabled destinations, for the forwarding job.
+SELECT id, organization_id, type, endpoint, token_ct, token_nonce
+FROM organization.log_sinks
+WHERE enabled;
+
+-- name: GetLogSinkSecret :one
+SELECT id, organization_id, type, endpoint, token_ct, token_nonce
+FROM organization.log_sinks WHERE id = @id AND organization_id = @organization_id;

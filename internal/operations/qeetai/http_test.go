@@ -10,8 +10,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/ai"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -39,7 +39,9 @@ type stubStore struct {
 	turns        int // turns begun and not yet released
 }
 
-func (s *stubStore) Pool() *pgxpool.Pool { return nil }
+func (s *stubStore) RecordMessageSent(context.Context, uuid.UUID, uuid.UUID, audit.Actor) error {
+	return nil
+}
 
 func (s *stubStore) CreateConversation(_ context.Context, _, _ uuid.UUID, _ CreateConversationInput) (*Conversation, error) {
 	return nil, nil
@@ -155,12 +157,12 @@ func TestStreamMessages_AuthorizedUserCanStream(t *testing.T) {
 // stored, and that a turn that runs releases the conversation when it ends.
 func TestStreamMessages_OneTurnAtATime(t *testing.T) {
 	organizationID, userID, convID := uuid.New(), uuid.New(), uuid.New()
-	busy := &stubStore{turnErr: errs.ErrQeetAITurnInProgress}
+	busy := &stubStore{turnErr: ErrTurnInProgress}
 	h := &Handler{Service: busy, Resolver: stubResolver{source: SourceOrganization}}
 	rr := httptest.NewRecorder()
 	h.streamMessages(rr, newHandlerRequest(organizationID, userID, convID, `{"message":"again"}`))
-	if rr.Code != http.StatusConflict || !strings.Contains(rr.Body.String(), errs.CodeQeetAITurnInProgress) {
-		t.Errorf("a second turn: %d %s, want 409 %s", rr.Code, rr.Body.String(), errs.CodeQeetAITurnInProgress)
+	if rr.Code != http.StatusConflict || !strings.Contains(rr.Body.String(), CodeTurnInProgress) {
+		t.Errorf("a second turn: %d %s, want 409 %s", rr.Code, rr.Body.String(), CodeTurnInProgress)
 	}
 	if busy.appendCalled {
 		t.Error("a refused turn stored its message")

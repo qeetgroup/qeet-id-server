@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const countEnabledPolicies = `-- name: CountEnabledPolicies :one
@@ -52,7 +51,7 @@ type CreateAbacPolicyParams struct {
 	Condition      []byte
 	Priority       int32
 	Enabled        bool
-	UpdatedBy      pgtype.UUID
+	UpdatedBy      *uuid.UUID
 }
 
 // Queries for the abac (attribute-based access control) domain.
@@ -166,7 +165,7 @@ type GetAbacPolicyVersionRow struct {
 	Condition    []byte
 	Priority     int32
 	Enabled      bool
-	SavedBy      pgtype.UUID
+	SavedBy      *uuid.UUID
 	SavedAt      time.Time
 }
 
@@ -256,7 +255,7 @@ type ListAbacPolicyVersionsRow struct {
 	Condition    []byte
 	Priority     int32
 	Enabled      bool
-	SavedBy      pgtype.UUID
+	SavedBy      *uuid.UUID
 	SavedAt      time.Time
 }
 
@@ -463,7 +462,7 @@ type UpdateAbacPolicyParams struct {
 	Condition      []byte
 	Priority       int32
 	Enabled        bool
-	UpdatedBy      pgtype.UUID
+	UpdatedBy      *uuid.UUID
 	ID             uuid.UUID
 	OrganizationID uuid.UUID
 }

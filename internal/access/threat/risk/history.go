@@ -15,10 +15,10 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 )
 
-// deviceKey reduces a User-Agent to a coarse browser-OS pair such as
+// DeviceKey reduces a User-Agent to a coarse browser-OS pair such as
 // "chrome-macos": a stand-in for device identity, without fingerprinting, that
 // is enough to tell a new device from a familiar one.
-func deviceKey(ua string) string {
+func DeviceKey(ua string) string {
 	u := strings.ToLower(ua)
 
 	browser := "other"
@@ -110,7 +110,8 @@ const SignInHistoryRetention = 90 * 24 * time.Hour
 // how many entries. Run on a schedule; a person's or organization's history
 // also goes when they are deleted.
 func PurgeSignInHistory(ctx context.Context, pool *pgxpool.Pool, retention time.Duration) (int64, error) {
-	return postgres.PurgeInBatches(ctx, pool, `DELETE FROM auth.login_context_history WHERE ctid = ANY(ARRAY(
-		SELECT h.ctid FROM auth.login_context_history h WHERE h.seen_at < $1 LIMIT $2))`,
-		time.Now().UTC().Add(-retention))
+	q, cutoff := dbgen.New(pool), time.Now().UTC().Add(-retention)
+	return postgres.DeleteInBatches(ctx, func(ctx context.Context, limit int32) (int64, error) {
+		return q.PurgeSignInHistory(ctx, dbgen.PurgeSignInHistoryParams{Cutoff: cutoff, MaxRows: limit})
+	})
 }

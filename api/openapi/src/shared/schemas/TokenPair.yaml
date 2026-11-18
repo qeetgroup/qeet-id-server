@@ -23,14 +23,14 @@ properties:
     type: string
     format: date-time
     description: >-
-      When the session ends however active it is: the organisation's maximum
+      When the session ends however active it is: the organization's maximum
       session age from sign-in (the platform default where it sets none).
-      Switching organisation never moves it later.
+      Switching organization never moves it later.
   idle_expires_at:
     type: string
     format: date-time
     description: >-
-      When the session ends unless it is renewed before then: the organisation's
+      When the session ends unless it is renewed before then: the organization's
       idle timeout from this sign-in or renewal, never after session_expires_at.
       Clients can warn the user ahead of either time; the server refuses a
       renewal after them with 401 auth.session_timed_out whatever the client
@@ -41,9 +41,9 @@ properties:
   user_id:
     type: string
     format: uuid
-  tenant_id:
+  organization_id:
     type: string
     format: uuid
     description: >-
-      The organisation the token is scoped to; absent for a session that belongs
-      to no organisation.
+      The organization the token is scoped to; absent for a session that belongs
+      to no organization.

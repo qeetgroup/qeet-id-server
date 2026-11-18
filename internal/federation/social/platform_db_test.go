@@ -4,13 +4,16 @@ package social
 
 import (
 	"errors"
+	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
@@ -61,7 +64,7 @@ func TestPlatformSocialSignInRefusedOnACapturedDomain(t *testing.T) {
 	}
 	_, linkedAs := member()
 	if q := signIn(linkedAs); q.Get("social_code") == "" {
-		t.Fatalf("console sign-in before the organisation requires single sign-on: %v; want a code", q)
+		t.Fatalf("console sign-in before the organization requires single sign-on: %v; want a code", q)
 	}
 	exempt, exemptAs := member()
 	breakGlass(t, organization, exempt)
@@ -91,7 +94,7 @@ func TestASignInCodeWorksOnlyInTheFlowThatIssuedIt(t *testing.T) {
 	svc := newSocialFixture(t).svc
 	organization := dbtest.Organization(t)
 	person := dbtest.User(t, organization, organization)
-	ownCode, consoleCode := dbtest.Unique("organisation-code"), dbtest.Unique("console-code")
+	ownCode, consoleCode := dbtest.Unique("organization-code"), dbtest.Unique("console-code")
 	for _, stmt := range []struct {
 		sql  string
 		args []any
@@ -107,11 +110,11 @@ func TestASignInCodeWorksOnlyInTheFlowThatIssuedIt(t *testing.T) {
 		}
 	}
 
-	if _, err := svc.ExchangePlatformLogin(ctx, ownCode, "192.0.2.10", "test"); !errors.Is(err, errs.ErrSocialLoginCodeInvalid) {
-		t.Errorf("an organisation's sign-in code at the console exchange: %v, want %v", err, errs.ErrSocialLoginCodeInvalid)
+	if _, err := svc.ExchangePlatformLogin(ctx, ownCode, "192.0.2.10", "test"); !errors.Is(err, ErrLoginCodeInvalid) {
+		t.Errorf("an organization's sign-in code at the console exchange: %v, want %v", err, ErrLoginCodeInvalid)
 	}
-	if _, err := svc.ExchangeLogin(ctx, consoleCode, "192.0.2.10", "test"); !errors.Is(err, errs.ErrSocialLoginCodeInvalid) {
-		t.Errorf("a console sign-in code at the organisation exchange: %v, want %v", err, errs.ErrSocialLoginCodeInvalid)
+	if _, err := svc.ExchangeLogin(ctx, consoleCode, "192.0.2.10", "test"); !errors.Is(err, ErrLoginCodeInvalid) {
+		t.Errorf("a console sign-in code at the organization exchange: %v, want %v", err, ErrLoginCodeInvalid)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM auth.login_codes WHERE user_id = $1 AND used_at IS NULL`, person.ID); n != 2 {
 		t.Fatalf("%d of the two codes unused after the wrong exchanges, want both", n)
@@ -119,10 +122,88 @@ func TestASignInCodeWorksOnlyInTheFlowThatIssuedIt(t *testing.T) {
 
 	in, err := svc.ExchangeLogin(ctx, ownCode, "192.0.2.10", "test")
 	if err != nil || in.Pair == nil || in.Pair.OrganizationID == nil || *in.Pair.OrganizationID != organization {
-		t.Errorf("the organisation's code at its own exchange: %+v, %v, want a session in the organisation", in, err)
+		t.Errorf("the organization's code at its own exchange: %+v, %v, want a session in the organization", in, err)
 	}
 	out, err := svc.ExchangePlatformLogin(ctx, consoleCode, "192.0.2.10", "test")
 	if err != nil || out.Pair == nil || out.Pair.OrganizationID != nil {
-		t.Errorf("the console code at its own exchange: %+v, %v, want a session in no organisation", out, err)
+		t.Errorf("the console code at its own exchange: %+v, %v, want a session in no organization", out, err)
+	}
+}
+
+// TestPlatformSocialSignIn checks the console's own sign-in: sign-up creates
+// an account only when asked to, sign-in needs one, and a signed-in person can
+// link the provider to their account, which only they can complete and unlink.
+func TestPlatformSocialSignIn(t *testing.T) {
+	f := newSocialFixture(t)
+	f.svc.SetPlatformProvider("google", "qeet", "idp-client-secret", f.idp.URL+"/.well-known/openid-configuration")
+	if names := f.svc.PlatformProviderNames(); len(names) != 1 || names[0] != "google" {
+		t.Errorf("platform providers %v", names)
+	}
+	newcomer := userInfo{Subject: "g-" + uuid.NewString(), Email: dbtest.Unique("g") + "@example.test", EmailVerified: true, Name: "Ravi"}
+
+	if target, q := redirectQuery(t, f.signIn(t, "google", "/social/google/start", newcomer)); target != "https://console.example.test/sign-in" || q.Get("social_error") != "no_account" {
+		t.Errorf("sign in without an account: %s %v, want no_account", target, q)
+	}
+	target, q := redirectQuery(t, f.signIn(t, "google", "/social/google/start?intent=signup", newcomer))
+	if target != "https://console.example.test/sign-in" || q.Get("social_code") == "" {
+		t.Fatalf("sign up: %s %v", target, q)
+	}
+	rec := browse(t, f.public, http.MethodPost, "/social/exchange", nil, map[string]string{"code": q.Get("social_code")})
+	var pair auth.TokenPair
+	dbtest.Decode(t, rec, &pair)
+	if rec.Code != http.StatusOK || pair.AccessToken == "" {
+		t.Fatalf("exchange: %d %s", rec.Code, rec.Body.String())
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, newcomer.Email); n != 1 {
+		t.Errorf("%d accounts for the newcomer, want 1", n)
+	}
+	if _, q := redirectQuery(t, f.signIn(t, "google", "/social/google/start", newcomer)); q.Get("social_code") == "" {
+		t.Errorf("sign in again: %v", q)
+	}
+
+	organization := dbtest.Organization(t)
+	a := dbtest.User(t, organization, organization)
+	dbtest.SetPassword(t, a.ID, "Kx7mQ2vLp9Wz")
+	asA := dbtest.Serve(dbtest.Principal(a.ID, organization), f.mount)
+	link := func(code string) string {
+		t.Helper()
+		rec := dbtest.Do(t, asA, http.MethodPost, "/social/google/link/start", nil)
+		var started struct {
+			AuthorizeURL string `json:"authorize_url"`
+		}
+		dbtest.Decode(t, rec, &started)
+		f.idp.expect(t, started.AuthorizeURL, code, userInfo{Subject: "g-" + a.ID.String(), Email: a.Email, EmailVerified: true})
+		target, q := redirectQuery(t, browse(t, f.public, http.MethodGet, "/social/google/callback?state="+url.QueryEscape(stateOf(started.AuthorizeURL))+"&code="+code, nil, nil))
+		if target != "https://console.example.test/account/security" || q.Get("link_code") == "" {
+			t.Fatalf("link callback: %s %v", target, q)
+		}
+		return q.Get("link_code")
+	}
+	b := dbtest.User(t, organization, organization)
+	stolen := link("link-1")
+	if rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(b.ID, organization), f.mount), http.MethodPost, "/social/link/complete", map[string]string{"code": stolen}); !strings.Contains(rec.Body.String(), CodeLinkAccountMismatch) {
+		t.Errorf("another account completing the link: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := dbtest.Do(t, asA, http.MethodPost, "/social/link/complete", map[string]string{"code": stolen}); !strings.Contains(rec.Body.String(), CodeLinkCodeInvalid) {
+		t.Errorf("a link code another account tried: %d %s, want spent", rec.Code, rec.Body.String())
+	}
+	if rec := dbtest.Do(t, asA, http.MethodPost, "/social/link/complete", map[string]string{"code": link("link-2")}); rec.Code != http.StatusOK {
+		t.Fatalf("complete the link: %d %s", rec.Code, rec.Body.String())
+	}
+	var mine struct {
+		Items []ExternalIdentity `json:"items"`
+	}
+	dbtest.Decode(t, dbtest.Do(t, asA, http.MethodGet, "/me/social/identities", nil), &mine)
+	if len(mine.Items) != 1 || mine.Items[0].Provider != "google" {
+		t.Fatalf("my identities %+v; want google", mine.Items)
+	}
+	if rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(b.ID, organization), f.mount), http.MethodDelete, "/me/social/identities/"+mine.Items[0].ID.String(), nil); rec.Code == http.StatusNoContent {
+		t.Error("another account unlinked my identity")
+	}
+	if rec := dbtest.Do(t, asA, http.MethodDelete, "/me/social/identities/"+mine.Items[0].ID.String(), nil); rec.Code != http.StatusNoContent {
+		t.Errorf("unlink mine: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := browse(t, f.public, http.MethodGet, "/social/platform/providers", nil, nil); !strings.Contains(rec.Body.String(), "google") {
+		t.Errorf("platform providers: %s", rec.Body.String())
 	}
 }

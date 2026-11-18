@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const adoptHomeOrganization = `-- name: AdoptHomeOrganization :exec
@@ -51,7 +50,7 @@ WHERE id = $1 AND deleted_at IS NULL
 
 // Queries for the organization domain.
 // Static queries against organization.organizations live here and are compiled by sqlc into ./dbgen.
-// Dynamic queries (partial UPDATE) intentionally remain hand-written in repository.go.
+// The partial UPDATE is built at run time and stays hand-written in repository.go.
 func (q *Queries) GetOrganization(ctx context.Context, id uuid.UUID) (OrganizationOrganization, error) {
 	row := q.db.QueryRow(ctx, getOrganization, id)
 	var i OrganizationOrganization
@@ -97,6 +96,18 @@ func (q *Queries) GetOrganizationBySlug(ctx context.Context, slug string) (Organ
 	return i, err
 }
 
+const getOrganizationRegion = `-- name: GetOrganizationRegion :one
+SELECT region FROM organization.organizations
+WHERE id = $1 AND deleted_at IS NULL
+`
+
+func (q *Queries) GetOrganizationRegion(ctx context.Context, id uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, getOrganizationRegion, id)
+	var region string
+	err := row.Scan(&region)
+	return region, err
+}
+
 const grantAllPermissionsToRole = `-- name: GrantAllPermissionsToRole :exec
 INSERT INTO rbac.role_permissions (role_id, permission_id)
 SELECT $1, id FROM rbac.permissions
@@ -126,14 +137,14 @@ func (q *Queries) GrantRoleToUser(ctx context.Context, arg GrantRoleToUserParams
 const insertBuiltinRoles = `-- name: InsertBuiltinRoles :exec
 WITH builtin AS (
     INSERT INTO rbac.roles (organization_id, name, description, is_system)
-    VALUES ($1, 'admin', 'Administrator — everything but deleting the organisation', TRUE),
-           ($1, 'member', 'Member — signs in to the organisation''s apps, no administration', TRUE),
+    VALUES ($1, 'admin', 'Administrator — everything but deleting the organization', TRUE),
+           ($1, 'member', 'Member — signs in to the organization''s apps, no administration', TRUE),
            ($1, 'viewer', 'Viewer — reads everything, changes nothing', TRUE)
     RETURNING id, name
 )
 INSERT INTO rbac.role_permissions (role_id, permission_id)
 SELECT b.id, p.id FROM builtin b
-JOIN rbac.permissions p ON (b.name = 'admin' AND p.key <> 'tenant.delete')
+JOIN rbac.permissions p ON (b.name = 'admin' AND p.key <> 'organization.delete')
                         OR (b.name = 'viewer' AND p.key LIKE '%.read' AND p.key <> 'secret.read')
 `
 
@@ -190,7 +201,7 @@ func (q *Queries) InsertOrganization(ctx context.Context, arg InsertOrganization
 const insertOwnerRole = `-- name: InsertOwnerRole :one
 
 INSERT INTO rbac.roles (organization_id, name, description, is_system)
-VALUES ($1, 'owner', 'Tenant owner — full access', TRUE)
+VALUES ($1, 'owner', 'Organization owner — full access', TRUE)
 RETURNING id
 `
 
@@ -370,7 +381,7 @@ type ListOrganizationsForUserRow struct {
 	Metadata        []byte
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
-	DeletionDueAt   pgtype.Timestamptz
+	DeletionDueAt   *time.Time
 	MemberCount     int64
 	MfaEnabledCount int64
 }
@@ -454,7 +465,7 @@ type ListOrganizationsForUserAfterRow struct {
 	Metadata        []byte
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
-	DeletionDueAt   pgtype.Timestamptz
+	DeletionDueAt   *time.Time
 	MemberCount     int64
 	MfaEnabledCount int64
 }
@@ -498,6 +509,49 @@ func (q *Queries) ListOrganizationsForUserAfter(ctx context.Context, arg ListOrg
 	return items, nil
 }
 
+const lockOrganization = `-- name: LockOrganization :one
+SELECT id, slug, name, status, plan, region, metadata, created_at, updated_at, deleted_at, logo_url, deletion_due_at FROM organization.organizations
+WHERE id = $1 AND deleted_at IS NULL
+FOR UPDATE
+`
+
+// LockOrganization reads an organization and holds its row until the
+// transaction ends, for the update that follows.
+func (q *Queries) LockOrganization(ctx context.Context, id uuid.UUID) (OrganizationOrganization, error) {
+	row := q.db.QueryRow(ctx, lockOrganization, id)
+	var i OrganizationOrganization
+	err := row.Scan(
+		&i.ID,
+		&i.Slug,
+		&i.Name,
+		&i.Status,
+		&i.Plan,
+		&i.Region,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.LogoUrl,
+		&i.DeletionDueAt,
+	)
+	return i, err
+}
+
+const lockOrganizationStatus = `-- name: LockOrganizationStatus :one
+SELECT status FROM organization.organizations
+WHERE id = $1 AND deleted_at IS NULL
+FOR UPDATE
+`
+
+// LockOrganizationStatus reads an organization's status and holds its row
+// until the transaction ends, for the deletion that follows.
+func (q *Queries) LockOrganizationStatus(ctx context.Context, id uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, lockOrganizationStatus, id)
+	var status string
+	err := row.Scan(&status)
+	return status, err
+}
+
 const scheduleOrganizationDeletion = `-- name: ScheduleOrganizationDeletion :one
 UPDATE organization.organizations SET deletion_due_at = $1::timestamptz, updated_at = NOW()
 WHERE id = $2 AND deleted_at IS NULL AND deletion_due_at IS NULL
@@ -512,9 +566,9 @@ type ScheduleOrganizationDeletionParams struct {
 // ScheduleOrganizationDeletion schedules an organization's deletion for @due_at,
 // unless one is already scheduled. No row: it is deleted or already
 // scheduled.
-func (q *Queries) ScheduleOrganizationDeletion(ctx context.Context, arg ScheduleOrganizationDeletionParams) (pgtype.Timestamptz, error) {
+func (q *Queries) ScheduleOrganizationDeletion(ctx context.Context, arg ScheduleOrganizationDeletionParams) (*time.Time, error) {
 	row := q.db.QueryRow(ctx, scheduleOrganizationDeletion, arg.DueAt, arg.ID)
-	var deletion_due_at pgtype.Timestamptz
+	var deletion_due_at *time.Time
 	err := row.Scan(&deletion_due_at)
 	return deletion_due_at, err
 }

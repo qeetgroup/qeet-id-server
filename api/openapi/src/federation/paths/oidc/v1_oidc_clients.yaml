@@ -1,7 +1,7 @@
 post:
   operationId: registerOidcClient
   description: >-
-    Registers an OIDC relying-party client in the caller's tenant, derived from
+    Registers an OIDC relying-party client in the caller's organization, derived from
     the authenticating principal, so it can drive the authorization-code and
     related flows. A confidential client's secret is returned exactly once in
     the response and cannot be retrieved later; roll it afterward with the

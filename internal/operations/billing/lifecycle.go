@@ -11,10 +11,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/billing/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/billing/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/emailtmpl"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
@@ -48,7 +48,7 @@ func (s *Service) RunPeriodEnds(ctx context.Context) (PeriodEndRun, error) {
 		step, err := s.endPeriod(ctx, organizationID, now)
 		if err != nil {
 			run.Failed++
-			slog.Warn("billing: period end failed", "tenant_id", organizationID, "err", err)
+			slog.Warn("billing: period end failed", "organization_id", organizationID, "err", err)
 			continue
 		}
 		switch step {
@@ -83,7 +83,7 @@ func (s *Service) endPeriod(ctx context.Context, organizationID uuid.UUID, now t
 	end := sub.CurrentPeriodEnd
 	var step string
 	switch {
-	case sub.Status == "trialing" && sub.TrialEnd.Valid && !now.Before(sub.TrialEnd.Time):
+	case sub.Status == "trialing" && sub.TrialEnd != nil && !now.Before(*sub.TrialEnd):
 		step, err = "ended", s.endSubscription(ctx, tx, organizationID, sub.Code, "trial_ended")
 	case sub.Status == "active" && !now.Before(end) && sub.CancelAtPeriodEnd:
 		step, err = "ended", s.endSubscription(ctx, tx, organizationID, sub.Code, "canceled")
@@ -159,9 +159,7 @@ func (s *Service) endSubscription(ctx context.Context, tx pgx.Tx, organizationID
 // recordBillingEvent audits a change the billing system made itself on the
 // organization's chain.
 func recordBillingEvent(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, action string, metadata map[string]any) error {
-	return audit.Record(ctx, tx, audit.Event{
-		OrganizationID: &organizationID, ActorType: "system", Action: action, ResourceType: "subscription", Metadata: metadata,
-	})
+	return audit.Record(ctx, tx, audit.Actor{Type: "system"}.Event(organizationID, action, "subscription", uuid.Nil, metadata))
 }
 
 // settleInvoice marks the organization's open invoice paid within tx, by via (a
@@ -171,13 +169,13 @@ func (s *Service) settleInvoice(ctx context.Context, tx pgx.Tx, organizationID, 
 	q := s.q.WithTx(tx)
 	inv, err := q.LockInvoice(ctx, dbgen.LockInvoiceParams{ID: invoiceID, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return errs.ErrBillingInvoiceNotFound
+		return ErrInvoiceNotFound
 	}
 	if err != nil {
 		return err
 	}
 	if inv.Status != "open" {
-		return errs.ErrBillingInvoiceNotOpen
+		return ErrInvoiceNotOpen
 	}
 	if err := q.SettleInvoice(ctx, dbgen.SettleInvoiceParams{ID: invoiceID, OrganizationID: organizationID, PaymentReference: reference}); err != nil {
 		return err
@@ -221,7 +219,7 @@ func (s *Service) MarkInvoicePaid(ctx context.Context, invoiceID uuid.UUID, refe
 	}
 	organizationID, err := s.q.InvoiceOrganization(ctx, invoiceID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return errs.ErrBillingInvoiceNotFound
+		return ErrInvoiceNotFound
 	}
 	if err != nil {
 		return err
@@ -243,13 +241,13 @@ func (s *Service) MarkInvoicePaid(ctx context.Context, invoiceID uuid.UUID, refe
 func (s *Service) PayInvoice(ctx context.Context, organizationID, invoiceID uuid.UUID, successURL, cancelURL string) (*CheckoutResult, error) {
 	inv, err := s.q.LockInvoice(ctx, dbgen.LockInvoiceParams{ID: invoiceID, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrBillingInvoiceNotFound
+		return nil, ErrInvoiceNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
 	if inv.Status != "open" {
-		return nil, errs.ErrBillingInvoiceNotOpen
+		return nil, ErrInvoiceNotOpen
 	}
 	var provider PaymentProvider
 	if s.payments != nil {
@@ -279,7 +277,7 @@ func (s *Service) PayInvoice(ctx context.Context, organizationID, invoiceID uuid
 		TaxRateBps:         inv.TaxRateBps,
 		TaxType:            inv.TaxType,
 		PlaceOfSupply:      inv.PlaceOfSupply,
-		InvoiceID:          pgtype.UUID{Bytes: invoiceID, Valid: true},
+		InvoiceID:          &invoiceID,
 	}, name, successURL, cancelURL)
 }
 
@@ -325,8 +323,8 @@ func (s *Service) invoiceEmail(row dbgen.ClaimInvoiceEmailsRow, to string) notif
 		row.PeriodStart.Format("2 Jan 2006"), row.PeriodEnd.Format("2 Jan 2006"), row.Currency, formatMinor(row.AmountMinor))
 	if row.Status == "paid" {
 		intro += " It's paid. Thank you."
-	} else if row.DueAt.Valid {
-		intro += " It's due by " + row.DueAt.Time.Format("2 Jan 2006") + "."
+	} else if row.DueAt != nil {
+		intro += " It's due by " + row.DueAt.Format("2 Jan 2006") + "."
 	}
 	note := "The invoice, with the details it was billed to, is under Settings › Billing in the Qeet ID console."
 	if s.consoleURL != "" {
@@ -381,7 +379,7 @@ func (s *Service) LastPaymentMethod(ctx context.Context, organizationID uuid.UUI
 	if err != nil {
 		return nil, err
 	}
-	out := &SavedPaymentMethod{Provider: row.Provider, LastUsedAt: row.CompletedAt.Time}
+	out := &SavedPaymentMethod{Provider: row.Provider, LastUsedAt: postgres.ZeroIfNull(row.CompletedAt)}
 	if err := json.Unmarshal(row.PaymentMethod, &out.PaymentMethod); err != nil {
 		return nil, err
 	}

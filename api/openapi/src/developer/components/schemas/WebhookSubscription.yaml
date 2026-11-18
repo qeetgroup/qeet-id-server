@@ -4,7 +4,7 @@ required:
   - disabled_at
   - events
   - id
-  - tenant_id
+  - organization_id
   - url
 properties:
   created_at:
@@ -45,7 +45,7 @@ properties:
     description: Until when the secret replaced by the last rotation also signs deliveries.
   secret:
     type: string
-  tenant_id:
+  organization_id:
     type: string
     format: uuid
   url:

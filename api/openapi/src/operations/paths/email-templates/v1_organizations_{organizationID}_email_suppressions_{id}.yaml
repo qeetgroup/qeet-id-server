@@ -1,0 +1,30 @@
+delete:
+  operationId: deleteEmailSuppression
+  summary: Clear a suppression
+  description: >-
+    Lifts a suppression this organization's mail caused, so mail can reach the
+    address again; audited as email.suppression_cleared. Check the address
+    first: mailing a dead address again harms delivery for every organization. A
+    suppression another organization's mail caused is not found here.
+  tags:
+    - Email Templates
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '204':
+      description: Cleared
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml

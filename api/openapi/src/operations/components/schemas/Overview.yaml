@@ -85,7 +85,7 @@ properties:
   range:
     type: object
     description: >-
-      The sign-ins day by day (UTC) over the chosen range, without organisation
+      The sign-ins day by day (UTC) over the chosen range, without organization
       switches; present when from, to or days was given.
     properties:
       from:

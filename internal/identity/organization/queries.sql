@@ -1,9 +1,27 @@
 -- Queries for the organization domain.
 -- Static queries against organization.organizations live here and are compiled by sqlc into ./dbgen.
--- Dynamic queries (partial UPDATE) intentionally remain hand-written in repository.go.
+-- The partial UPDATE is built at run time and stays hand-written in repository.go.
 
 -- name: GetOrganization :one
 SELECT * FROM organization.organizations
+WHERE id = $1 AND deleted_at IS NULL;
+
+-- LockOrganization reads an organization and holds its row until the
+-- transaction ends, for the update that follows.
+-- name: LockOrganization :one
+SELECT * FROM organization.organizations
+WHERE id = $1 AND deleted_at IS NULL
+FOR UPDATE;
+
+-- LockOrganizationStatus reads an organization's status and holds its row
+-- until the transaction ends, for the deletion that follows.
+-- name: LockOrganizationStatus :one
+SELECT status FROM organization.organizations
+WHERE id = $1 AND deleted_at IS NULL
+FOR UPDATE;
+
+-- name: GetOrganizationRegion :one
+SELECT region FROM organization.organizations
 WHERE id = $1 AND deleted_at IS NULL;
 
 -- ListEligibleOrganizations lists the active organizations an active account
@@ -131,7 +149,7 @@ LIMIT @row_limit;
 
 -- name: InsertOwnerRole :one
 INSERT INTO rbac.roles (organization_id, name, description, is_system)
-VALUES ($1, 'owner', 'Tenant owner — full access', TRUE)
+VALUES ($1, 'owner', 'Organization owner — full access', TRUE)
 RETURNING id;
 
 -- name: GrantAllPermissionsToRole :exec
@@ -144,14 +162,14 @@ SELECT $1, id FROM rbac.permissions;
 -- (whose read reveals them), member nothing.
 WITH builtin AS (
     INSERT INTO rbac.roles (organization_id, name, description, is_system)
-    VALUES (@organization_id, 'admin', 'Administrator — everything but deleting the organisation', TRUE),
-           (@organization_id, 'member', 'Member — signs in to the organisation''s apps, no administration', TRUE),
+    VALUES (@organization_id, 'admin', 'Administrator — everything but deleting the organization', TRUE),
+           (@organization_id, 'member', 'Member — signs in to the organization''s apps, no administration', TRUE),
            (@organization_id, 'viewer', 'Viewer — reads everything, changes nothing', TRUE)
     RETURNING id, name
 )
 INSERT INTO rbac.role_permissions (role_id, permission_id)
 SELECT b.id, p.id FROM builtin b
-JOIN rbac.permissions p ON (b.name = 'admin' AND p.key <> 'tenant.delete')
+JOIN rbac.permissions p ON (b.name = 'admin' AND p.key <> 'organization.delete')
                         OR (b.name = 'viewer' AND p.key LIKE '%.read' AND p.key <> 'secret.read');
 
 -- name: GrantRoleToUser :exec

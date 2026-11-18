@@ -290,3 +290,41 @@ SELECT m.provider, m.payment_method, m.completed_at FROM (
 ) m
 ORDER BY m.completed_at DESC
 LIMIT 1;
+
+-- -----------------------------------------------------------------------
+-- Signup checkouts: a paid plan chosen at signup, before its organization
+-- exists (checkout.go).
+-- -----------------------------------------------------------------------
+
+-- name: OrganizationSlugTaken :one
+SELECT EXISTS (SELECT 1 FROM organization.organizations WHERE slug = @slug);
+
+-- name: InsertSignupCheckout :one
+INSERT INTO organization.signup_checkouts
+    (user_id, org_name, org_slug, region, plan_code, currency, country, provider, amount_minor,
+     taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply)
+VALUES (@user_id, @org_name, @org_slug, @region, @plan_code, @currency, @country, @provider, @amount_minor,
+        @taxable_amount_minor, @tax_amount_minor, @tax_rate_bps, @tax_type, @place_of_supply)
+RETURNING id;
+
+-- name: FailSignupCheckout :exec
+UPDATE organization.signup_checkouts SET status = 'failed' WHERE id = @id;
+
+-- name: SetSignupCheckoutProviderRef :exec
+UPDATE organization.signup_checkouts SET provider_ref = @provider_ref WHERE id = @id;
+
+-- name: ClaimSignupCheckout :one
+-- Completes a pending signup checkout, once: a retry of the same payment finds
+-- no row.
+UPDATE organization.signup_checkouts
+SET status = 'completed', completed_at = NOW(), payment_method = @payment_method
+WHERE id = @id AND status = 'pending'
+RETURNING user_id, org_name, org_slug, region, plan_code, currency, organization_id,
+          amount_minor, taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply;
+
+-- name: ReopenSignupCheckout :exec
+-- Returns a claimed checkout to pending, so a retry resumes it.
+UPDATE organization.signup_checkouts SET status = 'pending', completed_at = NULL WHERE id = @id;
+
+-- name: SetSignupCheckoutOrganization :exec
+UPDATE organization.signup_checkouts SET organization_id = @organization_id::uuid WHERE id = @id;

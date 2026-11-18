@@ -43,3 +43,8 @@ SELECT EXISTS(
 -- name: InsertLoginContext :exec
 INSERT INTO auth.login_context_history (organization_id, user_id, device_key, country)
 VALUES ($1, $2, $3, $4);
+
+-- name: PurgeSignInHistory :execrows
+-- Deletes at most @max_rows sign-in history entries seen before @cutoff.
+DELETE FROM auth.login_context_history WHERE ctid = ANY(ARRAY(
+    SELECT h.ctid FROM auth.login_context_history h WHERE h.seen_at < @cutoff LIMIT @max_rows));

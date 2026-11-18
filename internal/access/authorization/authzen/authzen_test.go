@@ -17,7 +17,6 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/decide"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rebac"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
@@ -180,19 +179,19 @@ func TestEvaluations(t *testing.T) {
 		t.Fatalf("an evaluation without a subject id: %v, want it denied and the batch stopped", got)
 	}
 	e, _ := out.Evaluations[1].Context["error"].(map[string]any)
-	if e["status"] != 422 || e["code"] != errs.CodeAuthZENSubjectIDRequired {
-		t.Errorf("the failed evaluation's context: %v, want 422 %s", out.Evaluations[1].Context, errs.CodeAuthZENSubjectIDRequired)
+	if e["status"] != 422 || e["code"] != CodeSubjectIDRequired {
+		t.Errorf("the failed evaluation's context: %v, want 422 %s", out.Evaluations[1].Context, CodeSubjectIDRequired)
 	}
 
-	if _, err := svc.EvaluateAll(ctx, organization, batch("all_of_them", "doc:read")); !errors.Is(err, errs.ErrAuthZENSemanticInvalid) {
-		t.Errorf("an unknown semantic: %v, want %s", err, errs.CodeAuthZENSemanticInvalid)
+	if _, err := svc.EvaluateAll(ctx, organization, batch("all_of_them", "doc:read")); !errors.Is(err, ErrSemanticInvalid) {
+		t.Errorf("an unknown semantic: %v, want %s", err, CodeSemanticInvalid)
 	}
 	many := make([]string, maxEvaluations+1)
 	for i := range many {
 		many[i] = "doc:read"
 	}
-	if _, err := svc.EvaluateAll(ctx, organization, batch("", many...)); !errors.Is(err, errs.ErrAuthZENTooManyEvaluations) {
-		t.Errorf("%d evaluations: %v, want %s", len(many), err, errs.CodeAuthZENTooManyEvaluations)
+	if _, err := svc.EvaluateAll(ctx, organization, batch("", many...)); !errors.Is(err, ErrTooManyEvaluations) {
+		t.Errorf("%d evaluations: %v, want %s", len(many), err, CodeTooManyEvaluations)
 	}
 }
 
@@ -212,7 +211,7 @@ func TestEvaluationsEndpoint(t *testing.T) {
 	(&Handler{Service: svc}).Mount(r)
 	post := func(organizationID uuid.UUID, body string) (int, map[string]any) {
 		rec := httptest.NewRecorder()
-		r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/tenants/"+organizationID.String()+"/access/v1/evaluations", strings.NewReader(body)))
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/organizations/"+organizationID.String()+"/access/v1/evaluations", strings.NewReader(body)))
 		var out map[string]any
 		_ = json.Unmarshal(rec.Body.Bytes(), &out)
 		return rec.Code, out
@@ -227,6 +226,6 @@ func TestEvaluationsEndpoint(t *testing.T) {
 		t.Errorf("a batch of two: %d %v, want two decisions", code, out)
 	}
 	if code, _ := post(uuid.New(), `{`+subject+`,"evaluations":[{"action":{"name":"doc:read"}}]}`); code != http.StatusForbidden {
-		t.Errorf("another organisation's path: %d, want 403", code)
+		t.Errorf("another organization's path: %d, want 403", code)
 	}
 }

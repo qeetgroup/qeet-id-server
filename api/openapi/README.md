@@ -6,7 +6,7 @@ documents**. There is no monolithic `openapi.yaml`.
 | File | Context | Surface |
 |---|---|---|
 | [auth.yaml](auth.yaml) | access | Login/session, RBAC, ReBAC, MFA, passkeys, IP rules, auth/security policy, threats |
-| [management.yaml](management.yaml) | identity | Users, tenants, groups, invites, verification, branding, domain verification |
+| [management.yaml](management.yaml) | identity | Users, organizations, groups, invites, verification, branding, domain verification |
 | [federation.yaml](federation.yaml) | federation | OIDC, SAML, SCIM, LDAP, social login |
 | [developer.yaml](developer.yaml) | developer | API keys, webhooks, secrets vault, verifiable credentials, auth hooks, agents |
 | [operations.yaml](operations.yaml) | operations | Audit, analytics, billing, GDPR, email templates, retention, log sinks (SIEM), notifications, health |
@@ -31,8 +31,8 @@ src/
 ├── package.json, bun.lock          Redocly CLI, pinned
 ```
 
-- **One file per path.** `/v1/tenants/{tenantID}/webhooks` lives in
-  `developer/paths/webhooks/v1_tenants_{tenantID}_webhooks.yaml`: the path with `/`
+- **One file per path.** `/v1/organizations/{organizationID}/webhooks` lives in
+  `developer/paths/webhooks/v1_organizations_{organizationID}_webhooks.yaml`: the path with `/`
   turned into `_`, in a folder named after its operations' tag.
 - **A component's file name is its name.** `shared/schemas/TokenPair.yaml` becomes
   `#/components/schemas/TokenPair` in every document that uses it, so keep file names
@@ -57,7 +57,7 @@ src/
   items and a `truncated` property (`shared/schemas/Truncated.yaml`), with its query
   reading `LIMIT 1001` and the handler answering `paging.List`. The consistency test fails
   on a list that does neither, outside the few catalogues in `unpagedLists`.
-- **IDs.** `{tenantID}` is always `$ref: …/shared/parameters/TenantID.yaml`. Give any
+- **IDs.** `{organizationID}` is always `$ref: …/shared/parameters/OrganizationID.yaml`. Give any
   other path ID `format: uuid` when its handler parses it with `uuid.Parse`, and only
   then: provider names, template keys and similar stay plain strings.
 - **Headers.** Every response component declares `X-Request-Id`
@@ -119,7 +119,7 @@ laid out to follow an onboarding journey, and its top-level `tags:` array lists 
 tags in that same order (the consistency test enforces it):
 
 - **auth**: Auth → Passkeys → MFA → RBAC → ABAC → ReBAC → AuthZEN → Auth Policy → Policy → IP Rules → Threats
-- **management**: Tenants → Domains → Users → Verification → Groups → Invites → Branding
+- **management**: Organizations → Domains → Users → Verification → Groups → Invites → Branding
 - **federation**: OIDC → Social → SAML → OIDC Connections → LDAP → Directory → SCIM → Admin Portal
 - **developer**: API Keys → Agents → Credentials → Auth Hooks → Webhooks → Secrets → Token Vault
 - **operations**: Health → Activity → Analytics → Search → Audit → Compliance → Data Retention → GDPR → Log Sinks → Notifications → Rate Limits → Email Templates → Qeet AI → Billing → Entitlements → Sales

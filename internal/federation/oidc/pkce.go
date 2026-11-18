@@ -3,11 +3,6 @@ package oidc
 import (
 	"encoding/json"
 	"time"
-
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
-
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 // pkceExemptionMax is the furthest ahead an application's PKCE exemption may
@@ -28,21 +23,21 @@ func validateSignInRequest(clientType string, exempt bool, nonce, challenge, met
 	waived := exempt && clientType == "confidential"
 	if challenge == "" {
 		if method != "" {
-			return errs.ErrOIDCCodeChallengeInvalid
+			return ErrCodeChallengeInvalid
 		}
 		if !waived {
-			return errs.ErrOIDCCodeChallengeRequired
+			return ErrCodeChallengeRequired
 		}
 	} else {
 		if method != "S256" {
-			return errs.ErrOIDCCodeChallengeMethodUnsupported
+			return ErrCodeChallengeMethodUnsupported
 		}
 		if !validPKCEValue(challenge, 43, 43) {
-			return errs.ErrOIDCCodeChallengeInvalid
+			return ErrCodeChallengeInvalid
 		}
 	}
 	if len(nonce) > maxNonceLength {
-		return errs.ErrOIDCNonceInvalid
+		return ErrNonceInvalid
 	}
 	return nil
 }
@@ -55,7 +50,7 @@ func validPKCEExemption(clientType string, until *time.Time, now time.Time) erro
 		return nil
 	}
 	if clientType != "confidential" || !until.After(now) || until.After(now.Add(pkceExemptionMax)) {
-		return errs.ErrOIDCPKCEExemptionInvalid
+		return ErrPKCEExemptionInvalid
 	}
 	return nil
 }
@@ -80,45 +75,4 @@ func (o *OptionalTime) UnmarshalJSON(b []byte) error {
 	}
 	o.At = &t
 	return nil
-}
-
-// timePtr is a nullable timestamp as the API reports it (nil for NULL).
-func timePtr(t pgtype.Timestamptz) *time.Time {
-	if !t.Valid {
-		return nil
-	}
-	v := t.Time
-	return &v
-}
-
-// pgTime is a nullable timestamp for a query (NULL for nil).
-func pgTime(t *time.Time) pgtype.Timestamptz {
-	if t == nil {
-		return pgtype.Timestamptz{}
-	}
-	return pgtype.Timestamptz{Time: *t, Valid: true}
-}
-
-// optionalTime is a nullable timestamp for a query (NULL for the zero time).
-func optionalTime(t time.Time) pgtype.Timestamptz {
-	if t.IsZero() {
-		return pgtype.Timestamptz{}
-	}
-	return pgtype.Timestamptz{Time: t, Valid: true}
-}
-
-// timeOrZero is a nullable timestamp as a time (zero for NULL).
-func timeOrZero(t pgtype.Timestamptz) time.Time {
-	if !t.Valid {
-		return time.Time{}
-	}
-	return t.Time
-}
-
-// uuidOrNil is a nullable UUID as a uuid (uuid.Nil for NULL).
-func uuidOrNil(u pgtype.UUID) uuid.UUID {
-	if !u.Valid {
-		return uuid.Nil
-	}
-	return uuid.UUID(u.Bytes)
 }

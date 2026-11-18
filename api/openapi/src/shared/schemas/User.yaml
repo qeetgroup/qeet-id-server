@@ -3,7 +3,7 @@ properties:
   id:
     type: string
     format: uuid
-  tenant_id:
+  organization_id:
     type: string
     format: uuid
   email:
@@ -54,7 +54,7 @@ properties:
     items:
       type: string
     description: >-
-      Role names in the tenant reading the user, on the list and GET
+      Role names in the organization reading the user, on the list and GET
       /v1/users/{id}.
   assigned_roles:
     type: array
@@ -75,7 +75,7 @@ properties:
   groups_count:
     type: integer
     description: >-
-      Number of groups the user belongs to in this tenant; on the list and GET
+      Number of groups the user belongs to in this organization; on the list and GET
       /v1/users/{id}.
   last_seen_at:
     type:
@@ -83,24 +83,24 @@ properties:
       - 'null'
     format: date-time
     description: >-
-      Their most recent session activity or sign-in in this tenant, or null; on
+      Their most recent session activity or sign-in in this organization, or null; on
       the list and GET /v1/users/{id}.
   last_seen_ip:
     type:
       - string
       - 'null'
     description: The address of that session or sign-in, or null.
-  home_tenant_name:
+  home_organization_name:
     type:
       - string
       - 'null'
-    description: The name of the organisation that manages the account (tenant_id).
+    description: The name of the organization that manages the account (organization_id).
   suspension:
     type:
       - object
       - 'null'
     description: >-
-      On GET /v1/users/{id}, for a suspended person whose home is this tenant;
+      On GET /v1/users/{id}, for a suspended person whose home is this organization;
       absent otherwise.
     properties:
       reason:

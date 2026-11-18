@@ -128,9 +128,9 @@ func TestRedact_GroupRecursion(t *testing.T) {
 
 func TestRedact_NonSensitivePassesThrough(t *testing.T) {
 	lg, buf := newTestLogger()
-	lg.Info("x", "user_id", "u_1", "tenant_id", "t_1", "duration_ms", 42, "status", 200)
+	lg.Info("x", "user_id", "u_1", "organization_id", "t_1", "duration_ms", 42, "status", 200)
 	m := parseLine(t, buf)
-	if m["user_id"] != "u_1" || m["tenant_id"] != "t_1" {
+	if m["user_id"] != "u_1" || m["organization_id"] != "t_1" {
 		t.Errorf("non-sensitive values should not be touched: %v", m)
 	}
 	if m["status"] != float64(200) {

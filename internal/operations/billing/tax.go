@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
-	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/billing/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/billing/dbgen"
 )
 
 // Invoice tax. It is off until an operator configures the seller's jurisdiction

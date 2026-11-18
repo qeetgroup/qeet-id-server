@@ -6,8 +6,7 @@ package notifier
 import (
 	"context"
 	"log/slog"
-
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"strings"
 )
 
 // Message is one notification to send.
@@ -33,7 +32,7 @@ type Sender interface {
 // LogSender logs messages for channels with no provider. They carry OTPs and
 // reset or magic links, so the body is logged only when Reveal is set, which
 // must be development only. Without Reveal the message reaches nobody and Send
-// returns errs.ErrEmailProviderUnavailable. The zero value reveals nothing.
+// returns ErrEmailProviderUnavailable. The zero value reveals nothing.
 type LogSender struct {
 	Reveal bool // log the message body; development only
 }
@@ -55,7 +54,25 @@ func (l LogSender) Send(_ context.Context, m Message) error {
 	}
 	slog.Info("notify", attrs...)
 	if !l.Reveal {
-		return errs.ErrEmailProviderUnavailable
+		return ErrEmailProviderUnavailable
 	}
 	return nil
+}
+
+// MaskDestination is an email address or phone number a code goes to, as
+// people see it and the audit log records it: an address keeps the first
+// character of its local part and its domain ("a****@example.com"), a number
+// its last three digits ("*********123"). Shorter values are kept as they are.
+func MaskDestination(channel, dest string) string {
+	if channel == "email" {
+		at := strings.IndexByte(dest, '@')
+		if at <= 1 {
+			return dest
+		}
+		return dest[:1] + strings.Repeat("*", at-1) + dest[at:]
+	}
+	if len(dest) <= 3 {
+		return dest
+	}
+	return strings.Repeat("*", len(dest)-3) + dest[len(dest)-3:]
 }

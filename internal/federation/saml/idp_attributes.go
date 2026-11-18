@@ -137,13 +137,13 @@ func checkNameID(format, attribute *string) error {
 		*format = nameIDEmail
 	}
 	if !knownNameIDFormat(*format) {
-		return errs.ErrSAMLNameIDFormatInvalid
+		return ErrNameIDFormatInvalid
 	}
 	if *attribute == "" {
 		*attribute = defaultNameIDAttribute(*format)
 	}
 	if !validNameIDAttribute(*attribute) || !nameIDFits(*format, *attribute) {
-		return errs.ErrSAMLNameIDAttributeInvalid
+		return ErrNameIDAttributeInvalid
 	}
 	return nil
 }
@@ -159,7 +159,7 @@ func mergeNameID(curFormat, curAttribute string, format, attribute *string) (str
 			f = nameIDEmail
 		}
 		if !knownNameIDFormat(f) {
-			return "", "", errs.ErrSAMLNameIDFormatInvalid
+			return "", "", ErrNameIDFormatInvalid
 		}
 	}
 	if attribute != nil {
@@ -168,7 +168,7 @@ func mergeNameID(curFormat, curAttribute string, format, attribute *string) (str
 			a = defaultNameIDAttribute(f)
 		}
 		if !validNameIDAttribute(a) || !nameIDFits(f, a) {
-			return "", "", errs.ErrSAMLNameIDAttributeInvalid
+			return "", "", ErrNameIDAttributeInvalid
 		}
 		return f, a, nil
 	}
@@ -193,7 +193,7 @@ func validSource(source string) bool {
 // unknown source or an unknown name format, naming each field at fault.
 func checkAttributes(list []AttributeMapping) error {
 	if len(list) > maxAttributes {
-		return errs.ErrSAMLAttributesInvalid.WithFields([]errs.FieldError{{
+		return ErrAttributesInvalid.WithFields([]errs.FieldError{{
 			Field: "attributes", Code: "too_many", Message: fmt.Sprintf("At most %d attributes.", maxAttributes),
 		}})
 	}
@@ -223,7 +223,7 @@ func checkAttributes(list []AttributeMapping) error {
 		}
 	}
 	if faults != nil {
-		return errs.ErrSAMLAttributesInvalid.WithFields(faults)
+		return ErrAttributesInvalid.WithFields(faults)
 	}
 	return nil
 }
@@ -386,7 +386,7 @@ func (i *IdP) subjectFor(ctx context.Context, sp *ServiceProvider, p *person) (a
 		return assertionSubject{}, err
 	}
 	if len(ids) != 1 {
-		return assertionSubject{}, errs.ErrSAMLNameIDUnavailable
+		return assertionSubject{}, ErrNameIDUnavailable
 	}
 	s := assertionSubject{nameID: ids[0], nameIDFormat: format}
 	for _, m := range sp.Attributes {

@@ -2,7 +2,7 @@ get:
   operationId: listRequestableRoles
   summary: List roles I can ask for
   description: >-
-    The organisation's roles the signed-in person can ask for (every role but
+    The organization's roles the signed-in person can ask for (every role but
     the owner role), marking the ones they already hold directly.
   tags:
     - RBAC

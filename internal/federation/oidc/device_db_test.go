@@ -3,6 +3,7 @@
 package oidc
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -12,8 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/ipallow"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
@@ -50,7 +52,7 @@ func TestDeviceFlow(t *testing.T) {
 	}
 	collect := func(clientID, deviceCode string) *httptest.ResponseRecorder {
 		t.Helper()
-		return postForm(t, p.public, "/oauth/token-code", url.Values{"grant_type": {grantTypeDeviceCode}, "client_id": {clientID}, "device_code": {deviceCode}}, "", "")
+		return postForm(t, p.public, "/oauth/token", url.Values{"grant_type": {grantTypeDeviceCode}, "client_id": {clientID}, "device_code": {deviceCode}}, "", "")
 	}
 	// poll collects as a device that waited out the interval since its last poll.
 	poll := func(clientID, deviceCode string) *httptest.ResponseRecorder {
@@ -77,7 +79,7 @@ func TestDeviceFlow(t *testing.T) {
 		t.Errorf("device authorization %+v, want the hosted /device page and the RFC 8628 timings", started)
 	}
 	tooWide := url.Values{"client_id": {device.ClientID}, "scope": {"openid admin"}}
-	if rec := postForm(t, p.public, "/oauth/device_authorization", tooWide, "", ""); !strings.Contains(rec.Body.String(), errs.CodeOIDCScopeNotPermitted) {
+	if rec := postForm(t, p.public, "/oauth/device_authorization", tooWide, "", ""); !strings.Contains(rec.Body.String(), CodeScopeNotPermitted) {
 		t.Errorf("device authorization for a scope the application may not have: %d %s", rec.Code, rec.Body.String())
 	}
 	if got := pollError(device.ClientID, started.DeviceCode); got != "authorization_pending" {
@@ -99,8 +101,8 @@ func TestDeviceFlow(t *testing.T) {
 	if shown.ClientName != "TV" || !slices.Equal(shown.Scopes, []string{"openid", "email"}) {
 		t.Errorf("the verification page shows %+v, want the application and its scopes", shown)
 	}
-	if rec := decide(outsiderCookie, started.UserCode, true); !strings.Contains(rec.Body.String(), errs.CodeOIDCUserOrganizationMismatch) {
-		t.Errorf("approval by another organisation's person: %d %s", rec.Code, rec.Body.String())
+	if rec := decide(outsiderCookie, started.UserCode, true); !strings.Contains(rec.Body.String(), CodeUserOrganizationMismatch) {
+		t.Errorf("approval by another organization's person: %d %s", rec.Code, rec.Body.String())
 	}
 	if got := pollError(device.ClientID, started.DeviceCode); got != "authorization_pending" {
 		t.Errorf("poll after the outsider's approval: %s, want authorization_pending", got)
@@ -108,7 +110,7 @@ func TestDeviceFlow(t *testing.T) {
 	if rec := decide(cookie, started.UserCode, true); rec.Code != http.StatusOK {
 		t.Fatalf("approve: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec := decide(cookie, started.UserCode, false); !strings.Contains(rec.Body.String(), errs.CodeOIDCDeviceAlreadyDecided) {
+	if rec := decide(cookie, started.UserCode, false); !strings.Contains(rec.Body.String(), CodeDeviceAlreadyDecided) {
 		t.Errorf("decide again: %d %s", rec.Code, rec.Body.String())
 	}
 
@@ -137,7 +139,7 @@ func TestDeviceFlow(t *testing.T) {
 		WHERE organization_id = $1 AND device_code_hash = $2`, organization, codes.Hash(expired.DeviceCode)); err != nil {
 		t.Fatal(err)
 	}
-	if rec := decide(cookie, expired.UserCode, true); !strings.Contains(rec.Body.String(), errs.CodeOIDCUserCodeExpired) {
+	if rec := decide(cookie, expired.UserCode, true); !strings.Contains(rec.Body.String(), CodeUserCodeExpired) {
 		t.Errorf("approve an expired code: %d %s", rec.Code, rec.Body.String())
 	}
 	if got := pollError(device.ClientID, expired.DeviceCode); got != "expired_token" {
@@ -147,7 +149,7 @@ func TestDeviceFlow(t *testing.T) {
 	revoked := start()
 	asAdmin := dbtest.Serve(dbtest.Principal(person.ID, organization), p.mount)
 	asOutsider := dbtest.Serve(dbtest.Principal(outsider.ID, otherOrganization), p.mount)
-	rec = dbtest.Do(t, asAdmin, http.MethodGet, "/tenants/"+organization.String()+"/oauth/devices", nil)
+	rec = dbtest.Do(t, asAdmin, http.MethodGet, "/organizations/"+organization.String()+"/oauth/devices", nil)
 	var list struct {
 		Items []DeviceAuthorization `json:"items"`
 	}
@@ -162,14 +164,14 @@ func TestDeviceFlow(t *testing.T) {
 		}
 	}
 	id := list.Items[at].ID.String()
-	if rec := dbtest.Do(t, asOutsider, http.MethodGet, "/tenants/"+organization.String()+"/oauth/devices", nil); rec.Code != http.StatusForbidden {
-		t.Errorf("another organisation listing the devices: %d, want 403", rec.Code)
+	if rec := dbtest.Do(t, asOutsider, http.MethodGet, "/organizations/"+organization.String()+"/oauth/devices", nil); rec.Code != http.StatusForbidden {
+		t.Errorf("another organization listing the devices: %d, want 403", rec.Code)
 	}
-	inOther := "/tenants/" + otherOrganization.String() + "/oauth/devices/" + id
-	if rec := dbtest.Do(t, asOutsider, http.MethodDelete, inOther, nil); !strings.Contains(rec.Body.String(), errs.CodeOIDCDeviceNotFound) {
-		t.Errorf("another organisation revoking the device: %d %s", rec.Code, rec.Body.String())
+	inOther := "/organizations/" + otherOrganization.String() + "/oauth/devices/" + id
+	if rec := dbtest.Do(t, asOutsider, http.MethodDelete, inOther, nil); !strings.Contains(rec.Body.String(), CodeDeviceNotFound) {
+		t.Errorf("another organization revoking the device: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec := dbtest.Do(t, asAdmin, http.MethodDelete, "/tenants/"+organization.String()+"/oauth/devices/"+id, nil); rec.Code != http.StatusNoContent {
+	if rec := dbtest.Do(t, asAdmin, http.MethodDelete, "/organizations/"+organization.String()+"/oauth/devices/"+id, nil); rec.Code != http.StatusNoContent {
 		t.Fatalf("revoke the device: %d %s", rec.Code, rec.Body.String())
 	}
 	if got := pollError(device.ClientID, revoked.DeviceCode); got != "access_denied" {
@@ -186,16 +188,16 @@ func TestDeviceFlow(t *testing.T) {
 		t.Errorf("devices %+v, want the application's name and when an approval was spent", list.Items)
 	}
 	renew := url.Values{"grant_type": {"refresh_token"}, "client_id": {device.ClientID}, "refresh_token": {issued.RefreshToken}}
-	if rec := postForm(t, p.public, "/oauth/token-code", renew, "", ""); rec.Code != http.StatusOK {
+	if rec := postForm(t, p.public, "/oauth/token", renew, "", ""); rec.Code != http.StatusOK {
 		t.Fatalf("renew the device's tokens: %d %s", rec.Code, rec.Body.String())
 	} else {
 		dbtest.Decode(t, rec, &issued)
 	}
-	if rec := dbtest.Do(t, asAdmin, http.MethodDelete, "/tenants/"+organization.String()+"/oauth/devices/"+approved.ID.String(), nil); rec.Code != http.StatusNoContent {
+	if rec := dbtest.Do(t, asAdmin, http.MethodDelete, "/organizations/"+organization.String()+"/oauth/devices/"+approved.ID.String(), nil); rec.Code != http.StatusNoContent {
 		t.Fatalf("revoke the approved device: %d %s", rec.Code, rec.Body.String())
 	}
 	renew.Set("refresh_token", issued.RefreshToken)
-	if code, _ := decodeTokenError(t, postForm(t, p.public, "/oauth/token-code", renew, "", "")); code != "invalid_grant" {
+	if code, _ := decodeTokenError(t, postForm(t, p.public, "/oauth/token", renew, "", "")); code != "invalid_grant" {
 		t.Errorf("renew after the device was revoked: %s, want invalid_grant", code)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'oauth.device_revoked'
@@ -247,9 +249,9 @@ func TestDeviceAndBackchannelJudgeMembershipLikeSignIn(t *testing.T) {
 		member  bool
 	}{
 		{"a member whose account lives elsewhere", dbtest.User(t, home, home, organization), true},
-		{"an account of the organisation without a role", dbtest.User(t, organization), true},
+		{"an account of the organization without a role", dbtest.User(t, organization), true},
 		{"a guest whose roles were removed", formerGuest, false},
-		{"a suspended account of the organisation", suspended, false},
+		{"a suspended account of the organization", suspended, false},
 	} {
 		if _, _, err := svc.Authorize(ctx, tc.account.ID, web.ClientID, testRedirect, []string{"openid"}, "n-1", challenge, "S256"); (err == nil) != tc.member {
 			t.Fatalf("%s signing in: %v, want admitted %t", tc.name, err, tc.member)
@@ -321,4 +323,51 @@ func TestSigningKeysAreDated(t *testing.T) {
 	if err != nil || keys[0].CreatedAt == nil || keys[0].ActivatedAt == nil || !keys[0].ActivatedAt.Equal(activated) {
 		t.Errorf("signing key %+v (%v), want it dated from the registry", keys[0], err)
 	}
+}
+
+// TestDeviceFlowAddressRulesWithOneConnection checks, with only one connection
+// free, that the organization's address rules decide device approval and token
+// collection: a refusal is recorded, leaves the device pending when approving,
+// and spends the device code when collecting.
+func TestDeviceFlowAddressRulesWithOneConnection(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	svc := NewService(pool, dbtest.Issuer(t))
+	svc.SetAddressPolicy(ipallow.NewService(pool))
+	organization := dbtest.Organization(t)
+	user := dbtest.User(t, organization, organization)
+	if _, err := pool.Exec(ctx, `
+		WITH rule AS (INSERT INTO organization.ip_rules (organization_id, cidr, label, action) VALUES ($1, '192.0.2.0/24', 'office', 'allow'))
+		INSERT INTO organization.ip_rules_config (organization_id, enabled) VALUES ($1, TRUE)
+	`, organization); err != nil {
+		t.Fatalf("address rules: %v", err)
+	}
+	client, secret := registerClientWith(t, svc, CreateClientInput{OrganizationID: organization, GrantTypes: []string{grantTypeDeviceCode}})
+	deviceCode, userCode, _, err := svc.DeviceAuthorize(ctx, client.ClientID, nil)
+	if err != nil {
+		t.Fatalf("device authorize: %v", err)
+	}
+	const refusedIP = "198.51.100.7"
+	refusals := func(path string) int {
+		return dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'auth.address_refused' AND organization_id = $1
+			AND metadata->>'path' = $2 AND metadata->>'address' = $3`, organization, path, refusedIP)
+	}
+
+	dbtest.LeaveOneConnection(t)
+	if err := svc.DecideDevice(ctx, user.ID, userCode, true, refusedIP); !errors.Is(err, errs.ErrAuthAddressNotAllowed) {
+		t.Fatalf("approve from a refused address: %v, want %v", err, errs.ErrAuthAddressNotAllowed)
+	}
+	if n := refusals("device_approval"); n != 1 {
+		t.Errorf("the refused approval was recorded %d times, want 1", n)
+	}
+	if err := svc.DecideDevice(ctx, user.ID, userCode, true, deviceIP); err != nil {
+		t.Fatalf("approve from an allowed address after a refused one: %v", err)
+	}
+	_, err = svc.DeviceToken(ctx, client.ClientID, secret, deviceCode, refusedIP)
+	wantOAuthError(t, "collect from a refused address", err, "access_denied")
+	if n := refusals("device"); n != 1 {
+		t.Errorf("the refused collection was recorded %d times, want 1", n)
+	}
+	_, err = svc.DeviceToken(ctx, client.ClientID, secret, deviceCode, deviceIP)
+	wantOAuthError(t, "collect again after a refused collection", err, "invalid_grant")
 }

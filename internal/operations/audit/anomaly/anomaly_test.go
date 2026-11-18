@@ -1,6 +1,9 @@
 package anomaly
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestScore_NewActionType(t *testing.T) {
 	b := emptyBaseline()
@@ -12,7 +15,7 @@ func TestScore_NewActionType(t *testing.T) {
 	if sc < weightAction {
 		t.Errorf("score = %v, want >= %v (action novelty alone)", sc, weightAction)
 	}
-	if !contains(reasons, "new_action_type") {
+	if !slices.Contains(reasons, "new_action_type") {
 		t.Errorf("reasons = %v, want new_action_type", reasons)
 	}
 }
@@ -44,7 +47,7 @@ func TestScore_NewIP(t *testing.T) {
 	if sc != weightIP {
 		t.Errorf("score = %v, want %v (IP novelty alone)", sc, weightIP)
 	}
-	if !contains(reasons, "new_ip") {
+	if !slices.Contains(reasons, "new_ip") {
 		t.Errorf("reasons = %v, want new_ip", reasons)
 	}
 }
@@ -60,7 +63,7 @@ func TestScore_UnusualHour(t *testing.T) {
 	if sc != weightHour {
 		t.Errorf("score = %v, want %v (hour novelty alone)", sc, weightHour)
 	}
-	if !contains(reasons, "unusual_hour") {
+	if !slices.Contains(reasons, "unusual_hour") {
 		t.Errorf("reasons = %v, want unusual_hour", reasons)
 	}
 }
@@ -98,13 +101,4 @@ func TestFold_EmptyIPNotCounted(t *testing.T) {
 	if len(b.ips) != 0 {
 		t.Errorf("ips = %v, want empty (no IP on this event)", b.ips)
 	}
-}
-
-func contains(s []string, v string) bool {
-	for _, x := range s {
-		if x == v {
-			return true
-		}
-	}
-	return false
 }

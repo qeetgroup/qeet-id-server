@@ -61,9 +61,9 @@ func TestPolicyVersionsAreKeptWholeAndRestore(t *testing.T) {
 		t.Errorf("restore a version there isn't: %v, want not found", err)
 	}
 	if _, err := svc.Versions(ctx, p.ID, other); !errors.Is(err, errs.ErrNotFound) {
-		t.Errorf("another tenant's versions: %v, want not found", err)
+		t.Errorf("another organization's versions: %v, want not found", err)
 	}
 	if _, err := svc.Restore(ctx, p.ID, other, 1, byRavi); !errors.Is(err, errs.ErrNotFound) {
-		t.Errorf("restore from another tenant: %v, want not found", err)
+		t.Errorf("restore from another organization: %v, want not found", err)
 	}
 }

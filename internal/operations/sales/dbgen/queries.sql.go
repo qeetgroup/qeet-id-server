@@ -9,7 +9,6 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const insertSalesLead = `-- name: InsertSalesLead :one
@@ -22,8 +21,8 @@ RETURNING id
 `
 
 type InsertSalesLeadParams struct {
-	OrganizationID pgtype.UUID
-	UserID         pgtype.UUID
+	OrganizationID *uuid.UUID
+	UserID         *uuid.UUID
 	Name           string
 	Email          string
 	Company        string

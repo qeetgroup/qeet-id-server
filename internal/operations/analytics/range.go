@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/operations/analytics/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
@@ -36,33 +37,16 @@ type DayOfLogin struct {
 // of to, of method when not "".
 func (r *Reader) Range(ctx context.Context, organizationID uuid.UUID, from, to time.Time, method string) (*SignInRange, error) {
 	out := &SignInRange{From: from, To: to, Method: method, Days: []DayOfLogin{}}
-	rows, err := r.pool.Query(ctx, `
-		SELECT to_char(d, 'YYYY-MM-DD'),
-		       count(e.id) FILTER (WHERE e.action = 'auth.login_succeeded'),
-		       count(DISTINCT e.actor_user_id) FILTER (WHERE e.action = 'auth.login_succeeded'),
-		       count(e.id) FILTER (WHERE e.action = 'auth.sign_in_failed')
-		FROM generate_series(date_trunc('day', $2::timestamptz AT TIME ZONE 'UTC'),
-		                     date_trunc('day', $3::timestamptz AT TIME ZONE 'UTC'), INTERVAL '1 day') AS d
-		LEFT JOIN audit.events e
-		  ON e.organization_id = $1
-		 AND e.created_at >= d AT TIME ZONE 'UTC' AND e.created_at < (d + INTERVAL '1 day') AT TIME ZONE 'UTC'
-		 AND e.created_at >= $2 AND e.created_at <= $3
-		 AND e.action IN ('auth.login_succeeded', 'auth.sign_in_failed')
-		 AND COALESCE(e.metadata->>'method', '') NOT IN ('tenant_switch', 'tenant_create', 'invite_accept')
-		 AND ($4 = '' OR e.metadata->>'method' = $4)
-		GROUP BY d ORDER BY d`, organizationID, from, to, method)
+	rows, err := r.q.CountSignInsByDay(ctx, dbgen.CountSignInsByDayParams{
+		Tid: &organizationID, FromAt: from, ToAt: to, Method: method,
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var d DayOfLogin
-		if err := rows.Scan(&d.Date, &d.SignIns, &d.People, &d.Failed); err != nil {
-			return nil, err
-		}
-		out.Days = append(out.Days, d)
+	for _, row := range rows {
+		out.Days = append(out.Days, DayOfLogin{Date: row.Day, SignIns: int(row.SignIns), People: int(row.People), Failed: int(row.Failed)})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // parseRange reads a chosen range from r: from and to (RFC 3339), or days

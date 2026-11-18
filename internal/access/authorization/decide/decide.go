@@ -34,11 +34,11 @@ type Attributes interface {
 
 // The engine that decided.
 const (
-	ModelOrganization = "tenant" // refused before any engine ran
-	ModelABAC         = "abac"   // decided by an ABAC policy
-	ModelRBAC         = "rbac"   // decided by a role permission
-	ModelReBAC        = "rebac"  // decided by a relationship tuple
-	ModelNone         = "none"   // nothing allowed it: refused by default
+	ModelOrganization = "organization" // refused before any engine ran
+	ModelABAC         = "abac"         // decided by an ABAC policy
+	ModelRBAC         = "rbac"         // decided by a role permission
+	ModelReBAC        = "rebac"        // decided by a relationship tuple
+	ModelNone         = "none"         // nothing allowed it: refused by default
 )
 
 // Decision is one composed answer. Model and Rule name what decided it, and
@@ -57,11 +57,11 @@ type Decision struct {
 
 // Decision.ReasonCode values of the composition itself.
 const (
-	ReasonNoOrganization = "authz.no_tenant"      // no organization to decide in
-	ReasonEngineError    = "authz.engine_error"   // an engine failed, so it refused
-	ReasonRoleGrant      = "authz.role_grant"     // a role grants the permission
-	ReasonRelationGrant  = "authz.relation_grant" // a relationship tuple grants it
-	ReasonNothingAllows  = "authz.nothing_allows" // nothing allows it: refused by default
+	ReasonNoOrganization = "authz.no_organization" // no organization to decide in
+	ReasonEngineError    = "authz.engine_error"    // an engine failed, so it refused
+	ReasonRoleGrant      = "authz.role_grant"      // a role grants the permission
+	ReasonRelationGrant  = "authz.relation_grant"  // a relationship tuple grants it
+	ReasonNothingAllows  = "authz.nothing_allows"  // nothing allows it: refused by default
 )
 
 // DecidedBy is the part of a decision every check response carries: the model
@@ -177,9 +177,9 @@ func (d *Decider) Check(ctx context.Context, userID, organizationID uuid.UUID, p
 
 func (d *Decider) decide(ctx context.Context, q question) (Decision, error) {
 	if q.organizationID == uuid.Nil {
-		return Decision{Model: ModelOrganization, Rule: "no organisation", ReasonCode: ReasonNoOrganization, Trace: []string{"tenant: no organisation, refused"}}, nil
+		return Decision{Model: ModelOrganization, Rule: "no organization", ReasonCode: ReasonNoOrganization, Trace: []string{"organization: no organization, refused"}}, nil
 	}
-	trace := []string{"tenant: " + q.organizationID.String()}
+	trace := []string{"organization: " + q.organizationID.String()}
 	refuse := func(model string, err error) (Decision, error) {
 		trace = append(trace, fmt.Sprintf("%s: error, refused (%v)", model, err))
 		return Decision{Model: model, Rule: "engine error", ReasonCode: ReasonEngineError, Trace: trace}, err

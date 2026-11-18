@@ -17,7 +17,7 @@ INSERT INTO rbac.role_permissions (role_id, permission_id)
 SELECT ro.id, p.id
 FROM rbac.roles ro
 JOIN rbac.permissions p ON ro.name = 'owner'
-                        OR (ro.name = 'admin' AND p.key <> 'tenant.delete')
+                        OR (ro.name = 'admin' AND p.key <> 'organization.delete')
                         OR (ro.name = 'viewer' AND p.key LIKE '%.read' AND p.key <> 'secret.read')
 WHERE ro.is_system
 ON CONFLICT DO NOTHING;
@@ -315,3 +315,45 @@ FROM (
 ) holder
 JOIN account.users u ON u.id = holder.user_id AND u.deleted_at IS NULL AND u.status = 'active'
 LIMIT 200;
+
+-- Grant checks (grantcheck.go).
+
+-- name: RoleGrantScope :one
+-- Whether the organization's role is its owner role, and the permissions it
+-- carries, by key. No row when the role isn't the organization's.
+SELECT (ro.is_system AND ro.name = 'owner')::boolean AS owner_role,
+       COALESCE(array_agg(p.key ORDER BY p.key) FILTER (WHERE p.key IS NOT NULL), '{}')::text[] AS keys
+FROM rbac.roles ro
+LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
+LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
+WHERE ro.id = @role_id AND ro.organization_id = @organization_id
+GROUP BY ro.id, ro.is_system, ro.name;
+
+-- name: GroupGrantScope :one
+-- Whether the organization's group holds its owner role, and the permissions
+-- its roles carry, by key: none for a group that isn't the organization's.
+SELECT COALESCE(bool_or(ro.is_system AND ro.name = 'owner'), false)::boolean AS owner_role,
+       COALESCE(array_agg(DISTINCT p.key) FILTER (WHERE p.key IS NOT NULL), '{}')::text[] AS keys
+FROM rbac.group_roles gr
+JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.organization_id = gr.organization_id
+LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
+LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
+WHERE gr.group_id = @group_id AND gr.organization_id = @organization_id;
+
+-- name: RoleIsSystem :one
+-- Whether the organization's role is a built-in one.
+SELECT is_system FROM rbac.roles WHERE id = @role_id AND organization_id = @organization_id;
+
+-- name: IsOwner :one
+-- Whether the person holds the organization's owner role, directly or through
+-- a group.
+SELECT EXISTS (
+    SELECT 1 FROM rbac.user_roles ur
+    JOIN rbac.roles ro ON ro.id = ur.role_id AND ro.is_system AND ro.name = 'owner'
+    WHERE ur.user_id = @user_id AND ur.organization_id = @organization_id AND ro.organization_id = @organization_id
+    UNION ALL
+    SELECT 1 FROM organization.group_members gm
+    JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.organization_id = gm.organization_id
+    JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.is_system AND ro.name = 'owner'
+    WHERE gm.user_id = @user_id AND gm.organization_id = @organization_id AND ro.organization_id = @organization_id
+)::boolean AS owner;

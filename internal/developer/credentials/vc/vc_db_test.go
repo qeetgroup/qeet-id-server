@@ -10,7 +10,6 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
@@ -66,7 +65,7 @@ func TestCredentialsNameTheirHolder(t *testing.T) {
 	member := dbtest.User(t, organization, organization)
 	outsider := dbtest.User(t, other, other)
 	api := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: svc}).Mount)
-	base := "/tenants/" + organization.String() + "/credentials"
+	base := "/organizations/" + organization.String() + "/credentials"
 
 	issue := func(userID any) *httptest.ResponseRecorder {
 		return dbtest.Do(t, api, http.MethodPost, base, map[string]any{
@@ -79,8 +78,8 @@ func TestCredentialsNameTheirHolder(t *testing.T) {
 	if rec := issue(nil); rec.Code != http.StatusCreated {
 		t.Fatalf("issue to no one: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec := issue(outsider.ID); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), errs.CodeVCUserNotMember) {
-		t.Errorf("issue to another organisation's person: %d %s, want 422 %s", rec.Code, rec.Body.String(), errs.CodeVCUserNotMember)
+	if rec := issue(outsider.ID); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), CodeUserNotMember) {
+		t.Errorf("issue to another organization's person: %d %s, want 422 %s", rec.Code, rec.Body.String(), CodeUserNotMember)
 	}
 
 	var list struct{ Items []Credential }

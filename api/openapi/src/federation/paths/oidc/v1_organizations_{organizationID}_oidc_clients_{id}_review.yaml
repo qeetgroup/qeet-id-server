@@ -1,0 +1,28 @@
+post:
+  operationId: acknowledgeShadowAiClient
+  summary: Acknowledge a shadow-AI candidate
+  description: >-
+    Marks the client reviewed, attributed to the calling human principal — it
+    drops off the shadow-AI list until/unless its grant_types change again.
+  tags:
+    - OIDC
+  parameters:
+    - $ref: ../../../shared/parameters/OrganizationID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '204':
+      description: No Content
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
