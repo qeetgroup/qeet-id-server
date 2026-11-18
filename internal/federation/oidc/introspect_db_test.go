@@ -20,7 +20,7 @@ import (
 // the application itself introspects and revokes them over HTTP.
 func TestTokensAnswerOnlyToTheirApplication(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
+	svc := newTestService(t, dbtest.Pool(t), dbtest.Issuer(t))
 	organization, otherOrganization := dbtest.Organization(t), dbtest.Organization(t)
 	person := dbtest.User(t, organization, organization)
 	client, secret := registerClient(t, svc, organization)
@@ -87,7 +87,7 @@ func TestTokensAnswerOnlyToTheirApplication(t *testing.T) {
 // account's access token introspects inactive.
 func TestRevocationAndIntrospection(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
+	svc := newTestService(t, dbtest.Pool(t), dbtest.Issuer(t))
 	organization := dbtest.Organization(t)
 	user := dbtest.User(t, organization, organization)
 	client, secret := registerClient(t, svc, organization)

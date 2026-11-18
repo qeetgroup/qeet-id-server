@@ -3,7 +3,9 @@
 package mfa
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"regexp"
@@ -12,12 +14,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-webauthn/webauthn/protocol"
+
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth/authtest"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/totp"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
@@ -42,20 +47,37 @@ const testPassword = "Kx7mQ2vLp9Wz"
 // sixDigits finds a sent one-time code.
 var sixDigits = regexp.MustCompile(`\b\d{6}\b`)
 
-// services returns the MFA service, sending codes through sender, and an
-// authentication service that asks for its factors.
-func services(t *testing.T, sender notifier.Sender) (*Service, *auth.Service) {
+// services returns the MFA service, sending codes through sender on a plan
+// that includes SMS codes, and an authentication service that asks for its
+// factors. Each change applies to the authentication service's Deps.
+func services(t *testing.T, sender notifier.Sender, change ...func(*auth.Deps)) (*Service, *auth.Service) {
 	t.Helper()
 	pool := dbtest.Pool(t)
 	box, err := envelope.New([]byte("0123456789abcdef0123456789abcdef"))
 	if err != nil {
 		t.Fatalf("cipher: %v", err)
 	}
-	mfaSvc := NewService(pool, "Qeet", sender)
-	mfaSvc.SetCipher(box)
-	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
-	authSvc.SetMFA(mfaSvc)
+	mfaSvc, err := NewService(pool, Deps{
+		Issuer: "Qeet", Sender: sender, Cipher: box, Plan: allPlans{},
+		Deliverable: func(string) bool { return true }, WebAuthn: noPasskeys{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	authSvc := authtest.New(t, pool, append([]func(*auth.Deps){func(d *auth.Deps) { d.MFA = mfaSvc }}, change...)...)
 	return mfaSvc, authSvc
+}
+
+// allPlans is a plan gate that allows every feature.
+type allPlans struct{}
+
+func (allPlans) FeatureAllowed(context.Context, uuid.UUID, string) (bool, error) { return true, nil }
+
+// noPasskeys is a passkey verifier for accounts with none.
+type noPasskeys struct{ WebAuthnVerifier }
+
+func (noPasskeys) BeginMFA(context.Context, uuid.UUID) (uuid.UUID, *protocol.CredentialAssertion, error) {
+	return uuid.Nil, nil, errors.New("no passkey")
 }
 
 // member creates a member of a new organization who signs in with

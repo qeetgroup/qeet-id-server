@@ -35,10 +35,10 @@ func (d captureDomain) RefuseCaptured(_ context.Context, email string) error {
 func TestCapturedAddressesSignInElsewhere(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := newService(t)
-	svc.SetRegistrationPolicy(anyPassword{})
+	svc.regPolicy = anyPassword{}
 	organization := dbtest.Organization(t)
 	domain := dbtest.Unique("acme") + ".example.test"
-	svc.SetDomainCapture(captureDomain(domain))
+	svc.capture = captureDomain(domain)
 	captured := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, organization, organization)
 	dbtest.SetPassword(t, captured.ID, testPassword)
 	nobody := dbtest.Unique("nobody") + "@" + domain
@@ -64,7 +64,7 @@ func TestCapturedAddressesSignInElsewhere(t *testing.T) {
 		t.Errorf("%d failed sign-ins counted for a captured address", n)
 	}
 
-	h := &Handler{Service: svc, Validate: validator.New()}
+	h := &Handler{Service: svc, Throttle: passThrough, Bot: noBots{}, Validate: validator.New()}
 	srv := chi.NewRouter()
 	h.Mount(srv)
 	for path, body := range map[string]map[string]any{
@@ -83,6 +83,6 @@ func TestCapturedAddressesSignInElsewhere(t *testing.T) {
 	a, _ := member(t)
 	signIn(t, svc, a)
 	// Once the domain is no longer captured, the account isn't locked.
-	svc.SetDomainCapture(nil)
+	svc.capture = noCapture{}
 	signIn(t, svc, captured)
 }

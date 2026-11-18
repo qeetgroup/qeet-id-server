@@ -1,9 +1,30 @@
 package abac
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// TestNewServiceNeedsItsDependencies checks that the policy service can't be
+// built without its plan gate or its relation check.
+func TestNewServiceNeedsItsDependencies(t *testing.T) {
+	relations := func(context.Context, uuid.UUID, string, string, string) (bool, error) { return false, nil }
+	if svc, err := NewService(&pgxpool.Pool{}, nil, relations); err == nil {
+		t.Errorf("NewService without a plan gate: %v, nil; want an error", svc)
+	}
+	if svc, err := NewService(&pgxpool.Pool{}, planGate{}, nil); err == nil {
+		t.Errorf("NewService without a relation check: %v, nil; want an error", svc)
+	}
+}
+
+// planGate is a plan gate that is never asked.
+type planGate struct{}
+
+func (planGate) FeatureAllowed(context.Context, uuid.UUID, string) (bool, error) { return false, nil }
 
 // subjectBag returns a bag with only a "subject" namespace.
 func subjectBag(attrs map[string]any) AttributeBag {

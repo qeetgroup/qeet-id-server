@@ -6,6 +6,7 @@ package gdpr
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -13,13 +14,13 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/gdpr/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 )
 
 // Service handles erasure and data-export requests; Run is its background
-// sweeper. Until SetSessionSignals is called, ended sessions are not announced.
+// sweeper. The sessions an erasure ends are announced through its signals.
 type Service struct {
 	pool     *pgxpool.Pool
 	q        *dbgen.Queries
@@ -29,16 +30,17 @@ type Service struct {
 	signals  *sessionsignal.Signaller
 }
 
-// SetSessionSignals sets where the sessions an erasure ends are announced.
-func (s *Service) SetSessionSignals(sig *sessionsignal.Signaller) { s.signals = sig }
-
 // NewService returns a Service whose erasure requests wait grace (30 days if
-// grace <= 0) before the purge.
-func NewService(pool *pgxpool.Pool, grace time.Duration) *Service {
+// grace <= 0) before the purge, announcing the sessions an erasure ends
+// through signals. It refuses nil signals.
+func NewService(pool *pgxpool.Pool, grace time.Duration, signals *sessionsignal.Signaller) (*Service, error) {
+	if signals == nil {
+		return nil, errors.New("gdpr: session signals are required to announce the sessions an erasure ends")
+	}
 	if grace <= 0 {
 		grace = 30 * 24 * time.Hour
 	}
-	return &Service{pool: pool, q: dbgen.New(pool), grace: grace, workerID: uuid.New(), lease: 15 * time.Minute}
+	return &Service{pool: pool, q: dbgen.New(pool), grace: grace, workerID: uuid.New(), lease: 15 * time.Minute, signals: signals}, nil
 }
 
 // userBelongsToOrganization reports whether organizationID is the user's home organization

@@ -1,8 +1,7 @@
-// Package authpolicy stores an organization's authentication policy (password
-// rules, permitted sign-in methods and sign-in lockout) and its security policy
-// (sessions, second factor, step-up; securitypolicy.go), and owns the password
-// check every path that sets a password runs (ValidateForOrganization). An
-// account with no organization gets the platform baseline, DefaultPolicy.
+// Package authpolicy stores an organization's authentication policy (password rules, sign-in methods,
+// lockout) and its security policy (sessions, second factor, step-up; securitypolicy.go), and owns
+// the password check every path that sets a password runs (ValidateForOrganization). An account with
+// no organization gets the platform baseline, DefaultPolicy.
 package authpolicy
 
 import (
@@ -14,8 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authpolicy/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/hibp"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
@@ -64,23 +62,37 @@ func DefaultPolicy() Policy {
 // where the organization sets nothing (the column default).
 const defaultRememberDeviceDays = 30
 
-// Service stores organizations' authentication policies. breach (nil: off) checks
-// new passwords against known breaches and fails open when the provider is
-// unreachable; lockout holds the platform lockout defaults and bounds.
+// Service stores organizations' authentication policies. breach checks new
+// passwords against known breaches; lockout holds the platform lockout
+// defaults and bounds.
 type Service struct {
 	pool    *pgxpool.Pool
 	q       *dbgen.Queries
-	breach  *hibp.Checker
+	breach  BreachChecker
 	lockout LockoutLimits
 }
 
-// NewService returns the authentication policy service.
-func NewService(pool *pgxpool.Pool) *Service {
-	return &Service{pool: pool, q: dbgen.New(pool), lockout: DefaultLockoutLimits()}
+// BreachChecker reports whether a new password appears in known breaches,
+// failing open when it can't tell. Satisfied by *hibp.Checker.
+type BreachChecker interface {
+	PwnedAllowOnError(ctx context.Context, password string) bool
 }
 
-// SetBreachChecker sets the breached-password checker (nil: no check).
-func (s *Service) SetBreachChecker(c *hibp.Checker) { s.breach = c }
+// NoBreachCheck is the BreachChecker of a deployment that turns the check
+// off: no password counts as breached.
+type NoBreachCheck struct{}
+
+// PwnedAllowOnError reports false.
+func (NoBreachCheck) PwnedAllowOnError(context.Context, string) bool { return false }
+
+// NewService returns the authentication policy service, checking new
+// passwords with breaches.
+func NewService(pool *pgxpool.Pool, breaches BreachChecker) (*Service, error) {
+	if breaches == nil {
+		return nil, errors.New("authpolicy: the policy service needs a breach checker (NoBreachCheck when it is off)")
+	}
+	return &Service{pool: pool, q: dbgen.New(pool), breach: breaches, lockout: DefaultLockoutLimits()}, nil
+}
 
 // toDomain maps a generated OrganizationAuthPolicy row to the domain Policy model.
 func toDomain(row dbgen.OrganizationAuthPolicy) *Policy {
@@ -137,12 +149,10 @@ func (s *Service) Get(ctx context.Context, organizationID uuid.UUID) (*Policy, e
 	return p, nil
 }
 
-// Update stores an organization's whole policy, recorded as actor's in the same
-// transaction. Invalid settings are refused, each named in the validation
-// error, before anything is written; the password length (8–128) and
-// magic-link lifetime (5–1440 minutes) are clamped instead. Every first-factor
-// method may be off only while the organization has an active SAML or LDAP
-// connection to sign in through.
+// Update stores an organization's whole policy, recorded as actor's in the same transaction. Invalid
+// settings are refused, each named, before anything is written; password length (8-128) and
+// magic-link lifetime (5-1440 minutes) are clamped instead. Every first-factor method may be off only
+// while an active SAML or LDAP connection signs people in.
 func (s *Service) Update(ctx context.Context, organizationID uuid.UUID, p Policy, actor audit.Actor) (*Policy, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

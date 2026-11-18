@@ -184,8 +184,7 @@ func TestRenewalsAreBilledAndLapseUnpaid(t *testing.T) {
 // what it was paid with, for that organization only.
 func TestARenewalIsPaidThroughCheckout(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := newTestService(t)
-	withSandbox(svc)
+	svc := newTestService(t, withSandbox)
 	organization, other := dbtest.Organization(t), dbtest.Organization(t)
 	subscribe(t, svc, organization, "pro", "USD")
 	endPeriodAgo(t, organization, time.Minute)
@@ -240,8 +239,7 @@ func TestARenewalIsPaidThroughCheckout(t *testing.T) {
 // paid with the payment's reference.
 func TestInvoiceOnlyActivationIsOpenUntilPaid(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := newTestService(t)
-	svc.SetAllowUnpaidActivation(true)
+	svc := newTestService(t, unpaid)
 	organization := dbtest.Organization(t)
 	if _, err := svc.Checkout(ctx, organization, "pro", "USD", "", "https://console.example/ok", "https://console.example/no"); err != nil {
 		t.Fatal(err)
@@ -284,10 +282,14 @@ func (o *outbox) Send(_ context.Context, m notifier.Message) error {
 // once to that profile's billing email, again after a failed send.
 func TestInvoicesKeepWhoTheyWereBilledTo(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := newTestService(t)
-	svc.SetTaxConfig(TaxConfig{Enabled: true, SellerCountry: "IN", SellerState: "Karnataka", SupplierGSTIN: "29ABCDE1234F1Z5", SAC: "998315"})
+	svc := newTestService(t, func(c *Config) {
+		c.Tax = TaxConfig{Enabled: true, SellerCountry: "IN", SellerState: "Karnataka", SupplierGSTIN: "29ABCDE1234F1Z5", SAC: "998315"}
+	})
 	mail := &outbox{fail: true}
-	svc.SetMailer(mail, "https://console.example/")
+	emails, err := NewInvoiceEmails(svc, mail, "https://console.example/")
+	if err != nil {
+		t.Fatal(err)
+	}
 	organization, unbilled := dbtest.Organization(t), dbtest.Organization(t)
 	profile := BillingProfile{LegalName: "Acme Pvt Ltd", BillingEmail: "accounts@acme.example", City: "Pune",
 		State: "Maharashtra", Country: "IN", TaxIDType: "gstin", TaxID: "27AAPFU0939F1ZV"}
@@ -307,14 +309,14 @@ func TestInvoicesKeepWhoTheyWereBilledTo(t *testing.T) {
 		t.Errorf("invoice %+v, want who it was billed to when issued, and the supplier's GSTIN and SAC", inv)
 	}
 
-	if n, err := svc.SendInvoiceEmails(ctx); err != nil || n != 0 {
+	if n, err := emails.Send(ctx); err != nil || n != 0 {
 		t.Fatalf("send with the transport down: %d, %v", n, err)
 	}
 	mail.fail = false
-	if n, err := svc.SendInvoiceEmails(ctx); err != nil || n != 1 {
+	if n, err := emails.Send(ctx); err != nil || n != 1 {
 		t.Fatalf("send again: %d, %v; want the one invoice with a billing email", n, err)
 	}
-	if n, err := svc.SendInvoiceEmails(ctx); err != nil || n != 0 {
+	if n, err := emails.Send(ctx); err != nil || n != 0 {
 		t.Errorf("send a third time: %d, %v; want nothing left", n, err)
 	}
 	if len(mail.sent) != 1 || mail.sent[0].To != "accounts@acme.example" || mail.sent[0].OrganizationID != organization.String() {

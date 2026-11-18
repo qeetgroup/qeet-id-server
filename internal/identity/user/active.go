@@ -4,15 +4,14 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+
 	"github.com/qeetgroup/qeet-id-server/internal/identity/user/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 )
 
-// Monthly active users are the people active in an organization in a calendar
-// month (UTC): a person who signs in to it, or renews a session in it, at least
-// once that month counts once. The plans' allowances are in these units. API
-// keys, service principals and AI agents are not people, and their tokens are
-// never recorded.
+// Monthly active users are the people active in an organization in a calendar month (UTC): signing
+// in to it or renewing a session in it at least once that month counts once. The plans' allowances
+// are in these units. API keys, service principals and AI agents are not people and never counted.
 
 // RecordActive marks userID active in organizationID this month. Run it in the
 // sign-in's or renewal's own transaction, so a refused one doesn't count. A

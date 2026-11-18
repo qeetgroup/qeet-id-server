@@ -3,18 +3,25 @@
 package bootstrap
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth/authtest"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
+	"github.com/qeetgroup/qeet-id-server/internal/developer/agent"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/apikey"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
+	"github.com/qeetgroup/qeet-id-server/internal/developer/principal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
+
+// unlimitedPlans is a plan without limits.
+type unlimitedPlans struct{}
+
+func (unlimitedPlans) Limit(context.Context, uuid.UUID, string) (int, error) { return -1, nil }
 
 // TestStreamAccessFollowsWhatAdmittedTheReader checks the check an open
 // activity stream keeps making: a reader with a live session and audit.read
@@ -39,9 +46,20 @@ func TestStreamAccessFollowsWhatAdmittedTheReader(t *testing.T) {
 	if policy.UserPermission != "audit.read" {
 		t.Fatalf("the stream route's policy %+v; want it gated on audit.read", policy)
 	}
-	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
-	keys := apikey.NewService(pool)
-	access := streamAccess(&httpx.AuthVerifier{SessionLive: authSvc.SessionLive, APIKeyLive: keys.Live}, rbac.NewRepository(pool), policy)
+	authSvc := authtest.New(t, pool)
+	issuer := dbtest.Issuer(t)
+	keys, err := apikey.NewService(pool, unlimitedPlans{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier, err := httpx.NewAuthVerifier(httpx.AuthVerifier{
+		Tokens: issuer, AgentStatus: agent.NewService(pool, issuer).AgentStatus, SessionUsed: authSvc.SessionUsed,
+		SessionLive: authSvc.SessionLive, PrincipalLive: principal.NewService(pool, issuer).PrincipalLive, APIKeyLive: keys.Live,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	access := streamAccess(verifier, rbac.NewRepository(pool), policy)
 	asPerson := func(userID, organizationID, sessionID uuid.UUID, expires time.Time) *httpx.Principal {
 		return &httpx.Principal{ActorType: "user", UserID: &userID, OrganizationID: &organizationID, SessionID: &sessionID, ExpiresAt: &expires}
 	}

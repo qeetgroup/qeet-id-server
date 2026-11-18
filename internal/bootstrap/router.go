@@ -242,17 +242,6 @@ func NewRouter(d Deps) http.Handler {
 
 	mountRootPublicRoutes(r, d, credentialLimiter, protocolLimiter)
 
-	// Tight per-user throttle for the endpoints that dispatch an SMS/email to a
-	// caller-supplied address or guess a credential (~6/min sustained, burst 5):
-	// blunts SMS toll-fraud, email-bombing, and online password guessing that the
-	// generous 30 rps/user bucket wouldn't. Applied per-route inside the handlers.
-	sensitiveThrottle := newLimiter(sensitiveLimit).MiddlewareBy("sensitive", ratelimit.PerUser)
-	d.Auth.Throttle = sensitiveThrottle
-	d.Verification.Throttle = sensitiveThrottle
-	// A phone linking with a pairing code: a wrong code is a guess, so the same
-	// pace per address (the code itself is 50 bits and lives five minutes).
-	d.MFA.PairingThrottle = newLimiter(pairingLimit).MiddlewareBy("pairing", ratelimit.PerIP)
-
 	r.Route("/v1", func(r chi.Router) {
 		// Public (no JWT required).
 		r.Group(func(r chi.Router) {

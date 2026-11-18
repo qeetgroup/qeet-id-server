@@ -6,9 +6,8 @@ import (
 	"errors"
 	"regexp"
 	"testing"
-	"time"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -17,7 +16,7 @@ import (
 func TestEmailVerification(t *testing.T) {
 	ctx := dbtest.Context(t)
 	mail := &dbtest.Mailbox{}
-	svc := NewService(dbtest.Pool(t), mail, 10*time.Minute)
+	svc := newService(t, mail)
 	organization := dbtest.Organization(t)
 	a := dbtest.User(t, organization, organization)
 	who := Requester{Actor: audit.Actor{UserID: &a.ID, Type: "user"}, OrganizationID: &organization}

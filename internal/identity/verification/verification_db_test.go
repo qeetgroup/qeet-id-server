@@ -6,10 +6,13 @@ import (
 	"context"
 	"fmt"
 	"math/rand/v2"
+	"net/http"
 	"regexp"
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 
 	"github.com/google/uuid"
 
@@ -17,6 +20,25 @@ import (
 )
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
+
+// newService returns the verification service sending through sender, on a
+// plan that includes SMS codes, with every channel able to deliver.
+func newService(t *testing.T, sender notifier.Sender) *Service {
+	t.Helper()
+	svc, err := NewService(dbtest.Pool(t), sender, 10*time.Minute, allPlans{}, func(string) bool { return true })
+	if err != nil {
+		t.Fatal(err)
+	}
+	return svc
+}
+
+// passThrough is a route throttle that holds nothing back.
+func passThrough(h http.Handler) http.Handler { return h }
+
+// allPlans is a plan gate that allows every feature.
+type allPlans struct{}
+
+func (allPlans) FeatureAllowed(context.Context, uuid.UUID, string) (bool, error) { return true, nil }
 
 // codeIn returns the code of digits digits in body, failing t without one.
 func codeIn(t *testing.T, body string, digits int) string {

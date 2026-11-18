@@ -14,11 +14,9 @@ const pkceExemptionMax = 90 * 24 * time.Hour
 // token.
 const maxNonceLength = 255
 
-// validateSignInRequest enforces the OAuth 2.1 (RFC 9700) rules on an
-// authorization request: an S256 PKCE challenge, which binds the code to the
-// request, so a nonce is optional (OIDC Core 3.1.2.1). A confidential client's
-// active PKCE exemption waives the challenge; values that are sent are always
-// checked.
+// validateSignInRequest enforces the OAuth 2.1 (RFC 9700) rules on an authorization request: an S256
+// PKCE challenge, which binds the code to the request, so a nonce is optional (OIDC Core 3.1.2.1). A
+// confidential client's active PKCE exemption waives the challenge; values sent are always checked.
 func validateSignInRequest(clientType string, exempt bool, nonce, challenge, method string) error {
 	waived := exempt && clientType == "confidential"
 	if challenge == "" {

@@ -11,7 +11,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth/authtest"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
@@ -43,7 +43,8 @@ func TestAdminPasswordSetEndsEverySignIn(t *testing.T) {
 		Repo:           users,
 		Validate:       validator.New(validator.WithRequiredStructEnabled()),
 		PasswordPolicy: func(context.Context, uuid.UUID, string, string) error { return nil },
-		SignIns:        auth.NewService(pool, users, dbtest.Issuer(t)),
+		SignIns:        authtest.New(t, pool),
+		Mailer:         &dbtest.Mailbox{},
 		ActOnCheck:     rbac.NewRepository(pool).CheckActOn,
 	}
 	as := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)
@@ -75,7 +76,8 @@ func TestSuspensionEndsEverySignIn(t *testing.T) {
 	h := &user.Handler{
 		Repo:       users,
 		Validate:   validator.New(validator.WithRequiredStructEnabled()),
-		SignIns:    auth.NewService(pool, users, dbtest.Issuer(t)),
+		SignIns:    authtest.New(t, pool),
+		Mailer:     &dbtest.Mailbox{},
 		ActOnCheck: rbac.NewRepository(pool).CheckActOn,
 	}
 	as := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)

@@ -7,14 +7,18 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
 // TestHookAtAPrivateAddressIsRefused checks that a hook whose URL is not an
 // allowed outbound destination is not created.
 func TestHookAtAPrivateAddressIsRefused(t *testing.T) {
-	_, err := NewService(dbtest.Pool(t)).Create(dbtest.Context(t), dbtest.Organization(t), "http://127.0.0.1:9/hook", "x", true, audit.Actor{Type: "user"})
+	strict, err := NewService(dbtest.Pool(t), testCipher(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = strict.Create(dbtest.Context(t), dbtest.Organization(t), "http://127.0.0.1:9/hook", "x", true, audit.Actor{Type: "user"})
 	if !errors.Is(err, ErrURLInvalid) {
 		t.Errorf("a hook at a private address: %v, want refused", err)
 	}

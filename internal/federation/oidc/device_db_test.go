@@ -229,7 +229,7 @@ func TestDeviceAuthorizationNeedsTheDeviceGrant(t *testing.T) {
 func TestDeviceAndBackchannelJudgeMembershipLikeSignIn(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	svc := NewService(pool, dbtest.Issuer(t))
+	svc := newTestService(t, pool, dbtest.Issuer(t))
 	organization, home := dbtest.Organization(t), dbtest.Organization(t)
 	web, _ := registerClient(t, svc, organization)
 	device, _ := registerClientWith(t, svc, CreateClientInput{OrganizationID: organization, Type: "public", GrantTypes: []string{grantTypeDeviceCode}})
@@ -282,7 +282,7 @@ func TestDeviceAndBackchannelJudgeMembershipLikeSignIn(t *testing.T) {
 // the code's organization, naming the person, the code and the client.
 func TestDeviceDenialIsAudited(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
+	svc := newTestService(t, dbtest.Pool(t), dbtest.Issuer(t))
 	organization := dbtest.Organization(t)
 	device, _ := registerClientWith(t, svc, CreateClientInput{OrganizationID: organization, Type: "public", GrantTypes: []string{grantTypeDeviceCode}})
 	person := dbtest.User(t, organization, organization)
@@ -305,7 +305,7 @@ func TestDeviceDenialIsAudited(t *testing.T) {
 func TestSigningKeysAreDated(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	svc := NewService(pool, dbtest.Issuer(t))
+	svc := newTestService(t, pool, dbtest.Issuer(t))
 	keys, err := svc.SigningKeys(ctx)
 	if err != nil || len(keys) == 0 {
 		t.Fatalf("signing keys: %v, %v", keys, err)
@@ -332,8 +332,7 @@ func TestSigningKeysAreDated(t *testing.T) {
 func TestDeviceFlowAddressRulesWithOneConnection(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	svc := NewService(pool, dbtest.Issuer(t))
-	svc.SetAddressPolicy(ipallow.NewService(pool))
+	svc := newTestService(t, pool, dbtest.Issuer(t), func(d *Deps) { d.Addresses = ipallow.NewService(pool) })
 	organization := dbtest.Organization(t)
 	user := dbtest.User(t, organization, organization)
 	if _, err := pool.Exec(ctx, `

@@ -4,17 +4,40 @@ package domainverify
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"slices"
 	"testing"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
+
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
+
+// newService returns the domain service on a plan that includes custom
+// domains, with the platform's owner check and member permissions.
+func newService(t *testing.T) *Service {
+	t.Helper()
+	pool := dbtest.Pool(t)
+	svc, err := NewService(pool, Deps{
+		Gate: allPlans{}, Owners: rbac.NewRepository(pool), MemberPermissions: identitylink.MemberPermissions(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return svc
+}
+
+// allPlans is a plan gate that allows every feature.
+type allPlans struct{}
+
+func (allPlans) FeatureAllowed(context.Context, uuid.UUID, string) (bool, error) { return true, nil }
 
 // txtRecords answers every TXT lookup with its records.
 type txtRecords []string
@@ -26,7 +49,7 @@ func (r txtRecords) LookupTXT(context.Context, string) ([]string, error) { retur
 // verified.
 func TestDomainsStayInTheirOrganization(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t))
+	svc := newService(t)
 	organizationA, organizationB := dbtest.Organization(t), dbtest.Organization(t)
 	adminB := dbtest.User(t, organizationB, organizationB)
 	name := dbtest.Unique("acme") + ".example.test"
@@ -96,8 +119,8 @@ func TestLoginDomainKeepsItsLastCheck(t *testing.T) {
 	pool := dbtest.Pool(t)
 	organization, other := dbtest.Organization(t), dbtest.Organization(t)
 	dns := &countingResolver{}
-	svc := NewService(pool)
-	svc.resolver, svc.web = dns, nil
+	svc := newService(t)
+	svc.resolver, svc.web = dns, &http.Client{Transport: unreachable{}}
 	setHost := func(id uuid.UUID, host string) {
 		if _, err := pool.Exec(ctx, `INSERT INTO organization.branding (organization_id, custom_domain) VALUES ($1, $2)
 			ON CONFLICT (organization_id) DO UPDATE SET custom_domain = EXCLUDED.custom_domain`, id, host); err != nil {
@@ -130,4 +153,12 @@ func TestLoginDomainKeepsItsLastCheck(t *testing.T) {
 	if read, _ := svc.LoginDomain(ctx, other); dns.lookups != 4 || read.LoginDomain != "auth.other.example" {
 		t.Errorf("another organization's read: %+v, %d lookups; want its own check", read, dns.lookups)
 	}
+}
+
+// unreachable is a transport no request gets through, as for a hostname
+// whose login no one serves.
+type unreachable struct{}
+
+func (unreachable) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("unreachable")
 }

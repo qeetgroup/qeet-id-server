@@ -21,7 +21,7 @@ func TestSwitchAppliesTheTargetsRules(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	svc := newService(t)
-	svc.SetMFA(&poolFactors{pool: pool})
+	svc.mfa = &poolFactors{pool: pool}
 	a, home := member(t)
 	strict, open := dbtest.Organization(t), dbtest.Organization(t)
 	for _, organization := range []uuid.UUID{strict, open} {
@@ -36,7 +36,7 @@ func TestSwitchAppliesTheTargetsRules(t *testing.T) {
 	pair := signIn(t, svc, a)
 	p := dbtest.Principal(a.ID, home)
 	p.SessionID = &pair.SessionID
-	h := dbtest.Serve(p, (&Handler{Service: svc, Validate: validator.New(validator.WithRequiredStructEnabled())}).MountAuthed)
+	h := dbtest.Serve(p, (&Handler{Service: svc, Throttle: passThrough, Bot: noBots{}, Validate: validator.New(validator.WithRequiredStructEnabled())}).MountAuthed)
 	switchTo := func(organization uuid.UUID) (int, string) {
 		t.Helper()
 		rec := dbtest.Do(t, h, http.MethodPost, "/auth/switch-organization", map[string]string{"organization_id": organization.String()})
@@ -166,7 +166,7 @@ func TestCapturedAddressCannotSwitchIntoItsOrganization(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE organization.domains SET sso_enabled = TRUE WHERE organization_id = $1`, home); err != nil {
 		t.Fatal(err)
 	}
-	svc.SetDomainCapture(captureDomain(domain))
+	svc.capture = captureDomain(domain)
 	there, err := switchTo(signedIn, guestOf)
 	if err != nil {
 		t.Fatalf("switch into an organization they are a guest of: %v", err)

@@ -8,12 +8,9 @@ import (
 	"testing"
 
 	"github.com/descope/virtualwebauthn"
-	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -24,12 +21,7 @@ var testRP = virtualwebauthn.RelyingParty{ID: "example.test", Name: "Qeet ID", O
 // signInService returns the passkey service for testRP, issuing sessions.
 func signInService(t *testing.T) *Service {
 	t.Helper()
-	wa, err := webauthn.New(&webauthn.Config{RPID: testRP.ID, RPDisplayName: testRP.Name, RPOrigins: []string{testRP.Origin}})
-	if err != nil {
-		t.Fatalf("webauthn: %v", err)
-	}
-	pool := dbtest.Pool(t)
-	return NewService(pool, wa, auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t)))
+	return newService(t)
 }
 
 // device is a virtual authenticator holding one passkey.

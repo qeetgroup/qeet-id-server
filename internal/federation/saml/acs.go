@@ -13,7 +13,7 @@ import (
 	samltypes "github.com/russellhaering/gosaml2/types"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/logincode"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/returnto"
@@ -138,11 +138,10 @@ func (h *Handler) validatedAnswer(r *http.Request, conn *Connection) (acsAnswer,
 	return a, nil
 }
 
-// consumeAnswer reserves the answer's IDs against replay and spends the
-// request it answers, returning where the hosted login asked to go back to.
-// An answer to a request completes only in the browser that sent it, and
-// spends the request either way; bound reports that it did. One the IdP sends
-// unasked has no request to bind, so it is opt-in.
+// consumeAnswer reserves the answer's IDs against replay and spends the request it answers, returning
+// where the hosted login asked to go back to. An answer completes only in the browser that sent the
+// request, and spends it either way (bound reports that it did); an IdP-initiated answer has no request
+// to bind, so it is opt-in.
 func (h *Handler) consumeAnswer(w http.ResponseWriter, r *http.Request, conn *Connection, a acsAnswer) (returnTo string, bound bool, err error) {
 	requestID, assertionIDs, err := trustedCorrelation(a.response)
 	if err != nil {
@@ -187,19 +186,16 @@ func (h *Handler) answeredAccount(ctx context.Context, r *http.Request, conn *Co
 		slog.Error("saml acs: provisioning failed", "err", err, "connection", conn.ID)
 		return uuid.Nil, errs.ErrInternalServer
 	}
-	if h.Service.auth != nil {
-		if err := h.Service.auth.CheckSignInAccount(ctx, userID, conn.OrganizationID, provider, httpx.ClientIP(r), r.UserAgent()); err != nil {
-			return uuid.Nil, err
-		}
+	if err := h.Service.auth.CheckSignInAccount(ctx, userID, conn.OrganizationID, provider, httpx.ClientIP(r), r.UserAgent()); err != nil {
+		return uuid.Nil, err
 	}
 	return userID, nil
 }
 
-// acsFailed answers a sign-in that failed after its connection was found. One the hosted login
-// began goes back to its sign-in page (returnto.Failed), to the return_to stored when it began:
-// returnTo once the answer is bound to this browser, else that of this browser's latest pending
-// request on the connection, named by its binding cookie, which scripts and other sites can't
-// set. Any other sign-in gets the error itself.
+// acsFailed answers a sign-in that failed after its connection was found. One the hosted login began
+// goes back to its sign-in page (returnto.Failed) with the stored return_to: returnTo once bound to this
+// browser, else that of its latest pending request on the connection, named by its binding cookie,
+// which scripts and other sites can't set. Any other sign-in gets the error itself.
 func (h *Handler) acsFailed(w http.ResponseWriter, r *http.Request, connectionID uuid.UUID, returnTo string, err error) {
 	if h.Service.loginBaseURL != "" && returnTo == "" {
 		returnTo = h.Service.hostedReturn(r.Context(), connectionID, h.binding().Held(r))

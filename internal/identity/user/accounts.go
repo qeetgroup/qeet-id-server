@@ -9,7 +9,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/user/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
@@ -18,8 +18,7 @@ import (
 
 // accounts makes an administrator's changes to accounts. Each change owns its
 // transaction, in which its audit rows, events and ended sign-ins commit with
-// it or not at all. A nil signIns ends sessions alone; a nil signals
-// announces nothing.
+// it or not at all.
 type accounts struct {
 	repo    *Repository
 	signIns signInEnder

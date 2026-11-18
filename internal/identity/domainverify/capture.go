@@ -11,19 +11,17 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
-// Domain capture: an organization that manages a domain (ManagingDomain), has
-// switched SSO on for it and has an active SAML or LDAP connection requires
-// everyone on that domain to sign in through its identity provider. Their own
-// sign-in methods are refused, except for the break-glass members its owners
-// name, so an outage of the identity provider can't lock everyone out, and the
-// administrators single sign-on never takes over by address.
+// Domain capture: an organization that manages a domain, has switched SSO on for it and has an active
+// SAML or LDAP connection makes everyone on that domain sign in through its identity provider. Their
+// own sign-in methods are refused, except for the break-glass members its owners name (so an IdP
+// outage can't lock everyone out) and the administrators single sign-on never takes over by address.
 
 // OwnerChecker reports whether userID holds organizationID's owner role. Satisfied by
 // *rbac.Repository.
@@ -31,22 +29,12 @@ type OwnerChecker interface {
 	IsOwner(ctx context.Context, userID, organizationID uuid.UUID) (bool, error)
 }
 
-// SetOwners sets the owner check break-glass changes need (nil refuses them).
-func (s *Service) SetOwners(o OwnerChecker) { s.owners = o }
-
-// SetMemberPermissions sets the permissions a member may hold without being an
-// administrator single sign-on doesn't adopt by address (identitylink's); any
-// other permission, and the owner role, make one.
-func (s *Service) SetMemberPermissions(keys []string) { s.memberPermissions = keys }
-
 // errBreakGlassOwnerOnly refuses a break-glass change by anyone but an owner.
 var errBreakGlassOwnerOnly = errs.ErrRBACOwnerOnly.WithMessage("Only an owner can choose who keeps signing in without single sign-on.")
 
-// RefuseCaptured returns errs.ErrAuthSSORequired, naming the organization's
-// active connections in its metadata, when email's domain is captured and its
-// account isn't exempt. Only an exempt account's answer differs; every other
-// address on the domain gets the same one, with the same queries, whether or
-// not it has an account.
+// RefuseCaptured returns errs.ErrAuthSSORequired, naming the organization's active connections in its
+// metadata, when email's domain is captured and its account isn't exempt. Every address on the
+// domain that isn't exempt gets the same answer from the same queries, account or not.
 func (s *Service) RefuseCaptured(ctx context.Context, email string) error {
 	// A verified domain belongs to one organization, whoever asks.
 	ctx = postgres.AcrossOrganizations(ctx)
@@ -103,7 +91,7 @@ func (s *Service) ListBreakGlass(ctx context.Context, organizationID uuid.UUID) 
 // requireOwner refuses actor unless they are a person holding organizationID's owner
 // role; a credential acting for one is refused too.
 func (s *Service) requireOwner(ctx context.Context, organizationID uuid.UUID, actor audit.Actor) error {
-	if s.owners == nil || actor.UserID == nil || actor.Type != "user" {
+	if actor.UserID == nil || actor.Type != "user" {
 		return errBreakGlassOwnerOnly
 	}
 	owner, err := s.owners.IsOwner(ctx, *actor.UserID, organizationID)
@@ -209,11 +197,9 @@ type DiscoveredConnection struct {
 	SessionPath string `json:"session_path,omitempty"`
 }
 
-// Discovery is where an address signs in. SSO is true when the organization
-// managing its domain sends the domain to its identity provider, through
-// Connections. Organization is that organization's name, for the sign-in page
-// to say whose sign-in it is; like the connections' names it is the same for
-// every address on the domain.
+// Discovery is where an address signs in. SSO is true when the organization managing its domain sends
+// the domain to its identity provider, through Connections. Organization is that organization's name,
+// for the sign-in page; like the connections' names it is the same for every address on the domain.
 type Discovery struct {
 	SSO          bool                   `json:"sso"`
 	Organization string                 `json:"organization_name,omitempty"`

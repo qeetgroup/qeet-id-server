@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
@@ -63,7 +64,7 @@ func checkpointOf(t *testing.T, organization uuid.UUID) (uuid.UUID, bool) {
 // chain that grew, and keeps one per chain however many runs write one.
 func TestEachPlatformChainKeepsItsCheckpoint(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
-	if err := OpenPlatformChains(ctx, pool); err != nil {
+	if err := audit.OpenPlatformChains(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
 	last10 := recordPlatform(t, 10, "auth.signed_up")
@@ -88,15 +89,15 @@ func TestEachPlatformChainKeepsItsCheckpoint(t *testing.T) {
 	}
 	v := NewVerifier(pool, nil)
 	for range 2 {
-		if err := v.keepCheckpoint(ctx, chain{shard: 10}, nil, &checkpoint{EventID: uuid.New(), CreatedAt: time.Now(), RowHash: chainSeed}, true); err != nil {
+		if err := v.keepCheckpoint(ctx, chain{shard: 10}, nil, &checkpoint{EventID: uuid.New(), CreatedAt: time.Now(), RowHash: audit.ChainSeed}, true); err != nil {
 			t.Fatalf("a second first checkpoint of chain 10: %v", err)
 		}
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM platform.audit_chain_checkpoints WHERE organization_id IS NULL AND chain_shard = 10`); n != 1 {
 		t.Errorf("chain 10 has %d checkpoints, want 1", n)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM platform.audit_chain_checkpoints WHERE organization_id IS NULL`); n != PlatformChainShards {
-		t.Errorf("%d platform checkpoints, want one per chain, %d", n, PlatformChainShards)
+	if n := dbtest.Count(t, `SELECT count(*) FROM platform.audit_chain_checkpoints WHERE organization_id IS NULL`); n != audit.PlatformChainShards {
+		t.Errorf("%d platform checkpoints, want one per chain, %d", n, audit.PlatformChainShards)
 	}
 }
 
@@ -189,7 +190,7 @@ func rewriteChain(t *testing.T, organization, id uuid.UUID) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prev := chainSeed
+	prev := audit.ChainSeed
 	for _, row := range rows {
 		row.PrevHash = &prev
 		hash, err := rowHash(row)

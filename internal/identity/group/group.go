@@ -16,8 +16,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/group/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -45,20 +45,21 @@ type GroupRole struct {
 }
 
 // Service manages the groups. seats keeps the people holding a role, which a
-// group can carry, within the plan's seats; nil turns that off.
+// group can carry, within the plan's seats.
 type Service struct {
 	pool  *pgxpool.Pool
 	q     *dbgen.Queries
 	seats entitlements.SeatGuard
 }
 
-// NewService returns the group service.
-func NewService(pool *pgxpool.Pool) *Service {
-	return &Service{pool: pool, q: dbgen.New(pool)}
+// NewService returns the group service, holding role-carrying groups to
+// seats.
+func NewService(pool *pgxpool.Pool, seats entitlements.SeatGuard) (*Service, error) {
+	if seats == nil {
+		return nil, errors.New("group: the group service needs a seat guard")
+	}
+	return &Service{pool: pool, q: dbgen.New(pool), seats: seats}, nil
 }
-
-// SetSeatGuard wires the seat limit (nil disables it).
-func (s *Service) SetSeatGuard(g entitlements.SeatGuard) { s.seats = g }
 
 // CreateInput is what Create takes.
 type CreateInput struct {

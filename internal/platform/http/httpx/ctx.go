@@ -95,10 +95,9 @@ func SetTrustedProxyHops(n int) {
 	trustedProxyHops.Store(int32(n))
 }
 
-// ClientIP returns the client's IP for rate limiting, audit and logs: the
-// address a keyed relay names (see SetRelayKeys), else the X-Forwarded-For entry
-// the outermost of our trusted proxies appended, the one TRUSTED_PROXY_HOPS from
-// the right (anything further left is caller-chosen), else the transport peer.
+// ClientIP returns the client's IP for rate limiting, audit and logs: the address a keyed relay names
+// (see SetRelayKeys), else the X-Forwarded-For entry TRUSTED_PROXY_HOPS from the right (what our
+// outermost trusted proxy appended; anything further left is caller-chosen), else the transport peer.
 // X-Real-IP is never trusted.
 func ClientIP(r *http.Request) string {
 	if ip := relayedClientIP(r); ip != "" {

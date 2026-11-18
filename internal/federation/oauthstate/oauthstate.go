@@ -25,12 +25,10 @@ const (
 	KindPlatformSocial = "platform_social" // the console's own social sign-in
 )
 
-// State is what a sign-in keeps for its callback. OrganizationID is uuid.Nil
-// for the console's own sign-in; ConnectionID names an OpenID Connect
-// connection, Provider a social provider. CodeVerifier is the PKCE verifier
-// and NonceHash the hash of the nonce sent ("" for none). ReturnTo is where a
-// hosted sign-in goes back to, LinkUserID the account a link ceremony attaches
-// the identity to, and AllowCreate lets a console sign-up create an account.
+// State is what a sign-in keeps for its callback. OrganizationID is uuid.Nil for the console's own
+// sign-in; ConnectionID names an OIDC connection, Provider a social one. CodeVerifier is the PKCE
+// verifier, NonceHash the sent nonce's hash ("" for none), ReturnTo a hosted sign-in's way back,
+// LinkUserID the account a link attaches to, and AllowCreate lets a console sign-up create one.
 type State struct {
 	Kind           string
 	OrganizationID uuid.UUID

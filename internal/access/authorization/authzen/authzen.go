@@ -1,8 +1,7 @@
-// Package authzen implements the OpenID AuthZEN evaluation API
-// (POST .../access/v1/evaluation, and several at once at .../evaluations)
-// over the composed decision (decide.Decider).
-// resource.type "permission" asks whether the subject holds the permission
-// action.name; any other type asks about relation action.name on "type:id".
+// Package authzen implements the OpenID AuthZEN evaluation API (POST .../access/v1/evaluation, and
+// .../evaluations for several) over the composed decision (decide.Decider). resource.type
+// "permission" asks whether the subject holds permission action.name; any other type asks about
+// relation action.name on "type:id".
 package authzen
 
 import (
@@ -117,14 +116,20 @@ type Service struct {
 	rbac    rbacChecker
 	rebac   rebacChecker
 	decider *decide.Decider
-	// Decisions keeps each evaluation's decision (nil: none).
-	Decisions *decisionlog.Log
+	// decisions keeps each evaluation's decision.
+	decisions *decisionlog.Log
 }
 
-// NewService fronts decider; rbacRepo and rebacSvc supply the grant paths an
-// explain request asks for.
-func NewService(rbacRepo rbacChecker, rebacSvc rebacChecker, decider *decide.Decider) *Service {
-	return &Service{rbac: rbacRepo, rebac: rebacSvc, decider: decider}
+// NewService fronts decider, keeping each decision in decisions; rbacRepo and
+// rebacSvc supply the grant paths an explain request asks for.
+func NewService(rbacRepo rbacChecker, rebacSvc rebacChecker, decider *decide.Decider, decisions *decisionlog.Log) (*Service, error) {
+	switch {
+	case decider == nil:
+		return nil, errors.New("authzen: the evaluation service needs a decider")
+	case decisions == nil:
+		return nil, errors.New("authzen: the evaluation service needs a decision log")
+	}
+	return &Service{rbac: rbacRepo, rebac: rebacSvc, decider: decider, decisions: decisions}, nil
 }
 
 // permissionResourceType is the resource.type that asks a permission question
@@ -193,7 +198,7 @@ func (s *Service) Evaluate(ctx context.Context, organizationID uuid.UUID, req Ev
 	if resource != permissionResourceType {
 		resource += ":" + req.Resource.ID
 	}
-	s.Decisions.Record(ctx, decisionlog.Entry{OrganizationID: organizationID, Source: decisionlog.SourceAuthZEN, Subject: req.Subject.ID,
+	s.decisions.Record(ctx, decisionlog.Entry{OrganizationID: organizationID, Source: decisionlog.SourceAuthZEN, Subject: req.Subject.ID,
 		Resource: resource, Action: req.Action.Name, Allowed: dec.Allow, Model: dec.Model, Rule: dec.Rule, ReasonCode: dec.ReasonCode})
 	dec = s.decider.ForViewer(ctx, httpx.PrincipalFromCtx(ctx), organizationID, dec)
 	out := &EvaluationResponse{Decision: dec.Allow, Context: map[string]any{"decided_by": dec.DecidedBy()}}

@@ -10,7 +10,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	samltypes "github.com/russellhaering/gosaml2/types"
+
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
 )
 
 // TestWithinValidityAllowsClockSkew checks that an assertion's Conditions are
@@ -48,8 +51,9 @@ func TestWithinValidityAllowsClockSkew(t *testing.T) {
 // can only be sent back to a path or an allowed origin, and to none at all while the hosted
 // login isn't configured, before anything about the connection is read.
 func TestLoginRefusesAReturnAddressItDoesntAllow(t *testing.T) {
-	configured := &Service{}
-	configured.SetHostedLogin("https://accounts.example.test", "https://api.example.test")
+	configured := newTestService(t, new(pgxpool.Pool), new(auth.Service), func(d *Deps) {
+		d.LoginBaseURL, d.ReturnOrigins = "https://accounts.example.test", []string{"https://api.example.test"}
+	})
 	for _, tc := range []struct {
 		name     string
 		service  *Service
@@ -57,7 +61,7 @@ func TestLoginRefusesAReturnAddressItDoesntAllow(t *testing.T) {
 	}{
 		{"another site", configured, "https://evil.example.test/oauth/authorize"},
 		{"a protocol-relative address", configured, "//evil.example.test/x"},
-		{"no hosted login configured", &Service{}, "https://api.example.test/oauth/authorize"},
+		{"no hosted login configured", newTestService(t, new(pgxpool.Pool), new(auth.Service)), "https://api.example.test/oauth/authorize"},
 	} {
 		r := chi.NewRouter()
 		(&Handler{Service: tc.service}).MountPublic(r)

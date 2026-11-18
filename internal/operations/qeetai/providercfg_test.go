@@ -69,7 +69,10 @@ func TestProviderConfigClients(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := NewProviderConfig(nil, box, PlatformProvider{}, egress.DevelopmentPolicy())
+	c, err := NewProviderConfig(nil, box, PlatformProvider{}, egress.DevelopmentPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if c.httpClient.Timeout != probeTimeout {
 		t.Errorf("probe client timeout = %s, want %s", c.httpClient.Timeout, probeTimeout)
 	}
@@ -133,7 +136,7 @@ func TestEvalProbeAnswers(t *testing.T) {
 // TestStreamMessagesUnconfigured checks that posting a message with no provider
 // configured answers 409 qeetai_unconfigured.
 func TestStreamMessagesUnconfigured(t *testing.T) {
-	h := &Handler{Service: &stubStore{}, Resolver: stubResolver{source: SourceNone}}
+	h := &Handler{Service: &stubStore{}, Resolver: stubResolver{source: SourceNone}, Plan: noPlan{}}
 	rec := httptest.NewRecorder()
 	h.streamMessages(rec, newHandlerRequest(uuid.New(), uuid.New(), uuid.New(), `{"message":"hello"}`))
 	if code := bodyCode(t, rec); rec.Code != http.StatusConflict || code != CodeUnconfigured {

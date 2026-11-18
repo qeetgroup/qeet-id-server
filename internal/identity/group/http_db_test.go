@@ -47,7 +47,7 @@ func TestGroupMembershipNeedsTheGroupsAuthority(t *testing.T) {
 	team := group("Payments team")
 
 	h := dbtest.Serve(dbtest.Principal(editor.ID, organization),
-		(&Handler{Service: NewService(pool), GrantCheck: rbac.NewRepository(pool).CheckGrantGroup}).Mount)
+		(&Handler{Service: newService(t), GrantCheck: rbac.NewRepository(pool).CheckGrantGroup}).Mount)
 	add := func(g uuid.UUID) (int, string) {
 		rec := dbtest.Do(t, h, http.MethodPost, "/groups/"+g.String()+"/members/"+editor.ID.String(), nil)
 		return rec.Code, rec.Body.String()
@@ -112,7 +112,7 @@ func TestRemovingFromAGroupIsHeldToTheGrantRule(t *testing.T) {
 
 	repo := rbac.NewRepository(pool)
 	h := dbtest.Serve(dbtest.Principal(editor.ID, organization),
-		(&Handler{Service: NewService(pool), GrantCheck: repo.CheckGrantGroup, ActOnCheck: repo.CheckActOn}).Mount)
+		(&Handler{Service: newService(t), GrantCheck: repo.CheckGrantGroup, ActOnCheck: repo.CheckActOn}).Mount)
 	call := func(method, path string) (int, string) {
 		rec := dbtest.Do(t, h, method, path, nil)
 		return rec.Code, rec.Body.String()

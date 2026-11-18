@@ -18,7 +18,7 @@ import (
 // person active in the organization this month.
 func TestApplicationGrantsMakeAPersonMonthlyActive(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
+	svc := newTestService(t, dbtest.Pool(t), dbtest.Issuer(t))
 	organization := dbtest.Organization(t)
 	person := dbtest.User(t, organization, organization)
 	client, secret := registerClient(t, svc, organization)
@@ -48,7 +48,7 @@ func TestApplicationGrantsMakeAPersonMonthlyActive(t *testing.T) {
 func TestRefreshKeepsTheGrantsResource(t *testing.T) {
 	ctx := dbtest.Context(t)
 	issuer := dbtest.Issuer(t)
-	svc := NewService(dbtest.Pool(t), issuer)
+	svc := newTestService(t, dbtest.Pool(t), issuer)
 	organization := dbtest.Organization(t)
 	user := dbtest.User(t, organization, organization)
 	client, secret := registerClient(t, svc, organization)
@@ -102,7 +102,7 @@ func TestRefreshKeepsTheGrantsResource(t *testing.T) {
 func TestRefreshDropsScopesTheClientNoLongerHas(t *testing.T) {
 	ctx := dbtest.Context(t)
 	issuer := dbtest.Issuer(t)
-	svc := NewService(dbtest.Pool(t), issuer)
+	svc := newTestService(t, dbtest.Pool(t), issuer)
 	organization := dbtest.Organization(t)
 	person := dbtest.User(t, organization, organization)
 	client, secret := registerClient(t, svc, organization)
@@ -203,7 +203,7 @@ func TestRefreshedIDTokenKeepsTheSignIn(t *testing.T) {
 // introspection of its tokens already refuse.
 func TestSuspendedOrganizationRenewsNothing(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
+	svc := newTestService(t, dbtest.Pool(t), dbtest.Issuer(t))
 	organization := dbtest.Organization(t)
 	person := dbtest.User(t, organization, organization)
 	client, secret := registerClient(t, svc, organization)
@@ -225,7 +225,7 @@ func TestSuspendedOrganizationRenewsNothing(t *testing.T) {
 // the whole chain as theft, audited.
 func TestRefreshRotationAndReuse(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
+	svc := newTestService(t, dbtest.Pool(t), dbtest.Issuer(t))
 	organization := dbtest.Organization(t)
 	user := dbtest.User(t, organization, organization)
 	client, secret := registerClient(t, svc, organization)
@@ -260,7 +260,7 @@ func TestRefreshRotationAndReuse(t *testing.T) {
 // presented twice, and the reuse recorded.
 func TestRefreshTokenAnswers(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
-	svc := NewService(pool, dbtest.Issuer(t))
+	svc := newTestService(t, pool, dbtest.Issuer(t))
 	organization := dbtest.Organization(t)
 	person, other := dbtest.User(t, organization, organization), dbtest.User(t, organization, organization)
 	client, secret := registerClient(t, svc, organization)

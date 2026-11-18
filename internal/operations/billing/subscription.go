@@ -10,8 +10,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/billing/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
@@ -48,11 +48,9 @@ func subscriptionFromRow(row dbgen.GetSubscriptionRow) *Subscription {
 	return &sub
 }
 
-// Grants reports whether the subscription grants its plan at now. A trial
-// grants until it ends, and a plan marked to cancel until its period ends.
-// Any other active or past-due plan grants for the payment grace beyond its
-// period, while its renewal is billed and paid, so a renewal job that hasn't
-// run, or a renewal left unpaid, grants nothing past that.
+// Grants reports whether the subscription grants its plan at now: a trial until it ends, a plan marked
+// to cancel until its period ends, and any other active or past-due plan for the payment grace beyond
+// its period, so a renewal job that hasn't run, or a renewal left unpaid, grants nothing past that.
 func (s *Subscription) Grants(now time.Time) bool {
 	switch s.Status {
 	case "active", "past_due":
@@ -198,12 +196,10 @@ func (s *Service) activatePaid(ctx context.Context, tx pgx.Tx, organizationID uu
 	return err
 }
 
-// SwitchPlan is ChangePlan for an organization changing its own plan without a
-// checkout, recorded as actor's in the same transaction. A free plan starts a
-// new period. A paid plan that costsNoMore than the current subscription takes
-// over its paid period, with no new invoice; any other returns
-// errs.ErrBillingCheckoutRequired, unless invoice-only billing activates the
-// plan in that currency.
+// SwitchPlan is ChangePlan for an organization changing its own plan without a checkout, recorded as
+// actor's in the same transaction. A free plan starts a new period; a paid plan that costsNoMore than
+// the current one takes over its paid period with no invoice; any other answers
+// errs.ErrBillingCheckoutRequired, unless invoice-only billing activates it in that currency.
 func (s *Service) SwitchPlan(ctx context.Context, organizationID uuid.UUID, planCode, currency string, actor audit.Actor) (*Subscription, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -322,11 +318,9 @@ const (
 	invoiceKindRenewal  = "renewal"  // the next period of a plan, billed at its end
 )
 
-// issueInvoice records an invoice through q for plan's period from start to
-// end, charging tr, and returns its id. It is paid when paid is set or nothing
-// is owed, and otherwise open, due after the payment grace. It numbers a
-// charged invoice in the GST series and keeps the billing profile it was
-// issued to, with the supplier's GSTIN and SAC.
+// issueInvoice records through q an invoice for plan's period from start to end, charging tr, and
+// returns its id: paid when paid is set or nothing is owed, else open and due after the payment grace.
+// A charged invoice gets a GST series number and keeps its billing profile, supplier GSTIN and SAC.
 func (s *Service) issueInvoice(ctx context.Context, q *dbgen.Queries, organizationID uuid.UUID, plan, currency, kind string, start, end time.Time, tr TaxResult, paid bool) (uuid.UUID, error) {
 	status := "open"
 	due := new(time.Now().UTC().Add(s.paymentGrace))

@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
@@ -38,7 +38,7 @@ const (
 // is issued.
 func (s *Service) nextSignInStep(ctx context.Context, userID, organizationID uuid.UUID, gate mfaGate, firstFactor,
 	trustedToken, ip, ua, country string) nextStep {
-	risky := s.riskAssessor != nil && s.riskAssessor.ShouldForceMFA(ctx, organizationID, userID, ip, ua, country)
+	risky := s.riskAssessor.ShouldForceMFA(ctx, organizationID, userID, ip, ua, country)
 	switch {
 	case gate.enrollment():
 		return stepChallenge
@@ -56,9 +56,7 @@ func (s *Service) nextSignInStep(ctx context.Context, userID, organizationID uui
 // recordSignIn records, for later risk assessments, a sign-in whose session
 // (or hosted-login session) has been issued.
 func (s *Service) recordSignIn(ctx context.Context, userID, organizationID uuid.UUID, ua, country string) {
-	if s.riskAssessor != nil {
-		s.riskAssessor.RecordSignIn(ctx, organizationID, userID, ua, country)
-	}
+	s.riskAssessor.RecordSignIn(ctx, organizationID, userID, ua, country)
 }
 
 // trustedDeviceSkips reports whether a remembered device may skip the second
@@ -66,7 +64,7 @@ func (s *Service) recordSignIn(ctx context.Context, userID, organizationID uuid.
 // remembered-device token of the person's, for that organization. Any failure
 // or missing piece is false — the safe default is always to ask.
 func (s *Service) trustedDeviceSkips(ctx context.Context, userID, organizationID uuid.UUID, trustedToken string) bool {
-	if s.devicePolicy == nil || trustedToken == "" {
+	if trustedToken == "" {
 		return false
 	}
 	enabled, err := s.devicePolicy.RememberDeviceEnabled(ctx, organizationID)
@@ -86,7 +84,7 @@ func (s *Service) riskEmailChallenge(ctx context.Context, userID, organizationID
 		return MFAChallenge{}, err
 	}
 	organizationPtr, by := orNil(organizationID), asUser(userID, ip, ua)
-	if !account.Verified || account.Email == "" || s.sender == nil {
+	if !account.Verified || account.Email == "" {
 		_ = audit.RecordAlone(ctx, s.pool, by.EventIn(organizationPtr, "auth.sign_in_refused", "user", userID,
 			map[string]any{"reason": "risk_unverifiable", "first_factor": firstFactor}))
 		return MFAChallenge{}, ErrRiskVerificationUnavailable

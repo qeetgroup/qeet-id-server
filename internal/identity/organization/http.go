@@ -16,7 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
@@ -147,7 +147,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		"organization_id": t.ID,
 		"roles":           []string{"owner"},
 	}
-	if h.AuthService != nil && p.SessionID != nil {
+	if p.SessionID != nil {
 		if pair, err := h.AuthService.EnterCreatedOrganization(r.Context(), *p.UserID, t.ID, *p.SessionID, httpx.ClientIP(r), r.UserAgent()); err == nil {
 			resp["access_token"] = pair.AccessToken
 			resp["token_type"] = pair.TokenType
@@ -323,11 +323,9 @@ func (h *Handler) lifecycle(r *http.Request) StatusChange {
 	return statusChange(h.Signals, id, audit.ActorOf(r))
 }
 
-// statusChange returns the StatusChange run when organization id's status
-// changes, by actor. Suspending or deleting it ends and announces every
-// session in it; reactivating restores none, and the ended sessions' access
-// tokens are refused from then on. Each change is audited and queued as an
-// event.
+// statusChange returns the StatusChange run when organization id's status changes, by actor.
+// Suspending or deleting it ends and announces every session in it; reactivating restores none, and
+// the ended sessions' access tokens stay refused. Each change is audited and queued as an event.
 func statusChange(signals *sessionsignal.Signaller, id uuid.UUID, actor audit.Actor) StatusChange {
 	return func(ctx context.Context, tx pgx.Tx, from, to string) error {
 		var action, reason string
@@ -357,4 +355,17 @@ func statusChange(signals *sessionsignal.Signaller, id uuid.UUID, actor audit.Ac
 		return outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "organization.events", EventType: action,
 			Payload: map[string]any{"organization_id": id, "status": to, "from": from}})
 	}
+}
+
+// Check refuses a handler without what lets the creator enter a new
+// organization or what announces the sessions a suspension or deletion ends,
+// so bootstrap stops at start rather than serve without them.
+func (h *Handler) Check() error {
+	switch {
+	case h.AuthService == nil:
+		return errors.New("organization: the handler needs the sign-in service")
+	case h.Signals == nil:
+		return errors.New("organization: the handler needs session signals")
+	}
+	return nil
 }

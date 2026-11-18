@@ -22,7 +22,7 @@ func TestSignInCodeSending(t *testing.T) {
 	svc := newService(t)
 	factor := uuid.New()
 	mfa := &poolFactors{pool: pool, factors: []LoginFactor{{Type: "email", ID: &factor}}}
-	svc.SetMFA(mfa)
+	svc.mfa = mfa
 	a, _ := member(t)
 	res, err := svc.Login(ctx, LoginInput{Email: a.Email, Password: testPassword})
 	if err != nil || !res.MFARequired || res.EnrollmentRequired {
@@ -52,7 +52,7 @@ func TestPasskeyAndPushChallengeWithOneConnection(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	svc := newService(t)
-	svc.SetMFA(&poolFactors{pool: pool, factors: []LoginFactor{{Type: "passkey"}, {Type: "push"}}})
+	svc.mfa = &poolFactors{pool: pool, factors: []LoginFactor{{Type: "passkey"}, {Type: "push"}}}
 	a, _ := member(t)
 	res, err := svc.Login(ctx, LoginInput{Email: a.Email, Password: testPassword})
 	if err != nil || !res.MFARequired || res.EnrollmentRequired {
@@ -98,7 +98,7 @@ func TestFailedSendUndoneAfterTheContextEnds(t *testing.T) {
 		svc := newService(t)
 		factor := uuid.New()
 		mfa := &poolFactors{pool: pool, factors: []LoginFactor{{Type: "email", ID: &factor}}}
-		svc.SetMFA(mfa)
+		svc.mfa = mfa
 		token := challenge(t, svc)
 		ctx, cancel := context.WithCancel(dbtest.Context(t))
 		mfa.cancelSend = cancel
@@ -111,10 +111,10 @@ func TestFailedSendUndoneAfterTheContextEnds(t *testing.T) {
 	})
 	t.Run("risk email code", func(t *testing.T) {
 		svc := newService(t)
-		svc.SetMFA(&poolFactors{pool: pool})
-		svc.SetRiskAssessor(&riskStub{risky: true})
+		svc.mfa = &poolFactors{pool: pool}
+		svc.riskAssessor = &riskStub{risky: true}
 		ctx, cancel := context.WithCancel(dbtest.Context(t))
-		svc.SetSender(&cancellingMailbox{cancel: cancel})
+		svc.sender = &cancellingMailbox{cancel: cancel}
 		token := challenge(t, svc)
 		if err := svc.SendMFACode(ctx, token, uuid.MustParse(token)); !errors.Is(err, errs.ErrMFADeliveryFailed) {
 			t.Fatalf("send: %v, want %v", err, errs.ErrMFADeliveryFailed)

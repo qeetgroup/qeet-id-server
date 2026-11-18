@@ -6,6 +6,7 @@ package directory
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -45,18 +46,40 @@ type LDAPSource interface {
 	List(context.Context, uuid.UUID) ([]ldap.Connection, error)
 }
 
-// Service gives one view of an organization's directory connections, their events
-// and their mappings.
-type Service struct {
-	scim SCIMSource
-	ldap LDAPSource
+// Store records the connections' events and keeps their attribute mappings:
+// the part SCIM and LDAP report to and map through, so it is built before them.
+type Store struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
 }
 
-// NewService returns the directory service.
-func NewService(scimSource SCIMSource, ldapSource LDAPSource) *Service {
-	return &Service{scim: scimSource, ldap: ldapSource}
+// NewStore returns the store on pool.
+func NewStore(pool *pgxpool.Pool) (*Store, error) {
+	if pool == nil {
+		return nil, errors.New("directory: missing pool")
+	}
+	return &Store{pool: pool, q: dbgen.New(pool)}, nil
+}
+
+// Service gives one view of an organization's directory connections, their events
+// and their mappings.
+type Service struct {
+	*Store
+	scim SCIMSource
+	ldap LDAPSource
+}
+
+// NewService returns the directory service over store and the two sources.
+func NewService(store *Store, scimSource SCIMSource, ldapSource LDAPSource) (*Service, error) {
+	switch {
+	case store == nil:
+		return nil, errors.New("directory: missing store")
+	case scimSource == nil:
+		return nil, errors.New("directory: missing SCIM source")
+	case ldapSource == nil:
+		return nil, errors.New("directory: missing LDAP source")
+	}
+	return &Service{Store: store, scim: scimSource, ldap: ldapSource}, nil
 }
 
 // List returns the organization's connections.
@@ -106,9 +129,6 @@ func (service *Service) List(ctx context.Context, organizationID uuid.UUID) ([]C
 // countConnections sets each LDAP connection's user count, the people with an
 // identity it signed in, and SCIM's group count, the groups it provisioned.
 func (service *Service) countConnections(ctx context.Context, organizationID uuid.UUID, records []Connection) error {
-	if service.pool == nil {
-		return nil
-	}
 	counted, err := service.q.CountLDAPPeople(ctx, organizationID)
 	if err != nil {
 		return err
@@ -136,9 +156,6 @@ func (service *Service) countConnections(ctx context.Context, organizationID uui
 }
 
 func (service *Service) enrichConnections(ctx context.Context, organizationID uuid.UUID, records []Connection) error {
-	if service.pool == nil {
-		return nil
-	}
 	syncs, err := service.q.LastDirectorySyncs(ctx, organizationID)
 	if err != nil {
 		return err

@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/verification/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
@@ -105,11 +105,8 @@ func (s *Service) canSendSMS(ctx context.Context, phone string, organizationID *
 	if !e164.MatchString(phone) {
 		return errVerifyPhoneInvalid
 	}
-	if s.deliverable != nil && !s.deliverable("sms") {
+	if !s.deliverable("sms") {
 		return ErrVerifyDeliveryUnavailable.WithMetadata(map[string]any{"channel": "sms"})
-	}
-	if s.plan == nil {
-		return nil
 	}
 	refused := errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": smsFeature})
 	if organizationID == nil {

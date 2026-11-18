@@ -16,7 +16,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/threat/bot"
 	"github.com/qeetgroup/qeet-id-server/internal/access/threat/risk/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 

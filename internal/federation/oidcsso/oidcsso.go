@@ -1,12 +1,12 @@
-// Package oidcsso signs people in through an organization's own OpenID Connect
-// identity provider, such as Microsoft Entra ID, Okta or Google Workspace: an
-// authorization-code sign-in with PKCE, state and nonce, bound to the browser
-// that began it, whose ID token is checked against the provider's published
-// keys. Accounts are linked and adopted by the rules SAML sign-in follows.
+// Package oidcsso signs people in through an organization's own OpenID Connect identity provider
+// (Microsoft Entra ID, Okta, Google Workspace): an authorization-code sign-in with PKCE, state and
+// nonce, bound to the browser that began it, whose ID token is checked against the provider's keys.
+// Accounts are linked and adopted by the rules SAML sign-in follows.
 package oidcsso
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -75,7 +75,7 @@ func (c *Connection) discoveryURL() string {
 }
 
 // Service manages an organization's OpenID Connect connections and signs
-// people in through them. A nil gate leaves connection creation ungated.
+// people in through them.
 type Service struct {
 	pool       *pgxpool.Pool
 	q          *dbgen.Queries
@@ -86,30 +86,57 @@ type Service struct {
 	providers  *oidcrp.Client
 	link       *provision.Flow
 	appBaseURL string
-	// The hosted login's origin and the addresses a sign-in it starts may return to (SetHostedLogin).
+	// The hosted login's origin and the addresses a sign-in it starts may
+	// return to.
 	loginBaseURL string
 	returnTo     returnto.Allowed
 }
 
-// SetHostedLogin lets a sign-in start on the hosted login: its answer goes back to
-// loginBaseURL's sign-in page, and its return_to must be a path or on one of origins.
-func (s *Service) SetHostedLogin(loginBaseURL string, origins ...string) {
-	s.loginBaseURL = strings.TrimRight(loginBaseURL, "/")
-	s.returnTo = returnto.Origins(origins...)
+// Deps are what the service is built from. All are required but
+// LoginBaseURL and ReturnOrigins.
+type Deps struct {
+	Pool       *pgxpool.Pool
+	Auth       *auth.Service
+	Cipher     *envelope.Cipher      // seals the connections' client secrets
+	Gate       entitlements.PlanGate // whether the plan includes single sign-on
+	Egress     *egress.Policy        // the outbound policy providers are reached under
+	AppBaseURL string                // where the console's callback is served
+	// LoginBaseURL lets a sign-in start on the hosted login: its answer goes
+	// back to that sign-in page, and its return_to must be a path or on one of
+	// ReturnOrigins. With none, no sign-in starts there.
+	LoginBaseURL  string
+	ReturnOrigins []string
 }
 
-// NewService returns the service. Outbound requests to providers follow the
-// first policy given, else the default public-only one.
-func NewService(pool *pgxpool.Pool, authSvc *auth.Service, appBaseURL string, policies ...*egress.Policy) *Service {
-	policy := egress.PublicPolicy(policies...)
-	s := &Service{
-		pool:       pool,
-		q:          dbgen.New(pool),
-		auth:       authSvc,
-		egress:     policy,
-		providers:  oidcrp.New(policy),
-		appBaseURL: strings.TrimRight(appBaseURL, "/"),
-		link: &provision.Flow{Pool: pool, Method: provider, Errors: provision.Errors{
+// NewService returns the service built from d, or an error naming the
+// dependency d lacks.
+func NewService(d Deps) (*Service, error) {
+	switch {
+	case d.Pool == nil:
+		return nil, errors.New("oidcsso: missing Pool")
+	case d.Auth == nil:
+		return nil, errors.New("oidcsso: missing Auth")
+	case d.Cipher == nil:
+		return nil, errors.New("oidcsso: missing Cipher")
+	case d.Gate == nil:
+		return nil, errors.New("oidcsso: missing Gate")
+	case d.Egress == nil:
+		return nil, errors.New("oidcsso: missing Egress")
+	case d.AppBaseURL == "":
+		return nil, errors.New("oidcsso: missing AppBaseURL")
+	}
+	return &Service{
+		pool:         d.Pool,
+		q:            dbgen.New(d.Pool),
+		auth:         d.Auth,
+		box:          d.Cipher,
+		gate:         d.Gate,
+		egress:       d.Egress,
+		providers:    oidcrp.New(d.Egress),
+		appBaseURL:   strings.TrimRight(d.AppBaseURL, "/"),
+		loginBaseURL: strings.TrimRight(d.LoginBaseURL, "/"),
+		returnTo:     returnto.Origins(d.ReturnOrigins...),
+		link: &provision.Flow{Pool: d.Pool, Method: provider, Recorder: d.Auth, Errors: provision.Errors{
 			NotHome:            ErrUserOrganizationMismatch,
 			EmailMissing:       ErrNoEmail,
 			AccountUnverified:  ErrAccountUnverified,
@@ -118,18 +145,8 @@ func NewService(pool *pgxpool.Pool, authSvc *auth.Service, appBaseURL string, po
 			EmailUnverified:    ErrEmailUnverified,
 			JITNotAllowed:      ErrJITNotAllowed,
 		}},
-	}
-	if authSvc != nil {
-		s.link.Recorder = authSvc
-	}
-	return s
+	}, nil
 }
-
-// SetCipher sets the cipher that seals client secrets at rest.
-func (s *Service) SetCipher(box *envelope.Cipher) { s.box = box }
-
-// SetPlanGate wires the plan-feature gate (nil allows all features).
-func (s *Service) SetPlanGate(g entitlements.PlanGate) { s.gate = g }
 
 // Pool returns the connection pool, for handlers that run their own transaction.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
@@ -138,9 +155,6 @@ func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 // include enterprise single sign-on. It reads on the pool, so a handler runs
 // it before opening the transaction Create joins.
 func (s *Service) RequireSSO(ctx context.Context, organizationID uuid.UUID) error {
-	if s.gate == nil {
-		return nil
-	}
 	ok, err := s.gate.FeatureAllowed(ctx, organizationID, planFeature)
 	if err != nil {
 		return err

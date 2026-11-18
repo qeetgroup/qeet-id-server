@@ -6,12 +6,11 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -56,8 +55,7 @@ func grant(userID, organization, roleID uuid.UUID) func(pgx.Tx) error {
 func TestSeatsAreThePeopleHoldingARole(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	svc := NewService(pool, &dbtest.Mailbox{}, time.Hour, "https://app.example.test")
-	svc.SetPlanLimiter(seatPlan(3))
+	svc := newService(t, func(d *Deps) { d.Limits = seatPlan(3) })
 	organization := dbtest.Organization(t)
 	role := dbtest.Role(t, organization)
 	owner := dbtest.User(t, organization, organization)
@@ -111,7 +109,7 @@ func TestSeatsAreThePeopleHoldingARole(t *testing.T) {
 		t.Errorf("seats after the refusals = %d, want 3", n)
 	}
 
-	svc.SetPlanLimiter(seatPlan(-1)) // a plan without a seat limit
+	svc.limits = seatPlan(-1) // a plan without a seat limit
 	if err := withinSeats(t, svc, organization, joinGroup); err != nil {
 		t.Errorf("a role through a group on a plan without a seat limit: %v", err)
 	}

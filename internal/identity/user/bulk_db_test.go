@@ -31,6 +31,8 @@ func TestBulkImportRowErrorsCarryCodes(t *testing.T) {
 	h := &Handler{
 		Repo:     NewRepository(pool),
 		Validate: jsonNamedValidator(),
+		SignIns:  endSessions{},
+		Mailer:   &dbtest.Mailbox{},
 		PasswordPolicy: func(_ context.Context, _ uuid.UUID, _, plain string) error {
 			switch plain {
 			case "NoSymbolPassword99":
@@ -165,7 +167,7 @@ func TestBulkImportGivesARoleAndReturnsIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 	serve := func(roles RoleGranter) http.Handler {
-		return dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Repo: NewRepository(pool), Validate: jsonNamedValidator(), Roles: roles}).Mount)
+		return dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Repo: NewRepository(pool), Validate: jsonNamedValidator(), SignIns: endSessions{}, Mailer: &dbtest.Mailbox{}, Roles: roles}).Mount)
 	}
 	rows := func(n int) []map[string]any {
 		out := []map[string]any{}

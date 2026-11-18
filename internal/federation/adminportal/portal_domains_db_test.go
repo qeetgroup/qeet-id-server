@@ -11,20 +11,19 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml"
-	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 // txtRecords answers every TXT lookup with its records.
-type txtRecords []string
+// txtRecords answers every TXT lookup with its records, which a test changes
+// as it goes.
+type txtRecords struct{ records []string }
 
-func (r txtRecords) LookupTXT(context.Context, string) ([]string, error) { return r, nil }
+func (r *txtRecords) LookupTXT(context.Context, string) ([]string, error) { return r.records, nil }
 
 // TestPortalFinishesAnSSOSetup checks that the portal gives the IT admin the
 // addresses their IdP needs, begins and reads a test sign-in, and claims and
@@ -35,15 +34,15 @@ func TestPortalFinishesAnSSOSetup(t *testing.T) {
 	pool := dbtest.Pool(t)
 	organization, other := dbtest.Organization(t), dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
-	users := user.NewRepository(pool)
-	samlService := saml.NewService(pool, auth.NewService(pool, users, dbtest.Issuer(t)), "https://id.example.test")
-	domains := domainverify.NewService(pool)
+	samlService := newSAML(t, everyPlan{})
+	dns := &txtRecords{}
+	domains := newDomains(t).WithResolver(dns)
 	const api = "https://api.example.test"
 	h := &Handler{
 		Service:       NewService(pool, branded{}, "https://login.example.test"),
 		SAML:          samlService,
 		SAMLSignIn:    &saml.Handler{Service: samlService, PublicBaseURL: api},
-		SCIM:          scim.NewService(pool, users),
+		SCIM:          newSCIM(t),
 		Domains:       domains,
 		PublicBaseURL: api,
 	}
@@ -175,7 +174,7 @@ func TestPortalFinishesAnSSOSetup(t *testing.T) {
 	if rec.Code != http.StatusCreated || claimed.Domain != name || claimed.DNSRecordName != "_qeet-verification."+name || claimed.Status != "pending" {
 		t.Fatalf("claim a domain: %d %s", rec.Code, rec.Body.String())
 	}
-	domains.SetResolver(txtRecords{claimed.VerificationToken})
+	dns.records = []string{claimed.VerificationToken}
 	rec = portal(t, public, http.MethodPost, "/admin-portal/domains/"+claimed.ID.String()+"/verify", "", everything, nil)
 	var verified domainverify.Domain
 	dbtest.Decode(t, rec, &verified)
@@ -198,7 +197,7 @@ func TestPortalFinishesAnSSOSetup(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("claim another organization's verified domain: %d %s", rec.Code, rec.Body.String())
 	}
-	domains.SetResolver(txtRecords{squat.VerificationToken})
+	dns.records = []string{squat.VerificationToken}
 	if rec := portal(t, public, http.MethodPost, "/admin-portal/domains/"+squat.ID.String()+"/verify", "", everything, nil); !strings.Contains(rec.Body.String(), errs.CodeDomainVerifyClaimedByOther) {
 		t.Errorf("verify a domain another organization verified: %d %s", rec.Code, rec.Body.String())
 	}
@@ -206,7 +205,7 @@ func TestPortalFinishesAnSSOSetup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	domains.SetResolver(txtRecords{elsewhere.VerificationToken})
+	dns.records = []string{elsewhere.VerificationToken}
 	if rec := portal(t, public, http.MethodPost, "/admin-portal/domains/"+elsewhere.ID.String()+"/verify", "", everything, nil); rec.Code != http.StatusNotFound {
 		t.Errorf("verify another organization's domain: %d %s, want 404", rec.Code, rec.Body.String())
 	}

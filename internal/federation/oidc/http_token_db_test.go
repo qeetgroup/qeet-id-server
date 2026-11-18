@@ -32,7 +32,8 @@ func postToken(t *testing.T, h http.Handler, form url.Values, user, pass string)
 // TestTokenEndpointAnswersGrantErrorsInOAuthShape checks the token endpoint's
 // answers to refused client authentication and grants.
 func TestTokenEndpointAnswersGrantErrorsInOAuthShape(t *testing.T) {
-	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
+	pool, issuer := dbtest.Pool(t), dbtest.Issuer(t)
+	svc := newTestService(t, pool, issuer)
 	organization := dbtest.Organization(t)
 	user := dbtest.User(t, organization, organization)
 	client, secret := registerClient(t, svc, organization)
@@ -78,10 +79,13 @@ func TestTokenEndpointAnswersGrantErrorsInOAuthShape(t *testing.T) {
 	}
 
 	// A locked-out application is answered as a wrong secret, its right one too.
-	svc.SetClientLockout(ClientLockout{Threshold: 1, Window: time.Minute, Duration: time.Minute})
+	locking := chi.NewRouter()
+	(&Handler{Service: newTestService(t, pool, issuer, func(d *Deps) {
+		d.Lockout = ClientLockout{Threshold: 1, Window: time.Minute, Duration: time.Minute}
+	})}).MountToken(locking)
 	refresh := form("grant_type", "refresh_token", "refresh_token", issued.RefreshToken)
-	postToken(t, router, refresh, client.ClientID, "wrong-secret")
-	rec := postToken(t, router, refresh, client.ClientID, secret)
+	postToken(t, locking, refresh, client.ClientID, "wrong-secret")
+	rec := postToken(t, locking, refresh, client.ClientID, secret)
 	if got, _ := decodeTokenError(t, rec); rec.Code != http.StatusUnauthorized || got != "invalid_client" {
 		t.Errorf("locked-out application = %d %q, want 401 invalid_client", rec.Code, got)
 	}

@@ -10,12 +10,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/directory/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ldap"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -90,11 +89,6 @@ type eventFilter struct {
 // eventKey is an event's place in the newest-first order its pages follow.
 func eventKey(event Event) (time.Time, uuid.UUID) { return event.StartedAt, event.ID }
 
-// SetEventStore sets the pool that events are recorded to and read from.
-func (service *Service) SetEventStore(pool *pgxpool.Pool) {
-	service.pool, service.q = pool, dbgen.New(pool)
-}
-
 func classifyOperation(operation string, status int) (outcome, category, code, message, severity string) {
 	if status >= 200 && status < 300 {
 		return "success", "", "", "Operation completed", ""
@@ -140,22 +134,22 @@ type Operation struct {
 }
 
 // RecordOperation records one provisioning operation of a connection.
-func (service *Service) RecordOperation(ctx context.Context, organizationID uuid.UUID, connectionID, operation, resourceType, resourceID string, status int, started time.Time, duration time.Duration) error {
-	return service.Record(ctx, Operation{OrganizationID: organizationID, ConnectionID: connectionID, Operation: operation,
+func (store *Store) RecordOperation(ctx context.Context, organizationID uuid.UUID, connectionID, operation, resourceType, resourceID string, status int, started time.Time, duration time.Duration) error {
+	return store.Record(ctx, Operation{OrganizationID: organizationID, ConnectionID: connectionID, Operation: operation,
 		ResourceType: resourceType, ResourceID: resourceID, Status: status, Started: started, Duration: duration})
 }
 
 // RecordLDAPOperation records an LDAP connection's operation.
-func (service *Service) RecordLDAPOperation(ctx context.Context, op ldap.Operation) error {
-	return service.Record(ctx, Operation{OrganizationID: op.OrganizationID, ConnectionID: op.ConnectionID.String(), Operation: op.Operation,
+func (store *Store) RecordLDAPOperation(ctx context.Context, op ldap.Operation) error {
+	return store.Record(ctx, Operation{OrganizationID: op.OrganizationID, ConnectionID: op.ConnectionID.String(), Operation: op.Operation,
 		ResourceType: op.Resource, Status: op.Status, Started: op.Started, Duration: op.Duration,
 		Reason: op.Reason, Params: op.Params, Subject: op.Subject, UserID: op.UserID})
 }
 
 // RecordSCIMOperation records a change an organization's identity provider
 // sent over SCIM.
-func (service *Service) RecordSCIMOperation(ctx context.Context, op scim.Operation) error {
-	return service.Record(ctx, Operation{OrganizationID: op.OrganizationID, ConnectionID: "scim:" + op.OrganizationID.String(), Operation: op.Operation,
+func (store *Store) RecordSCIMOperation(ctx context.Context, op scim.Operation) error {
+	return store.Record(ctx, Operation{OrganizationID: op.OrganizationID, ConnectionID: "scim:" + op.OrganizationID.String(), Operation: op.Operation,
 		ResourceType: op.Resource, ResourceID: op.ResourceID, Status: op.Status, Started: op.Started, Duration: op.Duration,
 		Reason: op.Reason})
 }
@@ -164,10 +158,7 @@ func (service *Service) RecordSCIMOperation(ctx context.Context, op scim.Operati
 const maxSubjectLen = 256
 
 // Record records one operation of a connection.
-func (service *Service) Record(ctx context.Context, op Operation) error {
-	if service.pool == nil {
-		return nil
-	}
+func (store *Store) Record(ctx context.Context, op Operation) error {
 	organizationID, connectionID, operation, resourceType, resourceID := op.OrganizationID, op.ConnectionID, op.Operation, op.ResourceType, op.ResourceID
 	status, started, duration := op.Status, op.Started, op.Duration
 	if organizationID == uuid.Nil || !validConnectionID(organizationID, connectionID) || status < 100 || status > 599 {
@@ -206,7 +197,7 @@ func (service *Service) Record(ctx context.Context, op Operation) error {
 		return err
 	}
 	retryOf, _ := ctx.Value(retryContextKey{}).(uuid.UUID)
-	if err := service.q.InsertDirectoryEvent(ctx, dbgen.InsertDirectoryEventParams{
+	if err := store.q.InsertDirectoryEvent(ctx, dbgen.InsertDirectoryEventParams{
 		ID: uuid.New(), OrganizationID: organizationID, ConnectionID: connectionID, Operation: operation,
 		TriggerType: trigger, ResourceType: resourceType, ResourceID: resourceID, StartedAt: started.UTC(),
 		DurationMs: max(0, duration.Milliseconds()), HttpStatus: int32(status), Status: outcome, // #nosec G115 -- status is 100..599
@@ -217,10 +208,10 @@ func (service *Service) Record(ctx context.Context, op Operation) error {
 		return err
 	}
 	if outcome == "failed" {
-		return service.notifyAlerts(ctx, organizationID, connectionID)
+		return store.notifyAlerts(ctx, organizationID, connectionID)
 	}
 	if outcome == "success" {
-		return service.resolveConnectionFailures(ctx, organizationID, connectionID)
+		return store.resolveConnectionFailures(ctx, organizationID, connectionID)
 	}
 	return nil
 }
@@ -229,21 +220,21 @@ func (service *Service) Record(ctx context.Context, op Operation) error {
 // success disproves, the directory unreachable or refusing the connection's
 // own credentials, resolved by the system, and audits it once. A failure being
 // retried is left for its retry to settle.
-func (service *Service) resolveConnectionFailures(ctx context.Context, organizationID uuid.UUID, connectionID string) error {
+func (store *Store) resolveConnectionFailures(ctx context.Context, organizationID uuid.UUID, connectionID string) error {
 	retrying, _ := ctx.Value(retryContextKey{}).(uuid.UUID)
 	// Most successes find nothing to resolve; only then is a transaction opened.
-	found, err := service.q.OpenConnectionFailuresExist(ctx, dbgen.OpenConnectionFailuresExistParams{
+	found, err := store.q.OpenConnectionFailuresExist(ctx, dbgen.OpenConnectionFailuresExistParams{
 		OrganizationID: organizationID, ConnectionID: connectionID, Retrying: retrying,
 	})
 	if err != nil || !found {
 		return err
 	}
-	tx, err := service.pool.Begin(ctx)
+	tx, err := store.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	resolved, err := service.q.WithTx(tx).ResolveConnectionFailures(ctx, dbgen.ResolveConnectionFailuresParams{
+	resolved, err := store.q.WithTx(tx).ResolveConnectionFailures(ctx, dbgen.ResolveConnectionFailuresParams{
 		OrganizationID: organizationID, ConnectionID: connectionID, Retrying: retrying,
 	})
 	if err != nil {
@@ -318,7 +309,7 @@ func scanEvent(row pgx.Row) (Event, error) {
 // Events returns one page of the organization's provisioning events.
 func (service *Service) Events(ctx context.Context, organizationID uuid.UUID, filter eventFilter) (EventPage, error) {
 	page := EventPage{Result: paging.Page([]Event{}, ""), Volume: []VolumePoint{}, Limit: filter.Limit}
-	if organizationID == uuid.Nil || service.pool == nil {
+	if organizationID == uuid.Nil {
 		return page, errs.ErrUnauthorized
 	}
 	arguments := []any{organizationID, filter.Since, filter.ConnectionID, filter.Status, postgres.EscapeLike(filter.Search)}

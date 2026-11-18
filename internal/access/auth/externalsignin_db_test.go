@@ -25,9 +25,9 @@ func TestExternalSignIn(t *testing.T) {
 
 	t.Run("signs in", func(t *testing.T) {
 		svc := newService(t)
-		svc.SetMFA(noFactors{})
+		svc.mfa = noFactors{}
 		risk := &riskStub{}
-		svc.SetRiskAssessor(risk)
+		svc.riskAssessor = risk
 		res, err := svc.SignInExternal(ctx, in, proved)
 		if err != nil || res.Pair == nil {
 			t.Fatalf("sign in: %+v, %v", res, err)
@@ -68,9 +68,9 @@ func TestExternalSignIn(t *testing.T) {
 
 	t.Run("address rules", func(t *testing.T) {
 		svc := newService(t)
-		svc.SetAddressPolicy(addressFunc(func(context.Context, uuid.UUID, uuid.UUID, string, string) error {
+		svc.addresses = addressFunc(func(context.Context, uuid.UUID, uuid.UUID, string, string) error {
 			return errs.ErrAuthAddressNotAllowed
-		}))
+		})
 		checked := false
 		_, err := svc.SignInExternal(ctx, in, func(context.Context) (uuid.UUID, bool, error) {
 			checked = true
@@ -85,10 +85,10 @@ func TestExternalSignIn(t *testing.T) {
 		svc := newService(t)
 		denied := errs.ErrForbidden.WithDetail("denied by hook")
 		var hookOrganization uuid.UUID
-		svc.SetLoginHook(hookFunc(func(_ context.Context, organizationID, _ uuid.UUID, _ string) (map[string]any, error) {
+		svc.loginHook = hookFunc(func(_ context.Context, organizationID, _ uuid.UUID, _ string) (map[string]any, error) {
 			hookOrganization = organizationID
 			return nil, denied
-		}))
+		})
 		if _, err := svc.SignInExternal(ctx, in, proved); !errors.Is(err, errs.ErrForbidden) || hookOrganization != organization {
 			t.Errorf("hook denies: %v for organization %s, want %v for %s", err, hookOrganization, errs.ErrForbidden, organization)
 		}
@@ -96,7 +96,7 @@ func TestExternalSignIn(t *testing.T) {
 
 	t.Run("second factor required", func(t *testing.T) {
 		svc := newService(t)
-		svc.SetMFA(noFactors{})
+		svc.mfa = noFactors{}
 		required, _ := member(t)
 		if _, err := pool.Exec(ctx, `UPDATE account.users SET mfa_required = TRUE WHERE id = $1`, required.ID); err != nil {
 			t.Fatalf("require MFA: %v", err)
@@ -115,10 +115,10 @@ func TestExternalSignIn(t *testing.T) {
 
 	t.Run("risky", func(t *testing.T) {
 		svc := newService(t)
-		svc.SetMFA(noFactors{})
-		svc.SetSender(&dbtest.Mailbox{})
+		svc.mfa = noFactors{}
+		svc.sender = &dbtest.Mailbox{}
 		risk := &riskStub{risky: true}
-		svc.SetRiskAssessor(risk)
+		svc.riskAssessor = risk
 		if _, err := pool.Exec(ctx, `UPDATE account.users SET email_verified_at = NOW() WHERE id = $1`, a.ID); err != nil {
 			t.Fatal(err)
 		}

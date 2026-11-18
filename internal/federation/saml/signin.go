@@ -26,17 +26,10 @@ import (
 // is accepted this long before its NotBefore and after its NotOnOrAfter.
 const assertionClockSkew = 3 * time.Minute
 
-// validateResponse checks the encoded SAMLResponse against each of the IdP's
-// certificates valid at now in turn, so one signed with any of them is
-// accepted, and returns the response and its assertion. Each attempt trusts a
-// single certificate, so a signature without KeyInfo is checked against each.
-//
-// gosaml2 checks the expiry times on a clock assertionClockSkew behind now, and
-// withinValidity the whole window either way; the signature, issuer, audience,
-// recipient and destination checks are unchanged. key, when not nil, decrypts
-// an EncryptedAssertion, which must still be signed. A signed assertion whose
-// conditions fail comes back with ErrSAMLAssertionConditions, for a test
-// sign-in to report what it asserted.
+// validateResponse checks the encoded SAMLResponse against each IdP certificate valid at now, one at a
+// time (so a signature without KeyInfo is tried against each), and returns the response and assertion.
+// Expiry is checked assertionClockSkew behind now, withinValidity both ways; key, when set, decrypts an
+// EncryptedAssertion, which must be signed. Failed conditions return ErrSAMLAssertionConditions.
 func (s *Service) validateResponse(base string, conn *Connection, certs []*x509.Certificate, key *tls.Certificate, encoded string, now time.Time) (*samltypes.Response, *saml2.AssertionInfo, error) {
 	var failures []error
 	for _, cert := range certs {
@@ -148,12 +141,10 @@ func (s *Service) hostedReturn(ctx context.Context, connectionID uuid.UUID, requ
 	return stored
 }
 
-// ConsumeValidatedResponse atomically reserves the response and assertion IDs
-// against replay until keepUntil (replayKeepUntil) and consumes the matching
-// AuthnRequest, returning where the hosted login asked the browser to go back
-// to ("" for a console sign-in). Call it only after the signature and
-// conditions are validated. An empty requestID (IdP-initiated) is refused with
-// ErrSAMLRequestCorrelation unless allowIdPInitiated.
+// ConsumeValidatedResponse atomically reserves the response and assertion IDs against replay until
+// keepUntil (replayKeepUntil) and consumes the matching AuthnRequest, returning the hosted login's way
+// back ("" for a console sign-in). Call it only after the signature and conditions are validated. An
+// empty requestID (IdP-initiated) is refused with ErrSAMLRequestCorrelation unless allowIdPInitiated.
 func (s *Service) ConsumeValidatedResponse(ctx context.Context, connectionID uuid.UUID, requestID, responseID string, assertionIDs []string, keepUntil time.Time, allowIdPInitiated bool) (string, error) {
 	returnTo := ""
 	idpInitiated := strings.TrimSpace(requestID) == ""

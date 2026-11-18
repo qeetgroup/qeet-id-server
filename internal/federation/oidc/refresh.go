@@ -12,18 +12,17 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/strutil"
 )
 
-// issueRefreshToken stores a refresh token for the client and user and returns
-// it. resource is the RFC 8707 resource bound to the access token ("" for none),
-// loginSessionID the hosted-login session and authTime when the person signed
-// in there (NULL for none), and codeHash the redeemed code ("" for none). q
-// lets it run in the caller's transaction.
+// issueRefreshToken stores and returns a refresh token for the client and user, in the caller's
+// transaction through q. resource is the RFC 8707 resource bound to the access token, loginSessionID
+// and authTime the hosted-login session and when the person signed in there, and codeHash the
+// redeemed code (each empty or NULL for none).
 func (s *Service) issueRefreshToken(ctx context.Context, q *dbgen.Queries, clientID string, userID, organizationID uuid.UUID, scopes []string, resource string, loginSessionID *uuid.UUID, codeHash string, authTime *time.Time) (string, error) {
 	raw, hash, err := tokens.NewRefreshToken()
 	if err != nil {

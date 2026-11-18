@@ -4,14 +4,16 @@
 package verification
 
 import (
+	"cmp"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/verification/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
@@ -22,17 +24,8 @@ type Service struct {
 	q           *dbgen.Queries
 	sender      notifier.Sender
 	ttl         time.Duration
-	plan        entitlements.PlanGate     // gates SMS codes by plan (nil = no gate)
-	deliverable func(channel string) bool // whether a channel can deliver (nil = assume it can)
-}
-
-// SetPlan wires the plan gate for SMS codes, which cost per message.
-func (s *Service) SetPlan(p entitlements.PlanGate) { s.plan = p }
-
-// SetDeliveryCheck wires the check that a channel can deliver a code
-// (notifier.Router.Configured).
-func (s *Service) SetDeliveryCheck(deliverable func(channel string) bool) {
-	s.deliverable = deliverable
+	plan        entitlements.PlanGate     // gates SMS codes, which cost per message, by plan
+	deliverable func(channel string) bool // whether a channel can deliver a code
 }
 
 // Requester is who asked, for the audit trail: the actor, and the organization
@@ -48,10 +41,17 @@ func (r Requester) event(action string, userID uuid.UUID, metadata map[string]an
 	return r.EventIn(r.OrganizationID, action, "user", userID, metadata)
 }
 
-// NewService returns the verification service.
-func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration) *Service {
-	if ttl <= 0 {
-		ttl = 10 * time.Minute
+// NewService returns the verification service, sending codes good for ttl
+// (zero: 10 minutes) through sender. plan gates SMS codes; deliverable says
+// whether a channel can deliver one (notifier.Router.Configured).
+func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, plan entitlements.PlanGate, deliverable func(channel string) bool) (*Service, error) {
+	switch {
+	case sender == nil:
+		return nil, errors.New("verification: the service needs a sender")
+	case plan == nil:
+		return nil, errors.New("verification: the service needs a plan gate")
+	case deliverable == nil:
+		return nil, errors.New("verification: the service needs a delivery check")
 	}
-	return &Service{pool: pool, q: dbgen.New(pool), sender: sender, ttl: ttl}
+	return &Service{pool: pool, q: dbgen.New(pool), sender: sender, ttl: cmp.Or(ttl, 10*time.Minute), plan: plan, deliverable: deliverable}, nil
 }

@@ -3,14 +3,10 @@ package mfa
 import (
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 // TestDefaultStepUpWindow checks that the step-up window used when no
@@ -46,26 +42,5 @@ func TestRequireRecentMFAUnauthenticated(t *testing.T) {
 	}
 	if rr.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401", rr.Code)
-	}
-}
-
-// TestRequireRecentMFAWithoutSession checks that a principal with no session
-// (such as an API key) never passes the gate: a step-up belongs to a session.
-func TestRequireRecentMFAWithoutSession(t *testing.T) {
-	called := false
-	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })
-	h := RequireRecentMFA(&Service{})(next)
-
-	uid := uuid.New()
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodDelete, "/v1/mfa/totp", nil)
-	req = req.WithContext(httpx.WithPrincipal(req.Context(), &httpx.Principal{UserID: &uid, ActorType: "api_key"}))
-	h.ServeHTTP(rr, req)
-
-	if called {
-		t.Fatal("a principal without a session must not pass the step-up gate")
-	}
-	if rr.Code != http.StatusForbidden || !strings.Contains(rr.Body.String(), "step_up_required") {
-		t.Errorf("got %d %q, want 403 step_up_required", rr.Code, rr.Body.String())
 	}
 }

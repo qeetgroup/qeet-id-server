@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -112,7 +113,7 @@ func TestAuditListTakesTheOrganizationFromTheCaller(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Record(ctx, tx, Actor{Type: "system"}.Event(theirs, "secret.rotated", "key", uuid.New(), nil)); err != nil {
+	if err := audit.Record(ctx, tx, audit.Actor{Type: "system"}.Event(theirs, "secret.rotated", "key", uuid.New(), nil)); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(ctx); err != nil {

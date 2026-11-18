@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -32,7 +33,7 @@ func record(t *testing.T, organization uuid.UUID, action string) uuid.UUID {
 		t.Fatalf("begin: %v", err)
 	}
 	defer tx.Rollback(ctx)
-	if err := Record(ctx, tx, Actor{Type: "system"}.Event(organization, action, "user", uuid.New(), nil)); err != nil {
+	if err := audit.Record(ctx, tx, audit.Actor{Type: "system"}.Event(organization, action, "user", uuid.New(), nil)); err != nil {
 		t.Fatalf("record %s: %v", action, err)
 	}
 	var id uuid.UUID
@@ -185,10 +186,10 @@ func TestVerifyReadsTheChainInPages(t *testing.T) {
 func TestChainSurvivesAnInstanceWhoseClockIsAhead(t *testing.T) {
 	ctx := dbtest.Context(t)
 	organization := dbtest.Organization(t)
-	clock = func() time.Time { return time.Now().Add(time.Minute) }
+	restore := audit.SetClock(func() time.Time { return time.Now().Add(time.Minute) })
+	t.Cleanup(restore)
 	ahead := record(t, organization, "user.updated")
-	clock = time.Now
-	t.Cleanup(func() { clock = time.Now })
+	restore()
 	behind := record(t, organization, "user.deleted")
 
 	var first uuid.UUID
@@ -233,10 +234,10 @@ func TestEventsNameWhatTheyAreAbout(t *testing.T) {
 		}
 	}
 
-	actor := Actor{Type: "system"}
+	actor := audit.Actor{Type: "system"}
 	gone := uuid.New()
 	events := []struct {
-		event Event
+		event audit.Event
 		want  map[string]any
 	}{
 		{actor.Event(organization, "role.assigned", "user", person.ID, map[string]any{"role_id": role}),
@@ -258,7 +259,7 @@ func TestEventsNameWhatTheyAreAbout(t *testing.T) {
 	}
 	defer tx.Rollback(ctx)
 	for _, e := range events {
-		if err := Record(ctx, tx, e.event); err != nil {
+		if err := audit.Record(ctx, tx, e.event); err != nil {
 			t.Fatalf("record %s: %v", e.event.Action, err)
 		}
 	}
@@ -296,9 +297,7 @@ func TestEventsNameWhatTheyAreAbout(t *testing.T) {
 // onShard makes Record put platform events on shard until t ends.
 func onShard(t *testing.T, shard int16) {
 	t.Helper()
-	orig := platformShard
-	platformShard = func(pgx.Tx) int16 { return shard }
-	t.Cleanup(func() { platformShard = orig })
+	t.Cleanup(audit.PinPlatformShard(shard))
 }
 
 // recordPlatform writes one platform event on shard, committed, and returns
@@ -312,7 +311,7 @@ func recordPlatform(t *testing.T, shard int16, action string) uuid.UUID {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	if err := Record(ctx, tx, Actor{Type: "system"}.PlatformEvent(action, "user", uuid.New(), nil)); err != nil {
+	if err := audit.Record(ctx, tx, audit.Actor{Type: "system"}.PlatformEvent(action, "user", uuid.New(), nil)); err != nil {
 		t.Fatalf("record %s on chain %d: %v", action, shard, err)
 	}
 	var id uuid.UUID
@@ -340,24 +339,6 @@ func inTx(t *testing.T, fn func(tx pgx.Tx, v *Verifier)) {
 	fn(tx, &Verifier{q: dbgen.New(tx)})
 }
 
-// TestPlatformShardFollowsTheConnection checks that a transaction's platform
-// events all go on its connection's chain.
-func TestPlatformShardFollowsTheConnection(t *testing.T) {
-	ctx := dbtest.Context(t)
-	tx, err := dbtest.Pool(t).Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(ctx)
-	var pid int64
-	if err := tx.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&pid); err != nil {
-		t.Fatal(err)
-	}
-	if got, want := platformShard(tx), int16(pid%PlatformChainShards); got != want {
-		t.Errorf("platform chain %d for backend %d, want %d", got, pid, want)
-	}
-}
-
 // TestPlatformChainsDontWaitForEachOther checks that a transaction writing to
 // one platform chain doesn't hold up a writer on another, while a second
 // writer on the same chain waits for the first.
@@ -378,7 +359,7 @@ func TestPlatformChainsDontWaitForEachOther(t *testing.T) {
 	}
 	write := func(tx pgx.Tx, shard int16) error {
 		onShard(t, shard)
-		return Record(ctx, tx, Actor{Type: "system"}.PlatformEvent("auth.signed_up", "user", uuid.New(), nil))
+		return audit.Record(ctx, tx, audit.Actor{Type: "system"}.PlatformEvent("auth.signed_up", "user", uuid.New(), nil))
 	}
 
 	first := begin()
@@ -413,7 +394,7 @@ func writeAsTheSinglePlatformChain(t *testing.T) uuid.UUID {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	if err := lockChain(ctx, tx, nil, 0); err != nil {
+	if err := audit.LockChain(ctx, tx, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 	var prev string
@@ -422,19 +403,16 @@ func writeAsTheSinglePlatformChain(t *testing.T) uuid.UUID {
 		AND row_hash IS NOT NULL ORDER BY created_at DESC, id DESC LIMIT 1`).Scan(&prev, &tipAt); err != nil {
 		t.Fatal(err)
 	}
-	e := Event{ActorType: "system", Action: "auth.signed_up", ResourceType: "user"}
+	e := audit.Event{ActorType: "system", Action: "auth.signed_up", ResourceType: "user"}
 	id, at, meta := uuid.New(), tipAt.Add(time.Millisecond), []byte("{}")
-	raw, err := canonicalize(e, 0, id, at, meta, strings.TrimSpace(prev))
+	hash, err := audit.RowHash(e, 0, id, at, meta, strings.TrimSpace(prev))
 	if err != nil {
 		t.Fatal(err)
-	}
-	if strings.Contains(string(raw), "chain_shard") {
-		t.Fatalf("a chain 0 row's hashed form names its chain: %s", raw)
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO audit.events (id, actor_type, action, resource_type, metadata, created_at, prev_hash, row_hash, user_agent, request_id)
 		VALUES ($1, 'system', 'auth.signed_up', 'user', '{}', $2, $3, $4, '', '')`,
-		id, at, strings.TrimSpace(prev), hashHex(raw)); err != nil {
+		id, at, strings.TrimSpace(prev), hash); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -449,8 +427,8 @@ func writeAsTheSinglePlatformChain(t *testing.T) uuid.UUID {
 func TestRecordAloneCommitsTheEvent(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
 	organization := dbtest.Organization(t)
-	actor := Actor{Type: "system"}
-	if err := RecordAlone(ctx, pool, actor.EventIn(&organization, "thing.refused", "thing", uuid.New(), nil)); err != nil {
+	actor := audit.Actor{Type: "system"}
+	if err := audit.RecordAlone(ctx, pool, actor.EventIn(&organization, "thing.refused", "thing", uuid.New(), nil)); err != nil {
 		t.Fatalf("record: %v", err)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'thing.refused'`, organization); n != 1 {
@@ -465,7 +443,7 @@ func TestRecordAloneCommitsTheEvent(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	if err := RecordAlone(ctx, pool, actor.EventIn(nil, "thing.platform", "thing", resource, nil)); err != nil {
+	if err := audit.RecordAlone(ctx, pool, actor.EventIn(nil, "thing.platform", "thing", resource, nil)); err != nil {
 		t.Fatalf("record platform event: %v", err)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id IS NULL AND resource_id = $1`, resource); n != 1 {
@@ -497,7 +475,7 @@ func TestEventsSayWhereTheyCameFrom(t *testing.T) {
 	}
 	defer tx.Rollback(ctx)
 	for _, meta := range []map[string]any{nil, {"geo": "given"}} {
-		if err := Record(ctx, tx, Actor{Type: "system"}.Event(organization, "test.placed", "user", uuid.New(), meta)); err != nil {
+		if err := audit.Record(ctx, tx, audit.Actor{Type: "system"}.Event(organization, "test.placed", "user", uuid.New(), meta)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -531,7 +509,7 @@ func TestEventsNameTheKeyOrAgentThatActed(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := Record(ctx, tx, Actor{Type: c.actorType}.Event(organization, "test.acted", "user", uuid.New(), nil)); err != nil {
+		if err := audit.Record(ctx, tx, audit.Actor{Type: c.actorType}.Event(organization, "test.acted", "user", uuid.New(), nil)); err != nil {
 			t.Fatal(err)
 		}
 		if err := tx.Commit(ctx); err != nil {

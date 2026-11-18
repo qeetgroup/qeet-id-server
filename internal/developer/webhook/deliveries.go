@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/developer/webhook/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
@@ -40,11 +40,9 @@ func int32PtrToInt(p *int32) *int {
 	return &v
 }
 
-// ListDeliveries returns a page of up to limit of a subscription's deliveries
-// (paging.Clamp: 50 when unset, at most 200), newest first, after the cursor,
-// of status when given (delivered, pending, retrying or dead), and the next
-// page's cursor. Organization-scoped via the subscription join, so one
-// organization can't read another's delivery history.
+// ListDeliveries returns up to limit (50 by default, at most 200) of a subscription's deliveries,
+// newest first, after the cursor, optionally of one status (delivered, pending, retrying or dead), and
+// the next page's cursor. The subscription join scopes it to the organization.
 func (s *Service) ListDeliveries(ctx context.Context, subscriptionID, organizationID uuid.UUID, limit int, after paging.Cursor, status string) ([]Delivery, string, error) {
 	limit = paging.Clamp(limit, 50, 200)
 	params := dbgen.ListWebhookDeliveriesParams{
@@ -138,12 +136,10 @@ func (s *Service) Attempts(ctx context.Context, subscriptionID, deliveryID, orga
 	return out, nil
 }
 
-// RetryDelivery re-queues one of an organization's subscription's deliveries for
-// immediate redelivery, clearing delivered_at, dead_at and error. A delivery
-// that had finished, delivered or given up, starts a fresh budget of attempts;
-// one still retrying keeps its count. It fails with ErrWebhookDeliveryNotFound
-// when the delivery isn't that subscription's, the subscription isn't the
-// organization's, or a dispatcher currently holds its lease.
+// RetryDelivery re-queues a delivery for immediate redelivery, clearing delivered_at, dead_at and
+// error; a finished one (delivered or given up) gets a fresh attempt budget, a retrying one keeps its
+// count. ErrWebhookDeliveryNotFound when it isn't that subscription's, the subscription isn't the
+// organization's, or a dispatcher holds its lease.
 func (s *Service) RetryDelivery(ctx context.Context, subscriptionID, deliveryID, organizationID uuid.UUID) error {
 	n, err := s.q.RetryWebhookDelivery(ctx, dbgen.RetryWebhookDeliveryParams{
 		DeliveryID: deliveryID, SubscriptionID: subscriptionID, OrganizationID: organizationID,

@@ -123,7 +123,7 @@ func TestRequireAuth_AgentStatusEnforced(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			reached := false
-			v := &httpx.AuthVerifier{
+			v := liveVerifier(httpx.AuthVerifier{
 				Tokens: iss,
 				AgentStatus: func(_ context.Context, id uuid.UUID) (string, error) {
 					if id != agentID {
@@ -131,7 +131,7 @@ func TestRequireAuth_AgentStatusEnforced(t *testing.T) {
 					}
 					return tc.status, tc.statusErr
 				},
-			}
+			})
 			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				reached = true
 				if p := httpx.PrincipalFromCtx(r.Context()); p == nil || p.ActorType != "agent" {
@@ -185,7 +185,7 @@ func TestRequireAuth_EndedSessionRefused(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			looked := false
-			v := &httpx.AuthVerifier{
+			v := liveVerifier(httpx.AuthVerifier{
 				Tokens: iss,
 				SessionLive: func(_ context.Context, sid, uid uuid.UUID) (bool, error) {
 					looked = true
@@ -194,7 +194,7 @@ func TestRequireAuth_EndedSessionRefused(t *testing.T) {
 					}
 					return tc.live, tc.lookErr
 				},
-			}
+			})
 			next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 			w := httptest.NewRecorder()
 			req := httptest.NewRequest("GET", "/v1/anything", nil)
@@ -293,12 +293,12 @@ func TestRequireAuth_PrincipalLiveEnforced(t *testing.T) {
 		{"a failed lookup refuses", false, errors.New("db down"), http.StatusInternalServerError},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			v := &httpx.AuthVerifier{Tokens: iss, PrincipalLive: func(_ context.Context, id uuid.UUID) (bool, error) {
+			v := liveVerifier(httpx.AuthVerifier{Tokens: iss, PrincipalLive: func(_ context.Context, id uuid.UUID) (bool, error) {
 				if id != principalID {
 					t.Fatalf("PrincipalLive called with %s, want %s", id, principalID)
 				}
 				return tc.live, tc.err
-			}}
+			}})
 			w := httptest.NewRecorder()
 			req := httptest.NewRequest("GET", "/v1/anything", nil)
 			req.Header.Set("Authorization", "Bearer "+tok)
@@ -337,29 +337,28 @@ func TestLiveFollowsWhatAdmitted(t *testing.T) {
 		want    bool
 		wantErr error
 	}{
-		{"no principal", httpx.AuthVerifier{}, nil, false, nil},
-		{"an expired token", httpx.AuthVerifier{SessionLive: answer(true, nil)},
+		{"no principal", allLive(httpx.AuthVerifier{}), nil, false, nil},
+		{"an expired token", allLive(httpx.AuthVerifier{SessionLive: answer(true, nil)}),
 			&httpx.Principal{ActorType: "user", UserID: &user, SessionID: &session, ExpiresAt: &gone}, false, nil},
-		{"a person's live session", httpx.AuthVerifier{SessionLive: answer(true, nil)}, person, true, nil},
-		{"a person's ended session", httpx.AuthVerifier{SessionLive: answer(false, nil)}, person, false, nil},
-		{"a session that can't be read", httpx.AuthVerifier{SessionLive: answer(true, down)}, person, false, down},
-		{"an application's token is not the person's session", httpx.AuthVerifier{SessionLive: answer(false, nil)},
+		{"a person's live session", allLive(httpx.AuthVerifier{SessionLive: answer(true, nil)}), person, true, nil},
+		{"a person's ended session", allLive(httpx.AuthVerifier{SessionLive: answer(false, nil)}), person, false, nil},
+		{"a session that can't be read", allLive(httpx.AuthVerifier{SessionLive: answer(true, down)}), person, false, down},
+		{"an application's token is not the person's session", allLive(httpx.AuthVerifier{SessionLive: answer(false, nil)}),
 			&httpx.Principal{ActorType: "user", UserID: &user, SessionID: &session, ClientID: "app"}, true, nil},
-		{"a live API key", httpx.AuthVerifier{APIKeyLive: answer(true, nil)}, apiKey, true, nil},
-		{"a revoked API key", httpx.AuthVerifier{APIKeyLive: answer(false, nil)}, apiKey, false, nil},
-		{"an API key that can't be read", httpx.AuthVerifier{APIKeyLive: answer(true, down)}, apiKey, false, down},
-		{"an API key with nothing to check it", httpx.AuthVerifier{}, apiKey, false, nil},
-		{"an API key naming no organization", httpx.AuthVerifier{APIKeyLive: answer(true, nil)},
+		{"a live API key", allLive(httpx.AuthVerifier{APIKeyLive: answer(true, nil)}), apiKey, true, nil},
+		{"a revoked API key", allLive(httpx.AuthVerifier{APIKeyLive: answer(false, nil)}), apiKey, false, nil},
+		{"an API key that can't be read", allLive(httpx.AuthVerifier{APIKeyLive: answer(true, down)}), apiKey, false, down},
+		{"an API key naming no organization", allLive(httpx.AuthVerifier{APIKeyLive: answer(true, nil)}),
 			&httpx.Principal{ActorType: "api_key", Subject: key.String()}, false, nil},
-		{"an API key whose subject isn't an id", httpx.AuthVerifier{APIKeyLive: answer(true, nil)},
+		{"an API key whose subject isn't an id", allLive(httpx.AuthVerifier{APIKeyLive: answer(true, nil)}),
 			&httpx.Principal{ActorType: "api_key", Subject: "qk_x", OrganizationID: &organization}, false, nil},
-		{"an enabled service principal", httpx.AuthVerifier{PrincipalLive: principalAnswer(true)},
+		{"an enabled service principal", allLive(httpx.AuthVerifier{PrincipalLive: principalAnswer(true)}),
 			&httpx.Principal{ActorType: "service", Subject: key.String()}, true, nil},
-		{"a disabled service principal", httpx.AuthVerifier{PrincipalLive: principalAnswer(false)},
+		{"a disabled service principal", allLive(httpx.AuthVerifier{PrincipalLive: principalAnswer(false)}),
 			&httpx.Principal{ActorType: "service", Subject: key.String()}, false, nil},
-		{"an active agent", httpx.AuthVerifier{AgentStatus: agentAnswer("active", nil)},
+		{"an active agent", allLive(httpx.AuthVerifier{AgentStatus: agentAnswer("active", nil)}),
 			&httpx.Principal{ActorType: "agent", AgentID: &agent}, true, nil},
-		{"a suspended agent", httpx.AuthVerifier{AgentStatus: agentAnswer("suspended", nil)},
+		{"a suspended agent", allLive(httpx.AuthVerifier{AgentStatus: agentAnswer("suspended", nil)}),
 			&httpx.Principal{ActorType: "agent", AgentID: &agent}, false, nil},
 	} {
 		got, err := c.v.Live(ctx, c.p)
@@ -405,19 +404,19 @@ func TestRequireAuth_AdmitsAndRefusesAsItAlwaysHas(t *testing.T) {
 	earlier := &httpx.Principal{ActorType: "api_key", Subject: "qk_1"}
 	req := get()
 	req = req.WithContext(httpx.WithPrincipal(req.Context(), earlier))
-	if w, p := serveAuth(&httpx.AuthVerifier{Tokens: iss}, req); w.Code != http.StatusOK || p != earlier {
+	if w, p := serveAuth(liveVerifier(httpx.AuthVerifier{Tokens: iss}), req); w.Code != http.StatusOK || p != earlier {
 		t.Errorf("an earlier principal: %d %+v, want it passed on as it is", w.Code, p)
 	}
 
 	dev := get("X-Dev-User", userID.String(), "X-Dev-Organization", organizationID.String())
-	if w, _ := serveAuth(&httpx.AuthVerifier{Tokens: iss}, dev); w.Code != http.StatusUnauthorized {
+	if w, _ := serveAuth(liveVerifier(httpx.AuthVerifier{Tokens: iss}), dev); w.Code != http.StatusUnauthorized {
 		t.Errorf("development headers untrusted: %d, want 401", w.Code)
 	}
-	w, p := serveAuth(&httpx.AuthVerifier{Tokens: iss, DevTrustHeaders: true}, dev)
+	w, p := serveAuth(liveVerifier(httpx.AuthVerifier{Tokens: iss, DevTrustHeaders: true}), dev)
 	if w.Code != http.StatusOK || p.ActorType != "user" || p.Subject != userID.String() || *p.UserID != userID || *p.OrganizationID != organizationID {
 		t.Errorf("development headers trusted: %d %+v", w.Code, p)
 	}
-	if w, p := serveAuth(&httpx.AuthVerifier{Tokens: iss, DevTrustHeaders: true}, get("X-Dev-User", "someone", "X-Dev-Organization", "not-a-uuid")); w.Code != http.StatusOK || p.Subject != "someone" || p.UserID != nil || p.OrganizationID != nil {
+	if w, p := serveAuth(liveVerifier(httpx.AuthVerifier{Tokens: iss, DevTrustHeaders: true}), get("X-Dev-User", "someone", "X-Dev-Organization", "not-a-uuid")); w.Code != http.StatusOK || p.Subject != "someone" || p.UserID != nil || p.OrganizationID != nil {
 		t.Errorf("development headers that aren't ids: %d %+v", w.Code, p)
 	}
 
@@ -428,7 +427,7 @@ func TestRequireAuth_AdmitsAndRefusesAsItAlwaysHas(t *testing.T) {
 		"another scheme": {"Basic dXNlcjpwYXNz", `Bearer realm="qeet"`},
 		"a bad token":    {"Bearer not-a-jwt", `Bearer realm="qeet", error="invalid_token"`},
 	} {
-		w, p := serveAuth(&httpx.AuthVerifier{Tokens: iss}, get("Authorization", c.header))
+		w, p := serveAuth(liveVerifier(httpx.AuthVerifier{Tokens: iss}), get("Authorization", c.header))
 		if w.Code != http.StatusUnauthorized || p != nil || w.Header().Get("WWW-Authenticate") != c.challenge {
 			t.Errorf("%s: %d %q, want 401 %q", name, w.Code, w.Header().Get("WWW-Authenticate"), c.challenge)
 		}
@@ -439,7 +438,7 @@ func TestRequireAuth_AdmitsAndRefusesAsItAlwaysHas(t *testing.T) {
 		t.Fatal(err)
 	}
 	var used []uuid.UUID
-	v := &httpx.AuthVerifier{Tokens: iss, SessionUsed: func(_ context.Context, sid uuid.UUID) { used = append(used, sid) }}
+	v := liveVerifier(httpx.AuthVerifier{Tokens: iss, SessionUsed: func(_ context.Context, sid uuid.UUID) { used = append(used, sid) }})
 	w, p = serveAuth(v, get("Authorization", "bearer "+own))
 	if w.Code != http.StatusOK || p.ActorType != "user" || p.Subject != userID.String() || *p.UserID != userID ||
 		*p.OrganizationID != organizationID || *p.SessionID != sessionID || p.ClientID != "" || p.AgentID != nil ||
@@ -464,7 +463,59 @@ func TestRequireAuth_AdmitsAndRefusesAsItAlwaysHas(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if w, p := serveAuth(&httpx.AuthVerifier{Tokens: iss}, get("Authorization", "Bearer "+machine.AccessToken)); w.Code != http.StatusOK || p.ActorType != "agent" || p.AgentID == nil || *p.AgentID != agentID || p.UserID != nil {
+	if w, p := serveAuth(liveVerifier(httpx.AuthVerifier{Tokens: iss}), get("Authorization", "Bearer "+machine.AccessToken)); w.Code != http.StatusOK || p.ActorType != "agent" || p.AgentID == nil || *p.AgentID != agentID || p.UserID != nil {
 		t.Errorf("an agent's token with no status check: %d %+v", w.Code, p)
+	}
+}
+
+// allLive is v with each liveness check it leaves unset passing everything,
+// so a test sets only the check it is about.
+func allLive(v httpx.AuthVerifier) httpx.AuthVerifier {
+	if v.AgentStatus == nil {
+		v.AgentStatus = func(context.Context, uuid.UUID) (string, error) { return "active", nil }
+	}
+	if v.SessionUsed == nil {
+		v.SessionUsed = func(context.Context, uuid.UUID) {}
+	}
+	if v.SessionLive == nil {
+		v.SessionLive = func(context.Context, uuid.UUID, uuid.UUID) (bool, error) { return true, nil }
+	}
+	if v.PrincipalLive == nil {
+		v.PrincipalLive = func(context.Context, uuid.UUID) (bool, error) { return true, nil }
+	}
+	if v.APIKeyLive == nil {
+		v.APIKeyLive = func(context.Context, uuid.UUID, uuid.UUID) (bool, error) { return true, nil }
+	}
+	return v
+}
+
+// liveVerifier is allLive(v), as RequireAuth takes it.
+func liveVerifier(v httpx.AuthVerifier) *httpx.AuthVerifier {
+	v = allLive(v)
+	return &v
+}
+
+// TestNewAuthVerifierNeedsEveryCheck checks that the request verifier is not
+// built without its issuer or any of the liveness checks that refuse at once
+// the tokens of an ended session, a disabled principal or key, or a suspended
+// agent.
+func TestNewAuthVerifierNeedsEveryCheck(t *testing.T) {
+	full := allLive(httpx.AuthVerifier{Tokens: testIssuer(t)})
+	if _, err := httpx.NewAuthVerifier(full); err != nil {
+		t.Fatalf("built with every check: %v", err)
+	}
+	for name, without := range map[string]func(*httpx.AuthVerifier){
+		"issuer":         func(v *httpx.AuthVerifier) { v.Tokens = nil },
+		"agent status":   func(v *httpx.AuthVerifier) { v.AgentStatus = nil },
+		"session use":    func(v *httpx.AuthVerifier) { v.SessionUsed = nil },
+		"session live":   func(v *httpx.AuthVerifier) { v.SessionLive = nil },
+		"principal live": func(v *httpx.AuthVerifier) { v.PrincipalLive = nil },
+		"API key live":   func(v *httpx.AuthVerifier) { v.APIKeyLive = nil },
+	} {
+		v := full
+		without(&v)
+		if _, err := httpx.NewAuthVerifier(v); err == nil {
+			t.Errorf("built without the %s check", name)
+		}
 	}
 }

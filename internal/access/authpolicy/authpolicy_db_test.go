@@ -11,12 +11,22 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
+
+// newService returns the policy service with the breach check off.
+func newService(t *testing.T) *Service {
+	t.Helper()
+	svc, err := NewService(dbtest.Pool(t), NoBreachCheck{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return svc
+}
 
 // updates counts the organization's auth_policy.updated audit events.
 func updates(t *testing.T, organizationID uuid.UUID) int {
@@ -30,7 +40,7 @@ func updates(t *testing.T, organizationID uuid.UUID) int {
 // policy, clamping the password length and magic-link lifetime.
 func TestPolicyIsSavedAndAppliedToSignIn(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t))
+	svc := newService(t)
 	organization := dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
 	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: svc}).Mount)
@@ -162,7 +172,7 @@ func TestPolicyIsSavedAndAppliedToSignIn(t *testing.T) {
 // from its own.
 func TestPolicyRefusalsStoreNothing(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t))
+	svc := newService(t)
 	organization, other := dbtest.Organization(t), dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
 	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: svc}).Mount)
@@ -237,7 +247,7 @@ func TestUpdateCommitsWithItsAudit(t *testing.T) {
 	ctx := dbtest.Context(t)
 	organization := dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
-	svc := NewService(dbtest.Pool(t))
+	svc := newService(t)
 	p := DefaultPolicy()
 	p.PasswordMinLength = 12
 	unrecordable := audit.Actor{UserID: &admin.ID, Type: "user", IP: "not an address"}

@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -22,7 +22,7 @@ import (
 // the secret, and that deleting it stops it authenticating, each audited.
 func TestApplicationAdministration(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
+	svc := newTestService(t, dbtest.Pool(t), dbtest.Issuer(t))
 	organization, otherOrganization := dbtest.Organization(t), dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
 	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: svc}).Mount)
@@ -134,7 +134,7 @@ func TestApplicationAdministration(t *testing.T) {
 // can't be written.
 func TestClientChangesKeepTheirAuditRow(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
+	svc := newTestService(t, dbtest.Pool(t), dbtest.Issuer(t))
 	organization := dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
 	actor := audit.Actor{UserID: &admin.ID, Type: "user", IP: "192.0.2.41", RequestID: "req-" + uuid.NewString()}

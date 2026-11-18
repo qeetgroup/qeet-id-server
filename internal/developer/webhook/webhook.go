@@ -1,18 +1,11 @@
-// Package webhook lets organizations subscribe to the events in its catalogue and
-// receive each as a signed POST. Deliveries are persisted before send so
-// retries survive process restarts; a background dispatcher walks the queue.
-//
-// A delivery's body is an Event. X-Qeet-Signature is "sha256=" and the hex
-// HMAC-SHA256, keyed by the subscription's secret, of X-Qeet-Timestamp (Unix
-// seconds), a ".", and the body, so a receiver can refuse a stale or replayed
-// delivery as well as a forged one. While a rotated secret overlaps the new
-// one, the header holds both values, comma-separated.
-//
-// A subscription whose deliveries fail for autoDisableAfter is disabled, and
-// the members who manage the organization's webhooks are alerted.
+// Package webhook delivers an organization's subscribed events as signed POSTs of an Event, stored
+// before sending so retries survive restarts. X-Qeet-Signature is "sha256=" and the hex HMAC-SHA256,
+// keyed by the subscription's secret, of X-Qeet-Timestamp, "." and the body (both values while a
+// rotated secret overlaps). A subscription failing for autoDisableAfter is disabled, managers alerted.
 package webhook
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
@@ -26,8 +19,10 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
-// Service manages the webhook subscriptions.
+// Service manages the webhook subscriptions and sends their deliveries; its
+// Queue queues them.
 type Service struct {
+	*Queue
 	pool     *pgxpool.Pool
 	q        *dbgen.Queries
 	client   *http.Client
@@ -39,25 +34,41 @@ type Service struct {
 	lease    time.Duration
 }
 
-// NewService returns the webhook service.
-func NewService(pool *pgxpool.Pool, policies ...*egress.Policy) *Service {
+// Deps are what a Service is built from besides its pool. Cipher, PlanGate
+// and Notifier are required; a nil Egress lets deliveries reach only public
+// https endpoints.
+type Deps struct {
+	Cipher   *envelope.Cipher      // seals subscription secrets
+	PlanGate entitlements.PlanGate // webhooks are a plan feature
+	Notifier notification.Notifier // alerts managers when a failing subscription is turned off
+	Egress   *egress.Policy        // where deliveries may go
+}
+
+// NewService returns the webhook service, refusing a missing dependency.
+func NewService(pool *pgxpool.Pool, d Deps) (*Service, error) {
+	switch {
+	case d.Cipher == nil:
+		return nil, errors.New("webhook: a cipher is required to seal subscription secrets")
+	case d.PlanGate == nil:
+		return nil, errors.New("webhook: a plan gate is required, as webhooks are a plan feature")
+	case d.Notifier == nil:
+		return nil, errors.New("webhook: a notifier is required to alert managers of a disabled subscription")
+	}
+	var policies []*egress.Policy
+	if d.Egress != nil {
+		policies = append(policies, d.Egress)
+	}
 	policy := egress.PublicPolicy(policies...)
 	return &Service{
+		Queue:    NewQueue(pool),
 		pool:     pool,
 		q:        dbgen.New(pool),
 		client:   policy.HTTPClient(10 * time.Second),
+		gate:     d.PlanGate,
+		notifier: d.Notifier,
 		egress:   policy,
+		box:      d.Cipher,
 		workerID: uuid.New(),
 		lease:    2 * time.Minute,
-	}
+	}, nil
 }
-
-// SetPlanGate wires the plan-feature gate. nil (default) allows all features.
-func (s *Service) SetPlanGate(g entitlements.PlanGate) { s.gate = g }
-
-// SetCipher sets the cipher that encrypts webhook secrets at rest.
-func (s *Service) SetCipher(box *envelope.Cipher) { s.box = box }
-
-// SetNotifier sets who is alerted when a failing subscription is disabled;
-// nil alerts no one.
-func (s *Service) SetNotifier(n notification.Notifier) { s.notifier = n }

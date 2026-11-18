@@ -106,7 +106,10 @@ func TestServiceResolveAndQueries(t *testing.T) {
 	tid := uuid.New()
 
 	// Paid subscription → pro entitlements.
-	svc := NewService(stubResolver{plan: "pro_year"})
+	svc, err := NewService(stubResolver{plan: "pro_year"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if allowed, _ := svc.FeatureAllowed(ctx, tid, FeatureSSO); !allowed {
 		t.Error("pro should allow SSO")
 	}
@@ -115,7 +118,10 @@ func TestServiceResolveAndQueries(t *testing.T) {
 	}
 
 	// Free (empty plan) → gated + capped.
-	free := NewService(stubResolver{plan: ""})
+	free, err := NewService(stubResolver{plan: ""})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if allowed, _ := free.FeatureAllowed(ctx, tid, FeatureSSO); allowed {
 		t.Error("free should NOT allow SSO")
 	}
@@ -123,18 +129,37 @@ func TestServiceResolveAndQueries(t *testing.T) {
 		t.Errorf("free seats = %d, want 5", lim)
 	}
 
-	// Nil resolver → free.
-	nilSvc := NewService(nil)
-	ent, err := nilSvc.Resolve(ctx, tid)
-	if err != nil {
-		t.Fatalf("resolve: %v", err)
-	}
-	if ent.Plan != "free" {
-		t.Errorf("nil resolver plan = %q, want free", ent.Plan)
+	// No resolver: the service is not built, rather than put everyone on free.
+	if _, err := NewService(nil); err == nil {
+		t.Error("built without a plan resolver")
 	}
 
 	// Unmodelled resource → Unlimited (fail-open).
 	if lim, _ := free.Limit(ctx, tid, "nonexistent_resource"); lim != Unlimited {
 		t.Errorf("unknown resource limit = %d, want Unlimited", lim)
+	}
+}
+
+type noUsage struct{}
+
+func (noUsage) Usage(context.Context, uuid.UUID) (map[string]int, error) {
+	return map[string]int{}, nil
+}
+
+// TestNewHandlerNeedsItsSources checks that the handler is not built without
+// the service or the usage resolver it reports.
+func TestNewHandlerNeedsItsSources(t *testing.T) {
+	svc, err := NewService(stubResolver{plan: "free"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewHandler(svc, nil); err == nil {
+		t.Error("built without a usage resolver")
+	}
+	if _, err := NewHandler(nil, noUsage{}); err == nil {
+		t.Error("built without the service")
+	}
+	if _, err := NewHandler(svc, noUsage{}); err != nil {
+		t.Errorf("built with both: %v", err)
 	}
 }

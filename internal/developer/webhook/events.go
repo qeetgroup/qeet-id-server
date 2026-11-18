@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/developer/webhook/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
@@ -107,9 +108,18 @@ type Event struct {
 	Data           json.RawMessage `json:"data"`
 }
 
+// Queue queues events for the organization's webhook subscriptions, for the
+// Service's dispatcher to send. It needs nothing but the database.
+type Queue struct {
+	q *dbgen.Queries
+}
+
+// NewQueue returns a Queue over pool.
+func NewQueue(pool *pgxpool.Pool) *Queue { return &Queue{q: dbgen.New(pool)} }
+
 // queue inserts a delivery of e for each of its organization's active
 // subscriptions that name it. Queuing an event already queued is a no-op.
-func (s *Service) queue(ctx context.Context, q *dbgen.Queries, e Event) error {
+func (u *Queue) queue(ctx context.Context, q *dbgen.Queries, e Event) error {
 	ids, err := q.GetSubscriptionsForEvent(ctx, dbgen.GetSubscriptionsForEventParams{OrganizationID: e.OrganizationID, EventType: e.Type})
 	if err != nil || len(ids) == 0 {
 		return err
@@ -131,12 +141,12 @@ func (s *Service) queue(ctx context.Context, q *dbgen.Queries, e Event) error {
 // Relay returns a Publisher that queues each committed outbox event in the
 // catalogue for its organization's subscriptions, then hands it to next. The
 // outbox retries an event next failed; queuing it again is a no-op.
-func (s *Service) Relay(next outbox.Publisher) outbox.Publisher {
-	return relay{s: s, next: next}
+func (u *Queue) Relay(next outbox.Publisher) outbox.Publisher {
+	return relay{u: u, next: next}
 }
 
 type relay struct {
-	s    *Service
+	u    *Queue
 	next outbox.Publisher
 }
 
@@ -149,7 +159,7 @@ func (r relay) Publish(ctx context.Context, m outbox.Message) error {
 		}
 		if json.Unmarshal(m.Payload, &owner) == nil && owner.OrganizationID != uuid.Nil {
 			e := Event{ID: m.ID, Type: m.EventType, OrganizationID: owner.OrganizationID, OccurredAt: m.OccurredAt.UTC(), Data: m.Payload}
-			if err := r.s.queue(ctx, r.s.q, e); err != nil {
+			if err := r.u.queue(ctx, r.u.q, e); err != nil {
 				return err
 			}
 		}
@@ -158,22 +168,22 @@ func (r relay) Publish(ctx context.Context, m outbox.Message) error {
 }
 
 // Enqueue persists a delivery for every matching subscription.
-func (s *Service) Enqueue(ctx context.Context, organizationID uuid.UUID, eventType string, payload any) error {
-	return s.enqueue(ctx, s.q, organizationID, eventType, payload)
+func (u *Queue) Enqueue(ctx context.Context, organizationID uuid.UUID, eventType string, payload any) error {
+	return u.enqueue(ctx, u.q, organizationID, eventType, payload)
 }
 
 // EnqueueTx is Enqueue inside the caller's transaction, so the deliveries are
 // committed, or rolled back, with the change they describe.
-func (s *Service) EnqueueTx(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, eventType string, payload any) error {
-	return s.enqueue(ctx, s.q.WithTx(tx), organizationID, eventType, payload)
+func (u *Queue) EnqueueTx(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, eventType string, payload any) error {
+	return u.enqueue(ctx, u.q.WithTx(tx), organizationID, eventType, payload)
 }
 
-func (s *Service) enqueue(ctx context.Context, q *dbgen.Queries, organizationID uuid.UUID, eventType string, payload any) error {
+func (u *Queue) enqueue(ctx context.Context, q *dbgen.Queries, organizationID uuid.UUID, eventType string, payload any) error {
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
-	return s.queue(ctx, q, Event{ID: uuid.New(), Type: eventType, OrganizationID: organizationID, OccurredAt: time.Now().UTC(), Data: data})
+	return u.queue(ctx, q, Event{ID: uuid.New(), Type: eventType, OrganizationID: organizationID, OccurredAt: time.Now().UTC(), Data: data})
 }
 
 // SendTest queues a TestEvent for sub alone, whichever events it names.

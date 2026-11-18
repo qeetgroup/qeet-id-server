@@ -3,6 +3,7 @@
 package rebac
 
 import (
+	"context"
 	"net/http"
 	"testing"
 
@@ -22,8 +23,17 @@ func newHandler(t *testing.T) *Handler {
 	t.Helper()
 	pool := dbtest.Pool(t)
 	svc := NewService(pool)
-	return &Handler{Service: svc, Decider: decide.New(rbac.NewRepository(pool), svc, abac.NewService(pool))}
+	policies, err := abac.NewService(pool, allPlans{}, svc.Check)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &Handler{Service: svc, Decider: decide.New(rbac.NewRepository(pool), svc, policies)}
 }
+
+// allPlans is a plan gate that allows every feature.
+type allPlans struct{}
+
+func (allPlans) FeatureAllowed(context.Context, uuid.UUID, string) (bool, error) { return true, nil }
 
 // writeTuple stores the tuple object#relation@subject through h's write route.
 func writeTuple(t *testing.T, h http.Handler, organization uuid.UUID, object, relation, subject string) Tuple {

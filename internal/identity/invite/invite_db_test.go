@@ -3,6 +3,7 @@
 package invite
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -15,10 +16,10 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth/authtest"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authpolicy"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -28,14 +29,50 @@ func TestMain(m *testing.M) { dbtest.Main(m) }
 
 const testPassword = "Kx7mQ2vLp9Wz"
 
+// newService returns the invitation service with the platform's password
+// rules and grant check, on a plan with no seat limit, in organizations that
+// accept with a password only. Each change applies to its Deps first.
+func newService(t *testing.T, change ...func(*Deps)) *Service {
+	t.Helper()
+	pool := dbtest.Pool(t)
+	d := Deps{
+		Sender: &dbtest.Mailbox{}, BaseAppURL: "https://console.example.test", Rules: policies(t),
+		Methods: passwordOnly{}, Limits: seatPlan(-1), Grants: rbac.NewRepository(pool).CheckGrantRole,
+	}
+	for _, c := range change {
+		c(&d)
+	}
+	svc, err := NewService(pool, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return svc
+}
+
+// policies returns the authentication policy service, its breach check off.
+func policies(t *testing.T) *authpolicy.Service {
+	t.Helper()
+	svc, err := authpolicy.NewService(dbtest.Pool(t), authpolicy.NoBreachCheck{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return svc
+}
+
+// passwordOnly lets every organization's invitations be accepted with a
+// password only.
+type passwordOnly struct{}
+
+func (passwordOnly) AllowedSignInMethods(context.Context, uuid.UUID) (bool, bool, bool, error) {
+	return true, false, false, nil
+}
+
 // newHandler wires the invitation handler as bootstrap does.
 func newHandler(t *testing.T) (*Handler, *auth.Service) {
 	t.Helper()
 	pool := dbtest.Pool(t)
-	svc := NewService(pool, &dbtest.Mailbox{}, 0, "https://console.example.test")
-	svc.SetPasswordRules(authpolicy.NewService(pool))
-	svc.SetGrantCheck(rbac.NewRepository(pool).CheckGrantRole)
-	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
+	svc := newService(t)
+	authSvc := authtest.New(t, pool)
 	h := &Handler{
 		Service:     svc,
 		AuthService: authSvc,

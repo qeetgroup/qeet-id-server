@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/group/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -201,11 +201,9 @@ func (s *Service) DeleteTemplate(
 	return tx.Commit(ctx)
 }
 
-// ApplyTemplate creates a template's tree as groups under an optional parent, in
-// one transaction: a half-applied tree is worse than none.
-// ApplyOptions are where a template's groups go and what they're called:
-// under ParentID (nil: at the root), each named Prefix + its template name, and
-// the template's one top group named RootName instead, when given.
+// ApplyOptions are where a template's groups go and what they're called: under ParentID (nil: at the
+// root), each named Prefix + its template name, and the template's one top group named RootName
+// instead, when given.
 type ApplyOptions struct {
 	ParentID *uuid.UUID
 	Prefix   string

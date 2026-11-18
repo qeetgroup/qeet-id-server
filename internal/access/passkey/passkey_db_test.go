@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth/authtest"
+
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
 
@@ -17,8 +19,28 @@ import (
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
 
-// newService returns the passkey service for the relying party example.test.
-func newService(t *testing.T) *Service {
+// newService returns the passkey service for the relying party example.test,
+// issuing sessions, in organizations that allow passkeys, with no invitation
+// to accept and no address captured. Each change applies to its Deps first.
+func newService(t *testing.T, change ...func(*Deps)) *Service {
+	t.Helper()
+	pool := dbtest.Pool(t)
+	d := Deps{
+		RelyingParty: relyingParty(t), Auth: authtest.New(t, pool), Policy: allowPasskeys{},
+		Invitations: noInvitations{}, Sender: &dbtest.Mailbox{}, Capture: noCapture{},
+	}
+	for _, c := range change {
+		c(&d)
+	}
+	svc, err := NewService(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return svc
+}
+
+// relyingParty returns the relying party example.test.
+func relyingParty(t *testing.T) *RelyingParty {
 	t.Helper()
 	wa, err := webauthn.New(&webauthn.Config{
 		RPID: "example.test", RPDisplayName: "Qeet ID", RPOrigins: []string{"https://example.test"},
@@ -26,7 +48,28 @@ func newService(t *testing.T) *Service {
 	if err != nil {
 		t.Fatalf("webauthn: %v", err)
 	}
-	return NewService(dbtest.Pool(t), wa, nil)
+	rp, err := NewRelyingParty(dbtest.Pool(t), wa)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rp
+}
+
+// allowPasskeys lets every organization use passkeys.
+type allowPasskeys struct{}
+
+func (allowPasskeys) PasskeyEnabled(context.Context, uuid.UUID) (bool, error) { return true, nil }
+
+// noCapture captures no address.
+type noCapture struct{}
+
+func (noCapture) RefuseCaptured(context.Context, string) error { return nil }
+
+// noInvitations knows no invitation.
+type noInvitations struct{ InvitationAcceptor }
+
+func (noInvitations) InvitationForNewAccount(context.Context, string) (uuid.UUID, uuid.UUID, string, error) {
+	return uuid.Nil, uuid.Nil, "", errs.ErrNotImplemented
 }
 
 // captureDomain refuses every address on its domain, as an organization that
@@ -52,7 +95,7 @@ func TestCapturedAddressesUseNoPasskey(t *testing.T) {
 	captured := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, organization, organization)
 	free := dbtest.User(t, organization, organization)
 	d, other := register(t, svc, captured.ID, "Laptop"), register(t, svc, free.ID, "Phone")
-	svc.SetDomainCapture(captureDomain(domain))
+	svc.capture = captureDomain(domain)
 
 	if _, _, err := svc.BeginLogin(ctx, strings.ToUpper(captured.Email)); !errors.Is(err, errs.ErrAuthSSORequired) {
 		t.Errorf("begin a sign-in naming a captured address: %v, want %v", err, errs.ErrAuthSSORequired)
@@ -87,7 +130,7 @@ func (noPasskeys) PasskeyEnabled(context.Context, uuid.UUID) (bool, error) { ret
 // where the account's organization turned passkeys off.
 func TestPasskeysOffForTheOrganization(t *testing.T) {
 	svc := signInService(t)
-	svc.SetMethodPolicy(noPasskeys{})
+	svc.policy = noPasskeys{}
 	organization := dbtest.Organization(t)
 	a := dbtest.User(t, organization, organization)
 	if _, _, err := svc.BeginRegister(dbtest.Context(t), a.ID); !errors.Is(err, ErrDisabled) {

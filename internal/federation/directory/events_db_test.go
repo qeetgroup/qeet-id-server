@@ -31,8 +31,7 @@ func TestEventStoreOrganizationIsolationAndAlerts(test *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO account.users(id,organization_id,email,status) VALUES($1,$2,$3,'active')`, userID, organizationID, userID.String()+"@example.test"); err != nil {
 		test.Fatal(err)
 	}
-	service := NewService(&scimFixture{config: &scim.ConfigView{TokenSet: true}}, &ldapFixture{})
-	service.SetEventStore(pool)
+	service := newService(test, pool, &scimFixture{config: &scim.ConfigView{TokenSet: true}}, &ldapFixture{})
 	if _, err := pool.Exec(ctx, `INSERT INTO organization.directory_alerts(id,organization_id,user_id,name,threshold) VALUES($1,$2,$3,'Directory failures',1)`, uuid.New(), organizationID, userID); err != nil {
 		test.Fatal(err)
 	}
@@ -141,8 +140,7 @@ func TestRefusedSignInIsNotASyncError(test *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO organization.directory_alerts(id,organization_id,user_id,name,threshold) VALUES($1,$2,$3,'Directory failures',1)`, uuid.New(), organizationID, userID); err != nil {
 		test.Fatal(err)
 	}
-	service := NewService(&scimFixture{config: &scim.ConfigView{}}, &ldapFixture{})
-	service.SetEventStore(pool)
+	service := newService(test, pool, &scimFixture{config: &scim.ConfigView{}}, &ldapFixture{})
 	notifications := func() int {
 		return dbtest.Count(test, `SELECT count(*) FROM auth.notifications WHERE organization_id=$1 AND user_id=$2`, organizationID, userID)
 	}
@@ -191,8 +189,7 @@ func TestSuccessResolvesTheConnectionsFailures(test *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO organization.organizations(id,slug,name) VALUES($1,$2,'Directory test')`, organizationID, organizationID.String()); err != nil {
 		test.Fatal(err)
 	}
-	service := NewService(&scimFixture{config: &scim.ConfigView{}}, &ldapFixture{})
-	service.SetEventStore(pool)
+	service := newService(test, pool, &scimFixture{config: &scim.ConfigView{}}, &ldapFixture{})
 	connection, other := uuid.New().String(), uuid.New().String()
 	record := func(conn, operation string, status int) {
 		if err := service.RecordOperation(ctx, organizationID, conn, operation, "connection", "", status, time.Now(), time.Second); err != nil {
@@ -238,8 +235,7 @@ func TestDirectorySearchTakesWildcardsLiterally(test *testing.T) {
 			test.Fatal(err)
 		}
 	}
-	service := NewService(&scimFixture{config: &scim.ConfigView{TokenSet: true}}, &ldapFixture{})
-	service.SetEventStore(pool)
+	service := newService(test, pool, &scimFixture{config: &scim.ConfigView{TokenSet: true}}, &ldapFixture{})
 	for search, want := range map[string]string{"qa_b": "qa_b refused", "%": "100% refused"} {
 		filter := eventFilter{Since: time.Now().Add(-time.Hour), Search: search, Limit: 25}
 		events, err := service.Events(ctx, organizationID, filter)

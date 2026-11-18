@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
@@ -83,11 +83,9 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 	return pair, nil
 }
 
-// refuseEndedRefresh refuses renewing rt when its session, account or
-// organization has ended, or the token has expired. A session past its
-// maximum age or idle timeout has ended, whatever the client was told and
-// whether or not it is the first renewal to notice: the first one records the
-// ending (tx commits); it is never renewed.
+// refuseEndedRefresh refuses renewing rt when its session, account or organization has ended, or the
+// token has expired. A session past its maximum age or idle timeout has ended whatever the client was
+// told: the first renewal to notice records the ending (tx commits), and it is never renewed.
 func (s *Service) refuseEndedRefresh(ctx context.Context, tx pgx.Tx, rt dbgen.LockRefreshTokenRow, organizationID uuid.UUID, in RefreshInput) error {
 	if rt.PastMaxAge || rt.PastIdle {
 		if rt.SessionRevokedAt == nil {

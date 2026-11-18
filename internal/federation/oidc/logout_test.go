@@ -4,12 +4,13 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // TestLogoutTicketsVerify checks that the sign-out tickets this server signs
 // verify for what they name, and only for it.
 func TestLogoutTicketsVerify(t *testing.T) {
-	svc := NewService(nil, testIssuer(t))
+	svc := newTestService(t, new(pgxpool.Pool), testIssuer(t))
 	session := uuid.New()
 	confirm, err := svc.logoutConfirmation(session)
 	if err != nil {

@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
@@ -39,8 +39,9 @@ type MetadataRun struct {
 // each picks up its IdP's next certificate. One whose metadata can't be fetched
 // or used, or no longer describes its IdP, keeps its settings and records why.
 func RefreshMetadata(ctx context.Context, pool *pgxpool.Pool, policy *egress.Policy) (MetadataRun, error) {
-	s := NewService(pool, nil, "")
-	s.SetEgressPolicy(policy)
+	// A refresh reads and writes connections and fetches metadata, so it needs
+	// nothing of the service but its queries and outbound client.
+	s := &Service{pool: pool, q: dbgen.New(pool), egress: policy, metadataHTTP: policy.HTTPClient(metadataFetchTimeout)}
 	ctx = postgres.AcrossOrganizations(ctx)
 	due, err := s.q.ListSamlMetadataDue(ctx, dbgen.ListSamlMetadataDueParams{
 		CheckedBefore: new(time.Now().Add(-metadataRefreshAge)),

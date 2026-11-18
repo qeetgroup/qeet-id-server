@@ -113,14 +113,13 @@ func encryptAssertion(t *testing.T, cert *x509.Certificate, method string) func(
 // and that one encrypted to another key, encrypted but unsigned, or sent to a
 // connection that has no key, is refused.
 func TestSAMLEncryptedAssertion(t *testing.T) {
-	sp := newSPSide(t)
 	master := make([]byte, 32)
 	_, _ = rand.Read(master)
 	box, err := envelope.New(master)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sp.handler.Service.SetCipher(box)
+	sp := newSPSide(t, func(d *Deps) { d.Cipher = box })
 	idp := newUpstreamIdP(t)
 	organization := dbtest.Organization(t)
 	conn, keyless := sp.connect(t, organization, idp), sp.connect(t, organization, idp)

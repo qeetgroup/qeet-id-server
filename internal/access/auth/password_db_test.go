@@ -30,7 +30,7 @@ func TestHomeOrganizationPasswordSwitchAppliesThroughAnyClient(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := newService(t)
 	a, home := member(t)
-	svc.SetMethodPolicy(passwordsOff(home))
+	svc.methods = passwordsOff(home)
 	elsewhere := dbtest.Organization(t)
 	client := dbtest.Unique("app")
 	if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO auth.oidc_clients (organization_id, client_id, name) VALUES ($1, $2, $2)`, elsewhere, client); err != nil {
@@ -119,7 +119,7 @@ func TestChangePasswordEndsSignIns(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	svc := newService(t)
-	svc.SetRegistrationPolicy(anyPassword{})
+	svc.regPolicy = anyPassword{}
 	a, organization := member(t)
 	current, other := signIn(t, svc, a), signIn(t, svc, a)
 	if _, err := pool.Exec(ctx, `
@@ -135,7 +135,7 @@ func TestChangePasswordEndsSignIns(t *testing.T) {
 	}
 
 	mail := &dbtest.Mailbox{}
-	svc.SetSender(mail)
+	svc.sender = mail
 	if err := svc.ChangePassword(ctx, ChangePasswordInput{
 		UserID: a.ID, KeepSessionID: current.SessionID, Current: testPassword, Next: "Pw4!nKx7mQ2v-new",
 	}); err != nil {
@@ -165,7 +165,7 @@ func TestConcurrentSignInsShareASmallPool(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	svc := newService(t)
-	svc.SetAddressPolicy(ipallow.NewService(pool))
+	svc.addresses = ipallow.NewService(pool)
 	a, organization := member(t)
 	enforceAddressRules(t, organization)
 	n := 3 * int(pool.Config().MaxConns)

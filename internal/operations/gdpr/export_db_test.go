@@ -22,7 +22,7 @@ func TestExportPayloadExpires(t *testing.T) {
 	organization := dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
 	old, fresh, gone := account(t, organization), account(t, organization), account(t, organization)
-	svc := NewService(pool, 0)
+	svc := testService(t, pool, 0)
 	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), requests(t, svc).Mount)
 	queue := func(userID uuid.UUID) uuid.UUID {
 		var req ExportRequest
@@ -71,7 +71,7 @@ func TestExportIsBuiltInTheBackground(t *testing.T) {
 	organization, other := dbtest.Organization(t), dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
 	member := account(t, organization)
-	svc := NewService(dbtest.Pool(t), 0)
+	svc := testService(t, dbtest.Pool(t), 0)
 	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), requests(t, svc).Mount)
 
 	rec := dbtest.Do(t, asAdmin, http.MethodPost, "/gdpr/export", map[string]any{"user_id": member.ID})

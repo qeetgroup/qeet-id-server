@@ -6,11 +6,12 @@ import (
 	"math"
 	"testing"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth/authtest"
+
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -26,7 +27,7 @@ const testPassword = "Kx7mQ2vLp9Wz"
 func TestOverviewCountsPurgedSessionsSignIns(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	svc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
+	svc := authtest.New(t, pool)
 	organization, home := dbtest.Organization(t), dbtest.Organization(t)
 	account := func(home uuid.UUID, memberOf ...uuid.UUID) dbtest.Account {
 		a := dbtest.User(t, home, memberOf...)

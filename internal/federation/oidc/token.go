@@ -111,7 +111,7 @@ func (s *Service) tokenSubjectLive(ctx context.Context, claims *tokens.Claims) (
 			return false, err
 		}
 	}
-	if claims.ActorType == "service" && s.principalLive != nil {
+	if claims.ActorType == "service" {
 		id, err := uuid.Parse(claims.Subject)
 		if err != nil {
 			return false, nil //nolint:nilerr // an unparseable principal ID means the token is not active
@@ -120,7 +120,7 @@ func (s *Service) tokenSubjectLive(ctx context.Context, claims *tokens.Claims) (
 			return false, err
 		}
 	}
-	if claims.AgentID != "" && s.agentStatus != nil {
+	if claims.AgentID != "" {
 		id, err := uuid.Parse(claims.AgentID)
 		if err != nil {
 			return false, nil //nolint:nilerr // an unparseable agent ID means the token is not active
@@ -146,9 +146,6 @@ func (s *Service) tokenSessionLive(ctx context.Context, claims *tokens.Claims) (
 		return s.q.ApplicationSignInLive(ctx, dbgen.ApplicationSignInLiveParams{
 			SessionID: claims.SessionID, UserID: claims.UserID, OrganizationID: claims.OrganizationID, ClientID: claims.ClientID,
 		})
-	}
-	if s.sessionLive == nil {
-		return true, nil
 	}
 	return s.sessionLive(ctx, claims.SessionID, claims.UserID)
 }

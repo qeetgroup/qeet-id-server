@@ -4,6 +4,7 @@
 package recovery
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -24,7 +25,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authpolicy"
 	"github.com/qeetgroup/qeet-id-server/internal/access/recovery/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/cache/ratelimit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
@@ -36,8 +37,6 @@ import (
 
 // Service runs password resets and magic links. Email links go to baseAppURL
 // (the console), or to loginBaseURL for a request made from hosted login.
-// Until SetPasswordRules is called resets are refused rather than set an
-// unchecked password; the other Set* dependencies are optional.
 type Service struct {
 	pool            *pgxpool.Pool
 	q               *dbgen.Queries
@@ -64,25 +63,11 @@ type MagicLinkPolicy interface {
 	MagicLinkPolicy(ctx context.Context, organizationID uuid.UUID) (enabled bool, ttl time.Duration, err error)
 }
 
-// SetDomainCapture sets the check that refuses resets and magic links to an
-// address whose organization requires single sign-on (nil: none is refused).
-func (s *Service) SetDomainCapture(c auth.DomainCapture) { s.capture = c }
-
 // refuseCaptured returns errs.ErrAuthSSORequired when email's domain is
 // captured.
 func (s *Service) refuseCaptured(ctx context.Context, email string) error {
-	if s.capture == nil {
-		return nil
-	}
 	return s.capture.RefuseCaptured(ctx, email)
 }
-
-// SetSessionSignals sets how ended sessions are announced.
-func (s *Service) SetSessionSignals(sig *sessionsignal.Signaller) { s.signals = sig }
-
-// SetMagicLinkPolicy sets the policy that decides whether an organization
-// allows magic links and how long they live.
-func (s *Service) SetMagicLinkPolicy(p MagicLinkPolicy) { s.magicLinks = p }
 
 // magicLinkTTL is how long a magic link for organizationID lives, or
 // ErrAuthMethodDisabled when the organization has switched magic links off
@@ -90,7 +75,7 @@ func (s *Service) SetMagicLinkPolicy(p MagicLinkPolicy) { s.magicLinks = p }
 func (s *Service) magicLinkTTL(ctx context.Context, organizationID uuid.UUID) (time.Duration, error) {
 	// No organization, no organization policy: the platform allows magic
 	// links, with the default lifetime.
-	if s.magicLinks == nil || organizationID == uuid.Nil {
+	if organizationID == uuid.Nil {
 		return s.ttl, nil
 	}
 	enabled, ttl, err := s.magicLinks.MagicLinkPolicy(ctx, organizationID)
@@ -106,22 +91,46 @@ func (s *Service) magicLinkTTL(ctx context.Context, organizationID uuid.UUID) (t
 	return ttl, nil
 }
 
-// NewService returns the password reset and magic link service.
-func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, baseAppURL string) *Service {
-	if ttl <= 0 {
-		ttl = time.Hour
-	}
-	return &Service{pool: pool, q: dbgen.New(pool), sender: sender, ttl: ttl, baseAppURL: baseAppURL,
-		// Ten records per account, then one a minute.
-		requestRecords: ratelimit.New(1.0/60, 10)}
+// Deps are what the recovery service is built from. Every field is required
+// but TTL and the two URLs.
+type Deps struct {
+	Sender       notifier.Sender
+	TTL          time.Duration // how long a link lives where no policy says (zero: an hour)
+	BaseAppURL   string        // the console, where links land
+	LoginBaseURL string        // the hosted login, where a reset requested there lands
+	Rules        authpolicy.PasswordRules
+	MagicLinks   MagicLinkPolicy    // whether an organization allows magic links, and their lifetime
+	Capture      auth.DomainCapture // refuses resets and magic links on a captured domain
+	Signals      *sessionsignal.Signaller
+	// MagicPerAddress, MagicPerCaller and ResetPerAddress bound magic-link
+	// requests per address and per caller, and reset requests per address.
+	MagicPerAddress Limiter
+	MagicPerCaller  Limiter
+	ResetPerAddress Limiter
 }
 
-// SetPasswordRules sets the password check run on reset.
-func (s *Service) SetPasswordRules(r authpolicy.PasswordRules) { s.rules = r }
-
-// SetHostedLogin sets the hosted login origin, so a reset requested there links
-// back to its own reset page.
-func (s *Service) SetHostedLogin(loginBaseURL string) { s.loginBaseURL = loginBaseURL }
+// NewService returns the password reset and magic link service built from d.
+func NewService(pool *pgxpool.Pool, d Deps) (*Service, error) {
+	for _, dep := range []struct {
+		name    string
+		missing bool
+	}{
+		{"a sender", d.Sender == nil}, {"password rules", d.Rules == nil}, {"a magic-link policy", d.MagicLinks == nil},
+		{"domain capture", d.Capture == nil}, {"session signals", d.Signals == nil},
+		{"a magic-link limit per address", d.MagicPerAddress == nil}, {"a magic-link limit per caller", d.MagicPerCaller == nil},
+		{"a reset limit per address", d.ResetPerAddress == nil},
+	} {
+		if dep.missing {
+			return nil, fmt.Errorf("recovery: the recovery service needs %s", dep.name)
+		}
+	}
+	return &Service{pool: pool, q: dbgen.New(pool), sender: d.Sender, ttl: cmp.Or(d.TTL, time.Hour),
+		baseAppURL: d.BaseAppURL, loginBaseURL: d.LoginBaseURL, rules: d.Rules, magicLinks: d.MagicLinks,
+		capture: d.Capture, signals: d.Signals, magicPerAddress: d.MagicPerAddress, magicPerCaller: d.MagicPerCaller,
+		resetPerAddress: d.ResetPerAddress,
+		// Ten records per account, then one a minute.
+		requestRecords: ratelimit.New(1.0/60, 10)}, nil
+}
 
 // AppHostedLogin marks a reset requested from the hosted login (ResetOrigin.App).
 const AppHostedLogin = "hosted_login"
@@ -154,23 +163,13 @@ func (s *Service) resetLink(raw string, from ResetOrigin) string {
 	return fmt.Sprintf("%s/forgot-password?token=%s", s.baseAppURL, raw)
 }
 
-// SetResetLimit bounds password-reset requests per address (nil: unbounded).
-func (s *Service) SetResetLimit(perAddress Limiter) { s.resetPerAddress = perAddress }
-
-// StartPasswordReset emails a reset link to the account with this email, if
-// any (email is globally unique), landing back on the application from names
-// (see resetLink). It answers alike either way, storing and sending the link
-// after it returns (see afterAnswer), and returns the raw token for dev-mode
-// handlers, empty when no account matched. The link goes to the address as
-// stored, and ends the account's earlier ones. Past the per-address bound it
-// returns ErrTooManyRequests, whether or not an account matched; an address
-// whose organization requires single sign-on is then refused before any
-// account is looked up.
+// StartPasswordReset emails a reset link to the (globally unique) email's account, if any, landing
+// back on from's application (resetLink); it answers alike either way, sending after it returns
+// (afterAnswer), and returns the raw token for dev handlers. The link ends earlier ones. Past the
+// per-address bound: ErrTooManyRequests either way; an SSO address is refused before any lookup.
 func (s *Service) StartPasswordReset(ctx context.Context, email string, from ResetOrigin) (string, error) {
-	if s.resetPerAddress != nil {
-		if ok, _ := s.resetPerAddress.Take(ctx, "password-reset:address:"+strings.ToLower(strings.TrimSpace(email))); !ok {
-			return "", errs.ErrTooManyRequests
-		}
+	if ok, _ := s.resetPerAddress.Take(ctx, "password-reset:address:"+strings.ToLower(strings.TrimSpace(email))); !ok {
+		return "", errs.ErrTooManyRequests
 	}
 	if err := s.refuseCaptured(ctx, email); err != nil {
 		return "", err
@@ -273,11 +272,9 @@ func as(from audit.Actor, actorType string, userID *uuid.UUID) audit.Actor {
 // since whoever asked may not own it. It is bounded per account and best
 // effort: a record that can't be written is logged.
 func (s *Service) recordRequest(ctx context.Context, action string, userID uuid.UUID, orgs []uuid.UUID, from audit.Actor, meta map[string]any) {
-	if s.requestRecords != nil {
-		if ok, _ := s.requestRecords.Take(ctx, action+":"+userID.String()); !ok {
-			unrecordedRequests.WithLabelValues(action).Inc()
-			return
-		}
+	if ok, _ := s.requestRecords.Take(ctx, action+":"+userID.String()); !ok {
+		unrecordedRequests.WithLabelValues(action).Inc()
+		return
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer cancel()
@@ -345,15 +342,11 @@ func auditOrgs(orgs []uuid.UUID) []*uuid.UUID {
 	return out
 }
 
-// ConfirmPasswordReset sets a new password with a reset link, checked against
-// the rules of the account's organization once the link is known to be good. A
-// refused password, or an address that must now sign in with single sign-on,
-// leaves the credential and link untouched. On success the address counts as
-// verified and every sign-in ends (see auth.EndSignIns).
+// ConfirmPasswordReset sets a new password with a reset link, checked against the account's
+// organization's rules once the link is known good. A refused password, or an address that must now
+// use SSO, leaves the credential and link untouched. On success the address counts as verified and
+// every sign-in ends (see auth.EndSignIns).
 func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPassword string, from audit.Actor) error {
-	if s.rules == nil {
-		return errs.ErrNotImplemented
-	}
 	hash := codes.Hash(rawToken)
 	// The password is checked before the transaction, as the check reads the
 	// organization's rules and may call the breach service; the link is

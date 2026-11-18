@@ -90,7 +90,7 @@ func TestGuestOrganizationsDontSeeHomeMetadata(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE account.users SET metadata = '{"salary_band":"L7"}' WHERE id = $1`, person.ID); err != nil {
 		t.Fatal(err)
 	}
-	h := &Handler{Repo: NewRepository(pool), Validate: jsonNamedValidator()}
+	h := &Handler{Repo: NewRepository(pool), Validate: jsonNamedValidator(), SignIns: endSessions{}, Mailer: &dbtest.Mailbox{}}
 	seen := func(organization uuid.UUID) (single, listed string) {
 		t.Helper()
 		as := dbtest.Serve(dbtest.Principal(dbtest.User(t, organization, organization).ID, organization), h.Mount)

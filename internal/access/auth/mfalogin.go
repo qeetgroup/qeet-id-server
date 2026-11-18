@@ -144,9 +144,6 @@ func loadMFAChallenge(ctx context.Context, tx pgx.Tx, mfaToken string) (uuid.UUI
 // withMFAChallenge runs fn on the live challenge mfaToken names, in one
 // transaction committed when fn succeeds.
 func (s *Service) withMFAChallenge(ctx context.Context, mfaToken string, fn func(tx pgx.Tx, id uuid.UUID, c pendingMFAChallenge) error) error {
-	if s.mfa == nil {
-		return errs.ErrNotImplemented
-	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -243,11 +240,9 @@ func (s *Service) BeginMFAPasskey(ctx context.Context, mfaToken string) (uuid.UU
 	return sessionID, options, nil
 }
 
-// StartMFAPush sends a push approval request for the challenge to the
-// person's devices and returns when it expires and the number to show for the
-// phone to match; only its approval meets the challenge. It is sent after the
-// challenge's transaction, as the MFA service uses its own connection, and is
-// then bound to the challenge.
+// StartMFAPush sends a push approval request for the challenge to the person's devices and returns
+// when it expires and the number the phone must match; only its approval meets the challenge. It is
+// sent after the challenge's transaction (the MFA service has its own connection), then bound to it.
 func (s *Service) StartMFAPush(ctx context.Context, mfaToken, ip, ua string) (time.Time, int, error) {
 	id, userID, err := s.factorChallenge(ctx, mfaToken)
 	if err != nil {

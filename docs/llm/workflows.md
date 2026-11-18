@@ -30,8 +30,8 @@ staging or production.
 
 ```text
 1  find the subsystem              docs/llm/subsystems.md — get the REAL filenames first
-2  handler                         the package's http.go if it has one, else <domain>.go
-3  domain logic                    same file, or a feature-named file — NOT a new service.go
+2  handler                         the package's http.go
+3  domain logic                    <package>.go or the topic's file — NOT a new service.go
 4  queries.sql + regenerate        make sqlc → dbgen/ (a new package: add its entry to sqlc.yaml; never hand-edit dbgen/)
 5  wire it                         internal/bootstrap/wire_<context>.go (new<Context>, wire<Context>, <context>Handlers)
 6  mount it                        internal/bootstrap/router.go
@@ -41,9 +41,8 @@ staging or production.
 10 verify                          make test
 ```
 
-> **Step 2 matters.** The convention is `<domain>.go`, not a layered `handler/service/repository`
-> split. Only four packages have a `repository.go` and 17 domain packages have an `http.go` — creating one
-> where the package does not already use that shape breaks the local pattern. Check
+> **Step 2 matters.** Every package has the same shape (`<package>.go`, `http.go`, `errors.go`, one file
+> per topic), not a layered `handler/service/repository` split. Only three packages (rbac, organization, user) also have a `service.go` or `repository.go`: don't add one elsewhere. Check
 > [subsystems.md](subsystems.md) before adding a file.
 
 **Decide first: public or authenticated?** `internal/bootstrap/router.go` has two `/v1` groups. The
@@ -110,7 +109,7 @@ with why. `TestOrganizationTablesHaveRowSecurity` fails otherwise. A new schema 
 
 ```text
 1  read the product flow           qeet-id-context/FLOWS/authentication.md  (what it should do)
-2  find the implementation         internal/access/{authentication,passkeys,mfa,recovery}/
+2  find the implementation         internal/access/{auth,passkey,mfa,recovery}/
 3  check session/token impact      does it change qe_ls, qe_td, or token claims?
 4  check API impact                api/openapi/src/auth/
 5  security review                 SECURITY.md + qeet-context/SECURITY.md
@@ -244,7 +243,7 @@ Additive only, or a deprecation window with direct customer notice. See
 
 ```text
 1  behaviour must not change       if it changes, it is not a refactor
-2  respect R1/R2                   make lint fails otherwise (depguard)
+2  respect R1–R6                   make lint fails otherwise (depguard)
 3  wiring stays in bootstrap
 4  no cross-context concrete imports
 5  make test

@@ -21,8 +21,10 @@ func TestDestinationsCanBeTested(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := NewService(pool, egress.DevelopmentPolicy())
-	svc.SetCipher(box)
+	svc, err := NewService(pool, box, egress.DevelopmentPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
 	organization, other := dbtest.Organization(t), dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
 	sink := newCollector(t)

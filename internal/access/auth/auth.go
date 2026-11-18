@@ -6,6 +6,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,55 +23,28 @@ import (
 )
 
 // Service signs people in, by every method, and manages their sessions and
-// refresh tokens.
+// refresh tokens. Each dependency is required and set once, by New, so no
+// sign-in check depends on a wiring call having been made.
 type Service struct {
-	pool   *pgxpool.Pool
-	q      *dbgen.Queries
-	users  *user.Repository
-	tokens *tokens.Issuer
-	// mfa gates login on a second factor (nil = MFA-at-login off). Set via
-	// SetMFA; kept as an interface so package auth doesn't import package mfa.
-	mfa MFAEnroller
-	// memberPermissions are all a member may hold without counting as an
-	// administrator for an organization's admin_only second-factor requirement
-	// (nil: any permission counts). Set via SetMemberPermissions.
+	pool              *pgxpool.Pool
+	q                 *dbgen.Queries
+	users             *user.Repository
+	tokens            *tokens.Issuer
+	mfa               MFAEnroller
 	memberPermissions []string
-	// regPolicy gates hosted self-registration and is the password check every
-	// password this service sets goes through (nil = self-registration off, and
-	// no password can be set). Set via SetRegistrationPolicy; an interface so
-	// auth doesn't import authpolicy.
-	regPolicy RegistrationPolicy
-	// methods decides which sign-in methods an organization allows (nil = all).
-	methods MethodPolicy
-	// capture sends an address on a captured domain to its organization's
-	// identity provider (nil = none is). See capture.go.
-	capture DomainCapture
-	// anomaly receives security signals (nil = recording off). Set via
-	// SetAnomalyRecorder; an interface so auth doesn't import the threat package.
-	anomaly AnomalyRecorder
-	// devicePolicy reports whether an organization has opted into adaptive MFA
-	// (trusted-device skip). nil = always-on MFA. Set via SetDevicePolicy.
-	devicePolicy DevicePolicy
-	// riskAssessor assesses every sign-in's risk (see risksignin.go). nil = no
-	// assessment.
-	riskAssessor RiskAssessor
-	// sender emails the code that confirms a risky sign-in by someone with no
-	// second factor. Set via SetSender; nil refuses such a sign-in.
-	sender notifier.Sender
-	// loginHook is an optional synchronous policy gate run after credentials
-	// verify (nil = no gate). Set via SetLoginHook.
-	loginHook LoginHook
-	// addresses is the organizations' address rules, asked before any session
-	// in an organization is issued or renewed (nil = no rules). See address.go.
-	addresses ipallow.AddressPolicy
-	// signOutNotifier tells applications of a hosted sign-out (nil = none).
-	signOutNotifier SignOutNotifier
-	// signals announces ended sessions to subscribed applications (nil =
-	// announces nothing). Set via SetSessionSignals.
-	signals *sessionsignal.Signaller
+	regPolicy         RegistrationPolicy
+	methods           MethodPolicy
+	capture           DomainCapture
+	anomaly           AnomalyRecorder
+	devicePolicy      DevicePolicy
+	riskAssessor      RiskAssessor
+	sender            notifier.Sender
+	loginHook         LoginHook
+	addresses         ipallow.AddressPolicy
+	signOutNotifier   SignOutNotifier
+	signals           *sessionsignal.Signaller
 	// lockout is the platform-wide sign-in lockout configuration, and
-	// lockoutSource the per-organization settings (nil = the platform defaults for
-	// every sign-in). See lockout.go.
+	// lockoutSource the per-organization settings. See lockout.go.
 	lockout       LockoutConfig
 	lockoutSource LockoutSource
 	// sessionMaxAge and sessionIdle bound a session whose organization sets
@@ -82,20 +56,78 @@ type Service struct {
 	// failures bounds the record of failed sign-ins; see signinaudit.go.
 	failures failureBound
 	// refreshGrace is how long a rotated refresh token gets its rotation's
-	// pair again, kept sealed with refreshCipher (zero or nil = never). See
+	// pair again, kept sealed with refreshCipher (zero = never). See
 	// refreshretry.go.
 	refreshGrace  time.Duration
 	refreshCipher *envelope.Cipher
 }
 
-// NewService returns the sign-in and session service.
-func NewService(pool *pgxpool.Pool, users *user.Repository, t *tokens.Issuer) *Service {
-	return &Service{pool: pool, q: dbgen.New(pool), users: users, tokens: t, lockout: DefaultLockoutConfig(), failures: newFailureBound()}
+// Deps are what the sign-in service is built from. Every field is required
+// except the last four, which are settings with a default.
+type Deps struct {
+	Pool   *pgxpool.Pool
+	Users  *user.Repository
+	Tokens *tokens.Issuer
+	Cipher *envelope.Cipher // seals the pair a refresh rotation keeps
+	// MFA gates a sign-in on a second factor; Risk assesses every sign-in.
+	MFA  MFAEnroller
+	Risk RiskAssessor
+	// Registration, Methods, Devices and Lockout are the organization's
+	// authentication policy: self-registration and the password check, the
+	// methods it allows, remembered devices and sign-in lockout.
+	Registration RegistrationPolicy
+	Methods      MethodPolicy
+	Devices      DevicePolicy
+	Lockout      LockoutSource
+	Capture      DomainCapture         // sends a captured address to its identity provider
+	Addresses    ipallow.AddressPolicy // asked before a session is issued or renewed
+	Anomalies    AnomalyRecorder       // receives account locks and spraying sources
+	Sender       notifier.Sender       // emails risk confirmation codes and lock notices
+	LoginHook    LoginHook             // an organization's post-credential policy gate
+	SignOut      SignOutNotifier       // tells applications of a hosted sign-out
+	Signals      *sessionsignal.Signaller
+	// MemberPermissions are all a member may hold without counting as an
+	// administrator for an admin_only second-factor requirement (nil: every
+	// permission counts, the stricter reading).
+	MemberPermissions []string
+	// SessionMaxAge and SessionIdle bound a session whose organization sets
+	// none (zero: the platform defaults).
+	SessionMaxAge time.Duration
+	SessionIdle   time.Duration
+	// RefreshReuseGrace is how long a rotated refresh token sent again gets
+	// its rotation's pair (zero: never). See refreshretry.go.
+	RefreshReuseGrace time.Duration
 }
 
-// SetSessionSignals wires the announcement of ended sessions (session.revoked
-// webhooks).
-func (s *Service) SetSessionSignals(sig *sessionsignal.Signaller) { s.signals = sig }
+// New returns the sign-in and session service built from d, or an error
+// naming the first required dependency d lacks.
+func New(d Deps) (*Service, error) {
+	for _, dep := range []struct {
+		name    string
+		missing bool
+	}{
+		{"Pool", d.Pool == nil}, {"Users", d.Users == nil}, {"Tokens", d.Tokens == nil},
+		{"Cipher", d.Cipher == nil}, {"MFA", d.MFA == nil}, {"Risk", d.Risk == nil},
+		{"Registration", d.Registration == nil}, {"Methods", d.Methods == nil},
+		{"Devices", d.Devices == nil}, {"Lockout", d.Lockout == nil}, {"Capture", d.Capture == nil},
+		{"Addresses", d.Addresses == nil}, {"Anomalies", d.Anomalies == nil}, {"Sender", d.Sender == nil},
+		{"LoginHook", d.LoginHook == nil}, {"SignOut", d.SignOut == nil}, {"Signals", d.Signals == nil},
+	} {
+		if dep.missing {
+			return nil, fmt.Errorf("auth: the sign-in service needs %s", dep.name)
+		}
+	}
+	return &Service{
+		pool: d.Pool, q: dbgen.New(d.Pool), users: d.Users, tokens: d.Tokens,
+		mfa: d.MFA, riskAssessor: d.Risk, regPolicy: d.Registration, methods: d.Methods,
+		devicePolicy: d.Devices, lockoutSource: d.Lockout, capture: d.Capture, addresses: d.Addresses,
+		anomaly: d.Anomalies, sender: d.Sender, loginHook: d.LoginHook, signOutNotifier: d.SignOut,
+		signals: d.Signals, memberPermissions: d.MemberPermissions,
+		sessionMaxAge: d.SessionMaxAge, sessionIdle: d.SessionIdle,
+		refreshGrace: d.RefreshReuseGrace, refreshCipher: d.Cipher,
+		lockout: DefaultLockoutConfig(), failures: newFailureBound(),
+	}, nil
+}
 
 // LoginPush is a push approval request sent for a sign-in: its id, when it
 // expires, and the number shown on the sign-in screen for the phone to match.
@@ -141,9 +173,6 @@ type MFAEnroller interface {
 	ConfirmLoginEnrollment(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code string) ([]string, bool, error)
 }
 
-// SetMFA wires the MFA-at-login checker.
-func (s *Service) SetMFA(m MFAEnroller) { s.mfa = m }
-
 // RegistrationPolicy is the part of the auth-policy service this package needs:
 // the per-organization self-registration switch and the password check run wherever a
 // password is set. An organizationID of uuid.Nil means the platform baseline.
@@ -153,18 +182,11 @@ type RegistrationPolicy interface {
 	ValidateForOrganization(ctx context.Context, organizationID uuid.UUID, email, pw string) error
 }
 
-// SetRegistrationPolicy wires the hosted self-registration gate + password
-// policy.
-func (s *Service) SetRegistrationPolicy(p RegistrationPolicy) { s.regPolicy = p }
-
 // MethodPolicy is the slice of the authentication policy that decides whether
 // an organization allows password sign-in. Satisfied by *authpolicy.Service.
 type MethodPolicy interface {
 	PasswordEnabled(ctx context.Context, organizationID uuid.UUID) (bool, error)
 }
-
-// SetMethodPolicy wires the sign-in method policy (nil = every method allowed).
-func (s *Service) SetMethodPolicy(p MethodPolicy) { s.methods = p }
 
 // AnomalyRecorder receives security signals from sign-in: each account lock and
 // each network throttled for password spraying. Satisfied by *threat.Service.
@@ -172,9 +194,6 @@ type AnomalyRecorder interface {
 	OnAccountLocked(ctx context.Context, lock AccountLock)
 	OnSourceThrottled(ctx context.Context, throttle SourceThrottle)
 }
-
-// SetAnomalyRecorder wires the security-anomaly recorder.
-func (s *Service) SetAnomalyRecorder(a AnomalyRecorder) { s.anomaly = a }
 
 // DevicePolicy reports whether an organization has opted into adaptive MFA (skipping
 // the second factor on a trusted device). Satisfied by *authpolicy.Service;
@@ -185,9 +204,6 @@ type DevicePolicy interface {
 	// remembered.
 	RememberDevicePolicy(ctx context.Context, organizationID uuid.UUID) (bool, time.Duration, error)
 }
-
-// SetDevicePolicy wires the adaptive-MFA (trusted-device) gate.
-func (s *Service) SetDevicePolicy(d DevicePolicy) { s.devicePolicy = d }
 
 // RiskAssessor checks whether the risk level of an auth request should force
 // MFA even on a trusted device. Satisfied by *risk.Service
@@ -203,21 +219,12 @@ type RiskAssessor interface {
 	RecordSignIn(ctx context.Context, organizationID, userID uuid.UUID, ua, country string)
 }
 
-// SetRiskAssessor wires the sign-in risk assessment.
-func (s *Service) SetRiskAssessor(r RiskAssessor) { s.riskAssessor = r }
-
-// SetSender wires the email sender for risk confirmation codes.
-func (s *Service) SetSender(n notifier.Sender) { s.sender = n }
-
 // LoginHook is a policy gate run after the credentials are verified. A non-nil
 // error refuses the sign-in; otherwise the returned map (possibly nil) holds
 // custom claims for the access token.
 type LoginHook interface {
 	Run(ctx context.Context, organizationID, userID uuid.UUID, email string) (map[string]any, error)
 }
-
-// SetLoginHook wires the post-credential Actions/Hooks gate.
-func (s *Service) SetLoginHook(h LoginHook) { s.loginHook = h }
 
 // LoginResult is either a full token pair (no MFA needed) or a pending MFA
 // challenge that must be completed via CompleteMFALogin before tokens issue.

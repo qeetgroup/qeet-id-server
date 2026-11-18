@@ -22,10 +22,6 @@ var logoTypes = map[string]string{
 	"data:image/svg+xml;base64": "image/svg+xml",
 }
 
-// SetPublicBaseURL sets this API's public origin, where an uploaded logo is
-// served for emails and hosted pages to link to. Empty keeps the data URL.
-func (r *Repository) SetPublicBaseURL(base string) { r.publicBase = strings.TrimRight(base, "/") }
-
 // publicLogo is the address emails and hosted pages show for stored: a URL as
 // stored, or for an uploaded logo (a data URL) this API's link to it, carrying
 // a hash of the image so a new upload isn't served from a cache.

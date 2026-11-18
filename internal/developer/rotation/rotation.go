@@ -30,11 +30,9 @@ type GrantCheck func(ctx context.Context, caller *httpx.Principal, organizationI
 // not-found error.
 type ScopesOf func(ctx context.Context, organizationID, id uuid.UUID) ([]string, error)
 
-// Request reads a request to rotate credential id of organizationID and
-// returns the overlap it asks for (overlap_hours, DefaultOverlap when absent).
-// The new credential carries the old one's scopes, so the caller must hold
-// them, as for creating one: check refuses them otherwise, and without a check
-// every caller is refused.
+// Request reads a request to rotate credential id of organizationID and returns its overlap
+// (overlap_hours, DefaultOverlap when absent). The new credential keeps the old one's scopes, so the
+// caller must hold them: check refuses otherwise, and with no check every caller is refused.
 func Request(r *http.Request, organizationID, id uuid.UUID, scopes ScopesOf, check GrantCheck) (time.Duration, error) {
 	var in struct {
 		OverlapHours *int `json:"overlap_hours"`

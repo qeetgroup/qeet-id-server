@@ -9,11 +9,9 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// checkSignInMethods refuses a policy that leaves no first-factor sign-in
-// method (password, passkey or magic link) on unless the organization signs in
-// through single sign-on (sso), and one that switches on an email or SMS
-// one-time-code sign-in — no such sign-in exists, so saving it would claim a
-// method the organization does not have.
+// checkSignInMethods refuses a policy that leaves no first-factor method (password, passkey or magic
+// link) on unless the organization signs in through single sign-on (sso), and one that switches on an
+// email or SMS one-time-code sign-in, which doesn't exist.
 func checkSignInMethods(p Policy, sso bool) []errs.FieldError {
 	var out []errs.FieldError
 	if !p.PasswordEnabled && !p.PasskeyEnabled && !p.MagicLinkEnabled && !sso {

@@ -202,9 +202,6 @@ func (s *Service) loginDomainStatus(ctx context.Context, organizationID uuid.UUI
 // reports that host served a certificate valid for it; live, that the hosted
 // login answered.
 func (s *Service) probeLoginHost(ctx context.Context, host string) (tlsIssued, live bool) {
-	if s.web == nil {
-		return false, false
-	}
 	ctx, cancel := context.WithTimeout(ctx, loginProbeTimeout)
 	defer cancel()
 	target := url.URL{Scheme: "https", Host: host, Path: hostedLoginHealth}

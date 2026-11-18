@@ -29,11 +29,6 @@ type OperationObserver interface {
 	RecordSCIMOperation(context.Context, Operation) error
 }
 
-// SetOperationObserver sets where provisioning operations are recorded.
-func (service *Service) SetOperationObserver(observer OperationObserver) {
-	service.observer = observer
-}
-
 type outcomeWriter struct {
 	http.ResponseWriter
 	status int
@@ -84,7 +79,7 @@ func (handler *Handler) observeMutations(next http.Handler) http.Handler {
 			resource = "group"
 		}
 		mutation := request.Method == http.MethodPost || request.Method == http.MethodPut || request.Method == http.MethodPatch || request.Method == http.MethodDelete
-		if !authenticated || resource == "" || !mutation || handler.Service.observer == nil {
+		if !authenticated || resource == "" || !mutation {
 			next.ServeHTTP(response, request)
 			return
 		}

@@ -13,12 +13,10 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// accountData deletes what an erased account leaves outside its user row and
-// the audit trail: credentials and second factors, sign-ins, devices, linked
-// accounts, application grants, connected accounts' tokens, memberships,
-// directory profiles, inbox, behaviour baseline and AI conversations. Its data
-// exports lose their payloads, and verifiable credentials issued to it are
-// revoked. Each statement takes the account and runs in this order.
+// accountData deletes what an erased account leaves outside its user row and the audit trail:
+// credentials, factors, sign-ins, devices, linked accounts, grants, vault tokens, memberships,
+// directory profiles, inbox, behaviour baseline and AI conversations; exports lose their payloads and
+// issued credentials are revoked. Each statement takes the account and runs in this order.
 var accountData = []func(*dbgen.Queries, context.Context, uuid.UUID) error{
 	(*dbgen.Queries).ErasePasskeyCredentials,
 	(*dbgen.Queries).EraseWebAuthnSessions,

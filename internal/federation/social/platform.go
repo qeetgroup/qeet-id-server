@@ -25,32 +25,32 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/strutil"
 )
 
-// SetPlatformProvider registers a discovery-based OIDC provider (Google,
-// Microsoft, …) at platform level (config from env).
-func (s *Service) SetPlatformProvider(name, clientID, clientSecret, discoveryURL string) {
-	s.setPlatform(name, providerConfig{clientID: clientID, clientSecret: clientSecret, discoveryURL: discoveryURL, kind: kindOIDC})
+// PlatformProvider is one of the console's organization-less social
+// sign-ins, configured from the environment.
+type PlatformProvider struct {
+	name   string
+	config providerConfig
 }
 
-// SetPlatformGitHub registers GitHub, which isn't OIDC (no discovery doc), so it
-// uses the dedicated adapter in github.go instead of the generic OIDC ceremony.
-func (s *Service) SetPlatformGitHub(clientID, clientSecret string) {
-	s.setPlatform(kindGitHub, providerConfig{clientID: clientID, clientSecret: clientSecret, kind: kindGitHub})
+// PlatformOIDC is a discovery-based OpenID Connect provider (Google,
+// Microsoft, …) named name.
+func PlatformOIDC(name, clientID, clientSecret, discoveryURL string) PlatformProvider {
+	return PlatformProvider{name, providerConfig{clientID: clientID, clientSecret: clientSecret, discoveryURL: discoveryURL, kind: kindOIDC}}
 }
 
-// SetPlatformApple registers Sign in with Apple. servicesID is the Services ID;
-// the client secret is signed per request from teamID, keyID and privateKey (a
+// PlatformGitHub is GitHub, which isn't OIDC (no discovery doc), so it uses
+// the dedicated adapter in github.go instead of the generic OIDC ceremony.
+func PlatformGitHub(clientID, clientSecret string) PlatformProvider {
+	return PlatformProvider{kindGitHub, providerConfig{clientID: clientID, clientSecret: clientSecret, kind: kindGitHub}}
+}
+
+// PlatformApple is Sign in with Apple. servicesID is the Services ID; the
+// client secret is signed per request from teamID, keyID and privateKey (a
 // .p8 key). See apple.go.
-func (s *Service) SetPlatformApple(servicesID, teamID, keyID, privateKey string) {
-	s.setPlatform(kindApple, providerConfig{
+func PlatformApple(servicesID, teamID, keyID, privateKey string) PlatformProvider {
+	return PlatformProvider{kindApple, providerConfig{
 		clientID: servicesID, kind: kindApple, teamID: teamID, keyID: keyID, privateKey: privateKey,
-	})
-}
-
-func (s *Service) setPlatform(name string, pc providerConfig) {
-	if s.platform == nil {
-		s.platform = map[string]providerConfig{}
-	}
-	s.platform[name] = pc
+	}}
 }
 
 // PlatformProviderEnabled reports whether a platform provider is configured.

@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -28,7 +29,6 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/search"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/servicehealth"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/siem"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/delivery"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/worker"
 )
@@ -36,14 +36,13 @@ import (
 // operationsServices are the operations context's: billing and the plan's
 // entitlements, audit, analytics, notifications, retention, GDPR, log
 // streaming, Qeet AI, search and the activity stream. Its email templates are
-// built with the shared message chain (infra).
+// built with the shared message chain (newMailChain).
 type operationsServices struct {
 	billingService *billing.Service
-	// entitlementSvc turns an organization's plan into a capability set
-	// (feature flags and numeric limits): read by the entitlements endpoint and
-	// given to every plan-enforcement point, SetPlanLimiter for a numeric limit
-	// and SetPlanGate for a feature. Paid tiers resolve to unlimited or
-	// enabled, so the checks bite only where a plan caps.
+	invoiceEmails  *billing.InvoiceEmails
+	// entitlementSvc turns an organization's plan into feature flags and limits for the entitlements
+	// endpoint and every plan check (as its limiter or gate); paid tiers resolve to unlimited or enabled,
+	// so checks bite only where a plan caps.
 	entitlementSvc      *entitlements.Service
 	retentionService    *retention.Service
 	salesService        *sales.Service
@@ -69,78 +68,100 @@ type operationsServices struct {
 	serviceHealth       *servicehealth.Service
 }
 
-// newOperations builds the operations context's services.
-func (w *wiring) newOperations() *operationsServices {
-	o := &operationsServices{
-		billingService:      NewBillingService(w.cfg, w.pool, w.organizationRepo),
-		retentionService:    retention.NewService(w.pool),
-		salesService:        sales.NewService(w.pool, w.sender, w.cfg.SalesEmail),
-		notificationService: notification.NewService(w.pool),
-		siemService:         siem.NewService(w.pool, w.outboundPolicy),
-		qeetaiService:       qeetai.NewService(w.pool),
-		qeetaiProviderCfg:   newQeetaiProviderConfig(w.infra),
-		activityNATSConn:    connectActivityNATS(w.cfg),
-		searchService:       search.NewService(w.pool, w.rbacRepo),
-		gdprService:         gdpr.NewService(w.pool, 30*24*time.Hour),
-		auditReader:         audit.NewReader(w.pool),
-		auditVerifier:       audit.NewVerifier(w.pool, w.sharedCipher),
-		auditAnomalyService: anomaly.NewService(w.pool),
-		analyticsReader:     analytics.NewReader(w.pool),
-		serviceHealth:       servicehealth.NewService(w.pool),
+// newOperationsBase builds the operations services every other context is
+// built from: billing, the plans it resolves and in-app notifications.
+func (w *wiring) newOperationsBase() (*operationsServices, error) {
+	billingService, err := NewBillingService(w.cfg, w.pool, w.organizationRepo)
+	if err != nil {
+		return nil, err
 	}
-	o.entitlementSvc = entitlements.NewService(planResolver(o.billingService, w.organizationRepo))
+	entitlementSvc, err := entitlements.NewService(planResolver(billingService, w.organizationRepo))
+	if err != nil {
+		return nil, fmt.Errorf("entitlements service: %w", err)
+	}
+	return &operationsServices{
+		billingService:      billingService,
+		entitlementSvc:      entitlementSvc,
+		notificationService: notification.NewService(w.pool),
+	}, nil
+}
+
+// newOperations builds the rest of the operations context's services, once
+// the message chain and the session signals exist.
+func (w *wiring) newOperations() error {
+	o := w.operationsServices
+	var err error
+	if o.invoiceEmails, err = billing.NewInvoiceEmails(o.billingService, w.sender, w.cfg.AppBaseURL); err != nil {
+		return fmt.Errorf("invoice emails: %w", err)
+	}
+	if o.salesService, err = sales.NewService(w.pool, w.sender, w.cfg.SalesEmail); err != nil {
+		return fmt.Errorf("sales service: %w", err)
+	}
+	if o.siemService, err = siem.NewService(w.pool, w.sharedCipher, w.outboundPolicy); err != nil {
+		return fmt.Errorf("siem service: %w", err)
+	}
+	if o.qeetaiProviderCfg, err = newQeetaiProviderConfig(w.infra); err != nil {
+		return fmt.Errorf("qeet ai provider config: %w", err)
+	}
+	if o.gdprService, err = gdpr.NewService(w.pool, 30*24*time.Hour, w.sessionSignals); err != nil {
+		return fmt.Errorf("gdpr service: %w", err)
+	}
+	// Service health counts sign-in down while the signing keys can't be read.
+	if o.serviceHealth, err = servicehealth.NewService(w.pool, w.signingKeyRegistry.Ready); err != nil {
+		return fmt.Errorf("service health: %w", err)
+	}
+	o.retentionService = retention.NewService(w.pool)
+	o.qeetaiService = qeetai.NewService(w.pool)
+	o.activityNATSConn = connectActivityNATS(w.cfg)
 	o.activityHub = activity.NewHub(o.activityNATSConn)
+	o.searchService = search.NewService(w.pool, w.rbacRepo)
+	o.auditReader = audit.NewReader(w.pool)
+	o.auditVerifier = audit.NewVerifier(w.pool, w.sharedCipher)
+	o.auditAnomalyService = anomaly.NewService(w.pool)
+	o.analyticsReader = analytics.NewReader(w.pool)
 	o.evidenceService = compliance.NewEvidenceService(w.pool, o.auditVerifier, w.cfg.BreachedPasswordCheck)
-	return o
+	return nil
 }
 
 // newQeetaiProviderConfig returns the Qeet AI provider config: per-organization
 // keys, encrypted with the vault data key, with QEETAI_* as the platform
 // fallback. The orchestrator is always built, since an organization can bring
 // its own key.
-func newQeetaiProviderConfig(in *infra) *qeetai.ProviderConfig {
+func newQeetaiProviderConfig(in *infra) (*qeetai.ProviderConfig, error) {
 	cfg := in.cfg
-	qeetaiProviderCfg := qeetai.NewProviderConfig(in.pool, in.sharedCipher, qeetai.PlatformProvider{
+	qeetaiProviderCfg, err := qeetai.NewProviderConfig(in.pool, in.sharedCipher, qeetai.PlatformProvider{
 		Provider:  cfg.QeetaiProvider,
 		APIKey:    cfg.QeetaiAPIKey,
 		Model:     cfg.QeetaiModel,
 		BaseURL:   cfg.QeetaiBaseURL,
 		MaxTokens: cfg.QeetaiMaxTokens,
 	}, in.outboundPolicy)
+	if err != nil {
+		return nil, err
+	}
 	if qeetaiProviderCfg.PlatformConfigured() {
 		slog.Info("Qeet AI: platform provider configured", "provider", cfg.QeetaiProvider, "model", cfg.QeetaiModel)
 	} else {
 		slog.Info("Qeet AI: no platform provider set — organizations must bring their own key (BYOK)")
 	}
-	return qeetaiProviderCfg
-}
-
-// wireOperations connects the operations context's services to the rest.
-func (w *wiring) wireOperations() {
-	w.billingService.SetMailer(w.sender, w.cfg.AppBaseURL)
-	w.siemService.SetCipher(w.sharedCipher)
-	w.gdprService.SetSessionSignals(w.sessionSignals)
-	w.serviceHealth.SignInReady = w.signingKeyRegistry.Ready
-	// Current-usage provider for the billing usage-vs-limits display.
-	w.entitlementSvc.SetUsageResolver(entitlementUsageResolver{
-		invites: w.inviteService, oidc: w.oidcService, apikeys: w.apikeyService, rbacRepo: w.rbacRepo, users: w.userRepo,
-	})
+	return qeetaiProviderCfg, nil
 }
 
 // operationsHandlers serves the operations context.
-func (w *wiring) operationsHandlers(d *Deps) {
+func (w *wiring) operationsHandlers(d *Deps) error {
+	if err := w.operationsCheckedHandlers(d); err != nil {
+		return err
+	}
 	cfg := w.cfg
 	d.Retention = &retention.Handler{Service: w.retentionService}
 	d.EmailTemplate = &email.Handler{Service: w.emailTemplateService, Sender: w.sender, Appearance: w.brandingRepo, TestEmailEnabled: w.mail.testEnabled}
 	d.EmailDelivery = &email.DeliveryHandler{Store: w.mail.deliveries}
 	d.SESWebhook = &delivery.Webhook{Store: w.mail.deliveries, TopicARNs: cfg.SESEventsTopicARNs}
-	d.GDPR = &gdpr.Handler{Service: w.gdprService, Reauth: w.authService, ActOnCheck: w.rbacRepo.CheckActOn}
 	d.Compliance = &compliance.Handler{Evidence: w.evidenceService}
 	d.Audit = &audit.Handler{Reader: w.auditReader, Verifier: w.auditVerifier}
 	d.AuditAnomaly = &anomaly.Handler{Service: w.auditAnomalyService}
 	d.CriticalEvents = &critical.Handler{Service: critical.NewService(w.auditReader, w.auditAnomalyService)}
 	d.Billing = &billing.Handler{Service: w.billingService}
-	d.Entitlement = &entitlements.Handler{Service: w.entitlementSvc}
 	d.Sales = &sales.Handler{Service: w.salesService}
 	d.Analytics = &analytics.Handler{Reader: w.analyticsReader}
 	d.ServiceHealth = &servicehealth.Handler{Service: w.serviceHealth}
@@ -156,23 +177,43 @@ func (w *wiring) operationsHandlers(d *Deps) {
 	}
 	d.Notification = &notification.Handler{Service: w.notificationService}
 	d.SIEM = &siem.Handler{Service: w.siemService}
-	d.Qeetai = &qeetai.Handler{
+	d.Search = &search.Handler{Service: w.searchService}
+	d.endStreams = append(d.endStreams, w.activityHub.Shutdown)
+	if w.activityNATSConn != nil {
+		d.shutdownHooks = append(d.shutdownHooks, func() { _ = w.activityNATSConn.Drain() })
+	}
+	return nil
+}
+
+// operationsCheckedHandlers serves the operations handlers whose constructors
+// refuse a missing check or source.
+func (w *wiring) operationsCheckedHandlers(d *Deps) error {
+	var err error
+	if d.GDPR, err = gdpr.NewHandler(w.gdprService, w.authService, w.rbacRepo.CheckActOn); err != nil {
+		return fmt.Errorf("gdpr handler: %w", err)
+	}
+	// Current usage for the billing usage-vs-limits display.
+	if d.Entitlement, err = entitlements.NewHandler(w.entitlementSvc, entitlementUsageResolver{
+		invites: w.inviteService, oidc: w.oidcService, apikeys: w.apikeyService, rbacRepo: w.rbacRepo, users: w.userRepo,
+	}); err != nil {
+		return fmt.Errorf("entitlements handler: %w", err)
+	}
+	if d.Qeetai, err = qeetai.NewHandler(qeetai.Handler{
 		Service:      w.qeetaiService,
 		Orchestrator: qeetai.NewOrchestrator(w.qeetaiProviderCfg, w.qeetaiService),
 		Resolver:     w.qeetaiProviderCfg,
 		Config:       w.qeetaiProviderCfg,
 		Plan:         w.entitlementSvc, // platform fallback is a Pro+ feature; BYOK bypasses the gate
 		Admin:        w.qeetaiService,
+	}); err != nil {
+		return fmt.Errorf("qeet ai handler: %w", err)
 	}
-	d.Search = &search.Handler{Service: w.searchService}
 	// An open activity stream is checked again as its request was admitted.
-	activityHandler := activity.NewHandler(w.pool, w.activityHub)
-	activityHandler.Access = streamAccess(w.verifier, w.decider, RoutePolicies()["GET /v1/activity/stream"])
-	d.Activity = activityHandler
-	d.endStreams = append(d.endStreams, w.activityHub.Shutdown)
-	if w.activityNATSConn != nil {
-		d.shutdownHooks = append(d.shutdownHooks, func() { _ = w.activityNATSConn.Drain() })
+	if d.Activity, err = activity.NewHandler(w.pool, w.activityHub,
+		streamAccess(w.verifier, w.decider, RoutePolicies()["GET /v1/activity/stream"])); err != nil {
+		return fmt.Errorf("activity handler: %w", err)
 	}
+	return nil
 }
 
 // operationsPolicies are the operations context's routes whose policy is
@@ -226,15 +267,13 @@ func recordCleanupJob(pool *pgxpool.Pool) worker.Scheduled {
 
 // organizationPurgesJob purges a deleted organization's data once its restore
 // window has passed, its people's accounts with it, leaving a record that it
-// was, and announces the sessions it ends through signals.
-func organizationPurgesJob(pool *pgxpool.Pool, signals *sessionsignal.Signaller) worker.Scheduled {
+// was, with purges, which announces the sessions it ends.
+func organizationPurgesJob(purges *gdpr.Service) worker.Scheduled {
 	return worker.Scheduled{
 		Name:     "organization-purges",
 		Interval: time.Hour,
 		Run: func(ctx context.Context) error {
-			svc := gdpr.NewService(pool, 0)
-			svc.SetSessionSignals(signals)
-			n, err := svc.PurgeDeletedOrganizations(ctx, gdpr.OrganizationPurgeAfter)
+			n, err := purges.PurgeDeletedOrganizations(ctx, gdpr.OrganizationPurgeAfter)
 			if n > 0 {
 				slog.Info("deleted organizations purged", "purged", n)
 			}

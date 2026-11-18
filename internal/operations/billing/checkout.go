@@ -61,12 +61,10 @@ func (s *Service) Checkout(ctx context.Context, organizationID uuid.UUID, planCo
 	}
 
 	var provider PaymentProvider
-	if s.payments != nil {
-		if country != "" {
-			provider = s.payments.forCountry(country)
-		} else {
-			provider = s.payments.forCurrency(cur) // no country given
-		}
+	if country != "" {
+		provider = s.payments.forCountry(country)
+	} else {
+		provider = s.payments.forCurrency(cur) // no country given
 	}
 
 	// Free plan → nothing to collect, activate directly.
@@ -173,11 +171,9 @@ func (s *Service) CompleteCheckout(ctx context.Context, ref string, method *Paym
 	return s.completeSignupCheckout(ctx, id, recorded)
 }
 
-// completeOrganizationCheckout claims a pending organization checkout and, in one
-// transaction, settles the invoice it paid or activates its plan. A payment for
-// an invoice no longer open buys its plan afresh instead, so it is never lost.
-// It reports false, having changed nothing, when id is not a pending organization
-// checkout.
+// completeOrganizationCheckout claims a pending organization checkout and, in one transaction,
+// settles the invoice it paid or activates its plan; paying an invoice no longer open buys its plan
+// afresh, so a payment is never lost. It reports false, changing nothing, for any other id.
 func (s *Service) completeOrganizationCheckout(ctx context.Context, id uuid.UUID, method []byte) (bool, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -224,9 +220,6 @@ func (s *Service) completeOrganizationCheckout(ctx context.Context, id uuid.UUID
 // is a no-op. If a step fails, the checkout returns to pending, keeping any
 // organization already created, so a retry resumes where it stopped.
 func (s *Service) completeSignupCheckout(ctx context.Context, id uuid.UUID, method []byte) error {
-	if s.orgProvisioner == nil {
-		return nil
-	}
 	c, err := s.q.ClaimSignupCheckout(ctx, dbgen.ClaimSignupCheckoutParams{ID: id, PaymentMethod: method})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil // unknown, already completed, or failed — idempotent no-op
@@ -336,12 +329,10 @@ func (s *Service) StartSignupCheckout(ctx context.Context, ownerID uuid.UUID, in
 	}
 
 	var provider PaymentProvider
-	if s.payments != nil {
-		if in.Country != "" {
-			provider = s.payments.forCountry(in.Country)
-		} else {
-			provider = s.payments.forCurrency(cur)
-		}
+	if in.Country != "" {
+		provider = s.payments.forCountry(in.Country)
+	} else {
+		provider = s.payments.forCurrency(cur)
 	}
 	if provider == nil {
 		return nil, errs.ErrUnprocessable.
@@ -392,9 +383,6 @@ func (s *Service) StartSignupCheckout(ctx context.Context, ownerID uuid.UUID, in
 // completes its checkout; other events are a no-op. An unknown provider returns
 // errs.ErrNotFound and a bad signature ErrWebhookVerificationFailed.
 func (s *Service) HandleWebhook(ctx context.Context, providerName string, body []byte, signature string) error {
-	if s.payments == nil {
-		return errs.ErrNotFound
-	}
 	prov := s.payments.byName(providerName)
 	if prov == nil {
 		return errs.ErrNotFound
@@ -420,9 +408,6 @@ func (s *Service) HandleWebhook(ctx context.Context, providerName string, body [
 // WebhookSignatureHeader returns the webhook signature header of a provider, or
 // "" if the provider is not configured.
 func (s *Service) WebhookSignatureHeader(providerName string) string {
-	if s.payments == nil {
-		return ""
-	}
 	if prov := s.payments.byName(providerName); prov != nil {
 		return prov.SignatureHeader()
 	}
@@ -433,7 +418,7 @@ func (s *Service) WebhookSignatureHeader(providerName string) string {
 // was paid, completes its checkout. It is idempotent with the webhook, and is
 // what completes checkouts in local development, which the webhook cannot reach.
 func (s *Service) CompleteRazorpayCallback(ctx context.Context, params map[string]string) error {
-	if s.payments == nil || s.payments.razorpay == nil {
+	if s.payments.razorpay == nil {
 		return errs.ErrNotFound
 	}
 	ref, paid, err := s.payments.razorpay.VerifyCallback(params)

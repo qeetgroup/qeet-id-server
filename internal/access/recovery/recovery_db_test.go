@@ -12,11 +12,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authpolicy"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/cache/ratelimit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
@@ -27,6 +29,49 @@ import (
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
 
+// newService returns the recovery service sending through sender, with the
+// platform's password rules, magic links on in every organization, no address
+// captured and no request bounded.
+func newService(t *testing.T, sender notifier.Sender) *Service {
+	t.Helper()
+	svc, err := NewService(dbtest.Pool(t), Deps{
+		Sender: sender, TTL: time.Hour, BaseAppURL: "https://console.example.test", Rules: policies(t),
+		MagicLinks: magicLinksOn{}, Capture: noCapture{}, Signals: sessionsignal.New(nil),
+		MagicPerAddress: unbounded{}, MagicPerCaller: unbounded{}, ResetPerAddress: unbounded{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return svc
+}
+
+// policies returns the authentication policy service, its breach check off.
+func policies(t *testing.T) *authpolicy.Service {
+	t.Helper()
+	svc, err := authpolicy.NewService(dbtest.Pool(t), authpolicy.NoBreachCheck{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return svc
+}
+
+// magicLinksOn allows magic links everywhere, with the service's lifetime.
+type magicLinksOn struct{}
+
+func (magicLinksOn) MagicLinkPolicy(context.Context, uuid.UUID) (bool, time.Duration, error) {
+	return true, 0, nil
+}
+
+// noCapture captures no address.
+type noCapture struct{}
+
+func (noCapture) RefuseCaptured(context.Context, string) error { return nil }
+
+// unbounded never refuses a request.
+type unbounded struct{}
+
+func (unbounded) Take(context.Context, string) (bool, int) { return true, 0 }
+
 // TestPasswordReset checks the reset link end to end: it is mailed only to a
 // registered address, sets the new password, ends every session, remembered
 // device and application grant, and works once.
@@ -34,8 +79,8 @@ func TestPasswordReset(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	mail := &dbtest.Mailbox{}
-	svc := NewService(pool, mail, time.Hour, "https://console.example.test")
-	svc.SetPasswordRules(authpolicy.NewService(pool))
+	svc := newService(t, mail)
+	svc.rules = policies(t)
 	organization := dbtest.Organization(t)
 	a := dbtest.User(t, organization, organization)
 	dbtest.SetPassword(t, a.ID, "Kx7mQ2vLp9Wz-old")
@@ -114,7 +159,7 @@ func (r refusingSender) Send(_ context.Context, m notifier.Message) error {
 // as for an address with no account.
 func TestRecoveryRequestsAnswerAlike(t *testing.T) {
 	sender := refusingSender{sent: make(chan notifier.Message, 4)}
-	svc := NewService(dbtest.Pool(t), sender, time.Hour, "https://console.example.test")
+	svc := newService(t, sender)
 	h := &Handler{Service: svc}
 	srv := chi.NewRouter()
 	h.Mount(srv)
@@ -152,10 +197,10 @@ func TestRecoveryRequestsAnswerAlike(t *testing.T) {
 func TestRecoveryLinksWithOneConnection(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	svc := NewService(pool, &dbtest.Mailbox{}, time.Hour, "https://console.example.test")
-	policy := authpolicy.NewService(pool)
-	svc.SetPasswordRules(policy)
-	svc.SetMagicLinkPolicy(policy)
+	svc := newService(t, &dbtest.Mailbox{})
+	policy := policies(t)
+	svc.rules = policy
+	svc.magicLinks = policy
 	organization := dbtest.Organization(t)
 	a := dbtest.User(t, organization, organization)
 	reset, link := dbtest.Unique("reset"), dbtest.Unique("link")
@@ -185,12 +230,11 @@ func TestRecoveryLinksWithOneConnection(t *testing.T) {
 // still outstanding; and that resets are bounded per address.
 func TestRecoveryLinksGoToTheStoredAddress(t *testing.T) {
 	ctx := dbtest.Context(t)
-	pool := dbtest.Pool(t)
 	mail := &dbtest.Mailbox{}
-	svc := NewService(pool, mail, time.Hour, "https://console.example.test")
-	policy := authpolicy.NewService(pool)
-	svc.SetPasswordRules(policy)
-	svc.SetMagicLinkPolicy(policy)
+	svc := newService(t, mail)
+	policy := policies(t)
+	svc.rules = policy
+	svc.magicLinks = policy
 	organization := dbtest.Organization(t)
 	a := dbtest.UserAt(t, "Ada."+dbtest.Unique("Lovelace")+"@example.test", organization, organization)
 	tokenOf := func(msg notifier.Message) string {
@@ -234,7 +278,7 @@ func TestRecoveryLinksGoToTheStoredAddress(t *testing.T) {
 		t.Errorf("a sign-in link sent before the reset: %v, want %v", err, ErrLinkExpired)
 	}
 
-	svc.SetResetLimit(ratelimit.NewWithStore(ratelimit.NewMemStore(), 1.0/300, 1))
+	svc.resetPerAddress = ratelimit.NewWithStore(ratelimit.NewMemStore(), 1.0/300, 1)
 	for i, want := range []error{nil, errs.ErrTooManyRequests} {
 		if _, err := svc.StartPasswordReset(ctx, strings.ToUpper(a.Email), ResetOrigin{}); !errors.Is(err, want) {
 			t.Errorf("reset request %d: %v, want %v", i+1, err, want)
@@ -300,9 +344,8 @@ func heldCredentials(t *testing.T, a dbtest.Account) map[string]int {
 // and the removal is recorded.
 func TestResetThatProvesTheAddressEndsEarlierCredentials(t *testing.T) {
 	ctx := dbtest.Context(t)
-	pool := dbtest.Pool(t)
-	svc := NewService(pool, &dbtest.Mailbox{}, time.Hour, "https://console.example.test")
-	svc.SetPasswordRules(authpolicy.NewService(pool))
+	svc := newService(t, &dbtest.Mailbox{})
+	svc.rules = policies(t)
 	organization := dbtest.Organization(t)
 	squatted := dbtest.User(t, organization, organization)
 	giveCredentials(t, squatted, organization)
@@ -329,8 +372,8 @@ func TestResetThatProvesTheAddressEndsEarlierCredentials(t *testing.T) {
 func TestResetOfAVerifiedAccountKeepsItsPasskeys(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	svc := NewService(pool, &dbtest.Mailbox{}, time.Hour, "https://console.example.test")
-	svc.SetPasswordRules(authpolicy.NewService(pool))
+	svc := newService(t, &dbtest.Mailbox{})
+	svc.rules = policies(t)
 	organization := dbtest.Organization(t)
 	owner := dbtest.User(t, organization, organization)
 	giveCredentials(t, owner, organization)
@@ -371,10 +414,10 @@ func TestCapturedAddressesGetNoLinks(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	mail := &dbtest.Mailbox{}
-	svc := NewService(pool, mail, time.Hour, "https://console.example.test")
-	policy := authpolicy.NewService(pool)
-	svc.SetPasswordRules(policy)
-	svc.SetMagicLinkPolicy(policy)
+	svc := newService(t, mail)
+	policy := policies(t)
+	svc.rules = policy
+	svc.magicLinks = policy
 	organization := dbtest.Organization(t)
 	domain := dbtest.Unique("acme") + ".example.test"
 	a := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, organization, organization)
@@ -386,7 +429,7 @@ func TestCapturedAddressesGetNoLinks(t *testing.T) {
 	`, a.ID, codes.Hash(reset), a.Email, codes.Hash(link), MagicLinkConsole); err != nil {
 		t.Fatalf("links: %v", err)
 	}
-	svc.SetDomainCapture(captureDomain(domain))
+	svc.capture = captureDomain(domain)
 
 	for _, email := range []string{a.Email, dbtest.Unique("nobody") + "@" + domain} {
 		if _, err := svc.StartPasswordReset(ctx, email, ResetOrigin{}); !errors.Is(err, errs.ErrAuthSSORequired) {
@@ -453,10 +496,9 @@ func recordedAs(t *testing.T, action string, organization, userID uuid.UUID) rec
 // and the sign-in.
 func TestRecoveryRecordsTheRequest(t *testing.T) {
 	ctx := dbtest.Context(t)
-	pool := dbtest.Pool(t)
 	mail := &dbtest.Mailbox{}
-	svc := NewService(pool, mail, time.Hour, "https://console.example.test")
-	svc.SetPasswordRules(authpolicy.NewService(pool))
+	svc := newService(t, mail)
+	svc.rules = policies(t)
 	organization := dbtest.Organization(t)
 	a := dbtest.User(t, organization, organization)
 	someone := uuid.New()

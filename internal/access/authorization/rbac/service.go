@@ -7,66 +7,63 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 // Service runs each RBAC mutation in its own transaction with its audit row;
-// reads stay on the Repository. emitter sends token.claims_change webhook
-// events, limits caps custom roles by plan and seats the people holding a
-// role; nil turns any of them off.
+// reads stay on the Repository.
 type Service struct {
 	repo    *Repository
 	emitter EventEmitter
 	limits  entitlements.PlanLimiter
 	seats   entitlements.SeatGuard
-	signals *sessionsignal.Signaller // announces sessions a lost membership ends (nil: none)
+	signals *sessionsignal.Signaller
 }
 
-// SetSessionSignals wires the announcement of the sessions a guest's last role
-// ending ends (session.revoked webhooks).
-func (s *Service) SetSessionSignals(sig *sessionsignal.Signaller) { s.signals = sig }
+// ServiceDeps are what the role and permission service is built from, all
+// required.
+type ServiceDeps struct {
+	Emitter EventEmitter             // sends token.claims_change webhook events
+	Limits  entitlements.PlanLimiter // caps custom roles by plan
+	Seats   entitlements.SeatGuard   // keeps the people holding a role within the plan's seats
+	Signals *sessionsignal.Signaller // announces the sessions a lost membership ends
+}
 
-// SetSeatGuard wires the seat limit (nil disables it).
-func (s *Service) SetSeatGuard(g entitlements.SeatGuard) { s.seats = g }
-
-// seatLimit returns the organization's seat cap, or -1 without a seat guard.
-func (s *Service) seatLimit(ctx context.Context, organizationID uuid.UUID) (int, error) {
-	if s.seats == nil {
-		return -1, nil
+// NewService returns the role and permission service over repo.
+func NewService(repo *Repository, d ServiceDeps) (*Service, error) {
+	switch {
+	case d.Emitter == nil:
+		return nil, errors.New("rbac: the role service needs an event emitter")
+	case d.Limits == nil:
+		return nil, errors.New("rbac: the role service needs a plan limiter")
+	case d.Seats == nil:
+		return nil, errors.New("rbac: the role service needs a seat guard")
+	case d.Signals == nil:
+		return nil, errors.New("rbac: the role service needs session signals")
 	}
+	return &Service{repo: repo, emitter: d.Emitter, limits: d.Limits, seats: d.Seats, signals: d.Signals}, nil
+}
+
+// seatLimit returns the organization's seat cap, negative for none.
+func (s *Service) seatLimit(ctx context.Context, organizationID uuid.UUID) (int, error) {
 	return s.seats.SeatLimit(ctx, organizationID)
 }
 
-// withinSeats runs change in tx through the seat guard, if there is one.
+// withinSeats runs change in tx through the seat guard.
 func (s *Service) withinSeats(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, limit int, change func() error) error {
-	if s.seats == nil {
-		return change()
-	}
 	return s.seats.WithinSeats(ctx, tx, organizationID, limit, change)
 }
-
-// NewService returns the role and permission service.
-func NewService(repo *Repository) *Service { return &Service{repo: repo} }
-
-// SetPlanLimiter wires the plan-limit checker (nil disables the gate).
-func (s *Service) SetPlanLimiter(l entitlements.PlanLimiter) { s.limits = l }
 
 // EventEmitter delivers a webhook event to an organization's subscriptions, as the
 // webhooks service's Enqueue does, without rbac importing that package.
 type EventEmitter func(ctx context.Context, organizationID uuid.UUID, eventType string, payload any) error
 
-// SetEmitter sets webhook delivery for token.claims_change events.
-func (s *Service) SetEmitter(e EventEmitter) { s.emitter = e }
-
 // emit delivers a webhook event, best effort: an error is ignored so it never
 // fails the role change it describes.
 func (s *Service) emit(ctx context.Context, organizationID uuid.UUID, eventType string, payload any) {
-	if s.emitter == nil {
-		return
-	}
 	_ = s.emitter(ctx, organizationID, eventType, payload)
 }
 
@@ -74,19 +71,17 @@ func (s *Service) emit(ctx context.Context, organizationID uuid.UUID, eventType 
 func (s *Service) CreateRole(ctx context.Context, organizationID uuid.UUID, name, desc string, actor audit.Actor) (*Role, error) {
 	// Plan gate: custom roles are capped by plan (Free allows none — built-in
 	// roles don't count). Refuse once the cap is reached.
-	if s.limits != nil {
-		lim, err := s.limits.Limit(ctx, organizationID, entitlements.LimitCustomRoles)
+	lim, err := s.limits.Limit(ctx, organizationID, entitlements.LimitCustomRoles)
+	if err != nil {
+		return nil, err
+	}
+	if lim >= 0 {
+		n, err := s.repo.CountCustomRoles(ctx, organizationID)
 		if err != nil {
 			return nil, err
 		}
-		if lim >= 0 {
-			n, err := s.repo.CountCustomRoles(ctx, organizationID)
-			if err != nil {
-				return nil, err
-			}
-			if int(n) >= lim {
-				return nil, errs.ErrPlanLimit.WithMetadata(map[string]any{"resource": entitlements.LimitCustomRoles, "limit": lim})
-			}
+		if int(n) >= lim {
+			return nil, errs.ErrPlanLimit.WithMetadata(map[string]any{"resource": entitlements.LimitCustomRoles, "limit": lim})
 		}
 	}
 	tx, err := s.repo.Pool().Begin(ctx)
@@ -198,11 +193,9 @@ func (s *Service) SeatLimit(ctx context.Context, organizationID uuid.UUID) (int,
 	return s.seatLimit(ctx, organizationID)
 }
 
-// AssignRoleInTx is AssignRole inside the caller's transaction tx: the seat
-// check, the assignment and its audit row commit or roll back with the
-// caller's own work, such as answering an access request. limit is SeatLimit,
-// read before tx began. Once tx has committed, call the returned function to
-// send the token-change signal.
+// AssignRoleInTx is AssignRole inside the caller's tx: the seat check, assignment and audit row commit
+// or roll back with the caller's own work, such as answering an access request. limit is SeatLimit,
+// read before tx began. After tx commits, call the returned function to send the token-change signal.
 func (s *Service) AssignRoleInTx(ctx context.Context, tx pgx.Tx, limit int, userID, organizationID, roleID uuid.UUID, grantedBy *uuid.UUID, actor audit.Actor) (func(), error) {
 	if err := s.withinSeats(ctx, tx, organizationID, limit, func() error {
 		return s.repo.AssignRole(ctx, tx, userID, organizationID, roleID, grantedBy)
@@ -257,11 +250,9 @@ func (s *Service) UnassignRole(ctx context.Context, userID, organizationID, role
 	return nil
 }
 
-// AssignRoleToGroup grants a role to a group; both must belong to organizationID. A
-// cross-organization or missing role/group pair yields ErrNotFound rather than a
-// silent no-op. Audits like the user-role grant, but the subject is the group.
-// Members holding no role until now take a seat each, refused with
-// errs.ErrPlanLimit beyond the plan's seats.
+// AssignRoleToGroup grants a role to a group, both of organizationID (a cross-organization or missing
+// pair is ErrNotFound, not a silent no-op), audited like a user-role grant with the group as subject.
+// Members who held no role take a seat each, refused with errs.ErrPlanLimit beyond the plan's seats.
 func (s *Service) AssignRoleToGroup(ctx context.Context, groupID, organizationID, roleID uuid.UUID, grantedBy *uuid.UUID, actor audit.Actor) error {
 	limit, err := s.seatLimit(ctx, organizationID)
 	if err != nil {

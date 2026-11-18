@@ -1,6 +1,7 @@
 package activity
 
 import (
+	"context"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -10,6 +11,9 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 // recordedActions returns every audit action recorded in internal/: those named
@@ -174,5 +178,28 @@ func TestCategoryOf(t *testing.T) {
 				t.Errorf("severityOf(%q) = %q, want %q", tc.action, got, tc.wantSev)
 			}
 		})
+	}
+}
+
+// stillReading lets every reader go on reading.
+func stillReading(context.Context, *httpx.Principal) (bool, error) { return true, nil }
+
+// testHandler is a Handler over pool and hub whose open streams' readers may
+// always go on.
+func testHandler(t testing.TB, pool *pgxpool.Pool, hub *Hub) *Handler {
+	t.Helper()
+	h, err := NewHandler(pool, hub, stillReading)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h
+}
+
+// TestNewHandlerNeedsTheStreamAccessCheck checks that the handler is not built
+// without the check that ends a stream once its reader loses access, which
+// would leave an open stream unchecked.
+func TestNewHandlerNeedsTheStreamAccessCheck(t *testing.T) {
+	if _, err := NewHandler(nil, NewHub(nil), nil); err == nil {
+		t.Error("built without a stream access check")
 	}
 }

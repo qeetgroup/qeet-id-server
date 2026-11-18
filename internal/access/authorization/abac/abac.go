@@ -5,6 +5,7 @@
 package abac
 
 import (
+	"errors"
 	"sync"
 
 	"github.com/google/uuid"
@@ -26,10 +27,14 @@ type Service struct {
 	presence   map[uuid.UUID]presenceEntry
 }
 
-// NewService returns the ABAC policy service.
-func NewService(pool *pgxpool.Pool) *Service {
-	return &Service{pool: pool, q: dbgen.New(pool), presence: map[uuid.UUID]presenceEntry{}}
+// NewService returns the ABAC policy service. gate decides whether an
+// organization's plan includes ABAC; relations answers relation conditions.
+func NewService(pool *pgxpool.Pool, gate entitlements.PlanGate, relations RelationCheck) (*Service, error) {
+	switch {
+	case gate == nil:
+		return nil, errors.New("abac: the policy service needs a plan gate")
+	case relations == nil:
+		return nil, errors.New("abac: the policy service needs a relation check")
+	}
+	return &Service{pool: pool, q: dbgen.New(pool), gate: gate, relations: relations, presence: map[uuid.UUID]presenceEntry{}}, nil
 }
-
-// SetPlanGate wires the plan-feature gate (nil allows all features).
-func (s *Service) SetPlanGate(g entitlements.PlanGate) { s.gate = g }

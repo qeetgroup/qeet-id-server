@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/user/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
@@ -39,11 +39,8 @@ type SecuritySummary struct {
 	DistinctDevices        int        `json:"distinct_devices"`
 }
 
-// SessionInfo is one live session for a user. Device/OS/geo are intentionally
-// absent — the sessions model stores only ip + raw user_agent; the console
-// parses the UA client-side.
-// Device and DeviceKind describe it from the user agent, as the person's own
-// session list does; Country and City are where it was opened, when known.
+// SessionInfo is one live session for a user. Device and DeviceKind describe it from the user agent,
+// as the person's own session list does; Country and City are where it was opened, when known.
 type SessionInfo struct {
 	ID         uuid.UUID `json:"id"`
 	IP         *string   `json:"ip"`
@@ -396,10 +393,6 @@ func (h *Handler) revokeAllSessions(w http.ResponseWriter, r *http.Request) {
 	id, organizationID, err := h.actOnID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
-		return
-	}
-	if h.SignIns == nil {
-		httpx.WriteError(w, r, errs.ErrNotImplemented)
 		return
 	}
 	ended, err := h.accounts().revokeAllSessions(r.Context(), organizationID, id, audit.ActorOf(r))

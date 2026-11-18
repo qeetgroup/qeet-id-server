@@ -13,7 +13,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
 	"github.com/qeetgroup/qeet-id-server/internal/access/recovery/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
@@ -51,19 +51,11 @@ type Limiter interface {
 	Take(ctx context.Context, key string) (bool, int)
 }
 
-// SetMagicLinkLimits bounds magic-link requests per address and per caller
-// (nil: unbounded).
-func (s *Service) SetMagicLinkLimits(perAddress, perCaller Limiter) {
-	s.magicPerAddress, s.magicPerCaller = perAddress, perCaller
-}
-
 func (s *Service) magicLinkAllowed(ctx context.Context, req MagicLinkRequest) bool {
-	if s.magicPerAddress != nil {
-		if ok, _ := s.magicPerAddress.Take(ctx, "magic-link:address:"+strings.ToLower(strings.TrimSpace(req.Email))); !ok {
-			return false
-		}
+	if ok, _ := s.magicPerAddress.Take(ctx, "magic-link:address:"+strings.ToLower(strings.TrimSpace(req.Email))); !ok {
+		return false
 	}
-	if s.magicPerCaller != nil && req.IP != "" {
+	if req.IP != "" {
 		caller := req.IP
 		if network := httpx.SourceNetwork(caller); network != "" {
 			caller = network
@@ -75,13 +67,10 @@ func (s *Service) magicLinkAllowed(ctx context.Context, req MagicLinkRequest) bo
 	return true
 }
 
-// RequestMagicLink emails a sign-in link to the account holding req.Email, if
-// any, storing and sending it after it returns (see afterAnswer), so it answers
-// alike either way. It returns ErrTooManyRequests past the bounds,
-// ErrAuthMethodDisabled when the asking organization has magic links off, and
-// ErrAuthSSORequired for an address whose organization requires single sign-on.
-// The account's own organization decides whether a link is sent and how long it
-// lasts, whichever organization asked.
+// RequestMagicLink emails a sign-in link to the account holding req.Email, if any, storing and sending
+// it after it returns (afterAnswer) so it answers alike either way. ErrTooManyRequests past the
+// bounds, ErrAuthMethodDisabled when the asking organization has magic links off, ErrAuthSSORequired
+// for an SSO address. The account's own organization decides whether a link is sent and its lifetime.
 func (s *Service) RequestMagicLink(ctx context.Context, req MagicLinkRequest) error {
 	req.Email = strings.TrimSpace(req.Email)
 	if req.Email == "" {

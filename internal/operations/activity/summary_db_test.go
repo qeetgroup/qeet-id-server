@@ -40,7 +40,7 @@ func TestTheSummaryCountsWhatTheFiltersMatch(t *testing.T) {
 	insert("risk.rule_created", "agent", nil, agent, time.Hour)
 	insert("user.created", "user", &admin.ID, "", 200*24*time.Hour)
 
-	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), testHandler(t, dbtest.Pool(t), NewHub(nil)).Mount)
 	var got struct {
 		Total         int64       `json:"total"`
 		UniqueActors  int64       `json:"unique_actors"`

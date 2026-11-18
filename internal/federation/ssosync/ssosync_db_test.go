@@ -7,10 +7,11 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	scimdb "github.com/qeetgroup/qeet-id-server/internal/federation/scim/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/group"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -158,7 +159,7 @@ func TestSignInSyncsGroups(t *testing.T) {
 	mapGroup(t, f.organization, conn, "Privacy", privacy)
 	mapGroup(t, f.organization, other, "Elsewhere", elsewhere)
 	// An administrator already put the person in Design.
-	if err := group.NewService(dbtest.Pool(t)).AddMember(context.Background(), design, f.person.ID, f.organization, audit.Actor{Type: "user"}); err != nil {
+	if err := groups(t).AddMember(context.Background(), design, f.person.ID, f.organization, audit.Actor{Type: "user"}); err != nil {
 		t.Fatal(err)
 	}
 	f.signIn(other, SignIn{Groups: []string{"Elsewhere"}})
@@ -236,7 +237,7 @@ func TestMembershipsMadeByOthersStay(t *testing.T) {
 	if got := f.memberships(); got[byAdmin] != conn || got[byDirectory] != conn {
 		t.Fatalf("memberships %v, want both made by the sign-in", got)
 	}
-	if err := group.NewService(dbtest.Pool(t)).AddMember(context.Background(), byAdmin, f.person.ID, f.organization, audit.Actor{Type: "user"}); err != nil {
+	if err := groups(t).AddMember(context.Background(), byAdmin, f.person.ID, f.organization, audit.Actor{Type: "user"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := scimdb.New(dbtest.Pool(t)).AddGroupMember(context.Background(), scimdb.AddGroupMemberParams{GroupID: byDirectory, UserID: f.person.ID, OrganizationID: f.organization}); err != nil {
@@ -337,4 +338,23 @@ func TestSignInRefreshesProfile(t *testing.T) {
 	if email, _, _ := profile(); email != moved {
 		t.Errorf("an administrator's address moved to %q", email)
 	}
+}
+
+// groups is the group service, its membership not capped by seats.
+func groups(t *testing.T) *group.Service {
+	t.Helper()
+	svc, err := group.NewService(dbtest.Pool(t), noSeatLimit{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return svc
+}
+
+// noSeatLimit leaves group membership uncapped.
+type noSeatLimit struct{}
+
+func (noSeatLimit) SeatLimit(context.Context, uuid.UUID) (int, error) { return -1, nil }
+
+func (noSeatLimit) WithinSeats(_ context.Context, _ pgx.Tx, _ uuid.UUID, _ int, change func() error) error {
+	return change()
 }

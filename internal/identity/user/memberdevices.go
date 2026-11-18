@@ -6,7 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
@@ -45,11 +45,9 @@ func (h *Handler) listPasskeys(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, paging.List(items))
 }
 
-// removePasskey handles DELETE /v1/organizations/{organizationID}/users/{id}/passkeys/
-// {passkeyID}, for a lost device: like a second-factor reset it is the
-// account's home organization's alone to make, and only while the account
-// belongs to no other. Its last way to sign in isn't removed. Audited, and the
-// person is emailed.
+// removePasskey handles DELETE /v1/organizations/{organizationID}/users/{id}/passkeys/{passkeyID},
+// for a lost device: like a second-factor reset, only the account's home organization may, and only
+// while the account belongs to no other. Its last way to sign in isn't removed. Audited and emailed.
 func (h *Handler) removePasskey(w http.ResponseWriter, r *http.Request) {
 	if _, err := httpx.PathOrganization(r); err != nil {
 		httpx.WriteError(w, r, err)

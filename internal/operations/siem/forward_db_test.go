@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
@@ -26,8 +26,10 @@ func TestSinksForwardTheOrganizationsEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := NewService(pool, egress.DevelopmentPolicy())
-	svc.SetCipher(box)
+	svc, err := NewService(pool, box, egress.DevelopmentPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
 	organization, other := dbtest.Organization(t), dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
 	sink := newCollector(t)
@@ -116,7 +118,11 @@ func TestSinksForwardTheOrganizationsEvents(t *testing.T) {
 		t.Errorf("another organization deleting the sink: %d, want 404", rec.Code)
 	}
 
-	if _, err := NewService(pool).Create(ctx, organization, "http", "http://127.0.0.1:9/collect", "", audit.Actor{Type: "user"}); err == nil {
+	strict, err := NewService(pool, testCipher(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := strict.Create(ctx, organization, "http", "http://127.0.0.1:9/collect", "", audit.Actor{Type: "user"}); err == nil {
 		t.Error("a sink to a private address was accepted")
 	}
 }
@@ -132,8 +138,10 @@ func TestForwardingKeepsUpOnceAndBacksOff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := NewService(pool, egress.DevelopmentPolicy())
-	svc.SetCipher(box)
+	svc, err := NewService(pool, box, egress.DevelopmentPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
 	organization := dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
 	sink := newCollector(t)

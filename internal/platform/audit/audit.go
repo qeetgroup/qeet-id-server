@@ -1,8 +1,7 @@
-// Package audit records mutations to audit.events inside the caller's
-// transaction, so each row commits with the change it describes. Each row's
-// SHA-256 hash chains to the previous row of its chain, its organization's or one of
-// the PlatformChainShards platform chains: deleting, editing or reordering a
-// row breaks the chain, which Verifier detects.
+// Package audit records mutations to audit.events inside the caller's transaction, so each row commits
+// with the change it describes. Each row's SHA-256 hash chains to the previous row of its chain (its
+// organization's, or one of the PlatformChainShards): deleting, editing or reordering a row breaks
+// the chain, which operations/audit's Verifier detects.
 package audit
 
 import (
@@ -21,13 +20,13 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// chainSeed is the prev_hash of the first row of a chain.
-const chainSeed = "0000000000000000000000000000000000000000000000000000000000000000"
+// ChainSeed is the prev_hash of the first row of a chain.
+const ChainSeed = "0000000000000000000000000000000000000000000000000000000000000000"
 
 // PlatformChainShards is how many platform chains there are, numbered from 0,
 // so writers of events with no organization don't all queue on one chain's lock.
@@ -169,6 +168,17 @@ func canonicalize(e Event, shard int16, id uuid.UUID, createdAt time.Time, metaJ
 	})
 }
 
+// RowHash is the hash a row of e carries on its chain (platform chain shard,
+// for an event with no organization): over its contents, the stored id,
+// created_at and metadata, and the previous row's hash.
+func RowHash(e Event, shard int16, id uuid.UUID, createdAt time.Time, metaJSON []byte, prevHash string) (string, error) {
+	canonical, err := canonicalize(e, shard, id, createdAt, metaJSON, prevHash)
+	if err != nil {
+		return "", err
+	}
+	return hashHex(canonical), nil
+}
+
 func hashHex(b []byte) string {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
@@ -185,6 +195,22 @@ func uuidStr(u *uuid.UUID) string {
 // its chain's tip is later. A test sets it to stand for another instance.
 var clock = time.Now
 
+// SetClock makes this instance's clock now until restore is called, so a test
+// can stand for another instance. Tests only.
+func SetClock(now func() time.Time) (restore func()) {
+	prev := clock
+	clock = now
+	return func() { clock = prev }
+}
+
+// PinPlatformShard puts every platform event on platform chain shard until
+// restore is called, so a test knows which chain it writes. Tests only.
+func PinPlatformShard(shard int16) (restore func()) {
+	prev := platformShard
+	platformShard = func(pgx.Tx) int16 { return shard }
+	return func() { platformShard = prev }
+}
+
 // labelQueries read the name of a role, group or ABAC policy by its id in
 // the event's organization.
 var labelQueries = map[string]func(*dbgen.Queries, context.Context, uuid.UUID, *uuid.UUID) (string, error){
@@ -199,12 +225,10 @@ var labelQueries = map[string]func(*dbgen.Queries, context.Context, uuid.UUID, *
 	},
 }
 
-// labelled is e's metadata with the names of the roles, groups and ABAC
-// policies the event is about, as they are now: target_name for its resource,
-// and role_name or group_name for a role_id or group_id the metadata gives. A
-// target already gone keeps the name the caller gave, as metadata "name".
-// People are left to their ids: the chain can't be changed, so a name in it
-// would outlive the person's erasure.
+// labelled is e's metadata with the current names of the roles, groups and ABAC policies the event is
+// about: target_name for its resource, role_name or group_name for a role_id or group_id. A target
+// already gone keeps the caller's "name". People stay ids only: the chain can't change, so a name in
+// it would outlive the person's erasure.
 func labelled(ctx context.Context, tx pgx.Tx, e Event) (map[string]any, error) {
 	meta := make(map[string]any, len(e.Metadata)+2)
 	for k, v := range e.Metadata {
@@ -325,10 +349,10 @@ func RecordAlone(ctx context.Context, db interface {
 	return tx.Commit(ctx)
 }
 
-// lockChain takes the advisory lock of a chain, held until tx ends: an
+// LockChain takes the advisory lock of a chain, held until tx ends: an
 // organization's, or with no organization platform chain shard. Chain 0's key is the one
 // the single platform chain had.
-func lockChain(ctx context.Context, tx pgx.Tx, organizationID *uuid.UUID, shard int16) error {
+func LockChain(ctx context.Context, tx pgx.Tx, organizationID *uuid.UUID, shard int16) error {
 	key := "audit:platform"
 	switch {
 	case organizationID != nil:
@@ -351,13 +375,13 @@ func appendEvent(ctx context.Context, tx pgx.Tx, e Event, shard int16) error {
 	if len(meta) == 0 || string(meta) == "null" {
 		meta = []byte("{}")
 	}
-	if err := lockChain(ctx, tx, e.OrganizationID, shard); err != nil {
+	if err := LockChain(ctx, tx, e.OrganizationID, shard); err != nil {
 		return err
 	}
 
 	q := dbgen.New(tx)
 
-	prevHash := chainSeed
+	prevHash := ChainSeed
 	createdAt := clock().UTC().Truncate(time.Microsecond)
 	tip, err := q.GetAuditChainTip(ctx, dbgen.GetAuditChainTipParams{OrganizationID: e.OrganizationID, ChainShard: shard})
 	switch {
@@ -419,7 +443,7 @@ func openPlatformChain(ctx context.Context, pool *pgxpool.Pool, shard int16) err
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if err := lockChain(ctx, tx, nil, shard); err != nil {
+	if err := LockChain(ctx, tx, nil, shard); err != nil {
 		return err
 	}
 	_, err = dbgen.New(tx).GetAuditChainTip(ctx, dbgen.GetAuditChainTipParams{ChainShard: shard})

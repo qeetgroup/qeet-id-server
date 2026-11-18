@@ -12,7 +12,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/passkey/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/emailtmpl"
@@ -154,9 +154,6 @@ type passkeyChange int
 // removed from their account, so one they didn't add is noticed. Best effort,
 // after the change has committed: a failure is logged, the change stands.
 func (s *Service) tellPasskeyChange(ctx context.Context, userID uuid.UUID, change passkeyChange, name string) {
-	if s.sender == nil {
-		return
-	}
 	account, err := s.q.GetUserForWebAuthn(ctx, userID)
 	if err != nil || account.Email == "" {
 		slog.Warn("passkey change notice not sent: no address", "err", err, "user_id", userID)

@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -14,29 +15,45 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// AuthVerifier resolves a bearer token to a Principal.
+// AuthVerifier resolves a bearer token to a Principal. NewAuthVerifier checks
+// that every field but DevTrustHeaders is set.
 type AuthVerifier struct {
 	Tokens          *tokens.Issuer
 	DevTrustHeaders bool
-	// AgentStatus, when set, returns the current lifecycle status of an AI-agent
-	// (by agent_id). It is consulted on every agent token so that suspending or
+	// AgentStatus returns the current lifecycle status of an AI-agent (by
+	// agent_id). It is consulted on every agent token so that suspending or
 	// decommissioning an agent denies its already-issued (stateless) tokens
-	// within one request cycle. nil skips the check.
+	// within one request cycle.
 	AgentStatus func(ctx context.Context, agentID uuid.UUID) (string, error)
-	// SessionUsed, when set, is told of each request made with the access
-	// token of one of the user's own sessions (not an application's token),
-	// so the session's last use is known. Best effort; nil skips it.
+	// SessionUsed is told of each request made with the access token of one of
+	// the user's own sessions (not an application's token), so the session's
+	// last use is known. Best effort.
 	SessionUsed func(ctx context.Context, sessionID uuid.UUID)
-	// SessionLive, when set, reports whether the session of a user's own
-	// access token has not ended, so a signed-out, revoked or timed-out
-	// session's tokens are refused at once rather than when they expire.
+	// SessionLive reports whether the session of a user's own access token has
+	// not ended, so a signed-out, revoked or timed-out session's tokens are
+	// refused at once rather than when they expire.
 	SessionLive func(ctx context.Context, sessionID, userID uuid.UUID) (bool, error)
-	// PrincipalLive, when set, reports whether a service principal exists and
-	// isn't disabled, so disabling or deleting one refuses its tokens at once.
+	// PrincipalLive reports whether a service principal exists and isn't
+	// disabled, so disabling or deleting one refuses its tokens at once.
 	PrincipalLive func(ctx context.Context, principalID uuid.UUID) (bool, error)
 	// APIKeyLive reports whether an organization's API key would still
-	// authenticate a request, for Live. Without it no API key is live.
+	// authenticate a request, for Live.
 	APIKeyLive func(ctx context.Context, organizationID, keyID uuid.UUID) (bool, error)
+}
+
+// NewAuthVerifier returns v once it has the issuer and every liveness check,
+// naming the first one missing.
+func NewAuthVerifier(v AuthVerifier) (*AuthVerifier, error) {
+	for name, missing := range map[string]bool{
+		"token issuer": v.Tokens == nil, "agent status": v.AgentStatus == nil, "session use": v.SessionUsed == nil,
+		"session liveness": v.SessionLive == nil, "service principal liveness": v.PrincipalLive == nil,
+		"API key liveness": v.APIKeyLive == nil,
+	} {
+		if missing {
+			return nil, fmt.Errorf("httpx: the request verifier needs its %s check", name)
+		}
+	}
+	return &v, nil
 }
 
 // Live reports whether p, admitted earlier, would still be admitted, for a
@@ -50,13 +67,13 @@ func (v *AuthVerifier) Live(ctx context.Context, p *Principal) (bool, error) {
 	switch {
 	case p.ActorType == "api_key":
 		id, ok := subjectID(p)
-		if !ok || p.OrganizationID == nil || v.APIKeyLive == nil {
+		if !ok || p.OrganizationID == nil {
 			return false, nil
 		}
 		if live, err := v.APIKeyLive(ctx, *p.OrganizationID, id); err != nil || !live {
 			return false, err
 		}
-	case p.ActorType == "service" && v.PrincipalLive != nil:
+	case p.ActorType == "service":
 		id, ok := subjectID(p)
 		if !ok {
 			return false, nil
@@ -64,11 +81,11 @@ func (v *AuthVerifier) Live(ctx context.Context, p *Principal) (bool, error) {
 		if live, err := v.PrincipalLive(ctx, id); err != nil || !live {
 			return false, err
 		}
-	case p.AgentID != nil && v.AgentStatus != nil:
+	case p.AgentID != nil:
 		if status, err := v.AgentStatus(ctx, *p.AgentID); err != nil || status != "active" {
 			return false, err
 		}
-	case p.SessionID != nil && p.UserID != nil && p.ClientID == "" && v.SessionLive != nil:
+	case p.SessionID != nil && p.UserID != nil && p.ClientID == "":
 		if live, err := v.SessionLive(ctx, *p.SessionID, *p.UserID); err != nil || !live {
 			return false, err
 		}
@@ -183,21 +200,17 @@ func (v *AuthVerifier) sessionLive(w http.ResponseWriter, r *http.Request, p *Pr
 	if p.SessionID == nil || p.UserID == nil || p.ClientID != "" || p.ActorType != "user" {
 		return true
 	}
-	if v.SessionLive != nil {
-		live, err := v.SessionLive(r.Context(), *p.SessionID, *p.UserID)
-		if err != nil {
-			WriteError(w, r, errs.ErrInternalServer.Wrap(err))
-			return false
-		}
-		if !live {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="qeet", error="invalid_token"`)
-			WriteError(w, r, errs.ErrAuthSessionRevoked)
-			return false
-		}
+	live, err := v.SessionLive(r.Context(), *p.SessionID, *p.UserID)
+	if err != nil {
+		WriteError(w, r, errs.ErrInternalServer.Wrap(err))
+		return false
 	}
-	if v.SessionUsed != nil {
-		v.SessionUsed(r.Context(), *p.SessionID)
+	if !live {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="qeet", error="invalid_token"`)
+		WriteError(w, r, errs.ErrAuthSessionRevoked)
+		return false
 	}
+	v.SessionUsed(r.Context(), *p.SessionID)
 	return true
 }
 
@@ -205,7 +218,7 @@ func (v *AuthVerifier) sessionLive(w http.ResponseWriter, r *http.Request, p *Pr
 // is disabled or gone. Other tokens pass. A refused request is answered here,
 // and false returned.
 func (v *AuthVerifier) servicePrincipalLive(w http.ResponseWriter, r *http.Request, p *Principal, claims *tokens.Claims) bool {
-	if p.ActorType != "service" || v.PrincipalLive == nil {
+	if p.ActorType != "service" {
 		return true
 	}
 	id, perr := uuid.Parse(claims.Subject)
@@ -235,16 +248,14 @@ func (v *AuthVerifier) agentActive(w http.ResponseWriter, r *http.Request, p *Pr
 	}
 	if aid, perr := uuid.Parse(claims.AgentID); perr == nil {
 		p.AgentID = &aid
-		if v.AgentStatus != nil {
-			status, serr := v.AgentStatus(r.Context(), aid)
-			if serr != nil || status != "active" {
-				detail := "revoked"
-				if serr == nil {
-					detail = status
-				}
-				WriteError(w, r, errs.ErrUnauthorized.WithDetail("agent "+detail))
-				return false
+		status, serr := v.AgentStatus(r.Context(), aid)
+		if serr != nil || status != "active" {
+			detail := "revoked"
+			if serr == nil {
+				detail = status
 			}
+			WriteError(w, r, errs.ErrUnauthorized.WithDetail("agent "+detail))
+			return false
 		}
 	}
 	return true

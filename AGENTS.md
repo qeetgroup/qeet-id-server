@@ -60,12 +60,11 @@ and `internal/access/threat/risk` are different things.
 
 ### 2. Follow the existing architecture
 
-Reuse the established pattern before introducing an abstraction. Every domain package follows the
-same shape: `queries.sql` (listed in the root `sqlc.yaml`) + generated `dbgen/`, plus Go files named after the
-**domain** — `passkey.go`, `agent.go`, `oidc.go`. **The convention is `<domain>.go`, not
-`service.go`/`repository.go`**: only four packages use layered names and 17 domain packages have an
-`http.go`. Check [docs/llm/subsystems.md](docs/llm/subsystems.md) for the real filenames before
-looking for one.
+Reuse the established pattern before introducing an abstraction. Every domain package has the same
+shape: `<package>.go` (package doc, Service, `New`), `http.go` (routes and handlers), `errors.go` (its
+error codes), `queries.sql` (listed in the root `sqlc.yaml`) + generated `dbgen/`, and one file per
+topic (`register.go`, `login.go`). Only three packages (rbac, organization, user) also have a `service.go` or `repository.go`: don't add one elsewhere. Check
+[docs/llm/subsystems.md](docs/llm/subsystems.md) for the real filenames before looking for one.
 
 **Names.** Three words say who holds what: an **account** is a person's sign-in, an **organization**
 is a customer company, and an **application** is an app an organization connects. Use them in code,
@@ -77,21 +76,30 @@ that is the provider's word and it stays (`allowed_idp_tenant_ids`).
 
 ### 3. Preserve package boundaries
 
-Two rules, enforced by `depguard` in `golangci-lint` (`.golangci.yml`):
+Enforced by `depguard` in `golangci-lint` (`.golangci.yml`); each exception there carries its reason:
 
 - **R1** — `internal/platform/*` must not import a bounded context, `cmd/*`, or `internal/bootstrap`.
 - **R2** — a bounded context must not import `cmd/*` or `internal/bootstrap`.
+- **R3** — `operations` and `developer` are leaf contexts: the others use only the plan gate
+  (`operations/entitlements`) and in-app notices (`operations/notification`). The audit writer is
+  `internal/platform/audit`.
+- **R4** — `developer` uses those two and RBAC's scope check, never identity or federation.
+- **R5** — `operations` depends on no other context (its tests may build fixtures with them).
+- **R6** — `federation` builds on `access` and `identity`, never the other way round; `access` uses
+  `identity` only for `domainverify` and `user`, `identity` uses `access` only for `auth` and `authpolicy`.
 
-Cross-context imports are **not** currently enforced. Do not take that as permission — depend on an
-interface, not another context's concrete types. An interface several packages need is declared once,
+Depend on an interface, not another context's concrete types. An interface several packages need is declared once,
 next to what satisfies it (`entitlements.PlanGate`, `PlanLimiter`, `SeatGuard`; `notification.Notifier`;
 `ipallow.AddressPolicy`; `authpolicy.PasswordRules`; `postgres.Querier`); declare one in the consumer
 only when no shared one fits.
 
 ### 4. `internal/bootstrap` is the composition root
 
-It is the only package that wires dependencies. New services, repositories, routes, middleware and
-workers are wired **there**, not in the package that defines them.
+It is the only package that wires dependencies, one file per context (`wire_<context>.go`). New
+services, repositories, routes, middleware and workers are wired **there**, not in the package that
+defines them. A service takes every dependency in its constructor, which refuses a missing one by
+name, so the server doesn't start; there are no `Set…` methods and no nil-dependency branches. A
+truly optional feature gets an explicit no-op chosen in bootstrap (e.g. `authpolicy.NoBreachCheck`).
 
 ### 5. Preserve API contracts
 
@@ -188,6 +196,12 @@ A new behaviour ships with a test. A bug fix ships with a test that fails before
 touching organization scoping needs a test proving cross-organization access is denied. The test database is the
 schema alone: a test that depends on the built-in permissions or plans seeds them with the service's
 own `SeedBuiltins`, which is what the server runs at start.
+
+Test files are named after the code file they test, beside it: `foo_test.go` for tests without a
+database and `foo_db_test.go` for tests that need PostgreSQL (first line `//go:build integration`).
+Nothing else: no topic-named test files, no `*_integration_test.go`, no test folders. `TestMain` and
+shared helpers live in `<package>_db_test.go`; `internal/platform/database/dbtest` is the one shared
+test helper package. internal/bootstrap's whole-server checks are the only exception.
 
 ### 10. Do not commit secrets
 

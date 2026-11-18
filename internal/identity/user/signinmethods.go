@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/user/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -66,11 +66,9 @@ func LockSignInMethods(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (SignIn
 // administrator — for the audit record of a refusal. An empty Type is a user.
 type Remover = audit.Actor
 
-// RefuseLastMethodRemoval records, on its own (the removal it describes was
-// rolled back), that by was refused removing method (methodID) — "passkey" or
-// "linked_identity" — from userID's account as its last way to sign in, and
-// returns ErrAuthLastSignInMethod. A nil organizationID records it on a
-// platform chain.
+// RefuseLastMethodRemoval records on its own (the removal was rolled back) that by was refused
+// removing method methodID ("passkey" or "linked_identity") as userID's last way to sign in, and
+// returns ErrAuthLastSignInMethod. A nil organizationID records it on a platform chain.
 func RefuseLastMethodRemoval(ctx context.Context, pool *pgxpool.Pool, userID uuid.UUID, organizationID *uuid.UUID, method string, methodID uuid.UUID, by audit.Actor) error {
 	if err := audit.RecordAlone(ctx, pool, by.EventIn(organizationID, "auth.sign_in_method_removal_refused", "user", userID,
 		map[string]any{"method": method, "method_id": methodID, "reason": "last_sign_in_method"})); err != nil {

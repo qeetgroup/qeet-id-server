@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
@@ -59,10 +59,6 @@ func decideMFARequirement(row dbgen.MFARequirementRow, now time.Time) mfaRequire
 	}
 	return req
 }
-
-// SetMemberPermissions sets the permissions a member may hold without counting
-// as an administrator for an organization's admin_only second-factor requirement.
-func (s *Service) SetMemberPermissions(keys []string) { s.memberPermissions = keys }
 
 // mfaRequirementFor reads, through q, whether the account must use a second
 // factor to sign in to organizationID (uuid.Nil: only the account's own flag applies),
@@ -126,7 +122,7 @@ func stricterRequirement(a, b mfaRequirement) mfaRequirement {
 // ErrMFAEnrollmentRequired when a factor must be set up first, or
 // ErrStepUpRequired when the account holds one this sign-in didn't use.
 func (s *Service) organizationFactorShortfall(ctx context.Context, userID, organizationID uuid.UUID, secondFactor string) error {
-	if s.mfa == nil || organizationID == uuid.Nil || secondFactor != "" {
+	if organizationID == uuid.Nil || secondFactor != "" {
 		return nil
 	}
 	req, err := mfaRequirementFor(ctx, s.q, userID, organizationID, s.memberPermissions)
@@ -189,9 +185,6 @@ func (s *Service) mfaGate(ctx context.Context, userID, organizationID uuid.UUID)
 // none) — the organization of the application a hosted sign-in serves — whose
 // requirement applies as well as the home organization's.
 func (s *Service) mfaGateFor(ctx context.Context, userID, organizationID, alsoOrganization uuid.UUID) (mfaGate, error) {
-	if s.mfa == nil {
-		return mfaGate{}, nil
-	}
 	factors, err := s.mfa.LoginFactors(ctx, userID)
 	if err != nil {
 		return mfaGate{}, err

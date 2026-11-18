@@ -5,6 +5,7 @@
 package social
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -39,15 +40,67 @@ type Service struct {
 	returnTo   returnto.Allowed
 }
 
-// SetDomainCapture sets the check that keeps a provider from creating an
-// account on a domain whose organization requires single sign-on (nil: no
-// address is captured).
-func (s *Service) SetDomainCapture(c auth.DomainCapture) { s.capture = c }
+// Deps are what the social sign-in service is built from. All are required
+// but ReturnOrigins and Platform.
+type Deps struct {
+	Pool   *pgxpool.Pool
+	Auth   *auth.Service
+	Cipher *envelope.Cipher // seals the providers' client secrets
+	// Capture keeps a provider from creating or signing in an account on a
+	// domain whose organization requires single sign-on.
+	Capture    auth.DomainCapture
+	Egress     *egress.Policy // the outbound policy providers are reached under
+	AppBaseURL string         // where the console's callback is served
+	// ReturnOrigins are the origins a return_to may point at. With none, only
+	// root-relative paths are accepted.
+	ReturnOrigins []string
+	// Platform are the console's organization-less providers; none turns its
+	// social sign-in off.
+	Platform []PlatformProvider
+}
 
-// SetAllowedReturnOrigins sets the origins a return_to may point at. With none,
-// only root-relative paths are accepted.
-func (s *Service) SetAllowedReturnOrigins(origins ...string) {
-	s.returnTo = returnto.Origins(origins...)
+// NewService returns the social sign-in service built from d, or an error
+// naming the dependency d lacks.
+func NewService(d Deps) (*Service, error) {
+	switch {
+	case d.Pool == nil:
+		return nil, errors.New("social: missing Pool")
+	case d.Auth == nil:
+		return nil, errors.New("social: missing Auth")
+	case d.Cipher == nil:
+		return nil, errors.New("social: missing Cipher")
+	case d.Capture == nil:
+		return nil, errors.New("social: missing Capture")
+	case d.Egress == nil:
+		return nil, errors.New("social: missing Egress")
+	case d.AppBaseURL == "":
+		return nil, errors.New("social: missing AppBaseURL")
+	}
+	s := &Service{
+		pool:       d.Pool,
+		q:          dbgen.New(d.Pool),
+		auth:       d.Auth,
+		appBaseURL: strings.TrimRight(d.AppBaseURL, "/"),
+		oauth:      newOAuthClient(d.Egress),
+		oidc:       oidcrp.New(d.Egress),
+		apple:      appleProvider,
+		egress:     d.Egress,
+		box:        d.Cipher,
+		capture:    d.Capture,
+		platform:   map[string]providerConfig{},
+		returnTo:   returnto.Origins(d.ReturnOrigins...),
+	}
+	for _, p := range d.Platform {
+		s.platform[p.name] = p.config
+	}
+	s.link = &provision.Flow{Pool: d.Pool, Method: "social", Weigh: s.weigh, Errors: provision.Errors{
+		NotHome:            errs.ErrSocialAccountNotInOrganization,
+		EmailMissing:       ErrEmailMissing,
+		AccountUnverified:  ErrAccountUnverified,
+		AccountAdministers: ErrAccountAdministers,
+	}}
+	s.link.Recorder = d.Auth
+	return s, nil
 }
 
 // validateReturnTo accepts "" (no hosted flow), or a return_to returnto
@@ -57,32 +110,4 @@ func (s *Service) validateReturnTo(returnTo string) error {
 		return ErrReturnToInvalid
 	}
 	return nil
-}
-
-// SetCipher sets the cipher that encrypts social sign-in secrets at rest.
-func (s *Service) SetCipher(box *envelope.Cipher) { s.box = box }
-
-// NewService returns the social sign-in service.
-func NewService(pool *pgxpool.Pool, authSvc *auth.Service, appBaseURL string, policies ...*egress.Policy) *Service {
-	policy := egress.PublicPolicy(policies...)
-	s := &Service{
-		pool:       pool,
-		q:          dbgen.New(pool),
-		auth:       authSvc,
-		appBaseURL: strings.TrimRight(appBaseURL, "/"),
-		oauth:      newOAuthClient(policy),
-		oidc:       oidcrp.New(policy),
-		apple:      appleProvider,
-		egress:     policy,
-	}
-	s.link = &provision.Flow{Pool: pool, Method: "social", Weigh: s.weigh, Errors: provision.Errors{
-		NotHome:            errs.ErrSocialAccountNotInOrganization,
-		EmailMissing:       ErrEmailMissing,
-		AccountUnverified:  ErrAccountUnverified,
-		AccountAdministers: ErrAccountAdministers,
-	}}
-	if authSvc != nil {
-		s.link.Recorder = authSvc
-	}
-	return s
 }

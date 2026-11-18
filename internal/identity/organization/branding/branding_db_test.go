@@ -15,7 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -26,13 +26,25 @@ type planGate struct{ on bool }
 
 func (g *planGate) FeatureAllowed(context.Context, uuid.UUID, string) (bool, error) { return g.on, nil }
 
+// newRepository returns the branding repository deciding by gate, linking an
+// uploaded logo from publicBaseURL.
+func newRepository(t *testing.T, gate *planGate, publicBaseURL string) *Repository {
+	t.Helper()
+	repo, err := NewRepository(dbtest.Pool(t), gate, publicBaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return repo
+}
+
 // TestBrandingFollowsThePlan checks that the hosted pages and emails show an
 // organization's branding only while its plan includes custom branding, and
 // that the stored branding comes back on an upgrade.
 func TestBrandingFollowsThePlan(t *testing.T) {
 	ctx := dbtest.Context(t)
 	organization := dbtest.Organization(t)
-	repo := NewRepository(dbtest.Pool(t))
+	gate := &planGate{on: true}
+	repo := newRepository(t, gate, "")
 	logo, primary, name := "https://cdn.example.test/acme.png", "#112233", "Acme"
 	tx, err := dbtest.Pool(t).Begin(ctx)
 	if err != nil {
@@ -45,8 +57,6 @@ func TestBrandingFollowsThePlan(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	gate := &planGate{on: true}
-	repo.SetPlanGate(gate)
 	if l, p, _, _ := repo.LoginBranding(ctx, organization); l != logo || p != primary {
 		t.Errorf("on a plan with branding the hosted pages get %q %q, want the stored logo and colour", l, p)
 	}
@@ -69,10 +79,8 @@ func TestBrandingFollowsThePlan(t *testing.T) {
 func TestUploadedLogoIsServedForEmailsAndHostedPages(t *testing.T) {
 	ctx := dbtest.Context(t)
 	organization, linked := dbtest.Organization(t), dbtest.Organization(t)
-	repo := NewRepository(dbtest.Pool(t))
-	repo.SetPublicBaseURL("https://api.example.test/")
 	gate := &planGate{on: true}
-	repo.SetPlanGate(gate)
+	repo := newRepository(t, gate, "https://api.example.test/")
 	png := []byte("\x89PNG\r\n\x1a\nfake")
 	uploaded := "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
 	byURL := "https://cdn.example.test/logo.png"
@@ -131,7 +139,7 @@ func TestUploadedLogoIsServedForEmailsAndHostedPages(t *testing.T) {
 func TestFromAddressIsNotKept(t *testing.T) {
 	ctx := dbtest.Context(t)
 	organization := dbtest.Organization(t)
-	repo := NewRepository(dbtest.Pool(t))
+	repo := newRepository(t, &planGate{on: true}, "")
 	from, accent := "noreply@acme.example", "#abcdef"
 	tx, err := dbtest.Pool(t).Begin(ctx)
 	if err != nil {
@@ -161,7 +169,8 @@ func TestFromAddressIsNotKept(t *testing.T) {
 func TestSaveCommitsWithItsAuditRow(t *testing.T) {
 	ctx := dbtest.Context(t)
 	organization := dbtest.Organization(t)
-	repo := NewRepository(dbtest.Pool(t))
+	gate := &planGate{}
+	repo := newRepository(t, gate, "")
 	admin := uuid.New()
 	actor := audit.Actor{UserID: &admin, Type: "user", IP: "198.51.100.11", UserAgent: "branding-test", RequestID: "req-branding"}
 	recorded := func() int {
@@ -175,14 +184,13 @@ func TestSaveCommitsWithItsAuditRow(t *testing.T) {
 		return dbtest.Count(t, `SELECT count(*) FROM organization.branding WHERE organization_id = $1`, organization)
 	}
 	primary := "#445566"
-	repo.SetPlanGate(&planGate{on: false})
 	if err := repo.Save(ctx, Branding{OrganizationID: organization, PrimaryColor: &primary}, actor); err == nil {
 		t.Fatal("a plan without custom branding saved it")
 	}
 	if stored() != 0 || recorded() != 0 {
 		t.Errorf("a refused save stored %d rows and recorded %d, want none", stored(), recorded())
 	}
-	repo.SetPlanGate(&planGate{on: true})
+	gate.on = true
 	if err := repo.Save(ctx, Branding{OrganizationID: organization, PrimaryColor: &primary}, actor); err != nil {
 		t.Fatal(err)
 	}

@@ -15,7 +15,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
@@ -220,12 +220,10 @@ func (h *Handler) applyUserChange(w http.ResponseWriter, r *http.Request, organi
 	return true
 }
 
-// applyUserChange runs a SCIM-driven user change and its evidence, recorded as
-// actor's, in one transaction, so a provisioning change is never durable
-// without a record of it. A new address must be on a domain the organization
-// manages; it counts as verified, as the organization's directory vouches for
-// it, and links sent to the old one stop working. Every error is a
-// *scimRefusal.
+// applyUserChange runs a SCIM-driven user change and its evidence, recorded as actor's, in one
+// transaction, so no provisioning change lasts without its record. A new address must be on a domain
+// the organization manages; it counts as verified (the directory vouches for it) and links sent to the
+// old one stop working. Every error is a *scimRefusal.
 func (s *Service) applyUserChange(ctx context.Context, actor audit.Actor, organizationID, userID uuid.UUID, c userChange, action string) error {
 	in := c.in
 	// UpdateTx matches on the user ID alone, so without this check one organization's
@@ -273,7 +271,7 @@ func (s *Service) applyUserChange(ctx context.Context, actor audit.Actor, organi
 			return failed
 		}
 	}
-	if s.mapper != nil && c.profile != nil {
+	if c.profile != nil {
 		if err := s.mapper.StoreProfile(ctx, tx, organizationID, userID, "scim:"+organizationID.String(), c.profile); err != nil {
 			return refusal(http.StatusInternalServerError, "", "Profile mapping could not be saved")
 		}
@@ -327,13 +325,10 @@ func (s *Service) lockForChange(ctx context.Context, tx pgx.Tx, q *dbgen.Queries
 	return state, nil
 }
 
-// applyDirectoryVouching applies what the directory vouches for in c: the
-// account tagged as its own, and a new address, verified, which ends links
-// sent to the old one. Tagging an account as the directory's, or giving it a
-// new address, vouches for it from now on. One nobody vouched for yet (its
-// holder never proved the address, nor did the directory provision it) keeps
-// nothing whoever registered the address first set up, whichever request
-// does it.
+// applyDirectoryVouching applies what the directory vouches for in c: the account tagged as its own,
+// and a new, verified address, which ends links sent to the old one; either vouches for it from now
+// on. An account nobody vouched for yet (address never proved, not directory-provisioned) keeps
+// nothing whoever registered the address first set up, whichever request does it.
 func (s *Service) applyDirectoryVouching(ctx context.Context, tx pgx.Tx, q *dbgen.Queries, actor audit.Actor, organizationID, userID uuid.UUID, c userChange, failed error) error {
 	if c.adopted || c.tag != nil || c.email != "" {
 		if err := s.forgetUnvouched(ctx, tx, actor, organizationID, userID); err != nil {

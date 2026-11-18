@@ -65,8 +65,7 @@ func dueForRefresh(t *testing.T, connID uuid.UUID) {
 // organization can neither import into nor apply metadata to this one's.
 func TestSAMLMetadataImportAndRefresh(t *testing.T) {
 	ctx := dbtest.Context(t)
-	sp := newSPSide(t)
-	sp.handler.Service.SetEgressPolicy(egress.DevelopmentPolicy())
+	sp := newSPSide(t, func(d *Deps) { d.Egress = egress.DevelopmentPolicy() })
 	idp, next, manual := newUpstreamIdP(t), newUpstreamIdP(t), newUpstreamIdP(t)
 	organization, other := dbtest.Organization(t), dbtest.Organization(t)
 	member := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, organization), organization, organization)
@@ -180,11 +179,11 @@ func TestSAMLMetadataImportAndRefresh(t *testing.T) {
 // from metadata, like creating one, needs a plan with SSO and fetches nothing
 // without one, and that an import keeps the groups attribute it is given.
 func TestSAMLMetadataImportNeedsSSOInThePlan(t *testing.T) {
-	sp := newSPSide(t)
-	sp.handler.Service.SetEgressPolicy(egress.DevelopmentPolicy())
-	idp := newUpstreamIdP(t)
 	paid, free := dbtest.Organization(t), dbtest.Organization(t)
-	sp.handler.Service.SetPlanGate(poolGate{pool: dbtest.Pool(t), allowed: map[uuid.UUID]bool{paid: true}})
+	sp := newSPSide(t, func(d *Deps) {
+		d.Egress, d.Gate = egress.DevelopmentPolicy(), poolGate{pool: dbtest.Pool(t), allowed: map[uuid.UUID]bool{paid: true}}
+	})
+	idp := newUpstreamIdP(t)
 	metadata := newMetadataServer(t)
 	metadata.serve(http.StatusOK, idpEntity(idp.entityID, upstreamSSO, map[string][]string{"signing": {idp.der(t)}}))
 	body := map[string]any{"name": "Okta", "metadata_url": metadata.server.URL, "groups_attribute": "memberOf"}

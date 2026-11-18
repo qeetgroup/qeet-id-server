@@ -96,13 +96,11 @@ func (s *Service) authenticate(ctx context.Context, c *connFull, username, passw
 
 	filter := strings.ReplaceAll(c.UserFilter, "%s", goldap.EscapeFilter(username))
 	attributes := []string{c.EmailAttribute, c.NameAttribute, groupsAttr}
-	if s.mapper != nil {
-		mapped, err := s.mapper.SourceAttributes(ctx, c.OrganizationID, c.ID.String())
-		if err != nil {
-			return nil, err
-		}
-		attributes = append(attributes, mapped...)
+	read, err := s.mapper.SourceAttributes(ctx, c.OrganizationID, c.ID.String())
+	if err != nil {
+		return nil, err
 	}
+	attributes = append(attributes, read...)
 	req := goldap.NewSearchRequest(
 		c.BaseDN, goldap.ScopeWholeSubtree, goldap.NeverDerefAliases, 2, int(dialTimeout.Seconds()), false,
 		filter, attributes, nil,
@@ -131,28 +129,25 @@ func (s *Service) authenticate(ctx context.Context, c *connFull, username, passw
 	email := strings.ToLower(strings.TrimSpace(entry.GetAttributeValue(c.EmailAttribute)))
 	name := entry.GetAttributeValue(c.NameAttribute)
 	groups := entry.GetAttributeValues(groupsAttr)
-	var profile map[string]any
-	if s.mapper != nil {
-		source := map[string]any{}
-		for _, attribute := range attributes {
-			values := entry.GetAttributeValues(attribute)
-			if len(values) > 0 {
-				source[attribute] = values
-			}
+	source := map[string]any{}
+	for _, attribute := range attributes {
+		values := entry.GetAttributeValues(attribute)
+		if len(values) > 0 {
+			source[attribute] = values
 		}
-		profile, err = s.mapper.MapProfile(ctx, c.OrganizationID, c.ID.String(), source, false)
-		if err != nil {
-			return nil, err
-		}
-		if mapped, ok := profile["email"].(string); ok {
-			email = strings.ToLower(mapped)
-		}
-		if mapped, ok := profile["display_name"].(string); ok {
-			name = mapped
-		}
-		if mapped, ok := profile["groups"].([]string); ok {
-			groups = mapped
-		}
+	}
+	profile, err := s.mapper.MapProfile(ctx, c.OrganizationID, c.ID.String(), source, false)
+	if err != nil {
+		return nil, err
+	}
+	if mapped, ok := profile["email"].(string); ok {
+		email = strings.ToLower(mapped)
+	}
+	if mapped, ok := profile["display_name"].(string); ok {
+		name = mapped
+	}
+	if mapped, ok := profile["groups"].([]string); ok {
+		groups = mapped
 	}
 	if email == "" {
 		return nil, ErrEmailAttributeMissing

@@ -1,8 +1,6 @@
-// Command api runs the Qeet ID HTTP API server. With "healthcheck" it exits 0
-// only if /readyz on loopback answers 200 (the distroless image has no curl).
-// With "schema-check" it exits 0 if this build can run on DB_URL's schema, 1 if
-// not (newer or half-applied migrations, or built from other migration files),
-// or 2 if it can't tell.
+// Command api runs the Qeet ID HTTP API server. "healthcheck" exits 0 only if /readyz on loopback
+// answers 200 (the distroless image has no curl). "schema-check" exits 0 if this build can run on
+// DB_URL's schema, 1 if not (newer, half-applied or different migrations), or 2 if it can't tell.
 package main
 
 import (

@@ -18,8 +18,22 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth/authtest"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/directory"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/saml"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
@@ -62,4 +76,75 @@ func portal(t *testing.T, h http.Handler, method, path, bearer, session string, 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec
+}
+
+// everyPlan includes every feature.
+type everyPlan struct{}
+
+func (everyPlan) FeatureAllowed(context.Context, uuid.UUID, string) (bool, error) { return true, nil }
+
+// noSeatLimit leaves group membership uncapped.
+type noSeatLimit struct{}
+
+func (noSeatLimit) SeatLimit(context.Context, uuid.UUID) (int, error) { return -1, nil }
+
+func (noSeatLimit) WithinSeats(_ context.Context, _ pgx.Tx, _ uuid.UUID, _ int, change func() error) error {
+	return change()
+}
+
+// newSAML is the SAML service the portal sets connections up through, on a
+// plan gate says the features of.
+func newSAML(t *testing.T, gate entitlements.PlanGate) *saml.Service {
+	t.Helper()
+	pool := dbtest.Pool(t)
+	box, err := envelope.New([]byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc, err := saml.NewService(saml.Deps{
+		Pool: pool, Auth: newAuthService(t), Cipher: box, Gate: gate,
+		Egress: egress.PublicPolicy(), AppBaseURL: "https://id.example.test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return svc
+}
+
+// newSCIM is the SCIM service whose tokens the portal manages.
+func newSCIM(t *testing.T) *scim.Service {
+	t.Helper()
+	pool := dbtest.Pool(t)
+	store, err := directory.NewStore(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc, err := scim.NewService(scim.Deps{
+		Pool: pool, Users: user.NewRepository(pool), Signals: sessionsignal.New(nil),
+		Gate: everyPlan{}, Seats: noSeatLimit{}, Mapper: store, Observer: store,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return svc
+}
+
+// newAuthService is the sign-in service SAML sign-ins go through.
+func newAuthService(t *testing.T) *auth.Service {
+	t.Helper()
+	return authtest.New(t, dbtest.Pool(t))
+}
+
+// newDomains is the domain service on a plan with custom domains, with the
+// platform's owner check and member permissions.
+func newDomains(t *testing.T) *domainverify.Service {
+	t.Helper()
+	pool := dbtest.Pool(t)
+	domains, err := domainverify.NewService(pool, domainverify.Deps{
+		Gate: everyPlan{}, Owners: rbac.NewRepository(pool), MemberPermissions: identitylink.MemberPermissions(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return domains
 }

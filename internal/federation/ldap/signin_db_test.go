@@ -8,8 +8,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -30,10 +28,8 @@ func TestLapsedPlanStopsLDAPSignIn(t *testing.T) {
 		entries: map[string]dirEntry{"alice": {dn: userDN, attrs: map[string]string{"mail": a.Email, "cn": "Alice"}}},
 	}
 	connID := storedConnection(t, organization, dir.start(t), "cn=service,dc=example,dc=test")
-	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
-	authSvc.SetMFA(noFactors{})
-	svc := serviceOver(t, authSvc)
-	svc.SetPlanGate(noLDAP{})
+	authSvc := newAuthService(t)
+	svc := serviceOver(t, authSvc, func(d *Deps) { d.Gate = noLDAP{} })
 
 	if _, err := svc.Login(ctx, connID, "alice", "alice-secret", "192.0.2.20", "test"); !errors.Is(err, errs.ErrUpgradeRequired) {
 		t.Errorf("sign in after the plan lapsed: %v, want %v", err, errs.ErrUpgradeRequired)
@@ -59,8 +55,7 @@ func TestLoginAppliesSignInChecks(t *testing.T) {
 		entries: map[string]dirEntry{"alice": {dn: userDN, attrs: map[string]string{"mail": a.Email, "cn": "Alice"}}},
 	}
 	connID := storedConnection(t, organization, dir.start(t), "cn=service,dc=example,dc=test")
-	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
-	authSvc.SetMFA(noFactors{})
+	authSvc := newAuthService(t)
 	svc := serviceOver(t, authSvc)
 
 	if _, err := svc.Login(ctx, connID, "alice", "alice-secret", "192.0.2.20", "test"); !errors.Is(err, ErrAccountUnverified) {
@@ -129,8 +124,7 @@ func TestLoginSpeaksOnlyForTheOrganization(t *testing.T) {
 	rogue := connect(map[string]dirEntry{
 		"alice": {dn: aliceDN, attrs: map[string]string{"mail": dbtest.Unique("rogue") + "@example.test", "cn": "Alice"}},
 	})
-	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
-	authSvc.SetMFA(noFactors{})
+	authSvc := newAuthService(t)
 	svc := serviceOver(t, authSvc)
 
 	res, err := svc.Login(ctx, conn, "alice", "alice-secret", "192.0.2.21", "test")
@@ -183,8 +177,7 @@ func TestLoginAdoptsADirectoryProvisionedAccount(t *testing.T) {
 		entries: map[string]dirEntry{"alice": {dn: userDN, attrs: map[string]string{"mail": a.Email, "cn": "Alice"}}},
 	}
 	connID := storedConnection(t, organization, dir.start(t), "cn=service,dc=example,dc=test")
-	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
-	authSvc.SetMFA(noFactors{})
+	authSvc := newAuthService(t)
 	res, err := serviceOver(t, authSvc).Login(ctx, connID, "alice", "alice-secret", "192.0.2.22", "test")
 	if err != nil || res.Pair == nil || res.Pair.UserID != a.ID {
 		t.Fatalf("sign in: %+v, %v; want the provisioned account", res, err)
@@ -214,8 +207,7 @@ func TestLoginSyncsGroupsAndName(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO organization.sso_group_mappings (organization_id, connection_id, idp_group, group_id) VALUES ($1, $2, 'cn=engineering,ou=groups,dc=example,dc=test', $3)`, organization, connID, engineering); err != nil {
 		t.Fatal(err)
 	}
-	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
-	authSvc.SetMFA(noFactors{})
+	authSvc := newAuthService(t)
 	svc := serviceOver(t, authSvc)
 
 	res, err := svc.Login(ctx, connID, "alice", "alice-secret", "192.0.2.23", "test")
@@ -279,8 +271,7 @@ func TestLoginProvisionsOnlyWithJIT(t *testing.T) {
 		},
 	}
 	connID := storedConnection(t, organization, dir.start(t), service)
-	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
-	authSvc.SetMFA(noFactors{})
+	authSvc := newAuthService(t)
 	svc := serviceOver(t, authSvc)
 
 	if res, err := svc.Login(ctx, connID, "alice", "alice-secret", "192.0.2.23", "test"); err != nil || res.Pair == nil || res.Pair.UserID != member.ID {
@@ -318,8 +309,7 @@ func TestLDAPRecordsARefusedAdoption(t *testing.T) {
 		entries: map[string]dirEntry{"root": {dn: rootDN, attrs: map[string]string{"mail": admin.Email, "cn": "Root"}}},
 	}
 	conn := storedConnection(t, organization, dir.start(t), service)
-	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
-	authSvc.SetMFA(noFactors{})
+	authSvc := newAuthService(t)
 	svc := serviceOver(t, authSvc)
 
 	if _, err := svc.Login(ctx, conn, "root", "root-secret", "192.0.2.30", "test"); !errors.Is(err, ErrAccountAdministers) {
@@ -347,8 +337,7 @@ func TestLDAPRelinkRefreshesTheLinksAddress(t *testing.T) {
 		entries: map[string]dirEntry{"alice": {dn: aliceDN, attrs: map[string]string{"mail": first, "cn": "Alice"}}},
 	}
 	conn := storedConnection(t, organization, dir.start(t), service)
-	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
-	authSvc.SetMFA(noFactors{})
+	authSvc := newAuthService(t)
 	svc := serviceOver(t, authSvc)
 
 	res, err := svc.Login(ctx, conn, "alice", "alice-secret", "192.0.2.31", "test")

@@ -33,8 +33,7 @@ func (l poolLimiter) Limit(ctx context.Context, _ uuid.UUID, _ string) (int, err
 // validation of the request.
 func TestClientRegistrationPlanCapWithOneConnection(t *testing.T) {
 	pool := dbtest.Pool(t)
-	svc := NewService(pool, dbtest.Issuer(t))
-	svc.SetPlanLimiter(poolLimiter{pool: pool, limit: 2})
+	svc := newTestService(t, pool, dbtest.Issuer(t), func(d *Deps) { d.Limits = poolLimiter{pool: pool, limit: 2} })
 	organization := dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
 	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: svc}).Mount)
@@ -61,7 +60,7 @@ func TestClientRegistrationPlanCapWithOneConnection(t *testing.T) {
 // change another organization's OIDC client, and that its users can't authorize it.
 func TestOIDCClientsStayInTheirOrganization(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
+	svc := newTestService(t, dbtest.Pool(t), dbtest.Issuer(t))
 	organizationA, organizationB := dbtest.Organization(t), dbtest.Organization(t)
 	clientA, secretA := registerClient(t, svc, organizationA)
 	adminB := dbtest.User(t, organizationB, organizationB)

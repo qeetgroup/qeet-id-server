@@ -13,7 +13,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
@@ -32,7 +31,7 @@ func newTokenOrg(t *testing.T) *tokenOrg {
 	t.Helper()
 	id := dbtest.Organization(t)
 	admin := dbtest.User(t, id, id)
-	h := &Handler{Service: NewService(dbtest.Pool(t), user.NewRepository(dbtest.Pool(t)))}
+	h := &Handler{Service: newTestService(t, dbtest.Pool(t))}
 	r := chi.NewRouter()
 	h.MountPublic(r)
 	return &tokenOrg{

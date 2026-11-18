@@ -13,12 +13,14 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth/authtest"
 	"github.com/qeetgroup/qeet-id-server/internal/access/ipallow"
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
@@ -30,11 +32,11 @@ import (
 // refusal recorded), and a session that met the second factor it requires.
 func TestBackchannelApprovalMeetsTheOrganizationsRules(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
-	svc := NewService(pool, dbtest.Issuer(t))
-	svc.SetAddressPolicy(ipallow.NewService(pool))
-	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
-	authSvc.SetMFA(mfa.NewService(pool, "Qeet", notifier.LogSender{}))
-	svc.SetSessionFactors(authSvc.SessionFactorShortfall)
+	authSvc := authtest.New(t, pool, func(d *auth.Deps) { d.MFA = secondFactors(t, pool) })
+	svc := newTestService(t, pool, dbtest.Issuer(t), func(d *Deps) {
+		d.Addresses = ipallow.NewService(pool)
+		d.SessionFactors = authSvc.SessionFactorShortfall
+	})
 	organization, home := dbtest.Organization(t), dbtest.Organization(t)
 	client, secret := registerClientWith(t, svc, CreateClientInput{OrganizationID: organization, GrantTypes: []string{grantTypeCIBA}})
 	exec := func(sql string, args ...any) {
@@ -93,7 +95,7 @@ func TestBackchannelApprovalMeetsTheOrganizationsRules(t *testing.T) {
 // be stored leaves the request unspent, so a later poll gets it.
 func TestCIBAGrantRemovedAfterAuthorizeIsRefusedAtToken(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
-	svc := NewService(pool, dbtest.Issuer(t))
+	svc := newTestService(t, pool, dbtest.Issuer(t))
 	organization := dbtest.Organization(t)
 	client, secret := registerClientWith(t, svc, CreateClientInput{OrganizationID: organization, GrantTypes: []string{grantTypeCIBA, "refresh_token"}})
 	exec := func(sql string, args ...any) {
@@ -184,9 +186,8 @@ func (b *promptBox) Notify(_ context.Context, organizationID, userID uuid.UUID, 
 func TestBackchannelFlow(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	p := newProvider(t)
 	prompts := &promptBox{}
-	p.svc.SetNotifier(prompts)
+	p := newProvider(t, func(d *Deps, _ *auth.Service) { d.Notifier = prompts })
 	organization, otherOrganization := dbtest.Organization(t), dbtest.Organization(t)
 	person := dbtest.User(t, organization, organization)
 	colleague := dbtest.User(t, organization, organization)
@@ -311,3 +312,29 @@ func TestBackchannelFlow(t *testing.T) {
 		t.Errorf("poll after denial: %s, want access_denied", got)
 	}
 }
+
+// secondFactors is the second-factor service, reading the factors each
+// account holds and the organization's requirement.
+func secondFactors(t *testing.T, pool *pgxpool.Pool) *mfa.Service {
+	t.Helper()
+	box, err := envelope.New([]byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	factors, err := mfa.NewService(pool, mfa.Deps{
+		Issuer: "Qeet", Sender: notifier.LogSender{}, Cipher: box, Plan: smsPlans{},
+		Deliverable: func(string) bool { return true }, WebAuthn: noPasskeys{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return factors
+}
+
+// smsPlans includes SMS codes in every plan.
+type smsPlans struct{}
+
+func (smsPlans) FeatureAllowed(context.Context, uuid.UUID, string) (bool, error) { return true, nil }
+
+// noPasskeys stands for the passkey second factor, which no test here uses.
+type noPasskeys struct{ mfa.WebAuthnVerifier }

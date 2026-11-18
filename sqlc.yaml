@@ -211,5 +211,8 @@ sql:
     queries: internal/operations/siem/queries.sql
     gen: {go: {<<: *go, out: internal/operations/siem/dbgen}}
   - <<: *package
+    queries: internal/platform/audit/queries.sql
+    gen: {go: {<<: *go, out: internal/platform/audit/dbgen}}
+  - <<: *package
     queries: internal/platform/messaging/delivery/queries.sql
     gen: {go: {<<: *go, out: internal/platform/messaging/delivery/dbgen}}

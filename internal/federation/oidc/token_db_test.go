@@ -35,7 +35,7 @@ func TestGrantsRunOnTheirTransaction(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	dbtest.LeaveOneConnection(t)
-	svc := NewService(pool, dbtest.Issuer(t))
+	svc := newTestService(t, pool, dbtest.Issuer(t))
 	organization := dbtest.Organization(t)
 	user := dbtest.User(t, organization, organization)
 	server, _ := registerClient(t, svc, organization)

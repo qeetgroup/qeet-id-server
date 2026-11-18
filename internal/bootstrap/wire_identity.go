@@ -3,12 +3,15 @@ package bootstrap
 import (
 	"cmp"
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authpolicy"
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
@@ -35,51 +38,78 @@ type identityServices struct {
 	domainVerifyService *domainverify.Service
 }
 
-// newIdentity builds the identity context's services.
-func (w *wiring) newIdentity() *identityServices {
-	return &identityServices{
-		organizationRepo: organization.NewRepository(w.pool),
+// newDirectories builds the repositories of organizations, people and roles,
+// which need nothing but the database and which the other contexts are built
+// from.
+func (w *wiring) newDirectories() error {
+	w.identityServices = &identityServices{
+		organizationRepo: organization.NewRepository(w.pool, cmp.Or(w.cfg.HostingRegion, w.cfg.AWSRegion)),
 		userRepo:         user.NewRepository(w.pool),
-		verifyService:    verification.NewService(w.pool, w.sender, 10*time.Minute),
-		inviteService:    invite.NewService(w.pool, w.sender, 14*24*time.Hour, w.cfg.AppBaseURL),
-		groupService:     group.NewService(w.pool),
-		// The custom domain, so its plan gate can be wired.
-		domainVerifyService: domainverify.NewService(w.pool, w.outboundPolicy),
 	}
+	w.accessServices = &accessServices{rbacRepo: rbac.NewRepository(w.pool)}
+	return nil
 }
 
-// wireIdentity connects the identity context's services to the rest.
-func (w *wiring) wireIdentity() {
-	w.organizationRepo.SetHostingRegion(cmp.Or(w.cfg.HostingRegion, w.cfg.AWSRegion)) // where every organization is created
-	w.verifyService.SetPlan(w.entitlementSvc)                                         // SMS codes only on plans that include them
-	if w.mail.routed {
-		w.verifyService.SetDeliveryCheck(w.mail.transport.Configured) // refuse codes no provider can deliver
+// newIdentity builds the identity context's services, after the
+// authentication policy they check passwords and sign-in methods with.
+func (w *wiring) newIdentity() error {
+	policies, err := authpolicy.NewService(w.pool, breachChecker(w.cfg))
+	if err != nil {
+		return fmt.Errorf("authentication policy: %w", err)
 	}
-	w.inviteService.SetGrantCheck(w.rbacRepo.CheckGrantRole) // an invitation's sender must still be able to give its role
-	w.inviteService.SetPasswordRules(w.authPolicyService)    // invite accept
-	w.inviteService.SetAcceptMethods(w.authPolicyService)    // which ways of accepting the acceptance screen offers
-	w.inviteService.SetPlanLimiter(w.entitlementSvc)         // seats
-	w.groupService.SetSeatGuard(w.inviteService)             // seats: a person's first role, through a group
-	w.brandingRepo.SetPlanGate(w.entitlementSvc)             // custom branding
-	w.brandingRepo.SetPublicBaseURL(w.cfg.PublicBaseURL)
-	w.domainVerifyService.SetPlanGate(w.entitlementSvc)
-	w.domainVerifyService.SetOwners(w.rbacRepo) // only owners name break-glass members
+	w.authPolicyService = policies
+	id := w.identityServices
+	// The invitation's sender must still be able to give its role when it is
+	// accepted; its seats are the plan's.
+	if id.inviteService, err = invite.NewService(w.pool, invite.Deps{
+		Sender: w.sender, TTL: 14 * 24 * time.Hour, BaseAppURL: w.cfg.AppBaseURL,
+		Rules: policies, Methods: policies, Limits: w.entitlementSvc, Grants: w.rbacRepo.CheckGrantRole,
+	}); err != nil {
+		return fmt.Errorf("invitations: %w", err)
+	}
+	// Seats: a person's first role, through a group.
+	if id.groupService, err = group.NewService(w.pool, id.inviteService); err != nil {
+		return fmt.Errorf("groups: %w", err)
+	}
+	// SMS codes only on plans that include them, and no code a provider can't
+	// deliver.
+	if id.verifyService, err = verification.NewService(w.pool, w.sender, 10*time.Minute, w.entitlementSvc, w.deliverable()); err != nil {
+		return fmt.Errorf("verification: %w", err)
+	}
 	// Domain capture: an address on a verified domain with SSO on, in an
 	// organization with an active SAML or LDAP connection, signs in only there,
-	// except break-glass members and the administrators SSO never adopts.
-	w.domainVerifyService.SetMemberPermissions(identitylink.MemberPermissions())
+	// except break-glass members, whom only owners name, and the administrators
+	// SSO never adopts.
+	if id.domainVerifyService, err = domainverify.NewService(w.pool, domainverify.Deps{
+		Gate: w.entitlementSvc, Owners: w.rbacRepo, MemberPermissions: identitylink.MemberPermissions(),
+		Outbound: w.outboundPolicy,
+	}); err != nil {
+		return fmt.Errorf("domain verification: %w", err)
+	}
+	return nil
+}
+
+// deliverable is the check that a channel can deliver a code: the routed
+// transport's, or, with mail not routed (the log sender of development),
+// every channel.
+func (w *wiring) deliverable() func(channel string) bool {
+	if w.mail.routed {
+		return w.mail.transport.Configured
+	}
+	return func(string) bool { return true }
 }
 
 // identityHandlers serves the identity context.
-func (w *wiring) identityHandlers(d *Deps) {
+func (w *wiring) identityHandlers(d *Deps) error {
 	d.Organization = &organization.Handler{Repo: w.organizationRepo, Validate: w.validate, AuthService: w.authService, Signals: w.sessionSignals, OwnerCheck: w.rbacRepo.IsOwner}
 	d.User = &user.Handler{Repo: w.userRepo, Validate: w.validate, PasswordPolicy: w.authPolicyService.ValidateForOrganization, MFA: w.mfaService, SignIns: w.authService, Signals: w.sessionSignals, Mailer: w.sender, ActOnCheck: w.rbacRepo.CheckActOn,
 		Roles: rbac.ImportRoles{Repo: w.rbacRepo, Seats: w.inviteService}}
-	d.Verification = &verification.Handler{Service: w.verifyService}
+	d.Verification = &verification.Handler{Service: w.verifyService, Throttle: w.sensitiveThrottle}
 	d.Invite = &invite.Handler{Service: w.inviteService, AuthService: w.authService, Validate: w.validate, GrantCheck: w.rbacRepo.CheckGrantRole}
 	d.Branding = &branding.Handler{Repo: w.brandingRepo}
 	d.Group = &group.Handler{Service: w.groupService, GrantCheck: w.rbacRepo.CheckGrantGroup, ActOnCheck: w.rbacRepo.CheckActOn, ReadsRoles: rbac.CallerHolds(w.rbacRepo, "role.read")}
 	d.DomainVerify = &domainverify.Handler{Service: w.domainVerifyService}
+	return errors.Join(d.Organization.Check(), d.User.Check(), d.Verification.Check())
 }
 
 // organizationDeletionsJob deletes each organization whose scheduled deletion
@@ -89,7 +119,7 @@ func organizationDeletionsJob(pool *pgxpool.Pool, signals *sessionsignal.Signall
 		Name:     "organization-deletions",
 		Interval: 15 * time.Minute,
 		Run: func(ctx context.Context) error {
-			n, err := organization.DeleteDue(postgres.AcrossOrganizations(ctx), organization.NewRepository(pool), signals)
+			n, err := organization.DeleteDue(postgres.AcrossOrganizations(ctx), organization.NewRepository(pool, ""), signals) // deleting creates nothing, so no region
 			if n > 0 {
 				slog.Info("organizations deleted as scheduled", "deleted", n)
 			}

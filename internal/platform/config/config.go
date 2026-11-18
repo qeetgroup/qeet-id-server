@@ -119,25 +119,10 @@ type Config struct {
 	SAMLIdPKey  string `envconfig:"SAML_IDP_KEY" default:""`
 	SAMLIdPCert string `envconfig:"SAML_IDP_CERT" default:""`
 
-	// SecretsKey is the base64-encoded AES key (16/24/32 bytes) that encrypts
-	// every stored secret. Required outside dev
-	// when SECRETS_PROVIDER=static; in dev an ephemeral key is generated if
-	// unset. Generate with `openssl rand -base64 32`.
-	//
-	// Every stored value names the key that sealed it, so the key can be
-	// rotated without making anything unreadable:
-	//  1. With several instances, first add the new key to SECRETS_PREVIOUS_KEYS
-	//     on all of them, so each can read what the others will seal with it.
-	//  2. Make the new key SECRETS_KEY and move the old one to
-	//     SECRETS_PREVIOUS_KEYS. New values are sealed with the new key, and the
-	//     secrets-reencrypt job re-seals the stored ones in the background.
-	//  3. When envelope_rows_on_old_keys is 0 for every column and the
-	//     audit-chain-verify job has run since (it signs the audit checkpoints
-	//     again with the new key), remove the old key from SECRETS_PREVIOUS_KEYS.
-	//
-	// With aws-kms the steps are the same with SECRETS_WRAPPED_DEK and
-	// SECRETS_PREVIOUS_WRAPPED_DEKS; a key moved from static to aws-kms stays
-	// readable in SECRETS_PREVIOUS_KEYS.
+	// SecretsKey is the base64 AES key (16/24/32 bytes) that encrypts every stored secret: required
+	// outside dev with SECRETS_PROVIDER=static; in dev an ephemeral key is generated if unset
+	// (`openssl rand -base64 32`). Every stored value names its key, so the key rotates without losing
+	// anything: the steps are in .env.example, at SECRETS_PREVIOUS_KEYS.
 	SecretsKey string `envconfig:"SECRETS_KEY" default:""`
 	// SecretsPreviousKeysRaw lists earlier data keys, base64 and comma-separated:
 	// they decrypt what they sealed but never encrypt (see SecretsKey).
@@ -227,11 +212,9 @@ type Config struct {
 	// (e.g. CloudFront-Viewer-City), recorded on audit events and sessions.
 	GeoCityHeader string `envconfig:"GEO_CITY_HEADER" default:""`
 
-	// EmailProvider selects the email transport: "smtp" (default) or "ses-api".
-	// Use "ses-api" in regions that offer the SES API but no SMTP endpoint
-	// (e.g. ap-south-2). The SES API path uses the AWS credential chain +
-	// AWS_REGION and only needs SMTP_FROM (SMTP host/creds are ignored).
-	// Outside dev one of the two must be configured (see Validate).
+	// EmailProvider selects the email transport: "smtp" (default) or "ses-api", for regions with the SES
+	// API but no SMTP endpoint (e.g. ap-south-2); it uses the AWS credential chain and AWS_REGION, and of
+	// the SMTP settings only SMTP_FROM. Outside dev one of the two must be configured (see Validate).
 	EmailProvider string `envconfig:"EMAIL_PROVIDER" default:"smtp"`
 	// AWSRegion is used by the SES-API email provider (and any other AWS SDK
 	// client) so endpoint resolution never fails on a missing region.

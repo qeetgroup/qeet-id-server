@@ -12,7 +12,6 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/notification"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -28,16 +27,6 @@ const (
 	cibaRequestTTL   = 10 * time.Minute                    // how long a request stays pending
 	cibaPollInterval = 5                                   // seconds between polls, as for the device grant
 )
-
-// SetNotifier wires the CIBA consent-prompt notifier.
-func (s *Service) SetNotifier(n notification.Notifier) { s.notifier = n }
-
-// SetSessionFactors sets the check of what second factor an organization
-// still requires of a person's session (auth.Service.SessionFactorShortfall),
-// which approving a backchannel request in its name must meet. Nil checks none.
-func (s *Service) SetSessionFactors(check func(ctx context.Context, sessionID, userID, organizationID uuid.UUID) error) {
-	s.sessionFactors = check
-}
 
 // CIBAAuthResponse is the OpenID CIBA §7 backchannel-authentication response.
 type CIBAAuthResponse struct {
@@ -121,17 +110,15 @@ func (s *Service) BackchannelAuthorize(ctx context.Context, clientID, clientSecr
 		return nil, err
 	}
 
-	if s.notifier != nil {
-		name, _, nerr := s.ClientName(ctx, clientID)
-		if nerr == nil {
-			title := name + " is requesting access"
-			desc := "Approve or deny this request from your account."
-			if bindingMessage != "" {
-				desc = bindingMessage
-			}
-			// No console page lists pending requests, so the notice links nowhere.
-			_ = s.notifier.Notify(ctx, organizationID, userID, "info", title, desc, "")
+	name, _, nerr := s.ClientName(ctx, clientID)
+	if nerr == nil {
+		title := name + " is requesting access"
+		desc := "Approve or deny this request from your account."
+		if bindingMessage != "" {
+			desc = bindingMessage
 		}
+		// No console page lists pending requests, so the notice links nowhere.
+		_ = s.notifier.Notify(ctx, organizationID, userID, "info", title, desc, "")
 	}
 
 	return &CIBAAuthResponse{AuthReqID: raw, ExpiresIn: int(cibaRequestTTL.Seconds()), Interval: cibaPollInterval}, nil
@@ -173,7 +160,7 @@ func (s *Service) DecideBackchannel(ctx context.Context, userID, sessionID, id u
 	// Approving is the person's sign-in to the application, so the session it
 	// is made through must meet the second factor the request's organization
 	// requires. That check reads the pool, so it comes before the transaction.
-	if approve && s.sessionFactors != nil {
+	if approve {
 		organizationID, err := s.q.CIBARequestOrganization(ctx, dbgen.CIBARequestOrganizationParams{ID: id, UserID: userID})
 		if err == nil {
 			err = s.sessionFactors(ctx, sessionID, userID, organizationID)

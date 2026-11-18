@@ -199,8 +199,7 @@ func (p *provider) authorizeInBrowser(t *testing.T, cookie *http.Cookie, clientI
 func TestOrganizationsOwnAccountsSignInWithoutARole(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	p := newProvider(t)
-	p.sessions.SetRegistrationPolicy(openRegistration{})
+	p := newProviderOver(t, func(d *auth.Deps) { d.Registration = openRegistration{} })
 	organization, elsewhere := dbtest.Organization(t), dbtest.Organization(t)
 	client, secret := registerClient(t, p.svc, organization)
 

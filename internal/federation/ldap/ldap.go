@@ -6,6 +6,7 @@ package ldap
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -51,8 +52,7 @@ type connFull struct {
 	BindPassword string
 }
 
-// Service manages LDAP connections and directory sign-in. A nil gate leaves
-// connection creation ungated.
+// Service manages LDAP connections and directory sign-in.
 type Service struct {
 	pool     *pgxpool.Pool
 	q        *dbgen.Queries
@@ -63,15 +63,50 @@ type Service struct {
 	observer OperationObserver
 	mapper   ProfileMapper
 	link     *provision.Flow
-	// allowSkipVerify lets a connection turn certificate verification off;
-	// see SetAllowSkipTLSVerify.
+	// allowSkipVerify lets a connection turn certificate verification off.
 	allowSkipVerify bool
 }
 
-// NewService returns the LDAP service.
-func NewService(pool *pgxpool.Pool, authSvc *auth.Service, policies ...*egress.Policy) *Service {
-	s := &Service{pool: pool, q: dbgen.New(pool), auth: authSvc, egress: egress.PublicPolicy(policies...)}
-	s.link = &provision.Flow{Pool: pool, Method: provider, Store: s.storeMappedProfile,
+// Deps are what the LDAP service is built from. All but AllowSkipTLSVerify
+// are required.
+type Deps struct {
+	Pool     *pgxpool.Pool
+	Auth     *auth.Service
+	Cipher   *envelope.Cipher      // seals the connections' bind passwords
+	Gate     entitlements.PlanGate // whether the plan includes LDAP
+	Mapper   ProfileMapper         // the attribute mappings signed-in accounts get
+	Observer OperationObserver     // records each directory operation
+	Egress   *egress.Policy        // the outbound policy directories are dialled under
+	// AllowSkipTLSVerify lets connections turn off verification of the
+	// directory's certificate, for a developer workstation (SERVICE_ENV=dev)
+	// only. Otherwise saving or binding such a connection is refused.
+	AllowSkipTLSVerify bool
+}
+
+// NewService returns the LDAP service built from d, or an error naming the
+// dependency d lacks.
+func NewService(d Deps) (*Service, error) {
+	switch {
+	case d.Pool == nil:
+		return nil, errors.New("ldap: missing Pool")
+	case d.Auth == nil:
+		return nil, errors.New("ldap: missing Auth")
+	case d.Cipher == nil:
+		return nil, errors.New("ldap: missing Cipher")
+	case d.Gate == nil:
+		return nil, errors.New("ldap: missing Gate")
+	case d.Mapper == nil:
+		return nil, errors.New("ldap: missing Mapper")
+	case d.Observer == nil:
+		return nil, errors.New("ldap: missing Observer")
+	case d.Egress == nil:
+		return nil, errors.New("ldap: missing Egress")
+	}
+	s := &Service{
+		pool: d.Pool, q: dbgen.New(d.Pool), auth: d.Auth, egress: d.Egress, box: d.Cipher, gate: d.Gate,
+		observer: d.Observer, mapper: d.Mapper, allowSkipVerify: d.AllowSkipTLSVerify,
+	}
+	s.link = &provision.Flow{Pool: d.Pool, Method: provider, Store: s.storeMappedProfile, Recorder: d.Auth,
 		Errors: provision.Errors{
 			NotHome:            ErrAccountNotInOrganization,
 			EmailMissing:       ErrEmailAttributeMissing,
@@ -82,19 +117,8 @@ func NewService(pool *pgxpool.Pool, authSvc *auth.Service, policies ...*egress.P
 			EmailUnverified: ErrEmailDomainUnverified,
 			JITNotAllowed:   ErrJITNotAllowed,
 		}}
-	if authSvc != nil {
-		s.link.Recorder = authSvc
-	}
-	return s
+	return s, nil
 }
-
-// SetCipher sets the cipher that encrypts LDAP secrets at rest.
-func (s *Service) SetCipher(box *envelope.Cipher) { s.box = box }
-
-// SetAllowSkipTLSVerify lets connections turn off verification of the
-// directory's certificate, for a developer workstation (SERVICE_ENV=dev) only.
-// Otherwise saving or binding such a connection is refused.
-func (s *Service) SetAllowSkipTLSVerify(allow bool) { s.allowSkipVerify = allow }
 
 // checkTLSVerify refuses a connection that turns certificate verification off
 // where that isn't allowed.
@@ -105,18 +129,12 @@ func (s *Service) checkTLSVerify(skip bool) error {
 	return nil
 }
 
-// SetPlanGate wires the plan-feature gate (nil allows all features).
-func (s *Service) SetPlanGate(g entitlements.PlanGate) { s.gate = g }
-
 // Pool returns the connection pool, for handlers that run their own transaction.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
-// requireLDAP refuses with errs.ErrUpgradeRequired when the gate, if set,
-// finds that the organization's plan doesn't include LDAP.
+// requireLDAP refuses with errs.ErrUpgradeRequired when the organization's
+// plan doesn't include LDAP.
 func (s *Service) requireLDAP(ctx context.Context, organizationID uuid.UUID) error {
-	if s.gate == nil {
-		return nil
-	}
 	ok, err := s.gate.FeatureAllowed(ctx, organizationID, "ldap")
 	if err != nil {
 		return err

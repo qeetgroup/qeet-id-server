@@ -65,8 +65,7 @@ func (s *Service) ValidateForOrganization(ctx context.Context, organizationID uu
 	if reason := password.WeakReason(pw, email); reason != "" {
 		return errs.ErrAuthPasswordWeak.WithMessage(reason)
 	}
-	// Breached-password gate. No-op when the checker is nil (feature off) and
-	// fail-open inside PwnedAllowOnError (a HIBP outage allows the password).
+	// Breached-password gate, failing open (a HIBP outage allows the password).
 	if s.breach.PwnedAllowOnError(ctx, pw) {
 		return errs.ErrAuthPolicyPasswordBreached
 	}

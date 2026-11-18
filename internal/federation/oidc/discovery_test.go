@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 )
@@ -31,7 +32,7 @@ func TestProtectedResourceMetadataNamesTheIssuer(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := chi.NewRouter()
-	(&Handler{Service: NewService(nil, issuer)}).MountPublic(r)
+	(&Handler{Service: newTestService(t, new(pgxpool.Pool), issuer)}).MountPublic(r)
 	req := httptest.NewRequest(http.MethodGet, "/.well-known/oauth-protected-resource", nil)
 	req.Host = "internal-lb.example:8080"
 	rec := httptest.NewRecorder()
@@ -51,7 +52,7 @@ func TestProtectedResourceMetadataNamesTheIssuer(t *testing.T) {
 // metadata an RP reads to configure verification. No DB needed.
 func TestDiscovery_AdvertisesAlgIssuerS256(t *testing.T) {
 	issuer := testIssuer(t)
-	h := &Handler{Service: NewService(nil, issuer)}
+	h := &Handler{Service: newTestService(t, new(pgxpool.Pool), issuer)}
 	r := chi.NewRouter()
 	h.MountPublic(r)
 
@@ -100,7 +101,7 @@ func TestDiscovery_AdvertisesAlgIssuerS256(t *testing.T) {
 // TestDiscovery_AdvertisesClientAuthMethods checks that discovery lists the
 // client authentication each endpoint accepts.
 func TestDiscovery_AdvertisesClientAuthMethods(t *testing.T) {
-	h := &Handler{Service: NewService(nil, testIssuer(t))}
+	h := &Handler{Service: newTestService(t, new(pgxpool.Pool), testIssuer(t))}
 	r := chi.NewRouter()
 	h.MountPublic(r)
 	rec := httptest.NewRecorder()
@@ -155,7 +156,7 @@ func TestJWKSEndpoint_ServesActivePublicKey(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: issuer: %v", c.alg, err)
 		}
-		h := &Handler{Service: NewService(nil, issuer)}
+		h := &Handler{Service: newTestService(t, new(pgxpool.Pool), issuer)}
 
 		r := chi.NewRouter()
 		h.MountPublic(r)

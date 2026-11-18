@@ -10,7 +10,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
@@ -147,9 +147,6 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (*TokenPair, *user
 // password sign-in and password rules, and returns the SSO cookie value or,
 // when the organization requires MFA, an enrolment challenge.
 func (s *Service) RegisterInOrganization(ctx context.Context, organizationID uuid.UUID, email, plain, displayName, ip, ua string) (*user.User, *LoginSessionResult, error) {
-	if s.regPolicy == nil {
-		return nil, nil, errs.ErrNotImplemented
-	}
 	if err := s.refuseCaptured(ctx, email); err != nil {
 		return nil, nil, err
 	}
@@ -241,11 +238,8 @@ func (s *Service) RegisterInOrganization(ctx context.Context, organizationID uui
 // SelfRegistrationEnabled reports whether organizationID allows hosted self-service
 // signup. Exposed so other access-domain services (e.g. the passkey-first
 // signup ceremony) can gate on the same policy without duplicating it or
-// requiring a password to validate. false, nil when no policy is wired.
+// requiring a password to validate.
 func (s *Service) SelfRegistrationEnabled(ctx context.Context, organizationID uuid.UUID) (bool, error) {
-	if s.regPolicy == nil {
-		return false, nil
-	}
 	return s.regPolicy.SelfRegistrationEnabled(ctx, organizationID)
 }
 

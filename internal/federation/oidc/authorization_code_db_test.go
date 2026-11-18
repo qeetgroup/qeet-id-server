@@ -21,7 +21,7 @@ import (
 // grant, it buys no token, and it is spent.
 func TestCodeRedemptionRefusedAfterRemoval(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
+	svc := newTestService(t, dbtest.Pool(t), dbtest.Issuer(t))
 	organization := dbtest.Organization(t)
 	client, secret := registerClient(t, svc, organization)
 	code := func(userID uuid.UUID) (string, string) {
@@ -66,7 +66,7 @@ func TestCodeRedemptionRefusedAfterRemoval(t *testing.T) {
 func TestCodeRedemptionRules(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	svc := NewService(pool, dbtest.Issuer(t))
+	svc := newTestService(t, pool, dbtest.Issuer(t))
 	organization := dbtest.Organization(t)
 	person := dbtest.User(t, organization, organization)
 	client, secret := registerClient(t, svc, organization)
@@ -173,7 +173,7 @@ func TestCodeRedemptionRules(t *testing.T) {
 func TestOIDCAuthorizationCodeWithPKCE(t *testing.T) {
 	ctx := dbtest.Context(t)
 	issuer := dbtest.Issuer(t)
-	svc := NewService(dbtest.Pool(t), issuer)
+	svc := newTestService(t, dbtest.Pool(t), issuer)
 	organization := dbtest.Organization(t)
 	user := dbtest.User(t, organization, organization)
 	client, secret := registerClient(t, svc, organization)
@@ -224,7 +224,7 @@ func TestOIDCAuthorizationCodeWithPKCE(t *testing.T) {
 func TestExchangeCodeAnswers(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
 	issuer := dbtest.Issuer(t)
-	svc := NewService(pool, issuer)
+	svc := newTestService(t, pool, issuer)
 	organization := dbtest.Organization(t)
 	person := dbtest.User(t, organization, organization)
 	client, secret := registerClient(t, svc, organization)

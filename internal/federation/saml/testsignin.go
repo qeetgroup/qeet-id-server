@@ -17,7 +17,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -74,11 +74,9 @@ type TestAttribute struct {
 	Values       []string `json:"values"`
 }
 
-// BeginTestSignIn starts a test of organizationID's connection id in this browser,
-// recorded as actor's, and returns it with the IdP address to send the browser
-// to. The IdP's answer returns the browser to returnURL, the test's and the
-// connection's IDs in its fragment. A draft connection can be tested: the test
-// signs nobody in.
+// BeginTestSignIn starts a test of organizationID's connection id in this browser, recorded as
+// actor's, and returns it with the IdP address to send the browser to; the answer returns to returnURL
+// with the test's and connection's IDs in its fragment. A draft can be tested: a test signs nobody in.
 func (h *Handler) BeginTestSignIn(w http.ResponseWriter, r *http.Request, organizationID, id uuid.UUID, returnURL string, actor audit.Actor) (*TestSignIn, error) {
 	t, requestID, err := h.Service.beginTestSignIn(r.Context(), h.publicBase(r), organizationID, id, returnURL, actor)
 	if err != nil {

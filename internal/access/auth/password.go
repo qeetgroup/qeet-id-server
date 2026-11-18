@@ -11,7 +11,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/accountnotice"
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
@@ -44,7 +44,7 @@ type SignInAttempt struct {
 // passwordAllowed refuses with ErrAuthMethodDisabled when organizationID has switched
 // password sign-in off. uuid.Nil (no organization) is not restricted.
 func (s *Service) passwordAllowed(ctx context.Context, organizationID uuid.UUID) error {
-	if organizationID == uuid.Nil || s.methods == nil {
+	if organizationID == uuid.Nil {
 		return nil
 	}
 	enabled, err := s.methods.PasswordEnabled(ctx, organizationID)
@@ -58,12 +58,8 @@ func (s *Service) passwordAllowed(ctx context.Context, organizationID uuid.UUID)
 }
 
 // checkNewPassword runs the password check for an account in organizationID
-// (uuid.Nil = no organization). With no policy wired it refuses rather than
-// store a password nothing has checked.
+// (uuid.Nil = no organization).
 func (s *Service) checkNewPassword(ctx context.Context, organizationID uuid.UUID, email, plain string) error {
-	if s.regPolicy == nil {
-		return errs.ErrNotImplemented
-	}
 	return s.regPolicy.ValidateForOrganization(ctx, organizationID, email, plain)
 }
 

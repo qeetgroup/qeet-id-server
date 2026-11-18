@@ -17,7 +17,7 @@ import (
 // refused, even by an application the person has delegated to.
 func TestTokenExchangeRefusesIDTokens(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
+	svc := newTestService(t, dbtest.Pool(t), dbtest.Issuer(t))
 	organization := dbtest.Organization(t)
 	person := dbtest.User(t, organization, organization)
 	app, appSecret := registerClient(t, svc, organization)
@@ -38,7 +38,7 @@ func TestTokenExchangeRefusesIDTokens(t *testing.T) {
 func TestTokenExchange(t *testing.T) {
 	ctx := dbtest.Context(t)
 	issuer := dbtest.Issuer(t)
-	svc := NewService(dbtest.Pool(t), issuer)
+	svc := newTestService(t, dbtest.Pool(t), issuer)
 	organization, otherOrganization := dbtest.Organization(t), dbtest.Organization(t)
 	user := dbtest.User(t, organization, organization)
 	grants := []string{"authorization_code", "refresh_token", "token_exchange"}
@@ -90,7 +90,7 @@ func TestTokenExchange(t *testing.T) {
 // those consented to and those it is registered for.
 func TestTokenExchangeHoldsOnlyWhatTheCallerMay(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
+	svc := newTestService(t, dbtest.Pool(t), dbtest.Issuer(t))
 	organization := dbtest.Organization(t)
 	user := dbtest.User(t, organization, organization)
 	grants := []string{"authorization_code", "refresh_token", "token_exchange"}
@@ -144,7 +144,7 @@ func TestTokenExchangeHoldsOnlyWhatTheCallerMay(t *testing.T) {
 func TestTokenExchangeAnswers(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
 	issuer := dbtest.Issuer(t)
-	svc := NewService(pool, issuer)
+	svc := newTestService(t, pool, issuer)
 	organization, otherOrganization := dbtest.Organization(t), dbtest.Organization(t)
 	user := dbtest.User(t, organization, organization)
 	grants := []string{"authorization_code", "refresh_token", "token_exchange"}

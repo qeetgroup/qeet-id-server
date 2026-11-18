@@ -14,7 +14,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/cmd/seed/internal/world"
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/totp"
 )
 

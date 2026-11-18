@@ -35,7 +35,7 @@ func TestAPersonsSignInsAreSummarised(t *testing.T) {
 	insert(person.ID, "auth.sign_in_failed", "198.51.100.1", mac, `{"method":"password","reason":"wrong_password"}`, "1 day")
 	insert(other.ID, "auth.login_succeeded", "192.0.2.4", mac, `{"method":"password"}`, "1 day")
 
-	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Repo: NewRepository(pool), Validate: jsonNamedValidator()}).Mount)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Repo: NewRepository(pool), Validate: jsonNamedValidator(), SignIns: endSessions{}, Mailer: &dbtest.Mailbox{}}).Mount)
 	var got SignInSummary
 	rec := dbtest.Do(t, h, http.MethodGet, "/organizations/"+organization.String()+"/users/"+person.ID.String()+"/sign-ins", nil)
 	dbtest.Decode(t, rec, &got)

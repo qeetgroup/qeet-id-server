@@ -11,9 +11,8 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/developer/authhook/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 // Create registers a login hook at url, its signing secret encrypted, recorded
@@ -22,9 +21,6 @@ import (
 func (s *Service) Create(ctx context.Context, organizationID uuid.UUID, url, secret string, failOpen bool, actor audit.Actor) (*Hook, error) {
 	if _, err := s.egress.ValidateHTTPURL(url); err != nil {
 		return nil, ErrURLInvalid
-	}
-	if s.box == nil {
-		return nil, errs.ErrInternalServer.WithDetail("auth-hook secret encryption is unavailable")
 	}
 	id := uuid.New()
 	ciphertext, nonce, err := s.box.Seal(organizationID, "auth-hook-signing", id.String(), []byte(secret))
@@ -162,9 +158,6 @@ func (s *Service) setEndpoint(ctx context.Context, tx pgx.Tx, id, organizationID
 	}
 	params := dbgen.SetHookEndpointParams{Url: url, ID: id, OrganizationID: organizationID}
 	if secret != nil {
-		if s.box == nil {
-			return errs.ErrInternalServer.WithDetail("auth-hook secret encryption is unavailable")
-		}
 		cur, err := s.q.WithTx(tx).LockHookSecret(ctx, dbgen.LockHookSecretParams{ID: id, OrganizationID: organizationID})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound

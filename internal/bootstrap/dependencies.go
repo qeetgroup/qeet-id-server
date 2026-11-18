@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"time"
 
 	"github.com/go-playground/validator/v10"
@@ -34,18 +33,17 @@ type namedWorker struct {
 // Services wires every service as the API does, for a tool that drives them
 // directly, such as the development seed. No worker runs, nothing listens, and
 // committed events wait in the outbox for the API's dispatcher.
-func Services(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool) Deps {
+func Services(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool) (Deps, error) {
 	depsCfg := *cfg
 	depsCfg.NATSURL = ""
-	deps, _ := buildDeps(ctx, &depsCfg, pool, outbox.LogPublisher{})
-	return deps
+	deps, _, err := buildDeps(ctx, &depsCfg, pool, outbox.LogPublisher{})
+	return deps, err
 }
 
 // infra is the shared infrastructure every context's services are built from:
-// configuration, keys, the outbound policy, the request verifier, the request
-// limits and the outbound message chain. The chain dresses every message in
-// the organization's branding and email templates, so brandingRepo and
-// emailTemplateService are built with it; identity and operations serve them.
+// configuration, keys, the outbound policy, the request limits, then the
+// outbound message chain (newMailChain), the session signals and the request
+// verifier (newVerifier) once what they are built from exists.
 type infra struct {
 	rootCtx              context.Context
 	cfg                  *config.Config
@@ -65,8 +63,7 @@ type infra struct {
 	healthHandler        *health.Handler
 	inFlight             *httpx.InFlight
 	// sessionSignals announces session and role changes over the webhook
-	// dispatcher, so subscribers can react before access tokens expire. It is
-	// set once the developer context's webhooks are built.
+	// queue, so subscribers can react before access tokens expire.
 	sessionSignals *sessionsignal.Signaller
 }
 
@@ -76,14 +73,6 @@ func newInfra(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) *
 	in := &infra{rootCtx: rootCtx, cfg: cfg, pool: pool, outboundPolicy: newOutboundPolicy(cfg)}
 	keys := loadKeys(rootCtx, cfg, pool)
 	in.sharedCipher, in.signingKeyRegistry, in.issuer = keys.cipher, keys.signingKeys, keys.issuer
-	in.verifier = &httpx.AuthVerifier{
-		Tokens:          in.issuer,
-		DevTrustHeaders: cfg.AuthDevTrustHeaders,
-	}
-	in.brandingRepo = branding.NewRepository(pool)
-	in.emailTemplateService = email.NewService(pool)
-	in.mail = newMailer(cfg, pool, in.brandingRepo, in.emailTemplateService)
-	in.sender = in.mail.sender
 	in.limits = newRateLimits(rootCtx, cfg, pool)
 	in.validate = newValidator()
 	in.startedAt = time.Now()
@@ -108,58 +97,90 @@ type wiring struct {
 }
 
 // buildDeps constructs every repository, service, and handler and returns the
-// HTTP dependency set plus the background workers to supervise. Keeping all
-// wiring here lets main() focus on process lifecycle.
-func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, outboxPub outbox.Publisher) (Deps, []namedWorker) {
+// HTTP dependency set plus the background workers to supervise, or the first
+// dependency a constructor refused. Keeping all wiring here lets main() focus
+// on process lifecycle.
+func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, outboxPub outbox.Publisher) (Deps, []namedWorker, error) {
 	w := &wiring{infra: newInfra(rootCtx, cfg, pool)}
-	// Each context's services are built after those they are built from, then
-	// every context is connected to the others.
-	w.identityServices = w.newIdentity()
-	w.accessServices = w.newAccess()
-	w.operationsServices = w.newOperations()
-	w.seedBuiltins()
-	w.developerServices = w.newDeveloper()
-	w.sessionSignals = sessionsignal.New(w.webhookService.EnqueueTx)
-	w.federationServices = w.newFederation()
-	w.wireVerifier()
-	w.wireAccess()
-	w.wireIdentity()
-	w.wireFederation()
-	w.wireDeveloper()
-	w.wireOperations()
-
-	deps := w.platformDeps()
-	w.accessHandlers(&deps)
-	w.identityHandlers(&deps)
-	w.federationHandlers(&deps)
-	w.developerHandlers(&deps)
-	w.operationsHandlers(&deps)
-	workers := w.workers(outboxPub)
-	RegisterMaintenanceMetrics(pool, w.sharedCipher)
-	return deps, workers
-}
-
-// seedBuiltins seeds the permission catalogue and the billing plans, exiting
-// when either can't be seeded.
-func (w *wiring) seedBuiltins() {
-	if err := seedCatalogues(w.rootCtx, []namedSeeder{
-		{"permission catalogue", w.rbacRepo.SeedBuiltins}, {"billing plans", w.billingService.SeedBuiltins},
-	}); err != nil {
-		slog.Error("start-up refused", "err", err)
-		os.Exit(1)
+	if err := w.build(); err != nil {
+		return Deps{}, nil, err
 	}
+	deps := w.platformDeps()
+	for _, serve := range []func(*Deps) error{
+		w.accessHandlers, w.identityHandlers, w.federationHandlers, w.developerHandlers, w.operationsHandlers,
+	} {
+		if err := serve(&deps); err != nil {
+			return Deps{}, nil, err
+		}
+	}
+	workers, err := w.workers(outboxPub)
+	if err != nil {
+		return Deps{}, nil, err
+	}
+	RegisterMaintenanceMetrics(pool, w.sharedCipher)
+	return deps, workers, nil
 }
 
-// wireVerifier lets the request verifier refuse at once the tokens of what has
-// ended since they were issued.
-func (w *wiring) wireVerifier() {
-	// Let the auth middleware deny suspended/decommissioned agents' tokens per
-	// request.
-	w.verifier.AgentStatus = w.agentService.AgentStatus
-	w.verifier.SessionUsed = w.authService.SessionUsed          // a session's last use, for its idle timeout and the session list
-	w.verifier.SessionLive = w.authService.SessionLive          // an ended session's access tokens are refused at once
-	w.verifier.PrincipalLive = w.principalService.PrincipalLive // a disabled service principal's tokens are refused at once
-	w.verifier.APIKeyLive = w.apikeyService.Live                // an open activity stream's API key, checked again
+// build builds each context's services after those they depend on: repositories, billing's plans and
+// notifications first (the message chain and every context need them), then the webhooks that carry
+// the session signals, and the request verifier last, since it asks the services that end sessions.
+func (w *wiring) build() error {
+	var err error
+	if err = w.newDirectories(); err != nil {
+		return err
+	}
+	if w.operationsServices, err = w.newOperationsBase(); err != nil {
+		return err
+	}
+	if err = w.newMailChain(); err != nil {
+		return err
+	}
+	if err = w.seedBuiltins(); err != nil {
+		return err
+	}
+	if w.developerServices, err = w.newDeveloper(); err != nil {
+		return err
+	}
+	w.sessionSignals = sessionsignal.New(w.webhookService.EnqueueTx)
+	if err = w.newOperations(); err != nil {
+		return err
+	}
+	if err = w.newIdentity(); err != nil {
+		return err
+	}
+	if err = w.newAccess(); err != nil {
+		return err
+	}
+	if w.federationServices, err = w.newFederation(); err != nil {
+		return err
+	}
+	return w.newVerifier()
+}
+
+// seedBuiltins seeds the permission catalogue and the billing plans.
+func (w *wiring) seedBuiltins() error {
+	return seedCatalogues(w.rootCtx, []namedSeeder{
+		{"permission catalogue", w.rbacRepo.SeedBuiltins}, {"billing plans", w.billingService.SeedBuiltins},
+	})
+}
+
+// newVerifier builds the request verifier, which refuses at once the tokens of
+// what has ended since they were issued.
+func (w *wiring) newVerifier() error {
+	verifier, err := httpx.NewAuthVerifier(httpx.AuthVerifier{
+		Tokens:          w.issuer,
+		DevTrustHeaders: w.cfg.AuthDevTrustHeaders,
+		AgentStatus:     w.agentService.AgentStatus,       // a suspended or decommissioned agent's tokens are refused
+		SessionUsed:     w.authService.SessionUsed,        // a session's last use, for its idle timeout and the session list
+		SessionLive:     w.authService.SessionLive,        // an ended session's access tokens are refused at once
+		PrincipalLive:   w.principalService.PrincipalLive, // a disabled service principal's tokens are refused at once
+		APIKeyLive:      w.apikeyService.Live,             // an open activity stream's API key, checked again
+	})
+	if err != nil {
+		return fmt.Errorf("request verifier: %w", err)
+	}
+	w.verifier = verifier
+	return nil
 }
 
 // platformDeps is the router's shared middleware settings.
@@ -187,8 +208,17 @@ func (w *wiring) platformDeps() Deps {
 }
 
 // workers are the background workers the API supervises.
-func (w *wiring) workers(outboxPub outbox.Publisher) []namedWorker {
+func (w *wiring) workers(outboxPub outbox.Publisher) ([]namedWorker, error) {
 	cfg, pool := w.cfg, w.pool
+	// Audit-chain verification and the cleanups, once per interval across
+	// instances.
+	jobs, err := MaintenanceJobs(pool, w.sessionSignals, w.sharedCipher, w.outboundPolicy)
+	if err != nil {
+		return nil, err
+	}
+	jobs = append(jobs, BillingJobs(w.billingService, w.invoiceEmails)...)
+	jobs = append(jobs, AccessRequestJobs(w.accessRequestService)...)
+	jobs = append(jobs, AuditRetentionJobs(pool, w.entitlementSvc, w.sharedCipher)...)
 	// Committed events reach the organization's webhook subscriptions as well
 	// as the event stream.
 	outboxDispatcher := outbox.NewDispatcher(pool, w.webhookService.Relay(outboxPub), 2*time.Second, 50)
@@ -206,15 +236,8 @@ func (w *wiring) workers(outboxPub outbox.Publisher) []namedWorker {
 		{name: "retention", run: w.retentionService.Run},
 		{name: "siem", run: w.siemService.Run},
 		{name: "audit-anomaly", run: w.auditAnomalyService.Run},
-		// Audit-chain verification and the cleanups, once per interval across
-		// instances.
-		{name: "scheduler", run: func(ctx context.Context) {
-			jobs := append(MaintenanceJobs(pool, w.sessionSignals, w.sharedCipher, w.outboundPolicy), BillingJobs(w.billingService)...)
-			jobs = append(jobs, AccessRequestJobs(w.accessRequestService)...)
-			jobs = append(jobs, AuditRetentionJobs(pool, w.billingService, w.sharedCipher)...)
-			worker.RunScheduled(ctx, pool, jobs, worker.SchedulerTick)
-		}},
-	}
+		{name: "scheduler", run: func(ctx context.Context) { worker.RunScheduled(ctx, pool, jobs, worker.SchedulerTick) }},
+	}, nil
 }
 
 // namedSeeder seeds one built-in catalogue, named for the error that stops

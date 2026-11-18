@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
@@ -56,10 +56,10 @@ type otpSend struct {
 // ErrMFACodeSendLimited (retry_after in seconds) inside the resend wait or past
 // an hourly limit, and refuses SMS unless the organization's plan includes it.
 func (s *Service) sendOTP(ctx context.Context, in otpSend) error {
-	if s.deliverable != nil && !s.deliverable(in.channel) {
+	if !s.deliverable(in.channel) {
 		return ErrDeliveryUnavailable.WithMetadata(map[string]any{"channel": in.channel})
 	}
-	if in.channel == "sms" && s.plan != nil {
+	if in.channel == "sms" {
 		if in.organizationID == nil {
 			return errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "sms_mfa"})
 		}
@@ -189,7 +189,7 @@ func (s *Service) EnrollOTPStart(ctx context.Context, userID uuid.UUID, organiza
 	if destination == "" {
 		return uuid.Nil, ErrDestinationRequired
 	}
-	if s.deliverable != nil && !s.deliverable(channel) {
+	if !s.deliverable(channel) {
 		return uuid.Nil, ErrDeliveryUnavailable.WithMetadata(map[string]any{"channel": channel})
 	}
 	holdings, err := s.q.OTPFactorHoldings(ctx, dbgen.OTPFactorHoldingsParams{UserID: userID, Channel: channel, Destination: destination})

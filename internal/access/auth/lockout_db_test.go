@@ -22,15 +22,15 @@ import (
 func TestAnotherOrganizationsClientCannotLoosenLockout(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc, seen := newService(t), &anomalies{}
-	svc.SetAnomalyRecorder(seen)
+	svc.anomaly = seen
 	platform := DefaultLockoutConfig().Defaults
 	lenient := dbtest.Organization(t)
-	svc.SetLockoutSource(func(_ context.Context, organizationID uuid.UUID) (Lockout, error) {
+	svc.lockoutSource = func(_ context.Context, organizationID uuid.UUID) (Lockout, error) {
 		if organizationID == lenient {
 			return Lockout{Threshold: 20, Window: time.Minute, Duration: time.Minute}, nil
 		}
 		return platform, nil
-	})
+	}
 	client := dbtest.Unique("app")
 	if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO auth.oidc_clients (organization_id, client_id, name) VALUES ($1, $2, $2)`, lenient, client); err != nil {
 		t.Fatal(err)
@@ -64,15 +64,15 @@ func TestAnotherOrganizationsClientCannotLoosenLockout(t *testing.T) {
 func TestStricterLockoutCannotLockAnAccountEverywhere(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc, seen := newService(t), &anomalies{}
-	svc.SetAnomalyRecorder(seen)
+	svc.anomaly = seen
 	platform := DefaultLockoutConfig().Defaults
 	strict := dbtest.Organization(t)
-	svc.SetLockoutSource(func(_ context.Context, organizationID uuid.UUID) (Lockout, error) {
+	svc.lockoutSource = func(_ context.Context, organizationID uuid.UUID) (Lockout, error) {
 		if organizationID == strict {
 			return Lockout{Threshold: 3, Window: 24 * time.Hour, Duration: 24 * time.Hour}, nil
 		}
 		return platform, nil
-	})
+	}
 	client := dbtest.Unique("app")
 	if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO auth.oidc_clients (organization_id, client_id, name) VALUES ($1, $2, $2)`, strict, client); err != nil {
 		t.Fatal(err)
@@ -228,7 +228,7 @@ func TestLockoutCounters(t *testing.T) {
 	t.Run("account-wide cap", func(t *testing.T) {
 		svc, seen := newService(t), &anomalies{}
 		svc.lockout = config
-		svc.SetAnomalyRecorder(seen)
+		svc.anomaly = seen
 		a, _ := member(t)
 		for i := range 4 {
 			if err := login(svc, a.Email, "Wrong-password-1", freshIP()); !errors.Is(err, ErrInvalidCredentials) {
@@ -246,7 +246,7 @@ func TestLockoutCounters(t *testing.T) {
 	t.Run("spraying source", func(t *testing.T) {
 		svc, seen := newService(t), &anomalies{}
 		svc.lockout = config
-		svc.SetAnomalyRecorder(seen)
+		svc.anomaly = seen
 		a, _ := member(t)
 		source := freshIP()
 		for i := range 3 {
@@ -271,12 +271,12 @@ func TestLockoutCounters(t *testing.T) {
 	t.Run("organization's own lockout", func(t *testing.T) {
 		svc := newService(t)
 		strict := dbtest.Organization(t)
-		svc.SetLockoutSource(func(_ context.Context, organizationID uuid.UUID) (Lockout, error) {
+		svc.lockoutSource = func(_ context.Context, organizationID uuid.UUID) (Lockout, error) {
 			if organizationID == strict {
 				return Lockout{Threshold: 1, Window: time.Minute, Duration: time.Minute}, nil
 			}
 			return DefaultLockoutConfig().Defaults, nil
-		})
+		}
 		client := dbtest.Unique("app")
 		if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO auth.oidc_clients (organization_id, client_id, name) VALUES ($1, $2, $2)`, strict, client); err != nil {
 			t.Fatal(err)
@@ -303,7 +303,7 @@ func TestLockoutCounters(t *testing.T) {
 
 	t.Run("settings unavailable", func(t *testing.T) {
 		svc := newService(t)
-		svc.SetLockoutSource(func(context.Context, uuid.UUID) (Lockout, error) { return Lockout{}, errors.New("store down") })
+		svc.lockoutSource = func(context.Context, uuid.UUID) (Lockout, error) { return Lockout{}, errors.New("store down") }
 		a, _ := member(t)
 		if err := login(svc, a.Email, testPassword, freshIP()); !errors.Is(err, errs.ErrAuthSignInUnavailable) {
 			t.Errorf("sign in while the lockout settings can't be read: %v, want %v", err, errs.ErrAuthSignInUnavailable)

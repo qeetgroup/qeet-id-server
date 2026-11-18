@@ -22,11 +22,9 @@ import (
 // acceptance's transaction: the grant check reads the pool.
 type sentInvite dbgen.InviteSenderByTokenRow
 
-// checkSender refuses, with ErrInviteInvalid, accepting the invitation sent
-// (read with err) when the person who sent it may no longer give it: their
-// account isn't active, they no longer belong to its organization, or they
-// couldn't give its role now. One no person sent, or not pending, is left to
-// the acceptance itself, which refuses what it must.
+// checkSender refuses, with ErrInviteInvalid, accepting the invitation sent (read with err) when its
+// sender may no longer give it: their account isn't active, they left its organization, or they
+// couldn't give its role now. One no person sent, or not pending, is left to the acceptance itself.
 func (s *Service) checkSender(ctx context.Context, sent sentInvite, err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
@@ -47,9 +45,6 @@ func (s *Service) checkSender(ctx context.Context, sent sentInvite, err error) e
 	}
 	if sent.RoleID == nil {
 		return nil
-	}
-	if s.grants == nil {
-		return ErrInvalid
 	}
 	organizationID := sent.OrganizationID
 	caller := &httpx.Principal{UserID: &inviter, OrganizationID: &organizationID, ActorType: "user"}

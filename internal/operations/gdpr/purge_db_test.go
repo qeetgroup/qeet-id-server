@@ -25,7 +25,7 @@ func TestAnErasureRequestNamesItsPersonUntilErased(t *testing.T) {
 	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE account.users SET display_name = 'Asha Iyer' WHERE id = $1`, person.ID); err != nil {
 		t.Fatal(err)
 	}
-	svc := NewService(dbtest.Pool(t), 30*24*time.Hour)
+	svc := testService(t, dbtest.Pool(t), 30*24*time.Hour)
 	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), requests(t, svc).Mount)
 	var req Request
 	dbtest.Decode(t, dbtest.Do(t, h, http.MethodPost, "/gdpr/purge", map[string]any{"user_id": person.ID}), &req)
@@ -56,9 +56,9 @@ func TestErasureWaitsForItsGracePeriod(t *testing.T) {
 	organization, other := dbtest.Organization(t), dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
 	due, waiting, outsider := account(t, organization), account(t, organization), account(t, other)
-	svc := NewService(pool, time.Nanosecond)
+	svc := testService(t, pool, time.Nanosecond)
 	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), requests(t, svc).Mount)
-	waitingAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), requests(t, NewService(pool, 0)).Mount)
+	waitingAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), requests(t, testService(t, pool, 0)).Mount)
 
 	order := func(h http.Handler, userID uuid.UUID) (int, Request) {
 		t.Helper()

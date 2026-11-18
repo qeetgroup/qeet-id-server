@@ -1,10 +1,7 @@
-// Package requestsig signs the requests Qeet ID sends to an organization's own
-// endpoints, webhook deliveries and auth-hook calls alike, so one receiver's
-// check serves both. X-Qeet-Timestamp is the Unix second of sending, and
-// X-Qeet-Signature is "sha256=" and the hex HMAC-SHA256, keyed by a secret, of
-// the timestamp, a "." and the body: a receiver refuses a stale or replayed
-// request as well as a forged one. While a replaced secret overlaps its
-// successor the header holds a value for each, comma-separated, newest first.
+// Package requestsig signs the requests Qeet ID sends to an organization's endpoints, webhooks and
+// auth hooks alike: X-Qeet-Timestamp is the Unix second of sending, and X-Qeet-Signature is "sha256="
+// and the hex HMAC-SHA256 of the timestamp, "." and the body, so a receiver refuses stale, replayed
+// and forged requests. While a replaced secret overlaps, the header holds both, newest first.
 package requestsig
 
 import (

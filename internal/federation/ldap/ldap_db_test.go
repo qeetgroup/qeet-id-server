@@ -15,9 +15,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth/authtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
@@ -128,13 +127,6 @@ func ldapEntry(e dirEntry) *ber.Packet {
 	return op
 }
 
-// noFactors is an MFA service whose accounts hold no second factor.
-type noFactors struct{ auth.MFAEnroller }
-
-func (noFactors) LoginFactors(context.Context, uuid.UUID) ([]auth.LoginFactor, error) {
-	return nil, nil
-}
-
 // operations records each directory operation as "operation status".
 type operations struct {
 	mu  sync.Mutex
@@ -155,21 +147,32 @@ type noLDAP struct{}
 
 func (noLDAP) FeatureAllowed(context.Context, uuid.UUID, string) (bool, error) { return false, nil }
 
-// directoryService returns the LDAP service, allowed to reach loopback directories.
-func directoryService(t *testing.T) *Service {
+// newAuthService is the sign-in service the directory signs people in
+// through, its accounts holding no second factor.
+func newAuthService(t *testing.T) *auth.Service {
 	t.Helper()
-	pool := dbtest.Pool(t)
-	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
-	authSvc.SetMFA(noFactors{})
-	return serviceOver(t, authSvc)
+	return authtest.New(t, dbtest.Pool(t))
+}
+
+// directoryService returns the LDAP service, allowed to reach loopback
+// directories, its dependencies changed by each of with.
+func directoryService(t *testing.T, with ...func(*Deps)) *Service {
+	t.Helper()
+	return serviceOver(t, newAuthService(t), with...)
 }
 
 // serviceOver returns the LDAP service signing people in through authSvc,
 // allowed to reach loopback directories and able to open what the tests seal.
-func serviceOver(t *testing.T, authSvc *auth.Service) *Service {
+func serviceOver(t *testing.T, authSvc *auth.Service, with ...func(*Deps)) *Service {
 	t.Helper()
-	svc := NewService(dbtest.Pool(t), authSvc, egress.DevelopmentPolicy())
-	svc.SetCipher(testCipher(t))
+	d := testDeps(dbtest.Pool(t), authSvc, testCipher(t))
+	for _, change := range with {
+		change(&d)
+	}
+	svc, err := NewService(d)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return svc
 }
 

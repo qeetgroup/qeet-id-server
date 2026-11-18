@@ -3,25 +3,29 @@
 package abac_test
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/abac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rebac"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
 // TestRoleAndRelationConditionsDecide checks that a policy combining a role
 // with a relationship decides on the roles the platform supplies and on the
-// relationships stored for the subject, and that without a relationship
-// engine a relation condition grants nothing.
+// relationships stored for the subject.
 func TestRoleAndRelationConditionsDecide(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	svc := abac.NewService(pool)
 	relations := rebac.NewService(pool)
-	svc.SetRelationCheck(relations.Check)
+	svc, err := abac.NewService(pool, allPlans{}, relations.Check)
+	if err != nil {
+		t.Fatal(err)
+	}
 	organization := dbtest.Organization(t)
 	editor, viewer := dbtest.User(t, organization, organization), dbtest.User(t, organization, organization)
 	system := audit.Actor{Type: "system"}
@@ -54,8 +58,9 @@ func TestRoleAndRelationConditionsDecide(t *testing.T) {
 	if decide(viewer.ID.String(), "writer") {
 		t.Error("someone with the role but no relationship was allowed")
 	}
-	svc.SetRelationCheck(nil)
-	if decide(editor.ID.String(), "writer") {
-		t.Error("a relation condition granted without a relationship engine")
-	}
 }
+
+// allPlans is a plan gate that allows every feature.
+type allPlans struct{}
+
+func (allPlans) FeatureAllowed(context.Context, uuid.UUID, string) (bool, error) { return true, nil }

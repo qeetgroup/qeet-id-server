@@ -72,11 +72,9 @@ func (h *Handler) serverMetadata(r *http.Request) map[string]any {
 // asks for a refresh token (see issuesRefreshToken).
 var scopesSupported = []string{"openid", "profile", "email", "phone", scopeOfflineAccess}
 
-// protectedResourceMetadata implements RFC 9728 §3 — OAuth 2.0 Protected
-// Resource Metadata. MCP authorization servers must advertise this document
-// so MCP clients can discover the resource's authorization server and
-// supported token types without out-of-band configuration. The authorization
-// server is named by its issuer identifier, as the tokens carry it.
+// protectedResourceMetadata serves RFC 9728 §3 OAuth 2.0 Protected Resource Metadata, which MCP
+// clients read to discover the resource's authorization server and token types without out-of-band
+// configuration. The authorization server is named by its issuer, as the tokens carry it.
 func (h *Handler) protectedResourceMetadata(w http.ResponseWriter, r *http.Request) {
 	base := httpx.PublicOrigin(r, h.PublicBaseURL)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{

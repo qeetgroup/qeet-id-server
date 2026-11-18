@@ -85,7 +85,7 @@ func loadCredentials(ctx context.Context, q *dbgen.Queries, userID uuid.UUID) ([
 }
 
 // storeSession persists in-flight ceremony state and returns its opaque id.
-func (s *Service) storeSession(ctx context.Context, userID *uuid.UUID, kind string, data *webauthn.SessionData) (uuid.UUID, error) {
+func (s *RelyingParty) storeSession(ctx context.Context, userID *uuid.UUID, kind string, data *webauthn.SessionData) (uuid.UUID, error) {
 	raw, err := json.Marshal(data)
 	if err != nil {
 		return uuid.Nil, err

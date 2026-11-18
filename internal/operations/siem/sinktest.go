@@ -9,8 +9,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/siem/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -44,9 +44,6 @@ func (s *Service) TestSaved(ctx context.Context, organizationID, id uuid.UUID, a
 	}
 	if err != nil {
 		return nil, err
-	}
-	if s.box == nil {
-		return nil, errs.ErrInternalServer.WithDetail("SIEM token encryption is unavailable")
 	}
 	plain, err := s.box.Open(r.OrganizationID, "siem-token", r.ID.String(), r.TokenCt, r.TokenNonce)
 	if err != nil {

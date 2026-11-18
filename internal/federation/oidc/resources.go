@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
@@ -85,14 +85,10 @@ type CreateResourceInput struct {
 	ServerClientID string `json:"server_client_id"`
 }
 
-// CheckResourceDomain refuses a resource identifier that names the platform
-// itself (ErrOIDCResourceReserved: its token issuer or audience, or their host
-// or publicBaseURL's), one on a domain another organization has verified
-// (ErrOIDCResourceDomainTaken), and one on a host the organization hasn't
-// verified, or a domain above it (ErrOIDCResourceDomainUnverified): only a
-// host's owner may name a service there. It reads every organization's
-// domains, so it runs before the registration's transaction; CreateResource
-// rejects a malformed one.
+// CheckResourceDomain refuses a resource identifier naming the platform (ErrOIDCResourceReserved: its
+// issuer, audience, their hosts or publicBaseURL's), one on a domain another organization verified
+// (ErrOIDCResourceDomainTaken), or one on a host, or a domain above it, this organization hasn't
+// (ErrOIDCResourceDomainUnverified). It reads every organization's domains, so runs before the tx.
 func (s *Service) CheckResourceDomain(ctx context.Context, organizationID uuid.UUID, identifier, publicBaseURL string) error {
 	identifier = strings.TrimSpace(identifier)
 	host := hostOf(identifier)

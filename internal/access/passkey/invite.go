@@ -28,27 +28,19 @@ type InvitationAcceptor interface {
 	// invitation token names if a new account may accept it now, or the password
 	// path's refusal (invalid link, not pending, expired, or the email is taken).
 	InvitationForNewAccount(ctx context.Context, token string) (id, organizationID uuid.UUID, email string, err error)
-	// AcceptForNewAccountTx accepts invitation id for userID, the account
-	// just created in tx for email in organizationID: the invitation, read under
-	// lock, must still be pending, unexpired and for that email and
-	// organization. It grants the invited role and records the acceptance,
-	// made from ip with user agent ua.
+	// AcceptForNewAccountTx accepts invitation id for userID, the account just created in tx for email in
+	// organizationID: the invitation, read under lock, must still be pending, unexpired and for that
+	// email and organization. It grants the role and records the acceptance, from ip with user agent ua.
 	AcceptForNewAccountTx(ctx context.Context, tx pgx.Tx, id, organizationID, userID uuid.UUID, email, ip, ua string) error
 	// CheckInvitationSender refuses invitation id once whoever sent it may no
 	// longer give it. It reads the pool, so it runs before the transaction.
 	CheckInvitationSender(ctx context.Context, id uuid.UUID) error
 }
 
-// SetInvitations wires invitation acceptance by passkey (nil turns it off).
-func (s *Service) SetInvitations(a InvitationAcceptor) { s.invitations = a }
-
 // BeginInviteSignup starts the ceremony for the invitation token names. It is
 // refused as the password path would be, or when the organization has passkeys
 // off. Starting again replaces an earlier ceremony for the same invitation.
 func (s *Service) BeginInviteSignup(ctx context.Context, token, displayName string) (uuid.UUID, *protocol.CredentialCreation, error) {
-	if s.invitations == nil {
-		return uuid.Nil, nil, errs.ErrNotImplemented
-	}
 	inviteID, organizationID, email, err := s.invitations.InvitationForNewAccount(ctx, token)
 	if err != nil {
 		return uuid.Nil, nil, err
@@ -66,9 +58,6 @@ func (s *Service) BeginInviteSignup(ctx context.Context, token, displayName stri
 // organization with it, accepts the invitation, and signs the person in. The
 // passkey is named as in FinishRegister.
 func (s *Service) FinishInviteSignup(ctx context.Context, sessionID uuid.UUID, credential json.RawMessage, name, ip, ua string) (*auth.TokenPair, error) {
-	if s.invitations == nil {
-		return nil, errs.ErrNotImplemented
-	}
 	name, err := enrolmentName(name, ua)
 	if err != nil {
 		return nil, err

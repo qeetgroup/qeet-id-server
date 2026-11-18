@@ -5,15 +5,9 @@ import (
 	"strconv"
 )
 
-// Result is a list's body: its items (never null), next_cursor only when there
-// is another page, and truncated only when a list with no paging was cut at
-// MaxListItems. A body with more fields embeds it, and encoding/json flattens
-// it:
-//
-//	type Page struct {
-//		paging.Result[Event]
-//		Total int `json:"total"`
-//	}
+// Result is a list's body: its items (never null), next_cursor only when there is another page, and
+// truncated only when an unpaged list was cut at MaxListItems. A body with more fields embeds it and
+// encoding/json flattens it, as in struct{ paging.Result[Event]; Total int `json:"total"` }.
 type Result[T any] struct {
 	Items      []T    `json:"items"`
 	NextCursor string `json:"next_cursor,omitempty"`

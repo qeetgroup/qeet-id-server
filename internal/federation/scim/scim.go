@@ -6,9 +6,9 @@ package scim
 
 import (
 	"context"
+	"errors"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim/dbgen"
@@ -28,9 +28,7 @@ const (
 	maxPageCount     = 200
 )
 
-// Service manages SCIM tokens and provisioned users and groups. A nil signals
-// announces no ended sessions; a nil gate leaves token rotation and SCIM
-// requests ungated, and nil seats leaves group membership uncapped.
+// Service manages SCIM tokens and provisioned users and groups.
 type Service struct {
 	signals  *sessionsignal.Signaller
 	pool     *pgxpool.Pool
@@ -42,42 +40,43 @@ type Service struct {
 	seats    entitlements.SeatGuard
 }
 
-// SetSeatGuard wires the seat limit on group membership (nil disables it).
-func (s *Service) SetSeatGuard(g entitlements.SeatGuard) { s.seats = g }
+// Deps are what the SCIM service is built from; every one is required.
+type Deps struct {
+	Pool     *pgxpool.Pool
+	Users    *user.Repository
+	Signals  *sessionsignal.Signaller // announces the sessions a suspension ends
+	Gate     entitlements.PlanGate    // whether the plan includes SCIM
+	Seats    entitlements.SeatGuard   // the seat limit on group membership
+	Mapper   ProfileMapper            // the attribute mappings provisioned users get
+	Observer OperationObserver        // records each provisioning operation
+}
 
-// seatLimit returns the organization's seat cap, or -1 without a seat guard.
-func (s *Service) seatLimit(ctx context.Context, organizationID uuid.UUID) (int, error) {
-	if s.seats == nil {
-		return -1, nil
+// NewService returns the SCIM service built from d, or an error naming the
+// dependency d lacks.
+func NewService(d Deps) (*Service, error) {
+	switch {
+	case d.Pool == nil:
+		return nil, errors.New("scim: missing Pool")
+	case d.Users == nil:
+		return nil, errors.New("scim: missing Users")
+	case d.Signals == nil:
+		return nil, errors.New("scim: missing Signals")
+	case d.Gate == nil:
+		return nil, errors.New("scim: missing Gate")
+	case d.Seats == nil:
+		return nil, errors.New("scim: missing Seats")
+	case d.Mapper == nil:
+		return nil, errors.New("scim: missing Mapper")
+	case d.Observer == nil:
+		return nil, errors.New("scim: missing Observer")
 	}
-	return s.seats.SeatLimit(ctx, organizationID)
+	return &Service{
+		signals: d.Signals, pool: d.Pool, q: dbgen.New(d.Pool), users: d.Users,
+		observer: d.Observer, mapper: d.Mapper, gate: d.Gate, seats: d.Seats,
+	}, nil
 }
 
-// withinSeats runs change in tx through the seat guard, if there is one.
-func (s *Service) withinSeats(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, limit int, change func() error) error {
-	if s.seats == nil {
-		return change()
-	}
-	return s.seats.WithinSeats(ctx, tx, organizationID, limit, change)
-}
-
-// SetSessionSignals sets where the sessions ended by a SCIM suspension are
-// announced.
-func (s *Service) SetSessionSignals(sig *sessionsignal.Signaller) { s.signals = sig }
-
-// NewService returns the SCIM service.
-func NewService(pool *pgxpool.Pool, users *user.Repository) *Service {
-	return &Service{pool: pool, q: dbgen.New(pool), users: users}
-}
-
-// SetPlanGate wires the plan-feature gate (nil allows all features).
-func (s *Service) SetPlanGate(g entitlements.PlanGate) { s.gate = g }
-
-// planIncludesSCIM reports whether the organization's plan includes SCIM; with no
-// gate set, every plan does.
+// planIncludesSCIM reports whether the organization's plan includes SCIM.
 func (s *Service) planIncludesSCIM(ctx context.Context, organizationID uuid.UUID) (bool, error) {
-	if s.gate == nil {
-		return true, nil
-	}
 	return s.gate.FeatureAllowed(ctx, organizationID, "scim")
 }

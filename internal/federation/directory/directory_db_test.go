@@ -10,10 +10,13 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth/authtest"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ldap"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
@@ -65,7 +68,10 @@ func TestSuspendedDirectoryPrivacyReviewAndReactivation(test *testing.T) {
 		}
 	}
 	router := chi.NewRouter()
-	(&user.Handler{Repo: repository, ActOnCheck: rbac.NewRepository(dbtest.Pool(test)).CheckActOn}).Mount(router)
+	(&user.Handler{
+		Repo: repository, SignIns: authtest.New(test, dbtest.Pool(test)), Mailer: &dbtest.Mailbox{},
+		ActOnCheck: rbac.NewRepository(dbtest.Pool(test)).CheckActOn,
+	}).Mount(router)
 	call := func(method, path string, body any) *httptest.ResponseRecorder {
 		raw, _ := json.Marshal(body)
 		request := httptest.NewRequest(method, path, bytes.NewReader(raw))
@@ -113,10 +119,9 @@ func TestConnectionsCountTheirPeopleAndGroups(test *testing.T) {
 	ctx := dbtest.Context(test)
 	organizationID, other := dbtest.Organization(test), dbtest.Organization(test)
 	first, second := uuid.New(), uuid.New()
-	service := NewService(&scimFixture{config: &scim.ConfigView{TokenSet: true}}, &ldapFixture{records: []ldap.Connection{
+	service := newService(test, pool, &scimFixture{config: &scim.ConfigView{TokenSet: true}}, &ldapFixture{records: []ldap.Connection{
 		{ID: first, OrganizationID: organizationID, Name: "Head office"}, {ID: second, OrganizationID: organizationID, Name: "Branch"},
 	}})
-	service.SetEventStore(pool)
 	link := func(organization uuid.UUID, connection uuid.UUID) uuid.UUID {
 		person := dbtest.User(test, organization, organization)
 		if _, err := pool.Exec(ctx, `INSERT INTO account.external_identities (user_id, organization_id, provider, subject, connection_id) VALUES ($1, $2, 'ldap', $3, $4)`,
@@ -159,4 +164,55 @@ func TestConnectionsCountTheirPeopleAndGroups(test *testing.T) {
 	if got["ldap:Head office"] != "2/nil" || got["ldap:Branch"] != "0/nil" || got["scim:SCIM"] != "0/2" {
 		test.Errorf("counts %v; want Head office 2 people, Branch 0, SCIM 2 groups", got)
 	}
+}
+
+func TestConnectionSnapshotDoesNotInventHealthOrExposeCredentials(test *testing.T) {
+	organizationID := uuid.New()
+	pool := dbtest.Pool(test)
+	usedAt := time.Date(2026, 9, 12, 10, 0, 0, 0, time.UTC)
+	scimSource := &scimFixture{config: &scim.ConfigView{
+		TokenSet: true, TokenPrefix: "private-prefix", LastUsedAt: &usedAt, ProvisionedCount: 128,
+	}}
+	ldapSource := &ldapFixture{records: []ldap.Connection{{
+		ID: uuid.New(), OrganizationID: organizationID, Name: "Corporate directory", Status: "active",
+		ServerURL: "ldaps://directory.example.test", BindDN: "private-bind-dn", LastLoginAt: &usedAt,
+	}}}
+	records, err := newService(test, pool, scimSource, ldapSource).List(dbtest.Context(test), organizationID)
+	if err != nil {
+		test.Fatal(err)
+	}
+	if len(records) != 2 {
+		test.Fatalf("got %d connections, want 2", len(records))
+	}
+	for _, record := range records {
+		if record.Health != "unknown" || record.LastSyncAt != nil || record.Environment != nil {
+			test.Fatalf("configuration was presented as sync telemetry: %+v", record)
+		}
+		if record.LastActivityAt == nil || !record.LastActivityAt.Equal(usedAt) {
+			test.Fatal("last activity was not retained")
+		}
+	}
+	raw, err := json.Marshal(records)
+	if err != nil {
+		test.Fatal(err)
+	}
+	for _, prohibited := range []string{"private-prefix", "private-bind-dn", "bind_password", "token_prefix"} {
+		if strings.Contains(string(raw), prohibited) {
+			test.Fatalf("connection snapshot exposed %q", prohibited)
+		}
+	}
+}
+
+// newService is the directory service on pool over the two sources.
+func newService(test *testing.T, pool *pgxpool.Pool, scimSource SCIMSource, ldapSource LDAPSource) *Service {
+	test.Helper()
+	store, err := NewStore(pool)
+	if err != nil {
+		test.Fatal(err)
+	}
+	service, err := NewService(store, scimSource, ldapSource)
+	if err != nil {
+		test.Fatal(err)
+	}
+	return service
 }

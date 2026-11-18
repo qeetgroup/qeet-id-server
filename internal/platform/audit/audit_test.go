@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
@@ -44,11 +45,11 @@ func sampleEvent() Event {
 func TestCanonicalize_Deterministic(t *testing.T) {
 	e := sampleEvent()
 	meta, _ := json.Marshal(e.Metadata)
-	a, err := canonicalize(e, 0, fixedID, fixedCreatedAt, meta, chainSeed)
+	a, err := canonicalize(e, 0, fixedID, fixedCreatedAt, meta, ChainSeed)
 	if err != nil {
 		t.Fatalf("canonicalize: %v", err)
 	}
-	b, _ := canonicalize(e, 0, fixedID, fixedCreatedAt, meta, chainSeed)
+	b, _ := canonicalize(e, 0, fixedID, fixedCreatedAt, meta, ChainSeed)
 	if string(a) != string(b) {
 		t.Errorf("canonicalize must be deterministic: %s vs %s", a, b)
 	}
@@ -57,7 +58,7 @@ func TestCanonicalize_Deterministic(t *testing.T) {
 func TestCanonicalize_Snapshot(t *testing.T) {
 	e := sampleEvent()
 	meta, _ := json.Marshal(e.Metadata)
-	got, err := canonicalize(e, 0, fixedID, fixedCreatedAt, meta, chainSeed)
+	got, err := canonicalize(e, 0, fixedID, fixedCreatedAt, meta, ChainSeed)
 	if err != nil {
 		t.Fatalf("canonicalize: %v", err)
 	}
@@ -78,15 +79,15 @@ func TestCanonicalize_ShardIsHashedBeyondTheFirstChain(t *testing.T) {
 	e := sampleEvent()
 	e.OrganizationID = nil
 	meta, _ := json.Marshal(e.Metadata)
-	first, _ := canonicalize(e, 0, fixedID, fixedCreatedAt, meta, chainSeed)
+	first, _ := canonicalize(e, 0, fixedID, fixedCreatedAt, meta, ChainSeed)
 	if strings.Contains(string(first), "chain_shard") {
 		t.Errorf("a chain 0 row names its chain: %s", first)
 	}
-	other, _ := canonicalize(e, 7, fixedID, fixedCreatedAt, meta, chainSeed)
+	other, _ := canonicalize(e, 7, fixedID, fixedCreatedAt, meta, ChainSeed)
 	if want := strings.TrimSuffix(string(first), "}") + `,"chain_shard":7}`; string(other) != want {
 		t.Errorf("a chain 7 row:\n got: %s\nwant: %s", other, want)
 	}
-	moved, _ := canonicalize(e, 8, fixedID, fixedCreatedAt, meta, chainSeed)
+	moved, _ := canonicalize(e, 8, fixedID, fixedCreatedAt, meta, ChainSeed)
 	if hashHex(moved) == hashHex(other) {
 		t.Error("a row moved to another platform chain hashes the same")
 	}
@@ -100,7 +101,7 @@ func TestCanonicalize_NilUUIDsRenderEmpty(t *testing.T) {
 		Metadata:     nil,
 	}
 	meta := []byte("{}")
-	out, err := canonicalize(e, 0, fixedID, fixedCreatedAt, meta, chainSeed)
+	out, err := canonicalize(e, 0, fixedID, fixedCreatedAt, meta, ChainSeed)
 	if err != nil {
 		t.Fatalf("canonicalize: %v", err)
 	}
@@ -120,8 +121,8 @@ func TestCanonicalize_MetadataKeyOrderIndependent(t *testing.T) {
 	e2.Metadata = map[string]any{"n": 42.0, "k": "v"}
 	m1, _ := json.Marshal(e1.Metadata)
 	m2, _ := json.Marshal(e2.Metadata)
-	a, _ := canonicalize(e1, 0, fixedID, fixedCreatedAt, m1, chainSeed)
-	b, _ := canonicalize(e2, 0, fixedID, fixedCreatedAt, m2, chainSeed)
+	a, _ := canonicalize(e1, 0, fixedID, fixedCreatedAt, m1, ChainSeed)
+	b, _ := canonicalize(e2, 0, fixedID, fixedCreatedAt, m2, ChainSeed)
 	if string(a) != string(b) {
 		t.Errorf("canonical bytes must be map-order-independent:\n a=%s\n b=%s", a, b)
 	}
@@ -139,58 +140,13 @@ func TestHashHex_KnownValue(t *testing.T) {
 }
 
 func TestChainSeed_IsAllZeros(t *testing.T) {
-	if len(chainSeed) != 64 {
-		t.Errorf("chainSeed must be 64 hex chars, got %d", len(chainSeed))
+	if len(ChainSeed) != 64 {
+		t.Errorf("ChainSeed must be 64 hex chars, got %d", len(ChainSeed))
 	}
-	for i, c := range chainSeed {
+	for i, c := range ChainSeed {
 		if c != '0' {
-			t.Errorf("chainSeed[%d] = %q, want '0'", i, c)
+			t.Errorf("ChainSeed[%d] = %q, want '0'", i, c)
 		}
-	}
-}
-
-func TestNormaliseMetadata_RoundTripCanonical(t *testing.T) {
-	// Simulate what Postgres returns for JSONB: same logical structure,
-	// possibly with whitespace.
-	cases := []struct {
-		in   string
-		want string
-	}{
-		{`{"a":1,"b":2}`, `{"a":1,"b":2}`},
-		{`{"a": 1, "b": 2}`, `{"a":1,"b":2}`},          // spaces stripped
-		{`{"b":2,"a":1}`, `{"a":1,"b":2}`},             // keys sorted
-		{``, `{}`},                                     // empty becomes {}
-		{`null`, `{}`},                                 // null becomes {}
-		{`{"n":{"a":1,"b":2}}`, `{"n":{"a":1,"b":2}}`}, // nested keys sorted
-	}
-	for _, tc := range cases {
-		t.Run(tc.in, func(t *testing.T) {
-			got, err := normaliseMetadata([]byte(tc.in))
-			if err != nil {
-				t.Fatalf("normaliseMetadata(%q) error: %v", tc.in, err)
-			}
-			if string(got) != tc.want {
-				t.Errorf("normaliseMetadata(%q) = %q, want %q", tc.in, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestNormaliseMetadata_RecoversInsertBytes(t *testing.T) {
-	// When Record inserts metadata, it does json.Marshal of map[string]any.
-	// When Verify reads it back, normaliseMetadata should reproduce the
-	// exact same bytes regardless of how the DB formatted the column.
-	original := map[string]any{"nested": map[string]any{"b": 2, "a": 1}, "x": 5.0}
-	insertBytes, _ := json.Marshal(original)
-
-	// Simulate Postgres adding spaces and Go re-Unmarshalling them on read.
-	pgBytes := []byte(`{"nested": {"a": 1, "b": 2}, "x": 5}`)
-	verifyBytes, err := normaliseMetadata(pgBytes)
-	if err != nil {
-		t.Fatalf("normaliseMetadata: %v", err)
-	}
-	if string(insertBytes) != string(verifyBytes) {
-		t.Errorf("round-trip mismatch:\n insert: %s\n verify: %s", insertBytes, verifyBytes)
 	}
 }
 
@@ -199,7 +155,7 @@ func TestChainHashes_LinkProperly(t *testing.T) {
 	e := sampleEvent()
 	meta, _ := json.Marshal(e.Metadata)
 
-	canon1, _ := canonicalize(e, 0, fixedID, fixedCreatedAt, meta, chainSeed)
+	canon1, _ := canonicalize(e, 0, fixedID, fixedCreatedAt, meta, ChainSeed)
 	hash1 := hashHex(canon1)
 
 	id2 := uuid.MustParse("55555555-5555-4555-8555-555555555555")
@@ -215,7 +171,7 @@ func TestChainHashes_LinkProperly(t *testing.T) {
 	tampered := e
 	tampered.Action = "user.delete"
 	tamperedMeta, _ := json.Marshal(tampered.Metadata)
-	canon1b, _ := canonicalize(tampered, 0, fixedID, fixedCreatedAt, tamperedMeta, chainSeed)
+	canon1b, _ := canonicalize(tampered, 0, fixedID, fixedCreatedAt, tamperedMeta, ChainSeed)
 	if hashHex(canon1b) == hash1 {
 		t.Error("tampering with action must change row hash")
 	}
@@ -224,7 +180,7 @@ func TestChainHashes_LinkProperly(t *testing.T) {
 func TestCanonicalize_PrevHashAffectsOutput(t *testing.T) {
 	e := sampleEvent()
 	meta, _ := json.Marshal(e.Metadata)
-	a, _ := canonicalize(e, 0, fixedID, fixedCreatedAt, meta, chainSeed)
+	a, _ := canonicalize(e, 0, fixedID, fixedCreatedAt, meta, ChainSeed)
 	b, _ := canonicalize(e, 0, fixedID, fixedCreatedAt, meta, strings.Repeat("f", 64))
 	if string(a) == string(b) {
 		t.Error("prev_hash must be embedded in canonical output")

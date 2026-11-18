@@ -40,11 +40,10 @@ func forgotten(q *dbgen.Queries) []struct {
 	}
 }
 
-// ForgetCredentials removes, inside tx, every way userID signs in or acts that
-// someone could have set up before the address was proved: its password
-// (unless keepPassword), passkeys, second factors, pending verifications,
-// linked accounts, unexchanged sign-in codes and personal API keys (revoked).
-// Its sessions are EndSignIns' to end. It returns how many of each it removed.
+// ForgetCredentials removes, inside tx, every way userID signs in or acts that someone could have set
+// up before the address was proved: password (unless keepPassword), passkeys, second factors, pending
+// verifications, linked accounts, unexchanged sign-in codes and personal API keys (revoked), and
+// returns how many of each. Ending its sessions is EndSignIns' job.
 func ForgetCredentials(ctx context.Context, tx pgx.Tx, userID uuid.UUID, keepPassword bool) (map[string]int64, error) {
 	q := dbgen.New(tx)
 	steps := forgotten(q)

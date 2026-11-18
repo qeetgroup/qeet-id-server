@@ -3,6 +3,7 @@
 package group
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"slices"
@@ -10,21 +11,40 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
 
+// newService returns the group service on a plan with no seat limit.
+func newService(t *testing.T) *Service {
+	t.Helper()
+	svc, err := NewService(dbtest.Pool(t), noSeatLimit{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return svc
+}
+
+// noSeatLimit is a seat guard with no limit.
+type noSeatLimit struct{}
+
+func (noSeatLimit) SeatLimit(context.Context, uuid.UUID) (int, error) { return -1, nil }
+func (noSeatLimit) WithinSeats(_ context.Context, _ pgx.Tx, _ uuid.UUID, _ int, change func() error) error {
+	return change()
+}
+
 // TestGroupsStayInTheirOrganization checks that one organization can neither read nor
 // change another organization's group or its members, nor add another organization's user
 // to a group of its own.
 func TestGroupsStayInTheirOrganization(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t))
+	svc := newService(t)
 	organizationA, organizationB := dbtest.Organization(t), dbtest.Organization(t)
 	memberA := dbtest.User(t, organizationA, organizationA)
 	adminB := dbtest.User(t, organizationB, organizationB)
@@ -86,7 +106,7 @@ func TestGroupsStayInTheirOrganization(t *testing.T) {
 // templates, and again in another organization.
 func TestGroupNamesAreUniquePerOrganization(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t))
+	svc := newService(t)
 	organizationA, organizationB := dbtest.Organization(t), dbtest.Organization(t)
 	adminA := dbtest.User(t, organizationA, organizationA)
 	actor := audit.Actor{Type: "user"}
@@ -163,7 +183,7 @@ func TestGroupsListTheirRoles(t *testing.T) {
 	pool := dbtest.Pool(t)
 	organization, other := dbtest.Organization(t), dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
-	svc := NewService(pool)
+	svc := newService(t)
 	group := func(organizationID uuid.UUID, name string) uuid.UUID {
 		var id uuid.UUID
 		if err := pool.QueryRow(ctx, `INSERT INTO organization.groups (organization_id, name) VALUES ($1, $2) RETURNING id`, organizationID, name).Scan(&id); err != nil {

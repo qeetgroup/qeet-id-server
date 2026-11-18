@@ -1,25 +1,22 @@
-// Command scheduler runs the Qeet ID scheduled maintenance jobs (audit-chain
-// verification and the cleanups) standalone. The API normally runs them as
-// its embedded "scheduler" worker; either way each job runs once per interval
-// across every instance, so running this beside the API is safe.
-//
-// "scheduler replay-dead-letters [-type event.type] [-since RFC3339]" instead
-// moves dead-lettered outbox events back to the outbox, to be published again,
-// and exits. "scheduler mark-invoice-paid -invoice ID -reference REF" records
-// an invoice paid outside a checkout, such as by bank transfer, and exits.
-// "scheduler open-incident -component C -impact I -title T [-detail D]" and
-// "scheduler resolve-incident -incident ID" post and end a service incident.
+// Command scheduler runs the scheduled maintenance jobs standalone; the API normally runs them as its
+// "scheduler" worker, and each job runs once per interval across all instances, so both are safe.
+// Subcommands: replay-dead-letters [-type T] [-since RFC3339], mark-invoice-paid -invoice ID -reference
+// REF, open-incident -component C -impact I -title T [-detail D], resolve-incident -incident ID.
 package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/qeetgroup/qeet-id-server/internal/bootstrap"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/webhook"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/notification"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/servicehealth"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/migrations"
@@ -66,35 +63,55 @@ func main() {
 		if os.Args[1] == resolveIncidentCommand {
 			run = resolveIncident
 		}
-		code := run(rootCtx, servicehealth.NewService(pool), os.Args[2:])
+		code := run(rootCtx, servicehealth.NewIncidents(pool), os.Args[2:])
 		pool.Close()
 		os.Exit(code)
 	}
-	billingService := bootstrap.SchedulerBilling(cfg, pool)
-	if len(os.Args) > 1 && os.Args[1] == markPaidCommand {
-		code := markInvoicePaid(rootCtx, billingService, os.Args[2:])
-		pool.Close()
-		os.Exit(code)
-	}
-	// Sessions the cleanup removes that were never ended are announced
-	// (session.revoked, reason expired) to the organizations' subscribers.
-	sessionSignals := sessionsignal.New(webhook.NewService(pool).EnqueueTx)
-
-	// The re-encryption job needs the same data keys as the API.
-	box, err := bootstrap.SecretsCipher(rootCtx, cfg)
+	scheduler, err := bootstrap.NewScheduler(cfg, pool)
 	if err != nil {
-		slog.Error("init domain encryption", "err", err)
+		slog.Error("start-up refused", "err", err)
 		os.Exit(1)
 	}
-
-	jobs := append(bootstrap.MaintenanceJobs(pool, sessionSignals, box, bootstrap.OutboundPolicy(cfg)), bootstrap.BillingJobs(billingService)...)
-	jobs = append(jobs, bootstrap.AccessRequestJobs(bootstrap.SchedulerAccessRequests(pool))...)
-	jobs = append(jobs, bootstrap.AuditRetentionJobs(pool, billingService, box)...)
+	if len(os.Args) > 1 && os.Args[1] == markPaidCommand {
+		code := markInvoicePaid(rootCtx, scheduler.Billing, os.Args[2:])
+		pool.Close()
+		os.Exit(code)
+	}
+	jobs, err := scheduledJobs(rootCtx, cfg, pool, scheduler)
+	if err != nil {
+		slog.Error("start-up refused", "err", err)
+		os.Exit(1)
+	}
 	for _, j := range jobs {
 		slog.Info("job registered", "name", j.Name, "interval", j.Interval)
 	}
 	worker.RunScheduled(rootCtx, pool, jobs, worker.SchedulerTick)
 	slog.Info("scheduler shutdown complete")
+}
+
+// scheduledJobs returns every job the scheduler runs, or the dependency a
+// constructor refused. The webhook queue carries what the jobs announce: the
+// sessions the cleanup removes (session.revoked, reason expired) and the roles
+// the access-request sweep takes back.
+func scheduledJobs(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, s bootstrap.Scheduler) ([]worker.Scheduled, error) {
+	queue := webhook.NewQueue(pool)
+	signals := sessionsignal.New(queue.EnqueueTx)
+	// The re-encryption job needs the same data keys as the API.
+	box, err := bootstrap.SecretsCipher(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("init domain encryption: %w", err)
+	}
+	jobs, err := bootstrap.MaintenanceJobs(pool, signals, box, bootstrap.OutboundPolicy(cfg))
+	if err != nil {
+		return nil, err
+	}
+	accessRequests, err := bootstrap.SchedulerAccessRequests(pool, signals, s.Billing, queue.Enqueue, notification.NewService(pool))
+	if err != nil {
+		return nil, err
+	}
+	jobs = append(jobs, bootstrap.BillingJobs(s.Billing, s.Invoices)...)
+	jobs = append(jobs, bootstrap.AccessRequestJobs(accessRequests)...)
+	return append(jobs, bootstrap.AuditRetentionJobs(pool, s.Plans, box)...), nil
 }
 
 // setUp loads the configuration and installs the logger as the API does,

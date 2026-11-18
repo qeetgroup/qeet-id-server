@@ -6,6 +6,7 @@ package billing
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"strings"
 	"time"
@@ -14,7 +15,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/billing/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
 var currencyRe = regexp.MustCompile(`^[A-Z]{3}$`)
@@ -57,11 +57,10 @@ type Subscription struct {
 	grace time.Duration // how long a renewal may go unpaid
 }
 
-// Invoice is an issued invoice. AmountMinor is the total charged: TaxableMinor
-// plus TaxMinor. Status is "paid" once a payment was captured or when nothing
-// is owed, "open" until then, due at DueAt, and "void" for a renewal no longer
-// owed. Kind is "purchase" or "renewal". Number is the GST invoice number, nil
-// on a zero invoice; BilledTo is the billing profile when it was issued.
+// Invoice is an issued invoice. AmountMinor is TaxableMinor plus TaxMinor. Status is "paid" once
+// captured or when nothing is owed, "open" until then (due at DueAt), or "void" for a renewal no longer
+// owed. Kind is "purchase" or "renewal". Number is the GST invoice number (nil on a zero invoice);
+// BilledTo is the billing profile when it was issued.
 type Invoice struct {
 	ID            uuid.UUID `json:"id"`
 	Number        *string   `json:"invoice_number"`
@@ -104,18 +103,25 @@ type BillingProfile struct {
 
 // Service manages plans, subscriptions, invoices and checkouts. Without a card
 // provider, Checkout refuses a paid plan unless invoice-only billing is enabled.
-// Invoice tax is off until SetTaxConfig configures it.
 type Service struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
 
-	payments              *Payments      // card providers; nil means none
-	allowUnpaidActivation bool           // invoice-only billing; off by default
+	payments              *Payments      // card providers
+	allowUnpaidActivation bool           // invoice-only billing
 	orgProvisioner        OrgProvisioner // creates a signup checkout's organization
 	tax                   TaxConfig      // invoice tax; the zero value charges none
 	paymentGrace          time.Duration  // how long an open invoice may go unpaid
-	mailer                notifier.Sender
-	consoleURL            string // where invoice emails send the reader
+}
+
+// Config is how a Service bills. Payments and OrgProvisioner are required; a
+// non-positive PaymentGrace is DefaultPaymentGrace.
+type Config struct {
+	Payments              *Payments      // card providers: NewPayments with no keys charges no card
+	AllowUnpaidActivation bool           // invoice-only billing: Checkout activates a paid plan no card provider can charge
+	OrgProvisioner        OrgProvisioner // creates the organization a signup checkout pays for
+	Tax                   TaxConfig      // invoice tax; the zero value charges none
+	PaymentGrace          time.Duration  // how long an open invoice may go unpaid: a renewal's plan lapses that long after its period ends
 }
 
 // OrgProvisioner creates an organization owned by ownerID. It completes
@@ -127,43 +133,25 @@ type OrgProvisioner interface {
 // DefaultPaymentGrace is how long an open invoice may go unpaid by default.
 const DefaultPaymentGrace = 7 * 24 * time.Hour
 
-// NewService returns a Service with no card providers, tax disabled and the
-// default payment grace.
-func NewService(pool *pgxpool.Pool) *Service {
-	return &Service{pool: pool, q: dbgen.New(pool), paymentGrace: DefaultPaymentGrace}
+// NewService returns a Service billing as c says. It refuses a Config without
+// Payments or an OrgProvisioner.
+func NewService(pool *pgxpool.Pool, c Config) (*Service, error) {
+	switch {
+	case c.Payments == nil:
+		return nil, errors.New("billing: the payment providers are required (NewPayments charges no card without keys)")
+	case c.OrgProvisioner == nil:
+		return nil, errors.New("billing: an organization provisioner is required to complete signup checkouts")
+	}
+	grace := c.PaymentGrace
+	if grace <= 0 {
+		grace = DefaultPaymentGrace
+	}
+	return &Service{pool: pool, q: dbgen.New(pool), payments: c.Payments, allowUnpaidActivation: c.AllowUnpaidActivation,
+		orgProvisioner: c.OrgProvisioner, tax: c.Tax, paymentGrace: grace}, nil
 }
 
 // Pool returns the service's database pool.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
-
-// SetPayments sets the card-payment providers.
-func (s *Service) SetPayments(p *Payments) { s.payments = p }
-
-// SetAllowUnpaidActivation enables invoice-only billing: Checkout activates a
-// paid plan that no card provider can charge, instead of refusing it.
-func (s *Service) SetAllowUnpaidActivation(v bool) { s.allowUnpaidActivation = v }
-
-// SetOrgProvisioner sets the organization creator that completes signup
-// checkouts.
-func (s *Service) SetOrgProvisioner(p OrgProvisioner) { s.orgProvisioner = p }
-
-// SetTaxConfig sets the invoice tax configuration. The zero value charges no
-// tax.
-func (s *Service) SetTaxConfig(c TaxConfig) { s.tax = c }
-
-// SetPaymentGrace sets how long an open invoice may go unpaid: a renewal's plan
-// lapses that long after its period ends. Non-positive keeps the default.
-func (s *Service) SetPaymentGrace(d time.Duration) {
-	if d > 0 {
-		s.paymentGrace = d
-	}
-}
-
-// SetMailer sets where invoice emails go, and the console address they link
-// to. A nil mailer emails nothing.
-func (s *Service) SetMailer(m notifier.Sender, consoleURL string) {
-	s.mailer, s.consoleURL = m, strings.TrimRight(consoleURL, "/")
-}
 
 // SandboxEnabled reports whether the dev-only sandbox payment provider is active.
 func (s *Service) SandboxEnabled() bool { return s.payments.SandboxEnabled() }

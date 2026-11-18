@@ -7,12 +7,10 @@ import (
 	"net/url"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/authpolicy"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
@@ -48,10 +46,9 @@ func tokenIn(t *testing.T, m notifier.Message) string {
 // branding, and both of its organizations see the request.
 func TestMagicLinkNamingAnotherOrganization(t *testing.T) {
 	ctx := dbtest.Context(t)
-	pool := dbtest.Pool(t)
 	mail := &dbtest.Mailbox{}
-	svc := NewService(pool, mail, time.Hour, "https://console.example.test")
-	svc.SetMagicLinkPolicy(authpolicy.NewService(pool))
+	svc := newService(t, mail)
+	svc.magicLinks = policies(t)
 	home, named := dbtest.Organization(t), dbtest.Organization(t)
 	magicLinksFor(t, home, true, 10)
 	magicLinksFor(t, named, true, 1440)
@@ -116,7 +113,7 @@ func TestMagicLinkIntoUnprovedAccountEndsItsPassword(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	mail := &dbtest.Mailbox{}
-	svc := NewService(pool, mail, time.Hour, "https://console.example.test")
+	svc := newService(t, mail)
 	organization := dbtest.Organization(t)
 	squatted := dbtest.User(t, organization, organization)
 	giveCredentials(t, squatted, organization)

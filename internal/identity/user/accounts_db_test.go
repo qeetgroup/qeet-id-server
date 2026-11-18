@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -167,7 +167,7 @@ func TestNoAccountsOnAnotherOrganizationsDomain(t *testing.T) {
 	organization, other := dbtest.Organization(t), dbtest.Organization(t)
 	own, theirs := dbtest.Domain(t, organization), dbtest.Domain(t, other)
 	admin := dbtest.User(t, organization, organization)
-	h := &Handler{Repo: NewRepository(pool), Validate: jsonNamedValidator()}
+	h := &Handler{Repo: NewRepository(pool), Validate: jsonNamedValidator(), SignIns: endSessions{}, Mailer: &dbtest.Mailbox{}}
 	as := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)
 
 	for _, email := range []string{

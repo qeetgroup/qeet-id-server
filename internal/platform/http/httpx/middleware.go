@@ -140,11 +140,9 @@ const permissionsPolicy = "accelerometer=(), autoplay=(), camera=(), " +
 	"picture-in-picture=(), screen-wake-lock=(), sync-xhr=(), usb=(), " +
 	"web-share=(), xr-spatial-tracking=()"
 
-// RefuseEncodedSeparators answers 400 to a request whose path carries an
-// encoded slash or backslash (%2F, %5C). The router splits the raw path and
-// the permission, step-up, row-level scoping, CSRF and idempotency checks the
-// decoded one, so such a path could name one route to the router and another
-// to a check.
+// RefuseEncodedSeparators answers 400 to a path carrying an encoded slash or backslash (%2F, %5C). The
+// router splits the raw path while the permission, step-up, row-level scoping, CSRF and idempotency
+// checks see the decoded one, so such a path could name different routes to each.
 func RefuseEncodedSeparators(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if p := strings.ToUpper(r.URL.EscapedPath()); strings.Contains(p, "%2F") || strings.Contains(p, "%5C") {

@@ -22,7 +22,10 @@ func TestMain(m *testing.M) { dbtest.Main(m) }
 func TestReportJudgesEachComponentByTheOrganization(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	svc := NewService(pool)
+	svc, err := NewService(pool, func(context.Context) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
 	organization, other := dbtest.Organization(t), dbtest.Organization(t)
 	if _, err := pool.Exec(ctx, `TRUNCATE platform.incidents`); err != nil {
 		t.Fatal(err)
@@ -94,8 +97,11 @@ func TestReportJudgesEachComponentByTheOrganization(t *testing.T) {
 		t.Errorf("its own health: %d %s", rec.Code, rec.Body.String())
 	}
 
-	svc.SignInReady = func(context.Context) error { return errors.New("no signing key") }
-	if rep, err := svc.Report(ctx, organization); err != nil || states(rep)[ComponentSignIn] != StateOutage {
+	keyless, err := NewService(pool, func(context.Context) error { return errors.New("no signing key") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep, err := keyless.Report(ctx, organization); err != nil || states(rep)[ComponentSignIn] != StateOutage {
 		t.Errorf("without a signing key: %+v, %v; want sign_in outage", rep, err)
 	}
 }

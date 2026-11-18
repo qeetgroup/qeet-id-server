@@ -12,7 +12,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/provision"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 )
 
 // findOrCreateUser returns the account the connection signs in for the
@@ -108,14 +108,11 @@ type ProfileMapper interface {
 	StoreProfile(context.Context, pgx.Tx, uuid.UUID, uuid.UUID, string, map[string]any) error
 }
 
-// SetProfileMapper sets the mapper applied to signed-in directory accounts.
-func (service *Service) SetProfileMapper(mapper ProfileMapper) { service.mapper = mapper }
-
 // storeMappedProfile stores the profile the connection's mapping made of the
 // directory user's attributes, in the sign-in's transaction (identitylink's
 // Flow.Store).
 func (service *Service) storeMappedProfile(ctx context.Context, tx pgx.Tx, src provision.Source, userID uuid.UUID, p provision.Person) error {
-	if service.mapper == nil || len(p.Profile) == 0 {
+	if len(p.Profile) == 0 {
 		return nil
 	}
 	return service.mapper.StoreProfile(ctx, tx, src.OrganizationID, userID, src.ConnectionID.String(), p.Profile)

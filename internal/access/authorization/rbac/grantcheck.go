@@ -13,14 +13,10 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// Nobody hands out authority they don't hold. Granting a permission to a role
-// needs the caller to hold it; giving a role (directly, by group or by
-// invitation, or by adding them to a group that holds it) needs every
-// permission it carries; issuing a machine credential
-// needs every scope it carries; only an owner gives the owner role. A person
-// holds their permissions, an owner everything; a credential (API key, service
-// principal, agent) holds only its scopes, and no more than the person it acts
-// for holds now.
+// Nobody hands out authority they don't hold. Granting a permission to a role needs it; giving a role
+// (directly, by group, by invitation, or by a group that holds it) needs every permission it carries;
+// a machine credential needs every scope it carries; only an owner gives the owner role. A person
+// holds their permissions (an owner, all); a credential only its scopes, never more than its person's.
 
 // CheckGrantPermission refuses, with ErrRBACGrantExceedsCaller naming it, the
 // caller granting permID to a role of organizationID without holding it there.
@@ -52,11 +48,10 @@ func (r *Repository) CheckGrantRole(ctx context.Context, caller *httpx.Principal
 	return r.checkGrant(ctx, caller, organizationID, role.Keys, role.OwnerRole)
 }
 
-// CheckGrantGroup refuses the caller adding someone to groupID of organizationID when
-// the group's roles carry authority the caller doesn't hold: ErrRBACOwnerOnly
-// for a group holding the owner role, ErrRBACGrantExceedsCaller naming a
-// permission otherwise. A group that isn't organizationID's passes, so the write
-// itself must refuse it.
+// CheckGrantGroup refuses the caller adding someone to groupID of organizationID when the group's
+// roles carry authority the caller doesn't hold: ErrRBACOwnerOnly for the owner role, otherwise
+// ErrRBACGrantExceedsCaller naming a permission. A group of another organization passes, so the
+// write itself must refuse it.
 func (r *Repository) CheckGrantGroup(ctx context.Context, caller *httpx.Principal, organizationID, groupID uuid.UUID) error {
 	group, err := r.q.GroupGrantScope(ctx, dbgen.GroupGrantScopeParams{GroupID: groupID, OrganizationID: organizationID})
 	if err != nil {

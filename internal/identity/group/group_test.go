@@ -5,7 +5,16 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// TestNewServiceNeedsASeatGuard checks that the group service can't be built
+// without the seat guard a role-carrying group is held to.
+func TestNewServiceNeedsASeatGuard(t *testing.T) {
+	if svc, err := NewService(&pgxpool.Pool{}, nil); err == nil {
+		t.Fatalf("NewService without a seat guard: %v, nil; want an error", svc)
+	}
+}
 
 // TestUpdateInputTellsAMissingParentFromNull checks that UpdateInput tells a
 // missing parent_id (keep the parent) from an explicit null (make it top-level).

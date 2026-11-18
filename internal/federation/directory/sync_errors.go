@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/directory/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -55,7 +55,7 @@ const errorWhere = `organization_id=$1 AND started_at >= $2 AND ($3='' OR connec
 // Errors returns one page of the organization's directory errors.
 func (service *Service) Errors(ctx context.Context, organizationID uuid.UUID, filter errorFilter) (ErrorPage, error) {
 	page := ErrorPage{Result: paging.Page([]Event{}, ""), Categories: []Breakdown{}, Connections: []Breakdown{}, Remediations: []Event{}, Limit: filter.Limit}
-	if organizationID == uuid.Nil || service.pool == nil {
+	if organizationID == uuid.Nil {
 		return page, errs.ErrUnauthorized
 	}
 	args := []any{organizationID, filter.Since, filter.ConnectionID, filter.Severity, filter.Resolution, postgres.EscapeLike(filter.Search)}

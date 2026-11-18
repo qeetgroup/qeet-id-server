@@ -3,6 +3,7 @@
 package social
 
 import (
+	"context"
 	"errors"
 	"net/url"
 	"strings"
@@ -10,11 +11,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
-	"github.com/qeetgroup/qeet-id-server/internal/access/authpolicy"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/invite"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -74,7 +73,14 @@ func TestInboxClosedToAnAddressOnlyAProviderAsserted(t *testing.T) {
 	inviter := dbtest.User(t, inviting, inviting)
 	invitee := dbtest.Unique("new.hire") + "@example.test"
 	role := dbtest.Role(t, inviting, "user.read")
-	invites := invite.NewService(pool, &dbtest.Mailbox{}, 0, "https://console.example.test")
+	policies := registrationPolicies(t)
+	invites, err := invite.NewService(pool, invite.Deps{
+		Sender: &dbtest.Mailbox{}, BaseAppURL: "https://console.example.test", Rules: policies,
+		Methods: policies, Limits: noSeatCap{}, Grants: rbac.NewRepository(pool).CheckGrantRole,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	inv, _, err := invites.Create(ctx, invite.CreateInput{OrganizationID: inviting, Email: invitee, RoleID: &role}, audit.Actor{UserID: &inviter.ID, Type: "user"})
 	if err != nil {
 		t.Fatalf("invite: %v", err)
@@ -227,8 +233,7 @@ func TestSocialDoesNotAdoptAnAdministrator(t *testing.T) {
 // adopted by address, and nothing new is linked; a break-glass member still
 // signs in.
 func TestSocialSignInRefusedOnACapturedDomain(t *testing.T) {
-	f := newSocialFixture(t)
-	capturing(t, f)
+	f := newSocialFixture(t, capturing(t))
 	organization := dbtest.Organization(t)
 	domain := dbtest.Domain(t, organization)
 	addProvider(t, f, organization, "corp")
@@ -316,7 +321,7 @@ func TestSocialRelinkRefreshesTheLinksAddress(t *testing.T) {
 // can't sign a guest in and switch into the guest's home.
 func TestSocialSignInAdoptsOnlyAnAccountInTheOrganization(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t), nil, "https://api.id.qeet.in")
+	svc := newTestService(t, dbtest.Pool(t), newAuthService(t, nil))
 	home, joined, other := dbtest.Organization(t), dbtest.Organization(t), dbtest.Organization(t)
 	account := dbtest.User(t, home, joined)
 	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE account.users SET email_verified_at = NOW() WHERE id = $1`, account.ID); err != nil {
@@ -346,9 +351,7 @@ func TestSocialSignInAdoptsOnlyAnAccountInTheOrganization(t *testing.T) {
 func TestSocialSignUpWithOneConnection(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
-	authSvc.SetRegistrationPolicy(authpolicy.NewService(pool))
-	svc := NewService(pool, authSvc, "https://api.id.qeet.in")
+	svc := newTestService(t, pool, newAuthService(t, registrationPolicies(t)))
 	open, closed := dbtest.Organization(t), dbtest.Organization(t)
 	if _, err := pool.Exec(ctx, `INSERT INTO organization.auth_policy (organization_id, self_registration_enabled) VALUES ($1, TRUE)`, open); err != nil {
 		t.Fatalf("policy: %v", err)
@@ -375,7 +378,7 @@ func TestSocialSignUpWithOneConnection(t *testing.T) {
 func TestSocialSignInAdoptsADirectoryProvisionedAccount(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	svc := NewService(pool, nil, "https://api.id.qeet.in")
+	svc := newTestService(t, pool, newAuthService(t, nil))
 	organization := dbtest.Organization(t)
 	provisioned, registered := dbtest.User(t, organization, organization), dbtest.User(t, organization, organization)
 	if _, err := pool.Exec(ctx, `UPDATE account.users SET provisioned_via = 'scim' WHERE id = $1`, provisioned.ID); err != nil {
@@ -401,7 +404,7 @@ func TestSocialSignInAdoptsADirectoryProvisionedAccount(t *testing.T) {
 // controls such a provider can't sign in as them.
 func TestSocialSignInIgnoresConnectionLinks(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t), nil, "https://api.id.qeet.in")
+	svc := newTestService(t, dbtest.Pool(t), newAuthService(t, nil))
 	organization := dbtest.Organization(t)
 	linked := dbtest.User(t, organization, organization)
 	for _, provider := range []string{"saml", "ldap", "oidc"} {
@@ -417,3 +420,8 @@ func TestSocialSignInIgnoresConnectionLinks(t *testing.T) {
 		}
 	}
 }
+
+// noSeatCap puts no cap on seats.
+type noSeatCap struct{}
+
+func (noSeatCap) Limit(context.Context, uuid.UUID, string) (int, error) { return -1, nil }

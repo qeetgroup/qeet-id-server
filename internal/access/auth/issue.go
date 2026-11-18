@@ -11,7 +11,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -21,9 +21,6 @@ import (
 // their own organization for uuid.Nil. Every sign-in runs it once its first
 // factor is proven, so a refusal applies whatever the method.
 func (s *Service) signInHook(ctx context.Context, userID, organizationID uuid.UUID) (map[string]any, error) {
-	if s.loginHook == nil {
-		return nil, nil
-	}
 	u, err := s.users.Get(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -35,12 +32,8 @@ func (s *Service) signInHook(ctx context.Context, userID, organizationID uuid.UU
 }
 
 // hookClaims runs the login hook for a sign-in of u to organizationID: the organization's
-// policy endpoint may deny it, or supply claims to carry into the token. No
-// hook wired: no claims.
+// policy endpoint may deny it, or supply claims to carry into the token.
 func (s *Service) hookClaims(ctx context.Context, organizationID uuid.UUID, u *user.User) (map[string]any, error) {
-	if s.loginHook == nil {
-		return nil, nil
-	}
 	return s.loginHook.Run(ctx, organizationID, u.ID, u.Email)
 }
 

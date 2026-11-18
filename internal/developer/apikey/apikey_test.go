@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -169,5 +170,28 @@ func TestCreateChecksTheName(t *testing.T) {
 		if e := errs.As(err); e == nil || e.Code != want {
 			t.Errorf("a name of %d characters: %v, want %s", len([]rune(name)), err, want)
 		}
+	}
+}
+
+// unlimited caps nothing.
+type unlimited struct{}
+
+func (unlimited) Limit(context.Context, uuid.UUID, string) (int, error) { return -1, nil }
+
+// testService returns an API key service over pool with no plan cap.
+func testService(t testing.TB, pool *pgxpool.Pool) *Service {
+	t.Helper()
+	svc, err := NewService(pool, unlimited{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return svc
+}
+
+// TestNewServiceNeedsAPlanLimiter checks that the API key service is not
+// built without the plan limiter that caps an organization's keys.
+func TestNewServiceNeedsAPlanLimiter(t *testing.T) {
+	if _, err := NewService(new(pgxpool.Pool), nil); err == nil {
+		t.Error("built without a plan limiter")
 	}
 }

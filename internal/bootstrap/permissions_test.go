@@ -34,6 +34,9 @@ func routeInventoryDeps(t *testing.T) Deps {
 		}
 	}
 	deps.RBACChecker = allowRouteInventoryChecker{}
+	// The route throttles the access and identity handlers mount with.
+	pass := func(h http.Handler) http.Handler { return h }
+	deps.Auth.Throttle, deps.MFA.PairingThrottle, deps.Verification.Throttle = pass, pass, pass
 
 	// These handlers conditionally mount route families when an optional
 	// collaborator is present. Populate those exported pointers so the inventory

@@ -13,8 +13,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
-	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -22,11 +20,7 @@ import (
 // captureService returns the service as bootstrap wires it for capture.
 func captureService(t *testing.T) *Service {
 	t.Helper()
-	pool := dbtest.Pool(t)
-	svc := NewService(pool)
-	svc.SetOwners(rbac.NewRepository(pool))
-	svc.SetMemberPermissions(identitylink.MemberPermissions())
-	return svc
+	return newService(t)
 }
 
 // exec runs a statement for a test's setup.

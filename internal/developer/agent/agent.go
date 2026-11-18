@@ -19,7 +19,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/agent/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/rotation"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
@@ -48,12 +48,10 @@ func (s *Service) AgentStatus(ctx context.Context, agentID uuid.UUID) (string, e
 	return status, err
 }
 
-// Agent is an AI-agent identity. Status is active, suspended or decommissioned;
-// Disabled mirrors Status != "active" for older clients. SponsorUserID is the
-// person accountable for it (required for new agents, nil on older ones), and
-// Secret, the plaintext credential, is returned only on create. LastUsedAt is
-// when it was last issued a token, to the minute; PreviousSecretExpiresAt,
-// when the secret it replaced at its last rotation stops working.
+// Agent is an AI-agent identity. Status is active, suspended or decommissioned (Disabled mirrors
+// Status != "active" for older clients). SponsorUserID is the accountable person (nil only on older
+// agents); Secret is returned only on create. LastUsedAt is its last token, to the minute;
+// PreviousSecretExpiresAt is when the secret replaced at its last rotation stops working.
 type Agent struct {
 	ID                      uuid.UUID  `json:"id"`
 	Name                    string     `json:"name"`

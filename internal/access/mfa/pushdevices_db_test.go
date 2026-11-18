@@ -10,7 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -85,7 +85,7 @@ func TestNativeAppLinkAndTokenRotation(t *testing.T) {
 
 	// Over HTTP, as the app calls it: no session, the credential in the body.
 	fresh := link("1234")
-	h := dbtest.Serve(nil, (&Handler{Service: svc}).MountPublic)
+	h := dbtest.Serve(nil, (&Handler{Service: svc, PairingThrottle: func(h http.Handler) http.Handler { return h }}).MountPublic)
 	path := "/mfa/push/devices/" + fresh.Device.ID.String() + "/push-token"
 	if rec := dbtest.Do(t, h, http.MethodPost, path, map[string]any{"user_id": a.ID, "device_token": fresh.DeviceToken, "push_token": "5678"}); rec.Code != http.StatusNoContent {
 		t.Errorf("POST push-token: %d %s, want 204", rec.Code, rec.Body.String())

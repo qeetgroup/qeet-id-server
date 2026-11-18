@@ -1,6 +1,7 @@
 package authpolicy
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,17 +13,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authpolicy/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// SecurityPolicy is an organization's security policy: its sessions, second
-// factor and step-up. Session and step-up settings left zero on update take
-// the defaults; session settings apply to sessions opened after they are set.
-// Which addresses may sign in is not part of it: that is the address rules
-// (internal/access/ipallow).
+// SecurityPolicy is an organization's sessions, second-factor and step-up policy. Session and step-up
+// settings left zero on update take the defaults; session settings apply to sessions opened after
+// they're set. Which addresses may sign in is the address rules' (internal/access/ipallow).
 type SecurityPolicy struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
 
@@ -108,7 +107,7 @@ const (
 
 // SecurityPolicies stores security policies. sessionMaxAge and sessionIdle are
 // the session bounds of an organization that sets none (SESSION_MAX_AGE and
-// SESSION_IDLE_TIMEOUT, via SetSessionDefaults).
+// SESSION_IDLE_TIMEOUT).
 type SecurityPolicies struct {
 	pool          *pgxpool.Pool
 	q             *dbgen.Queries
@@ -116,15 +115,13 @@ type SecurityPolicies struct {
 	sessionIdle   time.Duration
 }
 
-// NewSecurityPolicies returns a SecurityPolicies over pool.
-func NewSecurityPolicies(pool *pgxpool.Pool) *SecurityPolicies {
-	return &SecurityPolicies{pool: pool, q: dbgen.New(pool), sessionMaxAge: 30 * 24 * time.Hour, sessionIdle: 24 * time.Hour}
-}
-
-// SetSessionDefaults sets the session bounds reported for an organization that
-// has not set its own, and stored for one that saves its policy without them.
-func (r *SecurityPolicies) SetSessionDefaults(maxAge, idle time.Duration) {
-	r.sessionMaxAge, r.sessionIdle = maxAge, idle
+// NewSecurityPolicies returns a SecurityPolicies over pool. maxAge and idle
+// are the session bounds reported for an organization that has not set its
+// own, and stored for one that saves its policy without them; zero is 30 days
+// and 24 hours.
+func NewSecurityPolicies(pool *pgxpool.Pool, maxAge, idle time.Duration) *SecurityPolicies {
+	return &SecurityPolicies{pool: pool, q: dbgen.New(pool),
+		sessionMaxAge: cmp.Or(maxAge, 30*24*time.Hour), sessionIdle: cmp.Or(idle, 24*time.Hour)}
 }
 
 // normalize fills what an update left zero (the platform session bounds, with

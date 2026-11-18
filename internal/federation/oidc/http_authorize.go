@@ -79,11 +79,10 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, appendQuery(redirect, "code", code, "state", state, "iss", h.Service.issuer.JWTIssuer()), http.StatusFound) // #nosec G710 -- redirect_uri matched against the registered list (a loopback port aside)
 }
 
-// factorsAnswered answers the authorization request when the application's
-// organization requires a second factor this sign-in didn't meet, and reports
-// whether it did. The hosted sign-in asks for the requirement of the
-// application it serves, so the browser signs in again for this request,
-// once; a fresh sign-in that still hasn't met one is refused.
+// factorsAnswered answers the authorization request when the application's organization requires a
+// second factor this sign-in didn't meet, and reports whether it did. The hosted sign-in asks for the
+// requirement of the application it serves, so the browser signs in again, once; a fresh sign-in
+// that still hasn't met it is refused.
 func (h *Handler) factorsAnswered(w http.ResponseWriter, r *http.Request, loginSessionID, userID uuid.UUID, clientID, redirect, state string, silent bool, loginAfter, signedInAt, now time.Time) bool {
 	switch err := h.factorShortfall(r.Context(), loginSessionID, userID, clientID); {
 	case err == nil:
@@ -100,11 +99,9 @@ func (h *Handler) factorsAnswered(w http.ResponseWriter, r *http.Request, loginS
 	return true
 }
 
-// consentAnswered answers the authorization request when the person hasn't
-// consented to scopes, or prompt asks again, and reports whether it did: it
-// hands off to the hosted consent screen with only the id of the request
-// stored here; the decision acts on the stored values, not on anything the
-// browser sends back.
+// consentAnswered answers the authorization request when the person hasn't consented to scopes, or
+// prompt asks again, and reports whether it did: it hands off to the hosted consent screen with only
+// the stored request's id, and the decision acts on the stored values, never on what the browser sends.
 func (h *Handler) consentAnswered(w http.ResponseWriter, r *http.Request, q url.Values, loginSessionID, userID uuid.UUID, clientID, redirect, state string, scopes []string, silent bool) bool {
 	has, err := h.Service.HasConsent(r.Context(), userID, clientID, scopes)
 	if err != nil {

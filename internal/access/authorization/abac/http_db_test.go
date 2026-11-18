@@ -11,7 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -21,7 +21,7 @@ import (
 func TestTemplatesThroughTheAPI(t *testing.T) {
 	organization := dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
-	api := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: NewService(dbtest.Pool(t))}).Mount)
+	api := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: newService(t)}).Mount)
 	base := "/organizations/" + organization.String() + "/abac"
 	save := func(name, effect, resourceType, action, condition string, priority int) *httptest.ResponseRecorder {
 		return dbtest.Do(t, api, http.MethodPost, base+"/policies", map[string]any{
@@ -101,7 +101,7 @@ func TestTemplatesThroughTheAPI(t *testing.T) {
 func TestEvaluateADraft(t *testing.T) {
 	organization, other := dbtest.Organization(t), dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
-	svc := NewService(dbtest.Pool(t))
+	svc := newService(t)
 	api := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: svc}).Mount)
 	base := "/organizations/" + organization.String() + "/abac"
 	rec := dbtest.Do(t, api, http.MethodPost, base+"/policies", map[string]any{

@@ -23,10 +23,10 @@ func TestRiskEmailCodeSending(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	svc := newService(t)
-	svc.SetMFA(&poolFactors{pool: pool})
-	svc.SetRiskAssessor(&riskStub{risky: true})
+	svc.mfa = &poolFactors{pool: pool}
+	svc.riskAssessor = &riskStub{risky: true}
 	mail := &poolMailbox{pool: pool}
-	svc.SetSender(mail)
+	svc.sender = mail
 	a, _ := member(t)
 	if _, err := pool.Exec(ctx, `UPDATE account.users SET email_verified_at = NOW() WHERE id = $1`, a.ID); err != nil {
 		t.Fatal(err)
@@ -103,7 +103,7 @@ func TestRiskRecordsOnlyIssuedSignIns(t *testing.T) {
 
 	t.Run("signed in", func(t *testing.T) {
 		svc, risk := newService(t), &riskStub{}
-		svc.SetRiskAssessor(risk)
+		svc.riskAssessor = risk
 		a, _ := member(t)
 		if res, err := login(svc, a); err != nil || res.Pair == nil {
 			t.Fatalf("sign in: %+v, %v", res, err)
@@ -114,7 +114,7 @@ func TestRiskRecordsOnlyIssuedSignIns(t *testing.T) {
 	})
 	t.Run("refused at the session limit", func(t *testing.T) {
 		svc, risk := newService(t), &riskStub{}
-		svc.SetRiskAssessor(risk)
+		svc.riskAssessor = risk
 		a, organization := member(t)
 		atSessionLimit(t, svc, a, organization)
 		if _, err := login(svc, a); !errors.Is(err, ErrSessionLimit) {
@@ -126,10 +126,10 @@ func TestRiskRecordsOnlyIssuedSignIns(t *testing.T) {
 	})
 	t.Run("refused for its address", func(t *testing.T) {
 		svc, risk := newService(t), &riskStub{}
-		svc.SetRiskAssessor(risk)
-		svc.SetAddressPolicy(addressFunc(func(context.Context, uuid.UUID, uuid.UUID, string, string) error {
+		svc.riskAssessor = risk
+		svc.addresses = addressFunc(func(context.Context, uuid.UUID, uuid.UUID, string, string) error {
 			return errs.ErrAuthAddressNotAllowed
-		}))
+		})
 		a, _ := member(t)
 		if _, err := login(svc, a); !errors.Is(err, errs.ErrAuthAddressNotAllowed) {
 			t.Fatalf("sign in: %v, want %v", err, errs.ErrAuthAddressNotAllowed)
@@ -140,9 +140,9 @@ func TestRiskRecordsOnlyIssuedSignIns(t *testing.T) {
 	})
 	t.Run("challenge met, then refused at the session limit", func(t *testing.T) {
 		svc, risk, mail := newService(t), &riskStub{risky: true}, &dbtest.Mailbox{}
-		svc.SetRiskAssessor(risk)
-		svc.SetMFA(&poolFactors{pool: pool})
-		svc.SetSender(mail)
+		svc.riskAssessor = risk
+		svc.mfa = &poolFactors{pool: pool}
+		svc.sender = mail
 		a, organization := member(t)
 		if _, err := pool.Exec(ctx, `UPDATE account.users SET email_verified_at = NOW() WHERE id = $1`, a.ID); err != nil {
 			t.Fatal(err)

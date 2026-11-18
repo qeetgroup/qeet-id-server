@@ -17,8 +17,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/organization/branding/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -46,20 +46,20 @@ type Repository struct {
 	publicBase string // this API's public origin, for links to an uploaded logo
 }
 
-// NewRepository returns a Repository over pool.
-func NewRepository(pool *pgxpool.Pool) *Repository {
-	return &Repository{pool: pool, q: dbgen.New(pool)}
+// NewRepository returns a Repository over pool. gate decides whether an
+// organization's plan includes custom branding; publicBaseURL is this API's
+// public origin, where an uploaded logo is served for emails and hosted pages
+// to link to (empty: the logo's data URL is shown).
+func NewRepository(pool *pgxpool.Pool, gate entitlements.PlanGate, publicBaseURL string) (*Repository, error) {
+	if gate == nil {
+		return nil, errors.New("branding: the repository needs a plan gate")
+	}
+	return &Repository{pool: pool, q: dbgen.New(pool), gate: gate, publicBase: strings.TrimRight(publicBaseURL, "/")}, nil
 }
-
-// SetPlanGate sets the plan-feature gate (nil allows all features).
-func (r *Repository) SetPlanGate(g entitlements.PlanGate) { r.gate = g }
 
 // brandingAllowed reports whether the organization's plan includes custom branding;
 // a gate that can't answer counts as no, so the default look is shown.
 func (r *Repository) brandingAllowed(ctx context.Context, organizationID uuid.UUID) bool {
-	if r.gate == nil {
-		return true
-	}
 	ok, err := r.gate.FeatureAllowed(ctx, organizationID, "custom_branding")
 	return err == nil && ok
 }
@@ -216,14 +216,12 @@ func (r *Repository) upsert(ctx context.Context, tx pgx.Tx, b Branding) error {
 		return err
 	}
 	// Plan gate: custom branding (logo, colors, custom email sender) is a paid feature.
-	if r.gate != nil {
-		ok, err := r.gate.FeatureAllowed(ctx, b.OrganizationID, "custom_branding")
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "custom_branding"})
-		}
+	allowed, err := r.gate.FeatureAllowed(ctx, b.OrganizationID, "custom_branding")
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "custom_branding"})
 	}
 	settings, err := json.Marshal(b.Settings)
 	if err != nil {

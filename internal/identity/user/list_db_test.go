@@ -51,7 +51,7 @@ func TestTheMembersListIsSearchedAndCountedOnTheServer(t *testing.T) {
 	visitor := dbtest.User(t, other, organization) // managed by another organization
 	stranger := dbtest.User(t, other, other)
 
-	h := dbtest.Serve(dbtest.Principal(alice.ID, organization), (&Handler{Repo: NewRepository(pool), Validate: jsonNamedValidator()}).Mount)
+	h := dbtest.Serve(dbtest.Principal(alice.ID, organization), (&Handler{Repo: NewRepository(pool), Validate: jsonNamedValidator(), SignIns: endSessions{}, Mailer: &dbtest.Mailbox{}}).Mount)
 	type page struct {
 		Items      []User `json:"items"`
 		NextCursor string `json:"next_cursor"`
@@ -183,7 +183,7 @@ func TestAMembersRecordSaysWhereTheyStand(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.sessions (user_id, organization_id, last_seen_at, ip) VALUES ($1, $2, NOW(), '198.51.100.4')`, visitor.ID, organization); err != nil {
 		t.Fatal(err)
 	}
-	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Repo: NewRepository(pool), Validate: jsonNamedValidator()}).Mount)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Repo: NewRepository(pool), Validate: jsonNamedValidator(), SignIns: endSessions{}, Mailer: &dbtest.Mailbox{}}).Mount)
 
 	var got User
 	dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, "/users/"+visitor.ID.String(), nil), &got)

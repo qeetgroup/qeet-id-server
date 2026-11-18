@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/directory/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -32,11 +32,11 @@ func toMapping(r dbgen.ListDirectoryMappingsRow) Mapping {
 }
 
 // Mappings returns a connection's mappings.
-func (service *Service) Mappings(ctx context.Context, organizationID uuid.UUID, connectionID string) ([]Mapping, error) {
+func (store *Store) Mappings(ctx context.Context, organizationID uuid.UUID, connectionID string) ([]Mapping, error) {
 	if organizationID == uuid.Nil || !validConnectionID(organizationID, connectionID) {
 		return nil, errs.ErrBadRequest
 	}
-	rows, err := service.q.ListDirectoryMappings(ctx, dbgen.ListDirectoryMappingsParams{OrganizationID: organizationID, ConnectionID: connectionID})
+	rows, err := store.q.ListDirectoryMappings(ctx, dbgen.ListDirectoryMappingsParams{OrganizationID: organizationID, ConnectionID: connectionID})
 	if err != nil {
 		return nil, err
 	}
@@ -48,8 +48,8 @@ func (service *Service) Mappings(ctx context.Context, organizationID uuid.UUID, 
 }
 
 // MapProfile applies a connection's mappings to source.
-func (service *Service) MapProfile(ctx context.Context, organizationID uuid.UUID, connectionID string, source map[string]any, partial bool) (map[string]any, error) {
-	mappings, err := service.Mappings(ctx, organizationID, connectionID)
+func (store *Store) MapProfile(ctx context.Context, organizationID uuid.UUID, connectionID string, source map[string]any, partial bool) (map[string]any, error) {
+	mappings, err := store.Mappings(ctx, organizationID, connectionID)
 	if err != nil {
 		return nil, err
 	}
@@ -72,8 +72,8 @@ func (service *Service) MapProfile(ctx context.Context, organizationID uuid.UUID
 
 // SourceAttributes returns the LDAP attributes the connection's enabled
 // mappings read.
-func (service *Service) SourceAttributes(ctx context.Context, organizationID uuid.UUID, connectionID string) ([]string, error) {
-	mappings, err := service.Mappings(ctx, organizationID, connectionID)
+func (store *Store) SourceAttributes(ctx context.Context, organizationID uuid.UUID, connectionID string) ([]string, error) {
+	mappings, err := store.Mappings(ctx, organizationID, connectionID)
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +87,7 @@ func (service *Service) SourceAttributes(ctx context.Context, organizationID uui
 }
 
 // StoreProfile stores a mapped profile on the user.
-func (service *Service) StoreProfile(ctx context.Context, tx pgx.Tx, organizationID, userID uuid.UUID, connectionID string, profile map[string]any) error {
+func (store *Store) StoreProfile(ctx context.Context, tx pgx.Tx, organizationID, userID uuid.UUID, connectionID string, profile map[string]any) error {
 	if organizationID == uuid.Nil || userID == uuid.Nil || !validConnectionID(organizationID, connectionID) {
 		return errs.ErrBadRequest
 	}
@@ -103,7 +103,7 @@ func (service *Service) StoreProfile(ctx context.Context, tx pgx.Tx, organizatio
 	if err != nil || len(raw) > 65536 {
 		return errs.ErrBadRequest
 	}
-	q := service.q.WithTx(tx)
+	q := store.q.WithTx(tx)
 	if err := q.UpsertDirectoryProfile(ctx, dbgen.UpsertDirectoryProfileParams{
 		OrganizationID: organizationID, UserID: userID, ConnectionID: connectionID, Profile: raw,
 	}); err != nil {

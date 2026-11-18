@@ -174,7 +174,7 @@ func TestErasureRemovesEveryTrace(t *testing.T) {
 		t.Fatalf("the traces cover %d tables, want every one erasure clears (%d)", len(left), len(accountData)+len(addressData))
 	}
 
-	svc := NewService(dbtest.Pool(t), time.Nanosecond)
+	svc := testService(t, dbtest.Pool(t), time.Nanosecond)
 	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), requests(t, svc).Mount)
 	rec := dbtest.Do(t, asAdmin, http.MethodPost, "/gdpr/purge", map[string]any{"user_id": erased.ID})
 	var req Request
@@ -212,7 +212,7 @@ func TestDeleteOwnAccountRemovesEveryTrace(t *testing.T) {
 	organization := dbtest.Organization(t)
 	a := account(t, organization)
 	leaveTraces(t, organization, a)
-	h := dbtest.Serve(dbtest.Principal(a.ID, organization), (&Handler{Service: NewService(dbtest.Pool(t), 0)}).Mount)
+	h := dbtest.Serve(dbtest.Principal(a.ID, organization), handler(t, testService(t, dbtest.Pool(t), 0), noPassword{}).Mount)
 	if rec := dbtest.Do(t, h, http.MethodPost, "/account/delete", nil); rec.Code != http.StatusNoContent {
 		t.Fatalf("delete own account: %d %s", rec.Code, rec.Body.String())
 	}
@@ -269,7 +269,7 @@ func TestErasureOfAnAccountAlreadyGone(t *testing.T) {
 	organization := dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
 	gone := account(t, organization)
-	svc := NewService(pool, time.Nanosecond)
+	svc := testService(t, pool, time.Nanosecond)
 	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), requests(t, svc).Mount)
 	var req Request
 	dbtest.Decode(t, dbtest.Do(t, asAdmin, http.MethodPost, "/gdpr/purge", map[string]any{"user_id": gone.ID}), &req)

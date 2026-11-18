@@ -23,7 +23,7 @@ import (
 // tokens share one issuer, so a second registration would let one
 // organization mint tokens another's service accepts.
 func TestResourceIdentifiersBelongToOneOrganization(t *testing.T) {
-	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
+	svc := newTestService(t, dbtest.Pool(t), dbtest.Issuer(t))
 	alpha, beta := dbtest.Organization(t), dbtest.Organization(t)
 	if _, err := dbtest.Pool(t).Exec(context.Background(), `
 		INSERT INTO organization.domains (organization_id, domain, verification_token, verified_at) VALUES ($1, 'Alpha-Bank.example', 'token', NOW())`, alpha); err != nil {
@@ -68,7 +68,7 @@ func TestResourceCannotUseThePlatformAudience(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := NewService(dbtest.Pool(t), issuer)
+	svc := newTestService(t, dbtest.Pool(t), issuer)
 	organization := dbtest.Organization(t)
 	verifyDomain(t, organization, "platform-qeet.example")
 	h := dbtest.Serve(dbtest.Principal(dbtest.User(t, organization, organization).ID, organization),
@@ -94,7 +94,7 @@ func TestResourceCannotUseThePlatformAudience(t *testing.T) {
 // domain above it, so nobody gets tokens for a host before its owner proves
 // it; an identifier without a host, such as a URN, needs no domain.
 func TestResourceHostMustBeVerifiedByTheOrganization(t *testing.T) {
-	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
+	svc := newTestService(t, dbtest.Pool(t), dbtest.Issuer(t))
 	organization := dbtest.Organization(t)
 	h := dbtest.Serve(dbtest.Principal(dbtest.User(t, organization, organization).ID, organization), (&Handler{Service: svc}).Mount)
 	register := func(identifier string) (int, string) {
@@ -118,7 +118,7 @@ func TestResourceHostMustBeVerifiedByTheOrganization(t *testing.T) {
 // machine application is listed until an admin reviews it.
 func TestResourcesAndShadowAIReview(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
+	svc := newTestService(t, dbtest.Pool(t), dbtest.Issuer(t))
 	organization, otherOrganization := dbtest.Organization(t), dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
 	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: svc}).Mount)

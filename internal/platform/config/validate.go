@@ -73,10 +73,9 @@ func (c *Config) checkEnvironment() error {
 	return nil
 }
 
-// Validate refuses, outside SERVICE_ENV=dev, any dev-only convenience or
-// insecure default still in place, such as CSRF off, dev trust headers, the
-// payment sandbox, weak or missing keys, wildcard origins, hosts wrong for
-// the environment, or no email provider. In dev it only checks SERVICE_ENV and
+// Validate refuses, outside SERVICE_ENV=dev, any dev-only convenience or insecure default still in
+// place: CSRF off, dev trust headers, the payment sandbox, weak or missing keys, wildcard origins,
+// hosts wrong for the environment, or no email provider. In dev it checks only SERVICE_ENV and
 // SERVICE_PROFILE.
 func (c *Config) Validate() error {
 	if err := c.checkEnvironment(); err != nil {

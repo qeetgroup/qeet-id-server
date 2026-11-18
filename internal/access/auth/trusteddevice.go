@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -77,7 +77,7 @@ func (s *Service) IsTrustedDevice(ctx context.Context, userID, organizationID uu
 // on, and returns the cookie value and its lifetime. It returns "" when the
 // organization doesn't remember devices, whatever the client asked for.
 func (s *Service) MaybeRememberDevice(ctx context.Context, userID, organizationID uuid.UUID, label string) (string, time.Duration, error) {
-	if s.devicePolicy == nil || organizationID == uuid.Nil {
+	if organizationID == uuid.Nil {
 		return "", 0, nil
 	}
 	ok, ttl, err := s.devicePolicy.RememberDevicePolicy(ctx, organizationID)

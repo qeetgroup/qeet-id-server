@@ -1,10 +1,7 @@
-// Package ssosync keeps an account in step with what each sign-in through a
-// connection (SAML, LDAP, OpenID Connect) asserts about it: the profile its
-// connection maps, and its place in the organization's groups. Sync changes
-// only memberships the same connection's sign-ins made, never one an
-// administrator, an import or SCIM made, and never reaches a group holding the
-// owner role or an administrative permission. Every change is audited in the
-// sign-in's transaction.
+// Package ssosync keeps an account in step with what each connection sign-in (SAML, LDAP, OIDC)
+// asserts: the mapped profile and its groups. It changes only memberships that connection's sign-ins
+// made (never an administrator's, an import's or SCIM's) and never reaches a group holding the owner
+// role or an administrative permission. Every change is audited in the sign-in's transaction.
 package ssosync
 
 import (
@@ -18,7 +15,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ssosync/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 )
@@ -94,11 +91,10 @@ func DisplayName(name string) string {
 	return name
 }
 
-// refreshEmail moves the account to the asserted address under the rules an
-// address is adopted by: it must be on a domain the organization manages, not
-// be another account's, and the account mustn't administer the organization,
-// or the connection could take over an administrator's recovery. Recovery links
-// sent to the old address stop working.
+// refreshEmail moves the account to the asserted address under the adoption rules: on a domain the
+// organization manages, not another account's, and not for an account that administers the
+// organization, or the connection could take over an administrator's recovery. Recovery links sent to
+// the old address stop working.
 func refreshEmail(ctx context.Context, tx pgx.Tx, in SignIn, current string) (bool, error) {
 	email := strings.ToLower(strings.TrimSpace(in.Email))
 	if email == "" || !in.EmailManaged || strings.EqualFold(email, current) {

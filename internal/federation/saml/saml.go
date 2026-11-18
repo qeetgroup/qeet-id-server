@@ -6,6 +6,7 @@ package saml
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -30,12 +31,10 @@ const (
 	replayIDTTL     = 24 * time.Hour
 )
 
-// Connection is an organization's connection to an external SAML IdP.
-// AllowIdPInitiated and GroupsAttribute aren't in the generated connection
-// queries, so they are read separately. GroupsAttribute names the attribute
-// carrying a person's groups; "" reads the common ones (assertedGroups).
-// Certificates are every signing certificate it trusts; IdpCertificate is the
-// oldest of them. MetadataURL is where it refreshes its IdP settings from.
+// Connection is an organization's connection to an external SAML IdP. AllowIdPInitiated and
+// GroupsAttribute are read separately from the generated queries; GroupsAttribute names the groups
+// attribute ("" reads the common ones, assertedGroups). Certificates are every trusted signing
+// certificate, IdpCertificate the oldest; MetadataURL is where its IdP settings refresh from.
 type Connection struct {
 	ID                uuid.UUID     `json:"id"`
 	OrganizationID    uuid.UUID     `json:"organization_id"`
@@ -57,11 +56,10 @@ type Connection struct {
 	LastLoginAt       *time.Time    `json:"last_login_at"`
 }
 
-// Service manages an organization's IdP connections and runs SP-initiated sign-in.
-// nextRequestSweep and nextReplaySweep throttle deleting expired AuthnRequest and
-// replay rows, separately so a busy login or ACS path can't starve the other.
-// IdP metadata is fetched with metadataHTTP, within the egress policy; box
-// seals the connections' SP keys.
+// Service manages an organization's IdP connections and runs SP-initiated sign-in. nextRequestSweep
+// and nextReplaySweep throttle deleting expired AuthnRequest and replay rows, separately so a busy
+// login or ACS path can't starve the other. IdP metadata is fetched with metadataHTTP, inside the
+// egress policy; box seals the connections' SP keys.
 type Service struct {
 	pool             *pgxpool.Pool
 	q                *dbgen.Queries
@@ -74,16 +72,26 @@ type Service struct {
 	metadataHTTP     *http.Client
 	box              *envelope.Cipher
 	link             *provision.Flow
-	// The hosted login's origin and the addresses a sign-in it starts may return to (SetHostedLogin).
+	// The hosted login's origin and the addresses a sign-in it starts may
+	// return to.
 	loginBaseURL string
 	returnTo     returnto.Allowed
 }
 
-// SetHostedLogin lets a sign-in start on the hosted login: its answer goes back to
-// loginBaseURL's sign-in page, and its return_to must be a path or on one of origins.
-func (s *Service) SetHostedLogin(loginBaseURL string, origins ...string) {
-	s.loginBaseURL = strings.TrimRight(loginBaseURL, "/")
-	s.returnTo = returnto.Origins(origins...)
+// Deps are what the SAML service is built from. All are required but
+// LoginBaseURL and ReturnOrigins.
+type Deps struct {
+	Pool       *pgxpool.Pool
+	Auth       *auth.Service
+	Cipher     *envelope.Cipher      // seals the connections' SP keys
+	Gate       entitlements.PlanGate // whether the plan includes single sign-on
+	Egress     *egress.Policy        // the outbound policy metadata URLs are fetched under
+	AppBaseURL string                // where the console's callback is served
+	// LoginBaseURL lets a sign-in start on the hosted login: its answer goes
+	// back to that sign-in page, and its return_to must be a path or on one of
+	// ReturnOrigins. With none, no sign-in starts there.
+	LoginBaseURL  string
+	ReturnOrigins []string
 }
 
 // replaySweepInterval is how often any one replica collects expired SAML
@@ -99,14 +107,35 @@ func sweepDue(next *atomic.Int64) bool {
 	return now >= due && next.CompareAndSwap(due, now+int64(replaySweepInterval.Seconds()))
 }
 
-// NewService returns the SAML service.
-func NewService(pool *pgxpool.Pool, authSvc *auth.Service, appBaseURL string) *Service {
-	s := &Service{
-		pool:       pool,
-		q:          dbgen.New(pool),
-		auth:       authSvc,
-		appBaseURL: strings.TrimRight(appBaseURL, "/"),
-		link: &provision.Flow{Pool: pool, Method: provider, Errors: provision.Errors{
+// NewService returns the SAML service built from d, or an error naming the
+// dependency d lacks.
+func NewService(d Deps) (*Service, error) {
+	switch {
+	case d.Pool == nil:
+		return nil, errors.New("saml: missing Pool")
+	case d.Auth == nil:
+		return nil, errors.New("saml: missing Auth")
+	case d.Cipher == nil:
+		return nil, errors.New("saml: missing Cipher")
+	case d.Gate == nil:
+		return nil, errors.New("saml: missing Gate")
+	case d.Egress == nil:
+		return nil, errors.New("saml: missing Egress")
+	case d.AppBaseURL == "":
+		return nil, errors.New("saml: missing AppBaseURL")
+	}
+	return &Service{
+		pool:         d.Pool,
+		q:            dbgen.New(d.Pool),
+		auth:         d.Auth,
+		appBaseURL:   strings.TrimRight(d.AppBaseURL, "/"),
+		gate:         d.Gate,
+		egress:       d.Egress,
+		metadataHTTP: d.Egress.HTTPClient(metadataFetchTimeout),
+		box:          d.Cipher,
+		loginBaseURL: strings.TrimRight(d.LoginBaseURL, "/"),
+		returnTo:     returnto.Origins(d.ReturnOrigins...),
+		link: &provision.Flow{Pool: d.Pool, Method: provider, Recorder: d.Auth, Errors: provision.Errors{
 			NotHome:            ErrUserOrganizationMismatch,
 			EmailMissing:       ErrAssertionNoEmail,
 			AccountUnverified:  ErrAccountUnverified,
@@ -116,19 +145,11 @@ func NewService(pool *pgxpool.Pool, authSvc *auth.Service, appBaseURL string) *S
 			EmailUnverified: ErrEmailDomainUnverified,
 			JITNotAllowed:   ErrJITNotAllowed,
 		}},
-	}
-	if authSvc != nil {
-		s.link.Recorder = authSvc
-	}
-	s.SetEgressPolicy(egress.PublicPolicy())
-	return s
+	}, nil
 }
 
 // Pool returns the connection pool, for handlers that run their own transaction.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
-
-// SetPlanGate wires the plan-feature gate (nil allows all features).
-func (s *Service) SetPlanGate(g entitlements.PlanGate) { s.gate = g }
 
 // RequireSSO refuses with errs.ErrUpgradeRequired when the organization's plan
 // doesn't include enterprise SSO: setting up a connection and every sign-in

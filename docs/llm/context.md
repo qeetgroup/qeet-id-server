@@ -168,24 +168,22 @@ internal/platform      shared kernel — pure infrastructure
 | `internal/platform` | HTTP, database, crypto, cache, config, events, workers, messaging, observability |
 | `internal/bootstrap` | Composition root: dependencies, router, permission map, lifecycle, server |
 
-110 packages under `internal/` and `cmd/` contain hand-written Go files, 163 with the
+113 packages under `internal/` and `cmd/` contain hand-written Go files, 176 with the
 sqlc-generated `dbgen` packages.
 
-**File-naming convention — `<domain>.go`, not layered file names.** Domain logic, persistence and
-HTTP handlers usually live in **one file named after the package**; additional files split by
-**feature**, not by layer. Only four packages use `service.go`/`repository.go` naming and 17 domain
-packages have a dedicated `http.go` (the platform database-test helper is the eighteenth).
+**Package shape — the same in every domain package.** `<package>.go` (package doc, Service, `New`),
+`http.go` (routes and handlers), `errors.go` (error codes), `queries.sql` + `dbgen/`, and one file per
+topic, split by **feature**, not by layer. Tests sit beside their file: `foo_test.go`, `foo_db_test.go`.
 
 ```text
 access/passkey/     passkey.go  http.go  register.go  login.go  …   ← split by FEATURE
 developer/agent/    agent.go  http.go  lifecycle.go  sponsors.go  rotate.go   ← split by concern
 access/mfa/          mfa.go  http.go  totp.go  otp.go  push.go  …    ← split by FEATURE
 federation/oidc/     oidc.go  authorization_code.go  refresh.go  authorize.go  device.go
-identity/user/      user.go  http.go  repository.go  …    ← one of the four layered packages
+identity/user/      user.go  http.go  repository.go  …    ← one of the three layered packages
 ```
 
-**Do not assume a `service.go` or `repository.go` exists** — check
-[subsystems.md](subsystems.md) first.
+Only three packages (rbac, organization, user) also have a `service.go` or `repository.go`: don't add one elsewhere. Check [subsystems.md](subsystems.md) first.
 
 Every leaf package additionally carries `queries.sql` (an entry in the root `sqlc.yaml`) + a generated `dbgen/`
 (`db.go`, `models.go`, `queries.sql.go`), which is sqlc output and is never hand-edited.
@@ -205,25 +203,26 @@ cmd/*  →  internal/bootstrap  →  internal/<context>  →  internal/platform
 - **R2** — a bounded context imports **neither** `cmd/*` **nor** `internal/bootstrap`. Business logic
   sits below wiring and entrypoints.
 
-### Cross-context imports are NOT enforced — and are widespread
+### Cross-context imports follow fixed directions (depguard R3–R6)
 
-The test states it verbatim: *"Cross-context imports are not yet enforced."* The actual shape, from
-the import graph — **38 import statements across 8 pairs**:
+`make lint` refuses an import against these directions; each allowed exception in `.golangci.yml`
+carries its reason.
 
 ```text
-operations/audit       ← access(9) · federation(8) · identity(5) · developer(5)
-access/auth  ← federation(6) · identity(2)
-identity/user         ← federation(2) · access(1)
+federation  → access, identity             (never the other way round)
+access      → identity/{domainverify,user}
+identity    → access/{auth,authpolicy}
+developer   → access/authorization/rbac, operations/{entitlements,notification}
+operations  → no other context
+any context → operations/{entitlements,notification}; the audit writer is internal/platform/audit
 ```
 
-- **`operations/audit` is a de-facto shared kernel** — every other bounded context imports it, because
-  audit writes join the caller's transaction.
+- The audit writer lives in `internal/platform/audit`, so recording an audit row imports no context.
 - `access ↔ identity` is bidirectional at package granularity without forming a Go import cycle.
-- **Nothing imports `developer`.** It is a leaf.
+- **Nothing imports `developer`.** It is a leaf, like `operations`.
 
-Treat this as an unguarded seam, not permission. Depend on interfaces, not another context's concrete
-types, so the extraction seam survives: the shared ones are declared once beside their implementation
-(`entitlements.PlanGate`, `notification.Notifier`, `ipallow.AddressPolicy`, …).
+Depend on interfaces, not another context's concrete types: the shared ones are declared once beside
+their implementation (`entitlements.PlanGate`, `notification.Notifier`, `ipallow.AddressPolicy`, …).
 
 ### Platform dependencies per context
 
@@ -240,7 +239,7 @@ uses `pgxpool` directly rather than the `database` helpers · **`access` does no
 |---|---|
 | `app.go` | Application assembly |
 | `dependencies.go` | Builds the shared infrastructure, then each context's services in turn, and the workers |
-| `wire_access.go` · `wire_identity.go` · `wire_federation.go` · `wire_developer.go` · `wire_operations.go` | One per bounded context: its services (`new<Context>`), how they connect to the rest (`wire<Context>`, every `Set…` call), its handlers, its route permissions, user-only routes and step-ups, and its scheduled jobs |
+| `wire_access.go` · `wire_identity.go` · `wire_federation.go` · `wire_developer.go` · `wire_operations.go` | One per bounded context: its services (`new<Context>`), each built with every dependency it needs and refused at start without one, its handlers (checked at start), its route permissions, user-only routes and step-ups, and its scheduled jobs |
 | `keys.go` · `mail.go` · `infra.go` · `sso.go` · `adapters.go` | Building blocks: vault and signing keys; the message chain; outbound policy, NATS, rate limits and the validator; SAML and platform social sign-in; cross-context adapters |
 | `router.go` | Builds the chi router, registers middleware, mounts every route |
 | `permissions.go` · `stepup.go` | The route → policy and step-up tables `rbac.Enforce` and the step-up gate read, joined from the contexts' |
@@ -296,9 +295,9 @@ One PostgreSQL database, **seven schemas**: `auth`, `organization`, `account`, `
 `qeetai`.
 
 - **Driver:** pgx v5. **Queries:** hand-written SQL in `queries.sql`, compiled by **sqlc** into
-  `dbgen/` packages: 56 `queries.sql` files, each an entry in the root `sqlc.yaml`, and 56 `dbgen`
+  `dbgen/` packages: 61 `queries.sql` files, each an entry in the root `sqlc.yaml`, and 61 `dbgen`
   directories. A NULL-able uuid, timestamptz or date column is a `*uuid.UUID` / `*time.Time` (nil is
-  NULL); `dbutil.NullIfZero` / `dbutil.ZeroIfNull` bridge fields that use the zero value for none.
+  NULL); `postgres.NullIfZero` / `postgres.ZeroIfNull` bridge fields that use the zero value for none.
 - **Generated `dbgen/` code is never hand-edited.** Change `queries.sql` and regenerate.
 - Transactions are opened at the service layer, so a domain write and its outbox row commit together.
 
@@ -452,7 +451,7 @@ OAuth scope. ABAC denies are evaluated by the composed checker and override a ro
 | Vault | AES-256-GCM, per-organization HKDF-derived key, static or AWS KMS provider |
 | Randomness | `crypto/rand` only |
 
-**Evidence:** `internal/platform/crypto/tokens/{jwt,registry}.go`, `internal/platform/crypto/envelope/`
+**Evidence:** `internal/platform/crypto/tokens/{tokens,issue,verify,keys,registry}.go`, `internal/platform/crypto/envelope/`
 
 > There is no signing-key mutation API. `JWT_SIGNING_KEY` stages encrypted key
 > material in PostgreSQL; `JWT_ACTIVATE_SIGNING_KEY=true` performs the explicit
@@ -595,7 +594,7 @@ documents, including API-auth security classification.
 
 `.golangci.yml` enables `errcheck`, `govet`, `staticcheck`, `misspell`, `unused`, `ineffassign`,
 `errorlint`, `nilerr`, `bodyclose`, `sqlclosecheck`, `rowserrcheck`, `nolintlint`, `forbidigo` and
-`depguard` (R1/R2), plus `gofmt`/`goimports`; `dbgen` packages are excluded. `make lint` runs the
+`depguard` (R1–R6), plus `gofmt`/`goimports`; `dbgen` packages are excluded. `make lint` runs the
 same lint as CI.
 
 ## Deployment
@@ -645,13 +644,13 @@ Then `make test`, `make lint`, `make build`.
 | **Hashing, vault crypto** | `internal/platform/crypto/{password,envelope}/` | **Critical** | Security review |
 | **CSRF** | `internal/platform/http/httpx/csrf.go` | **Critical** | Security review |
 | **Boot gate** | `internal/platform/config/validate.go` | **Critical** | Security review |
-| MFA, passkeys, recovery | `internal/access/{mfa,passkeys,recovery}/` | High | Security review |
+| MFA, passkeys, recovery | `internal/access/{mfa,passkey,recovery}/` | High | Security review |
 | Federation parsers | `internal/federation/{saml,scim,ldap}/` | High | Security review — untrusted external input |
-| Machine & agent identity | `internal/developer/{api-keys,principal,agents,credentials}/` | High | Security review |
+| Machine & agent identity | `internal/developer/{apikey,principal,agent,credentials}/` | High | Security review |
 | Webhooks | `internal/developer/webhook/` | High | Security review — external consumers |
 | Audit hash chain | `internal/operations/audit/` | High | Security review |
 | Migrations | `internal/platform/database/migrations/` | High | Data review |
-| Risk & threat | `internal/access/{threat,risk}/` | Medium | Review |
+| Risk & threat | `internal/access/{threat,ipallow}/` | Medium | Review |
 
 ## Safe change matrix
 
@@ -692,7 +691,7 @@ What review a change needs. Cross-repository impact is expanded in
   authority for current DEV/TEST/STAGING and production availability.
 - **Rate limiting fails open** when its store errors, and **auth hooks default to fail-open**. Both
   are deliberate, with ADRs. Do not reverse either without reversing the ADR.
-- **Cross-context imports are unenforced.**
+- **Cross-context import directions are enforced in lint** (depguard R3–R6); an exception needs a reason.
 
 ## Known technical debt
 

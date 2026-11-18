@@ -19,7 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth/authtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -227,15 +227,22 @@ func (s *spSide) send(req *http.Request) *httptest.ResponseRecorder {
 	return rec
 }
 
-// newSPSide returns the service provider, handing sign-ins to the console.
-func newSPSide(t *testing.T) *spSide {
+// newSPSide returns the service provider, handing sign-ins to the console,
+// its service's dependencies changed by each of with.
+func newSPSide(t *testing.T, with ...func(*Deps)) *spSide {
 	t.Helper()
 	pool := dbtest.Pool(t)
-	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
-	h := &Handler{Service: NewService(pool, authSvc, testAppBase), PublicBaseURL: testPublicBase}
+	authSvc := newAuthService(t)
+	h := &Handler{Service: newTestService(t, pool, authSvc, with...), PublicBaseURL: testPublicBase}
 	public := chi.NewRouter()
 	h.MountPublic(public)
 	return &spSide{auth: authSvc, handler: h, public: public}
+}
+
+// newAuthService is the sign-in service connection sign-ins go through.
+func newAuthService(t *testing.T) *auth.Service {
+	t.Helper()
+	return authtest.New(t, dbtest.Pool(t))
 }
 
 // asAdmin returns organization's routes as a new admin of it.

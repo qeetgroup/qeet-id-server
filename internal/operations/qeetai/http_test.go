@@ -11,11 +11,17 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/ai"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
+
+// noPlan includes the assistant in no plan.
+type noPlan struct{}
+
+func (noPlan) FeatureAllowed(context.Context, uuid.UUID, string) (bool, error) { return false, nil }
 
 // stubResolver is a ProviderResolver that reports a fixed config source without
 // touching a database, so handler gate/status tests run in memory.
@@ -176,5 +182,41 @@ func TestStreamMessages_OneTurnAtATime(t *testing.T) {
 	}()
 	if free.turns != 0 {
 		t.Errorf("%d turns still held after the request ended, want 0", free.turns)
+	}
+}
+
+// TestNewHandlerNeedsEachDependency checks that the handler is not built
+// without each of its dependencies, the plan gate on the platform key among
+// them.
+func TestNewHandlerNeedsEachDependency(t *testing.T) {
+	box, err := envelope.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := NewProviderConfig(nil, box, PlatformProvider{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{}
+	full := Handler{Service: svc, Orchestrator: NewOrchestrator(cfg, svc), Resolver: cfg, Config: cfg, Plan: noPlan{}, Admin: svc}
+	if _, err := NewHandler(full); err != nil {
+		t.Fatalf("built with every dependency: %v", err)
+	}
+	for name, without := range map[string]func(*Handler){
+		"service":      func(h *Handler) { h.Service = nil },
+		"orchestrator": func(h *Handler) { h.Orchestrator = nil },
+		"resolver":     func(h *Handler) { h.Resolver = nil },
+		"config":       func(h *Handler) { h.Config = nil },
+		"plan gate":    func(h *Handler) { h.Plan = nil },
+		"admin":        func(h *Handler) { h.Admin = nil },
+	} {
+		h := full
+		without(&h)
+		if _, err := NewHandler(h); err == nil {
+			t.Errorf("built without a %s", name)
+		}
+	}
+	if _, err := NewProviderConfig(nil, nil, PlatformProvider{}); err == nil {
+		t.Error("provider config built without a cipher")
 	}
 }

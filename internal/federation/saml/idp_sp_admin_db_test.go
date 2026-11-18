@@ -17,14 +17,7 @@ import (
 func TestSAMLServiceProvidersOverHTTP(t *testing.T) {
 	organization, other := dbtest.Organization(t), dbtest.Organization(t)
 	admin, otherAdmin := dbtest.User(t, organization, organization), dbtest.User(t, other, other)
-	keyPEM, certPEM, err := GenerateIdPKeyPEM("Test Qeet IdP")
-	if err != nil {
-		t.Fatal(err)
-	}
-	idp, err := NewIdP(dbtest.Pool(t), keyPEM, certPEM, "https://login.id.qeet.in", sessionsByCookie{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	idp := newTestIdP(t, dbtest.Pool(t), sessionsByCookie{})
 	h := &Handler{Service: &Service{}, IdP: idp}
 	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)
 	asOther := dbtest.Serve(dbtest.Principal(otherAdmin.ID, other), h.Mount)

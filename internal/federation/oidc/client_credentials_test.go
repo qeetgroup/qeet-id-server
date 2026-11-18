@@ -50,11 +50,10 @@ func TestClientCredentialsAsksEachMachineKindInTurn(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var principalAsked, agentAsked int
-			svc := &Service{}
-			svc.SetMachineClients(
+			svc := &Service{machineClients: []MachineClient{
 				fakeMachine{id: "p", tok: principalToken, err: tc.principalErr, asked: &principalAsked},
 				fakeMachine{id: "a", tok: agentToken, asked: &agentAsked},
-			)
+			}}
 			got, err := svc.ClientCredentials(context.Background(), tc.clientID, "secret")
 			if !errors.Is(err, tc.wantErr) || (tc.want == nil) != (got == nil) {
 				t.Fatalf("got %+v, %v; want %+v, %v", got, err, tc.want, tc.wantErr)

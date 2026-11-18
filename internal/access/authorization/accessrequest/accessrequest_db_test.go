@@ -11,15 +11,40 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
+
+// roleService returns the role service over repo with no plan limit, no seat
+// limit, no webhook events and no session announcements.
+func roleService(t *testing.T, repo *rbac.Repository) *rbac.Service {
+	t.Helper()
+	svc, err := rbac.NewService(repo, rbac.ServiceDeps{
+		Emitter: func(context.Context, uuid.UUID, string, any) error { return nil },
+		Limits:  unlimited{}, Seats: unlimited{}, Signals: sessionsignal.New(nil),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return svc
+}
+
+// unlimited is a plan with no limit on anything.
+type unlimited struct{}
+
+func (unlimited) Limit(context.Context, uuid.UUID, string) (int, error) { return -1, nil }
+func (unlimited) SeatLimit(context.Context, uuid.UUID) (int, error)     { return -1, nil }
+func (unlimited) WithinSeats(_ context.Context, _ pgx.Tx, _ uuid.UUID, _ int, change func() error) error {
+	return change()
+}
 
 // inbox records the in-app notifications sent.
 type inbox struct {
@@ -69,10 +94,12 @@ func setup(t *testing.T) world {
 	t.Helper()
 	pool := dbtest.Pool(t)
 	repo := rbac.NewRepository(pool)
-	svc := NewService(pool, rbac.NewService(repo), repo)
-	w := world{svc: svc, inbox: &inbox{}, phones: &phones{}}
-	svc.SetNotifier(w.inbox)
-	svc.SetPhoneNotifier(w.phones)
+	w := world{inbox: &inbox{}, phones: &phones{}}
+	svc, err := NewService(pool, roleService(t, repo), repo, w.inbox, w.phones)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.svc = svc
 	w.organization = dbtest.Organization(t)
 	w.requester = dbtest.User(t, w.organization, w.organization).ID
 	w.approver = dbtest.User(t, w.organization).ID
@@ -190,7 +217,7 @@ func TestPermanentGrantSurvivesTheAccessRequestSweep(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The administrator then gives the role for good.
-	if err := rbac.NewService(rbac.NewRepository(dbtest.Pool(t))).AssignRole(ctx, w.requester, w.organization, w.finance, &w.approver, approver); err != nil {
+	if err := roleService(t, rbac.NewRepository(dbtest.Pool(t))).AssignRole(ctx, w.requester, w.organization, w.finance, &w.approver, approver); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE rbac.access_requests SET access_ends_at = NOW() - interval '1 minute' WHERE id = $1 AND access_ends_at IS NOT NULL`, req.ID); err != nil {

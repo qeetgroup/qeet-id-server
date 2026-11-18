@@ -18,11 +18,10 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// BeginLogin starts a login ceremony. Every ceremony is discoverable, so the
-// answer is the same whether or not email has an account or a passkey; with an
-// email, only a passkey of that account can finish it. An email whose
-// organization requires single sign-on is refused before it is looked up; a
-// passkey of such an account is refused when it finishes (verifyLogin).
+// BeginLogin starts a login ceremony. Every ceremony is discoverable, so the answer is the same
+// whether or not email has an account or passkey; with an email, only that account's passkey can
+// finish it. An email whose organization requires SSO is refused before lookup; such an account's
+// passkey is refused when it finishes (verifyLogin).
 func (s *Service) BeginLogin(ctx context.Context, email string) (uuid.UUID, *protocol.CredentialAssertion, error) {
 	kind, owner := "login_discoverable", (*uuid.UUID)(nil)
 	if email != "" {
@@ -67,7 +66,7 @@ func (s *Service) FinishLogin(ctx context.Context, sessionID uuid.UUID, credenti
 // Errors that aren't a refusal (the store failing) aren't recorded.
 func (s *Service) recordFailure(ctx context.Context, userID, organizationID uuid.UUID, ip, ua string, err error) {
 	refusal := errs.As(err)
-	if refusal == nil || s.auth == nil {
+	if refusal == nil {
 		return
 	}
 	s.auth.RecordSignInFailure(ctx, auth.SignInFailure{

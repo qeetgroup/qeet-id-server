@@ -52,12 +52,9 @@ type Error struct {
 	// Code (which is already a stable `domain.reason` key); override only if a
 	// different key namespace is needed.
 	TranslationKey string
-	// Retryable tells the person they can try again, often by starting over
-	// (signing in again, asking for a new code, waiting a moment). It is not a
-	// promise that resending the same request will succeed: a revoked session
-	// is retryable in this sense and never comes back. Clients decide whether to
-	// resend from the status (429, 503 with Retry-After). Surfaced as
-	// `retryable: true`.
+	// Retryable (`retryable: true`) tells the person they can try again, often by starting over: signing
+	// in again, asking for a new code, waiting. It doesn't promise a resend succeeds (a revoked session is
+	// retryable and never comes back); clients decide resends from the status (429, 503 + Retry-After).
 	Retryable bool
 	// Fields carries structured per-field validation errors.
 	Fields []FieldError

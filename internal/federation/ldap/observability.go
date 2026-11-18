@@ -36,15 +36,9 @@ type OperationObserver interface {
 	RecordLDAPOperation(context.Context, Operation) error
 }
 
-// SetOperationObserver sets where directory operations are recorded.
-func (service *Service) SetOperationObserver(observer OperationObserver) { service.observer = observer }
-
 // recordOperation records c's operation that began at started and ended in
 // operationError, for subject and the person userID when a sign-in names them.
 func (service *Service) recordOperation(ctx context.Context, c *connFull, operation, resource string, started time.Time, operationError error, subject string, userID *uuid.UUID) {
-	if service.observer == nil {
-		return
-	}
 	op := Operation{
 		OrganizationID: c.OrganizationID, ConnectionID: c.ID, Operation: operation, Resource: resource,
 		Status: operationStatus(operation, operationError), Started: started, Duration: time.Since(started),

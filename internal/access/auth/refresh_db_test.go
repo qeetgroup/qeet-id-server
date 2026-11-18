@@ -169,12 +169,12 @@ func TestRefreshCharacterized(t *testing.T) {
 		svc := newService(t)
 		a, _ := member(t)
 		pair := signIn(t, svc, a)
-		svc.SetAddressPolicy(addressFunc(func(_ context.Context, _, _ uuid.UUID, ip, _ string) error {
+		svc.addresses = addressFunc(func(_ context.Context, _, _ uuid.UUID, ip, _ string) error {
 			if ip == "198.51.100.7" {
 				return errs.ErrAuthAddressNotAllowed
 			}
 			return nil
-		}))
+		})
 		in := RefreshInput{RefreshToken: pair.RefreshToken}
 		in.IP = "198.51.100.7"
 		if _, err := svc.Refresh(ctx, in); !errors.Is(err, errs.ErrAuthAddressNotAllowed) {
@@ -228,7 +228,7 @@ func TestRenewalFromARefusedAddress(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	svc := newService(t)
-	svc.SetAddressPolicy(ipallow.NewService(pool))
+	svc.addresses = ipallow.NewService(pool)
 	a, organization := member(t)
 	enforceAddressRules(t, organization)
 	pair, err := svc.IssuePair(ctx, a.ID, organization, "192.0.2.10", "test", "password")

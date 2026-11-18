@@ -94,12 +94,10 @@ type Explanation struct {
 	Path    []ExplainStep `json:"path,omitempty"`
 }
 
-// resolve answers "does user `userID` have `relation` on objType:objID?" by
-// expanding direct + userset tuples, and — when found — the root-to-leaf chain
-// of tuples that granted it. visited holds the shallowest depth each
-// object#relation was expanded at, so a cycle stops and a shorter path to one
-// first met near maxDepth is still walked; past maxExpansions of them the
-// check stops with ErrReBACCheckTooComplex. Pure given the fetcher.
+// resolve answers whether userID has relation on objType:objID by expanding direct and userset
+// tuples, returning the root-to-leaf chain that granted it. visited keeps the shallowest depth of each
+// object#relation, so cycles stop and a shorter path is still walked; past maxExpansions it stops
+// with ErrReBACCheckTooComplex. Pure given the fetcher.
 func resolve(fetch fetcher, objType, objID, relation, userID string, visited map[string]int, depth int) (bool, []ExplainStep, error) {
 	if depth > maxDepth {
 		return false, nil, nil

@@ -1,8 +1,7 @@
-// Package logincode keeps the one-time codes a federated sign-in's callback
-// hands the browser (SAML, OpenID Connect single sign-on, social), which the
-// console or the hosted login trades once for a session. Every flow spends
-// its codes through Consume, which also refuses a code once the connection or
-// provider that issued it no longer signs anyone in.
+// Package logincode keeps the one-time codes a federated sign-in's callback (SAML, OIDC single
+// sign-on, social) hands the browser, which the console or hosted login trades once for a session.
+// Every flow spends them through Consume, which also refuses a code once the connection or provider
+// that issued it no longer signs anyone in.
 package logincode
 
 import (

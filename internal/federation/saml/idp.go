@@ -156,8 +156,7 @@ type SessionResolver interface {
 	ResolveLoginSession(ctx context.Context, raw string) (uuid.UUID, error)
 }
 
-// IdP issues SAML assertions and manages the SP registry. A nil gate leaves SP
-// creation ungated.
+// IdP issues SAML assertions and manages the SP registry.
 type IdP struct {
 	pool         *pgxpool.Pool
 	q            *dbgen.Queries
@@ -176,29 +175,51 @@ type FactorPolicy interface {
 	LoginSessionFactorShortfall(ctx context.Context, loginSessionID, userID, organizationID uuid.UUID) error
 }
 
-// SetSignInRules sets the organization rules an assertion is signed under, as
-// OIDC authorize applies them: its address rules and its second-factor
-// requirement. A nil one checks nothing.
-func (i *IdP) SetSignInRules(addresses ipallow.AddressPolicy, factors FactorPolicy) {
-	i.addresses, i.factors = addresses, factors
+// IdPDeps are what the identity provider is built from; every one is
+// required.
+type IdPDeps struct {
+	Pool            *pgxpool.Pool
+	KeyPEM, CertPEM string          // the signing key and certificate, PEM
+	LoginBaseURL    string          // the hosted login people sign in at
+	Sessions        SessionResolver // resolves the hosted-login cookie
+	// Addresses and Factors are the organization rules an assertion is signed
+	// under, as OIDC authorize applies them: its address rules and its
+	// second-factor requirement.
+	Addresses ipallow.AddressPolicy
+	Factors   FactorPolicy
+	Gate      entitlements.PlanGate // whether the plan includes single sign-on
 }
 
-// SetPlanGate wires the plan-feature gate (nil allows all features).
-func (i *IdP) SetPlanGate(g entitlements.PlanGate) { i.gate = g }
-
-// NewIdP returns the SAML identity provider, signing with the key and
-// certificate given.
-func NewIdP(pool *pgxpool.Pool, keyPEM, certPEM, loginBaseURL string, sessions SessionResolver) (*IdP, error) {
-	signer, err := newIdPSigner(keyPEM, certPEM)
+// NewIdP returns the SAML identity provider built from d, or an error naming
+// the dependency d lacks or why its key can't sign.
+func NewIdP(d IdPDeps) (*IdP, error) {
+	switch {
+	case d.Pool == nil:
+		return nil, errors.New("saml idp: missing Pool")
+	case d.LoginBaseURL == "":
+		return nil, errors.New("saml idp: missing LoginBaseURL")
+	case d.Sessions == nil:
+		return nil, errors.New("saml idp: missing Sessions")
+	case d.Addresses == nil:
+		return nil, errors.New("saml idp: missing Addresses")
+	case d.Factors == nil:
+		return nil, errors.New("saml idp: missing Factors")
+	case d.Gate == nil:
+		return nil, errors.New("saml idp: missing Gate")
+	}
+	signer, err := newIdPSigner(d.KeyPEM, d.CertPEM)
 	if err != nil {
 		return nil, err
 	}
 	return &IdP{
-		pool:         pool,
-		q:            dbgen.New(pool),
+		pool:         d.Pool,
+		q:            dbgen.New(d.Pool),
 		signer:       signer,
-		sessions:     sessions,
-		loginBaseURL: strings.TrimRight(loginBaseURL, "/"),
+		sessions:     d.Sessions,
+		loginBaseURL: strings.TrimRight(d.LoginBaseURL, "/"),
+		gate:         d.Gate,
+		addresses:    d.Addresses,
+		factors:      d.Factors,
 	}, nil
 }
 

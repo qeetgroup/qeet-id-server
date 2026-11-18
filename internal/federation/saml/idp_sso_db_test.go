@@ -19,13 +19,15 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	saml2 "github.com/russellhaering/gosaml2"
 	dsig "github.com/russellhaering/goxmldsig"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth/authtest"
 	"github.com/qeetgroup/qeet-id-server/internal/access/ipallow"
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
@@ -43,19 +45,12 @@ type idpSide struct {
 }
 
 // newIdPSide returns the IdP, resolving hosted-login sessions with the real
-// authentication service.
-func newIdPSide(t *testing.T) *idpSide {
+// authentication service, its dependencies changed by each of with.
+func newIdPSide(t *testing.T, with ...func(*IdPDeps)) *idpSide {
 	t.Helper()
 	pool := dbtest.Pool(t)
-	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
-	keyPEM, certPEM, err := GenerateIdPKeyPEM("Test Qeet IdP")
-	if err != nil {
-		t.Fatal(err)
-	}
-	idp, err := NewIdP(pool, keyPEM, certPEM, "https://login.id.qeet.in", authSvc)
-	if err != nil {
-		t.Fatal(err)
-	}
+	authSvc := newAuthService(t)
+	idp := newTestIdP(t, pool, authSvc, with...)
 	router := chi.NewRouter()
 	(&Handler{Service: &Service{}, IdP: idp, PublicBaseURL: testPublicBase}).MountPublic(router)
 	signIn := func(userID uuid.UUID) string {
@@ -99,12 +94,11 @@ func setSPStatus(t *testing.T, ctx context.Context, idp *IdP, sp *ServiceProvide
 // while the plan had SSO gets no assertion once the plan has lapsed.
 func TestIdPSignInNeedsSSOInThePlan(t *testing.T) {
 	ctx := dbtest.Context(t)
-	s := newIdPSide(t)
 	organization := dbtest.Organization(t)
+	allowed := map[uuid.UUID]bool{organization: true}
+	s := newIdPSide(t, func(d *IdPDeps) { d.Gate = poolGate{pool: dbtest.Pool(t), allowed: allowed} })
 	member := dbtest.User(t, organization, organization)
 	sp := registerSP(t, ctx, s.idp, organization, "https://sp.example.test/metadata", "https://sp.example.test/acs")
-	allowed := map[uuid.UUID]bool{organization: true}
-	s.idp.SetPlanGate(poolGate{pool: dbtest.Pool(t), allowed: allowed})
 	sso := "/saml/idp/" + organization.String() + "/sso?" + authnRequestTo(sp.EntityID, "_req-1", sp.ACSURL)
 	cookie := s.signIn(member.ID)
 
@@ -379,17 +373,8 @@ func TestIdPPostBindingResumesAfterSignIn(t *testing.T) {
 // fresh sign-in still hasn't.
 func TestSAMLIdPAppliesTheOrganizationsAddressRulesAndSecondFactor(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
-	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
-	authSvc.SetMFA(mfa.NewService(pool, "Qeet", notifier.LogSender{}))
-	keyPEM, certPEM, err := GenerateIdPKeyPEM("Test Qeet IdP")
-	if err != nil {
-		t.Fatal(err)
-	}
-	idp, err := NewIdP(pool, keyPEM, certPEM, "https://login.id.qeet.in", authSvc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	idp.SetSignInRules(ipallow.NewService(pool), authSvc)
+	authSvc := authtest.New(t, pool, func(d *auth.Deps) { d.MFA = secondFactors(t, pool) })
+	idp := newTestIdP(t, pool, authSvc, func(d *IdPDeps) { d.Addresses, d.Factors = ipallow.NewService(pool), authSvc })
 	router := chi.NewRouter()
 	(&Handler{Service: &Service{}, IdP: idp, PublicBaseURL: testPublicBase}).MountPublic(router)
 	organization := dbtest.Organization(t)
@@ -508,3 +493,29 @@ func TestIdPSSOAnswers(t *testing.T) {
 		t.Errorf("disabled: %d %s, want %s", rec.Code, rec.Body.String(), CodeServiceProviderDisabled)
 	}
 }
+
+// secondFactors is the second-factor service, reading the factors each
+// account holds and the organization's requirement.
+func secondFactors(t *testing.T, pool *pgxpool.Pool) *mfa.Service {
+	t.Helper()
+	box, err := envelope.New([]byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	factors, err := mfa.NewService(pool, mfa.Deps{
+		Issuer: "Qeet", Sender: notifier.LogSender{}, Cipher: box, Plan: smsPlans{},
+		Deliverable: func(string) bool { return true }, WebAuthn: noPasskeys{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return factors
+}
+
+// smsPlans includes SMS codes in every plan.
+type smsPlans struct{}
+
+func (smsPlans) FeatureAllowed(context.Context, uuid.UUID, string) (bool, error) { return true, nil }
+
+// noPasskeys stands for the passkey second factor, which no test here uses.
+type noPasskeys struct{ mfa.WebAuthnVerifier }

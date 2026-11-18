@@ -4,6 +4,7 @@ package social
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -14,11 +15,11 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth/authtest"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authpolicy"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
@@ -52,24 +53,79 @@ type socialFixture struct {
 	mount  func(chi.Router)
 }
 
-// newSocialFixture returns the fixture, allowing return to app.example.test.
-func newSocialFixture(t *testing.T) *socialFixture {
+// fixtureChange changes the fixture's service dependencies, given its fake
+// provider.
+type fixtureChange func(d *Deps, idp *identityProvider)
+
+// newSocialFixture returns the fixture, allowing return to app.example.test,
+// its service's dependencies changed by each of with.
+func newSocialFixture(t *testing.T, with ...fixtureChange) *socialFixture {
 	t.Helper()
 	pool := dbtest.Pool(t)
-	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
-	authSvc.SetRegistrationPolicy(authpolicy.NewService(pool))
-	svc := NewService(pool, authSvc, "https://console.example.test", egress.DevelopmentPolicy())
+	idp := newIdentityProvider(t)
 	box, err := envelope.New([]byte("0123456789abcdef0123456789abcdef"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc.SetCipher(box)
-	svc.SetAllowedReturnOrigins("https://app.example.test")
+	svc := newTestService(t, pool, newAuthService(t, registrationPolicies(t)), func(d *Deps) {
+		d.Cipher, d.AppBaseURL, d.Egress = box, "https://console.example.test", egress.DevelopmentPolicy()
+		d.ReturnOrigins = []string{"https://app.example.test"}
+		for _, change := range with {
+			change(d, idp)
+		}
+	})
 	h := &Handler{Service: svc, LoginBaseURL: "https://login.example.test", PublicBaseURL: "https://id.example.test",
 		ActOnCheck: rbac.NewRepository(pool).CheckActOn}
 	public := chi.NewRouter()
 	h.MountPublic(public)
-	return &socialFixture{svc: svc, idp: newIdentityProvider(t), public: public, mount: h.Mount}
+	return &socialFixture{svc: svc, idp: idp, public: public, mount: h.Mount}
+}
+
+// newAuthService is the sign-in service social sign-in goes through,
+// following registration when it isn't nil (else nobody registers).
+func newAuthService(t *testing.T, registration auth.RegistrationPolicy) *auth.Service {
+	t.Helper()
+	return authtest.New(t, dbtest.Pool(t), func(d *auth.Deps) {
+		if registration != nil {
+			d.Registration = registration
+		}
+	})
+}
+
+// registrationPolicies are the organizations' own registration policies.
+func registrationPolicies(t *testing.T) *authpolicy.Service {
+	t.Helper()
+	policies, err := authpolicy.NewService(dbtest.Pool(t), authpolicy.NoBreachCheck{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return policies
+}
+
+// domainCapture is the domain capture bootstrap wires.
+func domainCapture(t *testing.T) *domainverify.Service {
+	t.Helper()
+	pool := dbtest.Pool(t)
+	capture, err := domainverify.NewService(pool, domainverify.Deps{
+		Gate: allDomains{}, Owners: rbac.NewRepository(pool), MemberPermissions: identitylink.MemberPermissions(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return capture
+}
+
+// allDomains includes custom domains in every plan.
+type allDomains struct{}
+
+func (allDomains) FeatureAllowed(context.Context, uuid.UUID, string) (bool, error) { return true, nil }
+
+// platform gives the fixture's service the console provider name, signing in
+// at its fake provider.
+func platform(name string) fixtureChange {
+	return func(d *Deps, idp *identityProvider) {
+		d.Platform = append(d.Platform, PlatformOIDC(name, "qeet", "idp-client-secret", idp.URL+"/.well-known/openid-configuration"))
+	}
 }
 
 // signIn runs a browser through a sign-in begun at start, the provider
@@ -120,13 +176,8 @@ func openOrganization(t *testing.T) uuid.UUID {
 func provisioningService(t *testing.T) *Service {
 	t.Helper()
 	pool := dbtest.Pool(t)
-	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
-	authSvc.SetRegistrationPolicy(authpolicy.NewService(pool))
-	capture := domainverify.NewService(pool)
-	capture.SetMemberPermissions(identitylink.MemberPermissions())
-	svc := NewService(pool, authSvc, "https://api.id.qeet.in")
-	svc.SetDomainCapture(capture)
-	return svc
+	capture := domainCapture(t)
+	return newTestService(t, pool, newAuthService(t, registrationPolicies(t)), func(d *Deps) { d.Capture = capture })
 }
 
 // addProvider gives organization the fixture's identity provider under name, an
@@ -158,12 +209,11 @@ func requireSSO(t *testing.T, organization uuid.UUID) {
 	}
 }
 
-// capturing gives f's service the domain capture bootstrap wires.
-func capturing(t *testing.T, f *socialFixture) {
+// capturing gives the fixture's service the domain capture bootstrap wires.
+func capturing(t *testing.T) fixtureChange {
 	t.Helper()
-	capture := domainverify.NewService(dbtest.Pool(t))
-	capture.SetMemberPermissions(identitylink.MemberPermissions())
-	f.svc.SetDomainCapture(capture)
+	capture := domainCapture(t)
+	return func(d *Deps, _ *identityProvider) { d.Capture = capture }
 }
 
 // breakGlass names a as a member of organization who keeps their own sign-in methods.

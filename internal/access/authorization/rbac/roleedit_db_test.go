@@ -44,7 +44,7 @@ func TestCustomRolesAreEditedWhole(t *testing.T) {
 		perm[key] = id.String()
 	}
 
-	h := &Handler{Repo: repo, Service: NewService(repo), Validate: validator.New(validator.WithRequiredStructEnabled())}
+	h := &Handler{Repo: repo, Service: newRoleService(t, repo), Validate: validator.New(validator.WithRequiredStructEnabled())}
 	asOwner := dbtest.Serve(dbtest.Principal(owner.ID, organization), h.Mount)
 	asEditor := dbtest.Serve(dbtest.Principal(editor.ID, organization), h.Mount)
 	rolePath := func(role uuid.UUID) string {
@@ -147,7 +147,7 @@ func TestEffectivePermissionsSayWhereEachComesFrom(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := &Handler{Repo: repo, Service: NewService(repo), Validate: validator.New(validator.WithRequiredStructEnabled())}
+	h := &Handler{Repo: repo, Service: newRoleService(t, repo), Validate: validator.New(validator.WithRequiredStructEnabled())}
 	rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount), http.MethodGet, "/users/"+person.ID.String()+"/organizations/"+organization.String()+"/permissions", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("%d %s", rec.Code, rec.Body.String())

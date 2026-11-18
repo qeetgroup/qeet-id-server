@@ -21,8 +21,9 @@ import (
 // the right secret from that network is refused, from any other it works,
 // and a lockout of one network doesn't end with another's success.
 func TestWrongSecretsFromAnotherAddressDontLockTheApplicationOut(t *testing.T) {
-	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
-	svc.SetClientLockout(ClientLockout{Threshold: 3, Window: time.Minute, Duration: time.Minute})
+	svc := newTestService(t, dbtest.Pool(t), dbtest.Issuer(t), func(d *Deps) {
+		d.Lockout = ClientLockout{Threshold: 3, Window: time.Minute, Duration: time.Minute}
+	})
 	client, secret := registerClient(t, svc, dbtest.Organization(t))
 	router := chi.NewRouter()
 	router.Use(httpx.ClientIPContext)

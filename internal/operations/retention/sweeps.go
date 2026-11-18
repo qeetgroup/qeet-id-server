@@ -16,11 +16,9 @@ type Sweep struct {
 	Delete func(q *dbgen.Queries, ctx context.Context, limit int32) (int64, error)
 }
 
-// SignInSweeps delete sign-in state once it is spent: links, codes, states and
-// requests a day after they expire (kept that long so a late click is told the
-// link expired rather than that it is unknown), and failed sign-in and wrong
-// application secret counters a week after the last failure, once no lock or
-// throttle is in force. A week is longer than any lockout window.
+// SignInSweeps delete spent sign-in state: links, codes, states and requests a day after they expire
+// (so a late click is told the link expired, not that it's unknown), and failed sign-in and wrong
+// client-secret counters a week after the last failure, longer than any lockout window.
 var SignInSweeps = []Sweep{
 	{"authorization codes", (*dbgen.Queries).SweepAuthorizationCodes},
 	{"consent requests", (*dbgen.Queries).SweepConsentRequests},
@@ -43,14 +41,10 @@ var SignInSweeps = []Sweep{
 	{"source throttles", (*dbgen.Queries).SweepSourceThrottles},
 }
 
-// RecordSweeps delete records once they stop being useful: finished webhook
-// deliveries after 30 days (logout deliveries after a week), bot detections
-// after 30 days, directory sync events and notifications after 90, security
-// events and audit anomalies 90 days after they are resolved or a year after
-// they were raised, invitations 90 days after they lapse, application grants a
-// week after they end, and access decisions after 30 days. A delivery still to
-// be made, an open alert and a live grant are kept. audit.events goes by each
-// organization's plan instead (audit.PurgeExpired).
+// RecordSweeps delete records once stale: webhook deliveries after 30 days (logout ones after a week),
+// bot detections and access decisions after 30, directory events and notifications after 90, security
+// events and anomalies 90 days after resolution or a year after raised, lapsed invitations after 90,
+// ended grants after a week; pending, open and live ones stay. audit.events: audit.PurgeExpired.
 var RecordSweeps = []Sweep{
 	{"webhook deliveries", (*dbgen.Queries).SweepWebhookDeliveries},
 	{"logout deliveries", (*dbgen.Queries).SweepLogoutDeliveries},

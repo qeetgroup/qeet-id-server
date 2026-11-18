@@ -212,11 +212,9 @@ func settingsFor(ctx context.Context, q *dbgen.Queries, organizationID uuid.UUID
 	return st, nil
 }
 
-// tick scores one batch of unscored events, each in its own transaction so a
-// bad row cannot block the rest.
-// tick scores unscored events in batches while they come full, within
-// sweepBudget, so the scorer keeps up with a busy log. It stops early when a
-// batch scores nothing, as when another instance holds every event in it.
+// tick scores unscored events in batches while they come full, within sweepBudget, so the scorer
+// keeps up with a busy log. It stops early when a batch scores nothing, as when another instance
+// holds every event in it.
 func (s *Service) tick(ctx context.Context) error {
 	deadline := time.Now().Add(sweepBudget)
 	for {

@@ -69,7 +69,12 @@ func TestRouteGuardDecidesOnTheCallersAttributes(t *testing.T) {
 		return &httpx.Principal{UserID: &user, OrganizationID: &organization, ActorType: "user", SessionID: sessionID, ClientID: clientID}
 	}
 
-	d := decide.New(rbac.NewRepository(pool), rebac.NewService(pool), abac.NewService(pool))
+	relations := rebac.NewService(pool)
+	policies, err := abac.NewService(pool, allPlans{}, relations.Check)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := decide.New(rbac.NewRepository(pool), relations, policies)
 	for _, tc := range []struct {
 		name       string
 		p          *httpx.Principal
@@ -88,3 +93,8 @@ func TestRouteGuardDecidesOnTheCallersAttributes(t *testing.T) {
 		}
 	}
 }
+
+// allPlans is a plan gate that allows every feature.
+type allPlans struct{}
+
+func (allPlans) FeatureAllowed(context.Context, uuid.UUID, string) (bool, error) { return true, nil }

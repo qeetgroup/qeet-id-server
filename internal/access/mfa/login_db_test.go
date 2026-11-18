@@ -24,8 +24,7 @@ func TestWrongCodesInARowLockSignIn(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	mail := &dbtest.Mailbox{}
-	mfaSvc, authSvc := services(t, notifier.LogSender{})
-	authSvc.SetSender(mail)
+	mfaSvc, authSvc := services(t, notifier.LogSender{}, func(d *auth.Deps) { d.Sender = mail })
 	a, _ := member(t)
 	secret, recovery := enrolTOTP(t, mfaSvc, a)
 	run := func(failures int) {

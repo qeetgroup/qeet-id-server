@@ -14,7 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 )
@@ -29,7 +29,7 @@ func TestConnectionUpdateRunsOnItsTransaction(t *testing.T) {
 		t.Fatalf("one-connection pool: %v", err)
 	}
 	t.Cleanup(pool.Close)
-	svc := NewService(pool, nil, testPublicBase)
+	svc := newTestService(t, pool, newAuthService(t), func(d *Deps) { d.AppBaseURL = testPublicBase })
 	organization := dbtest.Organization(t)
 	cert, _ := selfSignedCert(t)
 
@@ -67,7 +67,7 @@ func TestConnectionUpdateRunsOnItsTransaction(t *testing.T) {
 func TestAConnectionIsNamedBeforeItsIdP(t *testing.T) {
 	organization := dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
-	h := &Handler{Service: NewService(dbtest.Pool(t), nil, testAppBase), PublicBaseURL: testPublicBase}
+	h := &Handler{Service: newTestService(t, dbtest.Pool(t), newAuthService(t)), PublicBaseURL: testPublicBase}
 	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)
 	public := chi.NewRouter()
 	h.MountPublic(public)
@@ -144,7 +144,7 @@ func TestTrustChangesKeepTheirAuditRow(t *testing.T) {
 		t.Fatalf("one-connection pool: %v", err)
 	}
 	t.Cleanup(pool.Close)
-	svc := NewService(pool, nil, testPublicBase)
+	svc := newTestService(t, pool, newAuthService(t), func(d *Deps) { d.AppBaseURL = testPublicBase })
 	organization := dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
 	actor := audit.Actor{UserID: &admin.ID, Type: "user", IP: "192.0.2.61", RequestID: "req-" + uuid.NewString()}

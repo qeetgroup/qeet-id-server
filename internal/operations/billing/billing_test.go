@@ -1,10 +1,14 @@
 package billing
 
 import (
+	"context"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/billing/dbgen"
 )
@@ -160,5 +164,34 @@ func TestYearlyPlansMatchMonthlyFeatures(t *testing.T) {
 		if !slices.Equal(p.features, monthly.features) {
 			t.Errorf("plan %s features differ from %s", p.code, monthly.code)
 		}
+	}
+}
+
+type noProvisioner struct{}
+
+func (noProvisioner) ProvisionOrg(context.Context, uuid.UUID, string, string, string, string) (uuid.UUID, error) {
+	return uuid.Nil, nil
+}
+
+// TestNewServiceNeedsPaymentsAndAProvisioner checks that billing is not built
+// without its card providers, or without what creates the organization a
+// signup checkout pays for (which would take the payment and create nothing),
+// and that invoice emails are not built without a mailer.
+func TestNewServiceNeedsPaymentsAndAProvisioner(t *testing.T) {
+	full := Config{Payments: NewPayments("", "", "", "", ""), OrgProvisioner: noProvisioner{}}
+	svc, err := NewService(new(pgxpool.Pool), full)
+	if err != nil {
+		t.Fatalf("built with both: %v", err)
+	}
+	noPayments, noOrgs := full, full
+	noPayments.Payments, noOrgs.OrgProvisioner = nil, nil
+	if _, err := NewService(new(pgxpool.Pool), noPayments); err == nil {
+		t.Error("built without payment providers")
+	}
+	if _, err := NewService(new(pgxpool.Pool), noOrgs); err == nil {
+		t.Error("built without an organization provisioner")
+	}
+	if _, err := NewInvoiceEmails(svc, nil, ""); err == nil {
+		t.Error("invoice emails built without a mailer")
 	}
 }

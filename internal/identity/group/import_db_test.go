@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -16,7 +16,7 @@ import (
 // a child listed before its parent is still created.
 func TestImportRowCodes(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t))
+	svc := newService(t)
 	organization := dbtest.Organization(t)
 	actor := audit.Actor{Type: "user"}
 	if _, err := svc.Create(ctx, CreateInput{OrganizationID: organization, Name: "Engineering"}, actor); err != nil {

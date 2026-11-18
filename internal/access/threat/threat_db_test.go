@@ -3,6 +3,7 @@
 package threat
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -12,19 +13,36 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
 
+// newService returns the anomaly service with a notifier that keeps nothing.
+func newService(t *testing.T) *Service {
+	t.Helper()
+	svc, err := NewService(dbtest.Pool(t), discard{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return svc
+}
+
+// discard is a notifier that drops every notification.
+type discard struct{}
+
+func (discard) Notify(context.Context, uuid.UUID, uuid.UUID, string, string, string, string) error {
+	return nil
+}
+
 // TestLockoutsCountAsOpenIncidents checks that the anomaly summary counts what
 // the sign-in lockouts record (status rate-limited) as open until resolved,
 // each affected account once, and critical events as high severity.
 func TestLockoutsCountAsOpenIncidents(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t))
+	svc := newService(t)
 	organization, other := dbtest.Organization(t), dbtest.Organization(t)
 	victim := dbtest.User(t, organization, organization)
 	dbtest.User(t, other, other)
@@ -72,7 +90,7 @@ func TestLockoutsCountAsOpenIncidents(t *testing.T) {
 // accounts, once each, and names none of another organization's accounts.
 func TestSprayCountsTheAccountsItTargeted(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t))
+	svc := newService(t)
 	organization, other := dbtest.Organization(t), dbtest.Organization(t)
 	a, b, c := dbtest.User(t, organization, organization), dbtest.User(t, organization, organization), dbtest.User(t, organization, organization)
 	elsewhere := dbtest.User(t, other, other)
@@ -102,7 +120,7 @@ func TestSprayCountsTheAccountsItTargeted(t *testing.T) {
 // that another organization can neither resolve it nor leave a record of it.
 func TestResolvingAnAnomalyIsAudited(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t))
+	svc := newService(t)
 	h := &Handler{Service: svc}
 	organization, other := dbtest.Organization(t), dbtest.Organization(t)
 	admin, victim := dbtest.User(t, organization, organization), dbtest.User(t, organization, organization)
@@ -156,7 +174,7 @@ func TestResolvingAnAnomalyIsAudited(t *testing.T) {
 // cursor with a total, filter by status, and name who resolved one.
 func TestAnomaliesArePagedAndSayWhoResolvedThem(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t))
+	svc := newService(t)
 	organization := dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
 	for range 3 {

@@ -10,8 +10,8 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -87,12 +87,9 @@ func (i *IdP) requireSSO(ctx context.Context, organizationID uuid.UUID) error {
 	return requireSSO(ctx, i.gate, organizationID)
 }
 
-// requireSSO refuses with ErrUpgradeRequired when gate, if set, finds that
-// the organization's plan doesn't include enterprise SSO.
+// requireSSO refuses with ErrUpgradeRequired when gate finds that the
+// organization's plan doesn't include enterprise SSO.
 func requireSSO(ctx context.Context, gate entitlements.PlanGate, organizationID uuid.UUID) error {
-	if gate == nil {
-		return nil
-	}
 	ok, err := gate.FeatureAllowed(ctx, organizationID, "sso")
 	if err != nil {
 		return err

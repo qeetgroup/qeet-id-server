@@ -7,14 +7,13 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/user/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 )
 
-// OffboardTx, in the transaction that deletes userID or removes them from
-// organizationID, revokes the admin-portal links and pending invitations they issued
-// there and records the critical user.integrations_left event: how many of
-// each, and the integrations they created there that still work and need
-// review. Every removal calls it. Nothing to list or revoke records nothing.
+// OffboardTx, in the transaction that deletes userID or removes them from organizationID, revokes the
+// admin-portal links and pending invitations they issued there and records the critical
+// user.integrations_left event: how many of each, and the integrations they created that still work.
+// Every removal calls it; with nothing to list or revoke it records nothing.
 func (r *Repository) OffboardTx(ctx context.Context, tx pgx.Tx, organizationID, userID uuid.UUID, actor audit.Actor) error {
 	q := r.q.WithTx(tx)
 	links, err := q.RevokeAdminPortalLinksCreatedBy(ctx, dbgen.RevokeAdminPortalLinksCreatedByParams{OrganizationID: organizationID, UserID: userID})

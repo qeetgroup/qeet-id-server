@@ -8,7 +8,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/provision"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -27,13 +27,10 @@ func (s *Service) signInAccount(ctx context.Context, organizationID uuid.UUID, p
 		provision.Person{Subject: ui.Subject, Email: ui.Email, EmailVerified: &verified, Name: ui.Name}, actor)
 }
 
-// weigh weighs the address p asserts for src's provider (identitylink's
-// Flow.Weigh). Adopting an account needs an address the provider proves, off
-// a domain that requires single sign-on. Creating one is self-registration,
-// so it follows the organization's setting exactly as password and passkey
-// sign-up do, and is refused on a domain that requires single sign-on or
-// another organization manages; an address the provider doesn't prove may
-// name a new account, never marked verified.
+// weigh weighs the address p asserts for src's provider (Flow.Weigh). Adopting needs an address the
+// provider proves, off a domain requiring SSO. Creating is self-registration: it follows the
+// organization's setting as password and passkey sign-up do, is refused on a domain that requires SSO
+// or another organization manages, and an unproved address may name a new, unverified account.
 func (s *Service) weigh(ctx context.Context, src provision.Source, p provision.Person) (provision.Vouching, error) {
 	registration := s.requireSelfRegistration(ctx, src.OrganizationID)
 	vouch, err := s.vouchingFor(ctx, src.OrganizationID, src.Provider, p.Email, p.EmailVerified != nil && *p.EmailVerified)
@@ -57,9 +54,6 @@ func (s *Service) weigh(ctx context.Context, src provision.Source, p provision.P
 // is on a domain whose organization requires single sign-on and the account
 // isn't exempt: social sign-in, whichever provider, never satisfies it.
 func (s *Service) refuseCapturedAccount(ctx context.Context, userID uuid.UUID) error {
-	if s.capture == nil {
-		return nil
-	}
 	email, err := s.q.AccountEmail(ctx, userID)
 	if err != nil {
 		return err
@@ -75,11 +69,10 @@ type vouching struct {
 	refusal error
 }
 
-// vouchingFor weighs email, which the provider says it verified when
-// verified, for organizationID's provider. An OpenID Connect provider's
-// endpoints are the organization's choice, so it proves only addresses on
-// domains the organization manages; an adapter's are fixed. It reads every
-// organization's domains, so it runs before the transaction.
+// vouchingFor weighs email (which the provider says it verified when verified) for organizationID's
+// provider. An OpenID Connect provider's endpoints are the organization's choice, so it proves only
+// addresses on domains the organization manages; an adapter's are fixed. It reads every organization's
+// domains, so it runs before the transaction.
 func (s *Service) vouchingFor(ctx context.Context, organizationID uuid.UUID, provider, email string, verified bool) (vouching, error) {
 	v := vouching{proved: verified}
 	domain, managed, err := domainverify.ManagingDomain(postgres.AcrossOrganizations(ctx), s.pool, email)
@@ -95,7 +88,7 @@ func (s *Service) vouchingFor(ctx context.Context, organizationID uuid.UUID, pro
 	}
 	// A domain that requires single sign-on takes new accounts through it
 	// alone, and any other managed domain only from its own organization.
-	if domain.SSO && s.capture != nil {
+	if domain.SSO {
 		err := s.capture.RefuseCaptured(ctx, email)
 		if errors.Is(err, errs.ErrAuthSSORequired) {
 			v.refusal = err
@@ -112,11 +105,8 @@ func (s *Service) vouchingFor(ctx context.Context, organizationID uuid.UUID, pro
 }
 
 // requireSelfRegistration refuses with ErrAuthSelfRegistrationDisabled unless
-// the organization allows self-registration. No wired policy counts as closed.
+// the organization allows self-registration.
 func (s *Service) requireSelfRegistration(ctx context.Context, organizationID uuid.UUID) error {
-	if s.auth == nil {
-		return errs.ErrAuthSelfRegistrationDisabled
-	}
 	open, err := s.auth.SelfRegistrationEnabled(ctx, organizationID)
 	if err != nil {
 		return err

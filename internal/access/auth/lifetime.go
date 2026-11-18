@@ -7,7 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 )
 
@@ -22,12 +22,6 @@ const (
 	defaultSessionMaxAge      = 30 * 24 * time.Hour
 	defaultSessionIdleTimeout = 24 * time.Hour
 )
-
-// SetSessionLifetime sets the bounds of a session whose organization's security
-// policy sets none, or that has no organization.
-func (s *Service) SetSessionLifetime(maxAge, idle time.Duration) {
-	s.sessionMaxAge, s.sessionIdle = maxAge, idle
-}
 
 func (s *Service) sessionDefaults() (maxAge, idle time.Duration) {
 	maxAge, idle = s.sessionMaxAge, s.sessionIdle

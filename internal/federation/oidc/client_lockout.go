@@ -10,17 +10,15 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// ClientLockout is how many wrong secrets a confidential application may
-// present from one source network within Window, on every endpoint that takes
-// one together, before that network is refused for Duration. A client_id is
-// public, so a lockout of the application everywhere would let anyone shut it
-// off for all its users.
+// ClientLockout is how many wrong secrets a confidential application may present from one source
+// network within Window, across every endpoint that takes one, before that network is refused for
+// Duration. A client_id is public, so locking the application everywhere would let anyone shut it off.
 type ClientLockout struct {
 	Threshold int
 	Window    time.Duration
@@ -31,9 +29,6 @@ type ClientLockout struct {
 func DefaultClientLockout() ClientLockout {
 	return ClientLockout{Threshold: 10, Window: 15 * time.Minute, Duration: 15 * time.Minute}
 }
-
-// SetClientLockout sets the application secret lockout.
-func (s *Service) SetClientLockout(l ClientLockout) { s.lockout = l }
 
 // clientLocked reports whether a lockout is in force for the application from
 // the caller's source network. A failure to read it is returned, so

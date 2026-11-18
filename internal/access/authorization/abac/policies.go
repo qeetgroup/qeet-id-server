@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/abac/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -90,14 +90,12 @@ func toPolicy(row dbgen.AuthAbacPolicy) *Policy {
 // committed atomically in the same transaction.
 func (s *Service) Create(ctx context.Context, organizationID uuid.UUID, in CreateInput, actor audit.Actor) (*Policy, error) {
 	// Plan gate: ABAC (attribute-based access control) is a Pro+ feature.
-	if s.gate != nil {
-		ok, err := s.gate.FeatureAllowed(ctx, organizationID, "abac")
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			return nil, errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "abac"})
-		}
+	allowed, err := s.gate.FeatureAllowed(ctx, organizationID, "abac")
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
+		return nil, errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "abac"})
 	}
 	cond, err := checkPolicy(in.Name, in.Effect, in.ResourceType, in.Action, in.Condition)
 	if err != nil {

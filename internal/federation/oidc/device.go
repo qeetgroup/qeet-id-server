@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -190,11 +190,10 @@ func (s *Service) LookupDeviceByUserCode(ctx context.Context, userCode string) (
 	return &DeviceVerificationContext{ClientName: name, Scopes: row.Scopes, OrganizationID: row.OrganizationID}, nil
 }
 
-// DecideDevice records the user's approve/deny decision against a pending device
-// row identified by user_code. On approval it binds the user (who must belong to
-// the row's organization, and approve from an address its rules allow: ip) and marks
-// it authorized; on denial it marks it denied. Either is audited in the row's
-// organization as oauth.device_approved or oauth.device_denied.
+// DecideDevice records the user's decision on the pending device row with user_code. Approving binds
+// the user (who must belong to the row's organization and approve from an address its rules allow:
+// ip) and authorizes it; denying marks it denied. Either is audited in the row's organization as
+// oauth.device_approved or oauth.device_denied.
 func (s *Service) DecideDevice(ctx context.Context, userID uuid.UUID, userCode string, approve bool, ip string) error {
 	userCode = normalizeUserCode(userCode)
 	tx, err := s.pool.Begin(ctx)

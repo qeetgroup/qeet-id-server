@@ -269,7 +269,7 @@ Claims such as "NIST AAL2" or "ASVS compliant" need test evidence behind them; w
 **What Qeet ID has today:**
 
 - Internal reviews: the Phase 1 security programme, the enterprise plan and an October 2026 backend review, whose five findings are fixed.
-- CI runs gosec (the security scan) and govulncheck (the vulnerability scan).
+- CI runs govulncheck (the vulnerability scan); gosec (the security scan) runs in the local `make ci`.
 - A local run of the OpenID Foundation conformance suite (November 2026): the Basic OP, Config OP,
   RP-initiated logout and back-channel logout plans have no failure against a build that signs with
   an RSA key (RS256). The run against staging, which a certification needs, is still to do.

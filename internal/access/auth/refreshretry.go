@@ -13,8 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -27,14 +26,9 @@ import (
 // refreshRetryPurpose is the encryption context of a kept rotation pair.
 const refreshRetryPurpose = "refresh-token-retry"
 
-// SetRefreshReuseGrace makes each rotation keep the pair it issued, sealed
-// with cipher, so the rotated token sent again within grace gets that pair.
-// Zero grace or a nil cipher turns it off.
-func (s *Service) SetRefreshReuseGrace(grace time.Duration, cipher *envelope.Cipher) {
-	s.refreshGrace, s.refreshCipher = grace, cipher
-}
-
-func (s *Service) refreshRetryOn() bool { return s.refreshGrace > 0 && s.refreshCipher != nil }
+// refreshRetryOn reports whether each rotation keeps the pair it issued, so
+// the rotated token sent again within the grace gets that pair.
+func (s *Service) refreshRetryOn() bool { return s.refreshGrace > 0 }
 
 // keepRotation stores pair, sealed, on rotated, the refresh token it replaces.
 // The session ID is the context, as an organization-less session has no organization.
@@ -53,11 +47,10 @@ func (s *Service) keepRotation(ctx context.Context, tx pgx.Tx, rotated uuid.UUID
 	return s.q.WithTx(tx).KeepRotation(ctx, dbgen.KeepRotationParams{ID: rotated, ReplacementEnc: enc, ReplacementNonce: nonce})
 }
 
-// keptRotation returns the pair the rotation of the used token rotated issued,
-// and how long ago, when that was within the grace and its refresh token is
-// unused and live. ok is false otherwise, including when the pair can't be
-// opened, so the reuse counts as theft. The caller holds the session's row
-// lock, which every renewal takes, so the replacement can't be used meanwhile.
+// keptRotation returns the pair issued by the rotation of the used token, and how long ago, when that
+// was within the grace and its refresh token is unused and live; otherwise ok is false (also when the
+// pair can't be opened), so the reuse counts as theft. The caller holds the session's row lock, which
+// every renewal takes, so the replacement can't be used meanwhile.
 func (s *Service) keptRotation(ctx context.Context, tx pgx.Tx, rotated, sessionID uuid.UUID) (pair *TokenPair, age time.Duration, ok bool, err error) {
 	if !s.refreshRetryOn() {
 		return nil, 0, false, nil

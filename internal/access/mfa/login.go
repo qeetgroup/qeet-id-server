@@ -20,10 +20,6 @@ import (
 // challenged: an authenticator app with its recovery codes, email and SMS
 // codes, passkeys where the organization allows them, and push devices.
 
-// SetWebAuthn sets the passkey verifier for sign-in second factors (nil:
-// passkeys are not offered as one).
-func (s *Service) SetWebAuthn(v WebAuthnVerifier) { s.webauthn = v }
-
 // LoginFactors lists the second factors userID can meet a sign-in challenge
 // with, in a stable order.
 func (s *Service) LoginFactors(ctx context.Context, userID uuid.UUID) ([]auth.LoginFactor, error) {
@@ -58,7 +54,7 @@ func (s *Service) loginFactors(ctx context.Context, q *dbgen.Queries, userID uui
 		id := f.ID
 		out = append(out, auth.LoginFactor{Type: f.Channel, ID: &id, Destination: notifier.MaskDestination(f.Channel, f.Destination)})
 	}
-	if counts.Passkeys > 0 && s.webauthn != nil {
+	if counts.Passkeys > 0 {
 		out = append(out, auth.LoginFactor{Type: "passkey"})
 	}
 	if counts.PushDevices > 0 {
@@ -94,9 +90,6 @@ func (s *Service) verifyLoginOTP(ctx context.Context, tx pgx.Tx, userID uuid.UUI
 
 // BeginLoginPasskey starts a passkey assertion for userID's own passkeys.
 func (s *Service) BeginLoginPasskey(ctx context.Context, userID uuid.UUID) (uuid.UUID, any, error) {
-	if s.webauthn == nil {
-		return uuid.Nil, nil, ErrWebAuthnUnavailable
-	}
 	id, options, err := s.webauthn.BeginMFA(ctx, userID)
 	if err != nil {
 		return uuid.Nil, nil, err
@@ -107,9 +100,6 @@ func (s *Service) BeginLoginPasskey(ctx context.Context, userID uuid.UUID) (uuid
 // FinishLoginPasskeyTx verifies an assertion for the ceremony begun by
 // BeginLoginPasskey, inside the challenge transaction tx.
 func (s *Service) FinishLoginPasskeyTx(ctx context.Context, tx pgx.Tx, userID, sessionID uuid.UUID, credential json.RawMessage) error {
-	if s.webauthn == nil {
-		return ErrWebAuthnUnavailable
-	}
 	return s.webauthn.FinishMFATx(ctx, tx, userID, sessionID, credential)
 }
 

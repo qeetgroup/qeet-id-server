@@ -13,7 +13,6 @@ import (
 	"sort"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -303,10 +302,12 @@ func (n seatPlan) Limit(context.Context, uuid.UUID, string) (int, error) { retur
 func TestDirectoryGroupMembershipTakesSeats(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	f := newSCIMFixture(t, ctx)
-	seats := invite.NewService(pool, &dbtest.Mailbox{}, time.Hour, "https://app.example.test")
-	seats.SetPlanLimiter(seatPlan(1))
-	f.svc.SetSeatGuard(seats)
+	plan := seatPlan(1)
+	seats, err := invite.NewSeats(pool, &plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := newSCIMFixture(t, ctx, func(d *Deps) { d.Seats = seats })
 	dbtest.User(t, f.organizationID, f.organizationID) // holds the one seat
 	member := f.seedUser(t, ctx, dbtest.Unique("member")+"@acme.test")
 
@@ -342,7 +343,7 @@ func TestDirectoryGroupMembershipTakesSeats(t *testing.T) {
 		t.Errorf("%d members added past the seat limit, want none", n)
 	}
 
-	seats.SetPlanLimiter(seatPlan(-1)) // a plan without a seat limit
+	plan = -1 // a plan without a seat limit
 	rec = f.do(t, http.MethodPatch, "/scim/v2/Groups/"+gid, map[string]any{
 		"schemas":    []string{schemaPatchOp},
 		"Operations": []map[string]any{{"op": "add", "path": "members", "value": []map[string]any{{"value": member.String()}}}},

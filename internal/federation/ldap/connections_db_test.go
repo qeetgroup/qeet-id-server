@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -16,8 +16,7 @@ import (
 func TestDirectoryConnectionLimits(t *testing.T) {
 	ctx := dbtest.Context(t)
 	organization := dbtest.Organization(t)
-	svc := directoryService(t)
-	svc.SetPlanGate(noLDAP{})
+	svc := directoryService(t, func(d *Deps) { d.Gate = noLDAP{} })
 	_, err := svc.Create(ctx, organization, CreateInput{Name: "Directory", ServerURL: "ldap://127.0.0.1:1", BindDN: "cn=service,dc=example,dc=test", BindPassword: "x", BaseDN: "dc=example,dc=test"}, audit.Actor{Type: "system"})
 	if !strings.Contains(errorCode(err), errs.CodeUpgradeRequired) {
 		t.Errorf("create on a plan without directory sign-in: %v, want an upgrade", err)

@@ -27,7 +27,7 @@ func (c passwordCheck) ReauthPassword(_ context.Context, _ uuid.UUID, plain stri
 func TestDeleteOwnAccount(t *testing.T) {
 	organization := dbtest.Organization(t)
 	a := account(t, organization)
-	h := dbtest.Serve(dbtest.Principal(a.ID, organization), (&Handler{Service: NewService(dbtest.Pool(t), 0), Reauth: passwordCheck{"Kx7mQ2vLp9Wz"}}).Mount)
+	h := dbtest.Serve(dbtest.Principal(a.ID, organization), handler(t, testService(t, dbtest.Pool(t), 0), passwordCheck{"Kx7mQ2vLp9Wz"}).Mount)
 	if rec := dbtest.Do(t, h, http.MethodPost, "/account/delete", map[string]string{"password": "wrong"}); rec.Code != http.StatusBadRequest || erased(t, a.ID) {
 		t.Errorf("delete with the wrong password: %d", rec.Code)
 	}
@@ -54,7 +54,7 @@ func TestDataRequestsRefusedForSomeoneWhoOutranksTheCaller(t *testing.T) {
 	}
 	admin := dbtest.User(t, organization, organization)
 	dbtest.Assign(t, admin.ID, organization, dbtest.Role(t, organization, "gdpr.write", "gdpr.read", "user.write", "user.delete"))
-	h := requests(t, NewService(pool, time.Hour))
+	h := requests(t, testService(t, pool, time.Hour))
 	as := func(a dbtest.Account, method, path string, body any) (int, string) {
 		rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(a.ID, organization), h.Mount), method, path, body)
 		return rec.Code, rec.Body.String()

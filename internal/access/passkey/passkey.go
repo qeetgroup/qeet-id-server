@@ -6,6 +6,7 @@ package passkey
 
 import (
 	"context"
+	"errors"
 
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
@@ -13,20 +14,32 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
 	"github.com/qeetgroup/qeet-id-server/internal/access/passkey/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
-// Service runs passkey ceremonies and manages stored passkeys. policy says
-// whether an organization permits passkeys (nil: no restriction); invitations
-// lets an invited person found an account on a passkey (nil: that path is off);
-// sender emails the account holder when one is added or removed (nil: no one);
-// capture refuses passkey sign-in and sign-up to an address whose organization
-// requires single sign-on (nil: none is refused).
+// RelyingParty is the WebAuthn relying party and its store of in-flight
+// ceremonies: all a passkey second factor needs (see mfa.go), so the
+// second-factor service is built before the sign-in service it serves.
+type RelyingParty struct {
+	pool *pgxpool.Pool
+	q    *dbgen.Queries
+	wa   *webauthn.WebAuthn
+}
+
+// NewRelyingParty returns the relying party wa over pool.
+func NewRelyingParty(pool *pgxpool.Pool, wa *webauthn.WebAuthn) (*RelyingParty, error) {
+	if wa == nil {
+		return nil, errors.New("passkey: the relying party needs a WebAuthn configuration")
+	}
+	return &RelyingParty{pool: pool, q: dbgen.New(pool), wa: wa}, nil
+}
+
+// Service runs passkey ceremonies and manages stored passkeys. policy says whether an organization
+// permits passkeys; invitations let an invited person found an account on one; sender emails the
+// holder when one is added or removed; capture refuses passkeys for addresses that require SSO.
 type Service struct {
-	pool        *pgxpool.Pool
-	q           *dbgen.Queries
-	wa          *webauthn.WebAuthn
+	*RelyingParty
 	auth        *auth.Service
 	policy      MethodPolicy
 	invitations InvitationAcceptor
@@ -34,14 +47,35 @@ type Service struct {
 	capture     auth.DomainCapture
 }
 
-// NewService returns the passkey service.
-func NewService(pool *pgxpool.Pool, wa *webauthn.WebAuthn, authSvc *auth.Service) *Service {
-	return &Service{pool: pool, q: dbgen.New(pool), wa: wa, auth: authSvc}
+// Deps are what the passkey service is built from, all required.
+type Deps struct {
+	RelyingParty *RelyingParty
+	Auth         *auth.Service      // signs a person in once a passkey proves them
+	Policy       MethodPolicy       // the organization's passkey on/off setting
+	Invitations  InvitationAcceptor // accepts an invitation with a passkey
+	Sender       notifier.Sender    // tells the account holder of a passkey added or removed
+	Capture      auth.DomainCapture // refuses passkey sign-in and sign-up on a captured domain
 }
 
-// SetSender sets how the account holder is emailed when a passkey is added to
-// or removed from their account.
-func (s *Service) SetSender(sender notifier.Sender) { s.sender = sender }
+// NewService returns the passkey service built from d.
+func NewService(d Deps) (*Service, error) {
+	switch {
+	case d.RelyingParty == nil:
+		return nil, errors.New("passkey: the passkey service needs a relying party")
+	case d.Auth == nil:
+		return nil, errors.New("passkey: the passkey service needs the sign-in service")
+	case d.Policy == nil:
+		return nil, errors.New("passkey: the passkey service needs a method policy")
+	case d.Invitations == nil:
+		return nil, errors.New("passkey: the passkey service needs invitations")
+	case d.Sender == nil:
+		return nil, errors.New("passkey: the passkey service needs a sender")
+	case d.Capture == nil:
+		return nil, errors.New("passkey: the passkey service needs domain capture")
+	}
+	return &Service{RelyingParty: d.RelyingParty, auth: d.Auth, policy: d.Policy, invitations: d.Invitations,
+		sender: d.Sender, capture: d.Capture}, nil
+}
 
 // MethodPolicy says whether an organization permits passkeys. It is satisfied
 // by *authpolicy.Service without this package importing it.
@@ -49,25 +83,16 @@ type MethodPolicy interface {
 	PasskeyEnabled(ctx context.Context, organizationID uuid.UUID) (bool, error)
 }
 
-// SetMethodPolicy wires the organization's passkey on/off setting.
-func (s *Service) SetMethodPolicy(p MethodPolicy) { s.policy = p }
-
-// SetDomainCapture wires domain capture into passkey sign-in and sign-up.
-func (s *Service) SetDomainCapture(c auth.DomainCapture) { s.capture = c }
-
 // refuseCaptured returns errs.ErrAuthSSORequired when email's domain is
 // captured.
 func (s *Service) refuseCaptured(ctx context.Context, email string) error {
-	if s.capture == nil {
-		return nil
-	}
 	return s.capture.RefuseCaptured(ctx, email)
 }
 
 // passkeysAllowed returns ErrPasskeyDisabled if organizationID's policy switches
 // passkeys off. uuid.Nil (a user without an organization) is not restricted.
 func (s *Service) passkeysAllowed(ctx context.Context, organizationID uuid.UUID) error {
-	if organizationID == uuid.Nil || s.policy == nil {
+	if organizationID == uuid.Nil {
 		return nil
 	}
 	enabled, err := s.policy.PasskeyEnabled(ctx, organizationID)

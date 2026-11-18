@@ -74,8 +74,10 @@ func hookService(t *testing.T) *Service {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := NewService(dbtest.Pool(t), egress.DevelopmentPolicy())
-	svc.SetCipher(box)
+	svc, err := NewService(dbtest.Pool(t), box, egress.DevelopmentPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
 	return svc
 }
 

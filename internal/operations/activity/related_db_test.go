@@ -26,7 +26,7 @@ func TestOneEventByID(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), testHandler(t, dbtest.Pool(t), NewHub(nil)).Mount)
 	base := "/organizations/" + organization.String() + "/activity/"
 
 	rec := dbtest.Do(t, h, http.MethodGet, base+mine.String(), nil)

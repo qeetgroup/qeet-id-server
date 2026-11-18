@@ -11,7 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
@@ -21,7 +21,7 @@ import (
 // row can't be written.
 func TestGrantRevocationKeepsItsAuditRow(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
+	svc := newTestService(t, dbtest.Pool(t), dbtest.Issuer(t))
 	organization := dbtest.Organization(t)
 	admin, asha, ravi := dbtest.User(t, organization, organization), dbtest.User(t, organization, organization), dbtest.User(t, organization, organization)
 	actor := audit.Actor{UserID: &admin.ID, Type: "user", IP: "192.0.2.42", RequestID: "req-" + uuid.NewString()}
@@ -66,7 +66,7 @@ func TestGrantRevocationKeepsItsAuditRow(t *testing.T) {
 // included, and can neither see nor end another organization's.
 func TestGrantAdministration(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
+	svc := newTestService(t, dbtest.Pool(t), dbtest.Issuer(t))
 	organization, otherOrganization := dbtest.Organization(t), dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
 	person := dbtest.User(t, organization, organization)
@@ -118,7 +118,7 @@ func TestGrantAdministration(t *testing.T) {
 // organization only.
 func TestGrantsNameTheirPartiesPageAndRevokeTogether(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
+	svc := newTestService(t, dbtest.Pool(t), dbtest.Issuer(t))
 	organization, other := dbtest.Organization(t), dbtest.Organization(t)
 	asha, ravi := dbtest.User(t, organization, organization), dbtest.User(t, organization, organization)
 	app, secret := registerClientWith(t, svc, CreateClientInput{OrganizationID: organization, Name: "Reports"})

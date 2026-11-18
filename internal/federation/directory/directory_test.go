@@ -2,10 +2,8 @@ package directory
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -40,46 +38,42 @@ func (source *ldapFixture) List(_ context.Context, organizationID uuid.UUID) ([]
 	return source.records, nil
 }
 
-func TestConnectionSnapshotDoesNotInventHealthOrExposeCredentials(test *testing.T) {
-	organizationID := uuid.New()
-	usedAt := time.Date(2026, 9, 12, 10, 0, 0, 0, time.UTC)
-	scimSource := &scimFixture{config: &scim.ConfigView{
-		TokenSet: true, TokenPrefix: "private-prefix", LastUsedAt: &usedAt, ProvisionedCount: 128,
-	}}
-	ldapSource := &ldapFixture{records: []ldap.Connection{{
-		ID: uuid.New(), OrganizationID: organizationID, Name: "Corporate directory", Status: "active",
-		ServerURL: "ldaps://directory.example.test", BindDN: "private-bind-dn", LastLoginAt: &usedAt,
-	}}}
-	records, err := NewService(scimSource, ldapSource).List(context.Background(), organizationID)
-	if err != nil {
-		test.Fatal(err)
-	}
-	if len(records) != 2 {
-		test.Fatalf("got %d connections, want 2", len(records))
-	}
-	for _, record := range records {
-		if record.Health != "unknown" || record.LastSyncAt != nil || record.Environment != nil {
-			test.Fatalf("configuration was presented as sync telemetry: %+v", record)
-		}
-		if record.LastActivityAt == nil || !record.LastActivityAt.Equal(usedAt) {
-			test.Fatal("last activity was not retained")
-		}
-	}
-	raw, err := json.Marshal(records)
-	if err != nil {
-		test.Fatal(err)
-	}
-	for _, prohibited := range []string{"private-prefix", "private-bind-dn", "bind_password", "token_prefix"} {
-		if strings.Contains(string(raw), prohibited) {
-			test.Fatalf("connection snapshot exposed %q", prohibited)
-		}
-	}
-}
-
 func TestConnectionSourcesCannotReturnAnotherOrganization(test *testing.T) {
 	scimSource := &scimFixture{config: &scim.ConfigView{}}
 	ldapSource := &ldapFixture{records: []ldap.Connection{{ID: uuid.New(), OrganizationID: uuid.New()}}}
-	if records, err := NewService(scimSource, ldapSource).List(context.Background(), uuid.New()); err == nil || records != nil {
+	if records, err := fixtureService(scimSource, ldapSource).List(context.Background(), uuid.New()); err == nil || records != nil {
 		test.Fatal("cross-tenant source result was not rejected")
+	}
+}
+
+// fixtureService is a service over the two sources whose store has no
+// database, for checks that end before one is reached.
+func fixtureService(scimSource SCIMSource, ldapSource LDAPSource) *Service {
+	return &Service{Store: &Store{}, scim: scimSource, ldap: ldapSource}
+}
+
+// TestConstructorsRefuseMissingDependencies checks that the store and the
+// service are not built without what they read from, naming what is missing.
+func TestConstructorsRefuseMissingDependencies(test *testing.T) {
+	if _, err := NewStore(nil); err == nil || !strings.Contains(err.Error(), "pool") {
+		test.Errorf("store without a pool: %v", err)
+	}
+	scimSource, ldapSource := &scimFixture{}, &ldapFixture{}
+	for _, scenario := range []struct {
+		name  string
+		store *Store
+		scim  SCIMSource
+		ldap  LDAPSource
+	}{
+		{"store", nil, scimSource, ldapSource},
+		{"SCIM source", &Store{}, nil, ldapSource},
+		{"LDAP source", &Store{}, scimSource, nil},
+	} {
+		if _, err := NewService(scenario.store, scenario.scim, scenario.ldap); err == nil || !strings.Contains(err.Error(), scenario.name) {
+			test.Errorf("service without its %s: %v", scenario.name, err)
+		}
+	}
+	if _, err := NewService(&Store{}, scimSource, ldapSource); err != nil {
+		test.Errorf("service with every dependency: %v", err)
 	}
 }

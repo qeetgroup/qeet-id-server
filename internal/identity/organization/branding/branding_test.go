@@ -9,10 +9,21 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/google/uuid"
+
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
+
+// TestNewRepositoryNeedsAPlanGate checks that the branding repository can't
+// be built without the plan gate that decides whether custom branding shows.
+func TestNewRepositoryNeedsAPlanGate(t *testing.T) {
+	if repo, err := NewRepository(&pgxpool.Pool{}, nil, ""); err == nil {
+		t.Fatalf("NewRepository without a plan gate: %v, nil; want an error", repo)
+	}
+}
 
 func TestBackgroundSetting(t *testing.T) {
 	brand := Branding{Settings: map[string]any{"background_color": " #FAFAFA ", "existing": "preserved"}}

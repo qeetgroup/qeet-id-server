@@ -3,7 +3,6 @@
 package oidcsso
 
 import (
-	"context"
 	"net/http"
 	"strings"
 	"testing"
@@ -62,11 +61,6 @@ func TestOIDCTrustChangeMustOutrankLinkedAdministrators(t *testing.T) {
 		t.Errorf("an owner points it at another issuer: %d %s, want 200", status, got)
 	}
 }
-
-// denyPlan is a plan without single sign-on.
-type denyPlan struct{}
-
-func (denyPlan) FeatureAllowed(context.Context, uuid.UUID, string) (bool, error) { return false, nil }
 
 // TestOIDCConnectionsOverHTTP checks that an organization creates, lists,
 // reads, changes and deletes its connections, refusing invalid input, never
@@ -177,7 +171,7 @@ func TestOIDCConnectionsOverHTTP(t *testing.T) {
 		t.Errorf("another organization's connections: %d, want its one untouched", n)
 	}
 
-	s.svc.SetPlanGate(denyPlan{})
+	s.plan.lapsed = true
 	rec = dbtest.Do(t, asAdmin, http.MethodPost, base, connection)
 	if rec.Code != http.StatusPaymentRequired || !strings.Contains(rec.Body.String(), errs.CodeUpgradeRequired) {
 		t.Errorf("create on a plan without single sign-on: %d %s, want 402 %s", rec.Code, rec.Body.String(), errs.CodeUpgradeRequired)

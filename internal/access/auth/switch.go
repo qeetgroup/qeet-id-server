@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -57,15 +57,13 @@ func (s *Service) SwitchOrganization(ctx context.Context, in SwitchOrganizationI
 	if err := s.organizationFactorShortfall(ctx, in.UserID, in.OrganizationID, carried); err != nil {
 		return nil, err
 	}
-	var claims map[string]any
-	if s.loginHook != nil {
-		u, err := s.users.Get(ctx, in.UserID)
-		if err != nil {
-			return nil, err
-		}
-		if claims, err = s.loginHook.Run(ctx, in.OrganizationID, in.UserID, u.Email); err != nil {
-			return nil, err
-		}
+	u, err := s.users.Get(ctx, in.UserID)
+	if err != nil {
+		return nil, err
+	}
+	claims, err := s.loginHook.Run(ctx, in.OrganizationID, in.UserID, u.Email)
+	if err != nil {
+		return nil, err
 	}
 	if err := s.refuseSignIn(ctx, in.UserID, in.OrganizationID, "organization_switch", in.IP, in.UserAgent); err != nil {
 		return nil, err

@@ -7,11 +7,9 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Row-level security (migration 0011): each organization-owned table has a
-// policy that shows a connection only the rows of the organization set on it,
-// and every row when none is set. Connections run as AppRole, which the
-// policies bind; the organization is set from the context each time a
-// connection is taken from the pool.
+// Row-level security (migration 0011): each organization-owned table's policy shows a connection only
+// the rows of the organization set on it, or every row when none is set. Connections run as AppRole,
+// which the policies bind; the organization is set from the context on every pool checkout.
 
 // AppRole is the role the pool's connections run as.
 const AppRole = "qeet_app"

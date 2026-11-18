@@ -38,7 +38,7 @@ func TestUsageCountsHowPeopleSignIn(t *testing.T) {
 		googleOnly.ID, organization, uuid.NewString(), both.ID, uuid.NewString()); err != nil {
 		t.Fatal(err)
 	}
-	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: NewService(pool)}).Mount)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: newService(t)}).Mount)
 	var got MethodUsage
 	dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, "/organizations/"+organization.String()+"/auth-policy/usage", nil), &got)
 	if got.People != 5 || got.Password != (MethodCount{People: 2, Only: 1}) || got.Passkey != (MethodCount{People: 2, Only: 1}) {
@@ -56,7 +56,7 @@ func TestUsageCountsHowPeopleSignIn(t *testing.T) {
 func TestEveryMethodOffNeedsSingleSignOn(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	svc := NewService(pool)
+	svc := newService(t)
 	organization, other := dbtest.Organization(t), dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
 	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: svc}).Mount)
@@ -106,7 +106,7 @@ func TestEveryMethodOffWithOpenIDConnect(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
 	organization := dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
-	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: NewService(pool)}).Mount)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: newService(t)}).Mount)
 	path := "/organizations/" + organization.String() + "/auth-policy"
 	ssoOnly := map[string]any{"password_enabled": false, "passkey_enabled": false, "magic_link_enabled": false}
 	connect := func(status string) {

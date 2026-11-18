@@ -22,7 +22,7 @@ func TestLockOutIsJudgedOnTheAuthorsCall(t *testing.T) {
 	organization := dbtest.Organization(t)
 	author := dbtest.User(t, organization, organization)
 	group(t, organization, "Contractors", nil)
-	svc := NewService(dbtest.Pool(t))
+	svc := newService(t)
 	save := func(sessionID uuid.UUID, name, condition string) *httptest.ResponseRecorder {
 		p := dbtest.Principal(author.ID, organization)
 		p.SessionID = &sessionID

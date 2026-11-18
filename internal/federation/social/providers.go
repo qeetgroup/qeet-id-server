@@ -13,7 +13,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/social/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -36,9 +36,6 @@ func recordProviderChange(ctx context.Context, tx pgx.Tx, by audit.Actor, organi
 
 // sealSecret encrypts a provider secret for storage.
 func (s *Service) sealSecret(organizationID uuid.UUID, provider, secret string) (ciphertext, nonce []byte, err error) {
-	if s.box == nil {
-		return nil, nil, errs.ErrInternalServer.WithDetail("social provider secret encryption is unavailable")
-	}
 	return s.box.Seal(organizationID, "social-provider", provider, []byte(secret))
 }
 
@@ -53,11 +50,9 @@ type UpdateProviderInput struct {
 	Enabled      *bool   `json:"enabled"`
 }
 
-// UpdateProvider changes the given fields of the organization's provider and
-// returns it. ErrNotFound when the organization has no such provider —
-// including one that belongs to another organization. Switching it off is
-// refused with ErrSocialProviderInUse, as deleting it is, while anyone can
-// sign in only through it.
+// UpdateProvider changes the given fields of the organization's provider and returns it; ErrNotFound
+// when it has no such provider (another organization's included). Switching it off is refused with
+// ErrSocialProviderInUse, as deleting it is, while anyone can sign in only through it.
 func (s *Service) UpdateProvider(ctx context.Context, organizationID uuid.UUID, provider string, in UpdateProviderInput, by audit.Actor) (*Provider, error) {
 	kind := adapterKind(provider)
 	if err := s.checkProviderUpdate(kind, &in); err != nil {
@@ -278,13 +273,10 @@ func (h *Handler) deleteProvider(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// CreateProviderInput adds a provider, or replaces the settings of one the
-// organization already has. Replacing keeps whether it is switched on, and an
-// empty ClientSecret keeps the stored secret (a new provider needs one).
-// DiscoveryURL is an OpenID Connect provider's alone. For Apple, ClientID is
-// the Services ID and ClientSecret the .p8 private key, with AppleTeamID and
-// AppleKeyID; the client secret is signed from them for each sign-in.
-// Actor is who saved it, for the audit record.
+// CreateProviderInput adds a provider or replaces one's settings (keeping whether it is on; an empty
+// ClientSecret keeps the stored one, and a new provider needs one). DiscoveryURL is OpenID Connect's
+// alone. For Apple, ClientID is the Services ID and ClientSecret the .p8 key, with AppleTeamID and
+// AppleKeyID, signing a client secret per sign-in. Actor is who saved it, for the audit record.
 type CreateProviderInput struct {
 	audit.Actor    `json:"-"`
 	OrganizationID uuid.UUID `json:"organization_id"`
@@ -437,11 +429,10 @@ func (s *Service) ListProviders(ctx context.Context, organizationID uuid.UUID) (
 	return out, nil
 }
 
-// checkTrust refuses pointing the organization's OpenID Connect provider name
-// at discoveryURL, unless that is where it already looks, when the caller may
-// not act on every administrator linked to it: the provider signs them in on
-// what that URL serves. A provider set up again under a name it had before
-// gets its earlier links back, so it counts as a change too.
+// checkTrust refuses pointing the organization's OpenID Connect provider name at discoveryURL (unless
+// it already looks there) when the caller may not act on every administrator linked to it, since the
+// provider signs them in on what that URL serves. A provider set up again under an earlier name gets
+// its old links back, so that counts as a change too.
 func (h *Handler) checkTrust(r *http.Request, organizationID uuid.UUID, name, discoveryURL string) error {
 	if adapterKind(name) != kindOIDC {
 		return nil

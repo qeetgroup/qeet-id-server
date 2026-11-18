@@ -13,14 +13,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
-
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth/authtest"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -120,26 +120,49 @@ const (
 // authenticated ones.
 type provider struct {
 	svc      *Service
+	notices  *LogoutNotices
 	sessions *auth.Service
 	public   http.Handler
 	mount    func(chi.Router)
 }
 
 // newProvider returns the provider wired as production wires it, sign-out
-// notices included.
-func newProvider(t *testing.T) *provider {
+// notices included, its dependencies changed by each of with.
+func newProvider(t *testing.T, with ...func(d *Deps, sessions *auth.Service)) *provider {
+	t.Helper()
+	return newProviderOver(t, func(*auth.Deps) {}, with...)
+}
+
+// newProviderOver is newProvider with its hosted-login session service's
+// dependencies changed by sessionsChange.
+func newProviderOver(t *testing.T, sessionsChange func(*auth.Deps), with ...func(d *Deps, sessions *auth.Service)) *provider {
 	t.Helper()
 	pool := dbtest.Pool(t)
 	issuer := dbtest.Issuer(t)
-	svc := NewService(pool, issuer)
-	sessions := auth.NewService(pool, user.NewRepository(pool), issuer)
-	sessions.SetSignOutNotifier(svc)
+	notices, err := NewLogoutNotices(pool, issuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions := newSessions(t, issuer, notices, sessionsChange)
+	svc := newTestService(t, pool, issuer, func(d *Deps) {
+		for _, change := range with {
+			change(d, sessions)
+		}
+	})
 	h := &Handler{Service: svc, Sessions: sessions, LoginBaseURL: loginBase, PublicBaseURL: publicBase}
 	public := chi.NewRouter()
 	h.MountPublic(public)
 	h.MountBrowser(public)
 	h.MountToken(public)
-	return &provider{svc: svc, sessions: sessions, public: public, mount: h.Mount}
+	return &provider{svc: svc, notices: notices, sessions: sessions, public: public, mount: h.Mount}
+}
+
+// newSessions is the hosted-login session service signing with issuer, which
+// tells applications through notices when someone signs out, its
+// dependencies then changed by change.
+func newSessions(t *testing.T, issuer *tokens.Issuer, notices *LogoutNotices, change func(*auth.Deps)) *auth.Service {
+	t.Helper()
+	return authtest.New(t, dbtest.Pool(t), func(d *auth.Deps) { d.Tokens, d.SignOut = issuer, notices }, change)
 }
 
 // signIn opens a hosted-login session for userID and returns the browser's

@@ -103,8 +103,7 @@ func TestValidateForOrganization_NoOrganizationUsesThePlatformBaseline(t *testin
 		}
 	}))
 	defer breached.Close()
-	s := &Service{} // no pool: uuid.Nil must not touch the database
-	s.SetBreachChecker(hibp.New(breached.Client(), breached.URL, 1))
+	s := &Service{breach: hibp.New(breached.Client(), breached.URL, 1)} // no pool: uuid.Nil must not touch the database
 
 	for _, c := range []struct{ pw, code string }{
 		{"Zq7#x", errs.CodeAuthPolicyPasswordTooShort}, // under the 8-character baseline

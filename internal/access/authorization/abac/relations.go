@@ -104,15 +104,11 @@ func relationLeaves(raw json.RawMessage, found func(relation, object, ref string
 // organizationID. Satisfied by rebac.Service.Check.
 type RelationCheck func(ctx context.Context, organizationID uuid.UUID, object, relation, userID string) (bool, error)
 
-// SetRelationCheck sets how relation conditions are answered; without one
-// they are unknown, so a deny holding one applies and an allow grants nothing.
-func (s *Service) SetRelationCheck(c RelationCheck) { s.relations = c }
-
 // resolveRelations answers, into bag, each relationship the conditions ask
 // about for the bag's subject, so evaluation needs no lookups of its own.
 func (s *Service) resolveRelations(ctx context.Context, organizationID uuid.UUID, conditions [][]byte, bag AttributeBag) error {
 	subject, _ := bag["subject"]["id"].(string)
-	if s.relations == nil || subject == "" {
+	if subject == "" {
 		return nil
 	}
 	answers := map[string]any{}

@@ -8,9 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -20,12 +19,12 @@ import (
 func TestEmailChangeToAddressInUse(t *testing.T) {
 	ctx := dbtest.Context(t)
 	mail := &dbtest.Mailbox{}
-	svc := NewService(dbtest.Pool(t), mail, 10*time.Minute)
+	svc := newService(t, mail)
 	organization := dbtest.Organization(t)
 	a := dbtest.User(t, organization, organization)
 	holder := dbtest.User(t, organization, organization)
 	who := Requester{Actor: audit.Actor{UserID: &a.ID, Type: "user"}, OrganizationID: &organization}
-	as := dbtest.Serve(dbtest.Principal(a.ID, organization), (&Handler{Service: svc}).Mount)
+	as := dbtest.Serve(dbtest.Principal(a.ID, organization), (&Handler{Service: svc, Throttle: passThrough}).Mount)
 	codeRe := regexp.MustCompile(`\b\d{8}\b`)
 
 	free := dbtest.Unique("free") + "@example.test"
@@ -64,7 +63,7 @@ func TestEmailChangeEndsLinksToTheOldAddress(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	mail := &dbtest.Mailbox{}
-	svc := NewService(pool, mail, 10*time.Minute)
+	svc := newService(t, mail)
 	organization := dbtest.Organization(t)
 	a := dbtest.User(t, organization, organization)
 	who := Requester{Actor: audit.Actor{UserID: &a.ID, Type: "user"}, OrganizationID: &organization}
@@ -74,7 +73,7 @@ func TestEmailChangeEndsLinksToTheOldAddress(t *testing.T) {
 	`, a.ID, dbtest.Unique("reset"), strings.ToUpper(a.Email), dbtest.Unique("link")); err != nil {
 		t.Fatal(err)
 	}
-	as := dbtest.Serve(dbtest.Principal(a.ID, organization), (&Handler{Service: svc}).Mount)
+	as := dbtest.Serve(dbtest.Principal(a.ID, organization), (&Handler{Service: svc, Throttle: passThrough}).Mount)
 	if rec := dbtest.Do(t, as, http.MethodPost, "/me/email/change/start", map[string]any{"email": dbtest.Unique("moved") + "@example.test"}); rec.Code != http.StatusOK {
 		t.Fatalf("start: %d %s", rec.Code, rec.Body.String())
 	}
@@ -99,13 +98,13 @@ func TestCapturedMemberCannotMoveOffTheManagedDomain(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	mail := &dbtest.Mailbox{}
-	svc := NewService(pool, mail, 10*time.Minute)
+	svc := newService(t, mail)
 	organization := dbtest.Organization(t)
 	domain := dbtest.Domain(t, organization)
 	elsewhere := dbtest.Domain(t, dbtest.Organization(t))
 	start := func(a dbtest.Account, email string) (int, string) {
 		t.Helper()
-		as := dbtest.Serve(dbtest.Principal(a.ID, organization), (&Handler{Service: svc}).Mount)
+		as := dbtest.Serve(dbtest.Principal(a.ID, organization), (&Handler{Service: svc, Throttle: passThrough}).Mount)
 		rec := dbtest.Do(t, as, http.MethodPost, "/me/email/change/start", map[string]any{"email": email})
 		return rec.Code, rec.Body.String()
 	}

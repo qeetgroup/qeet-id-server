@@ -120,9 +120,6 @@ func DefaultLockoutConfig() LockoutConfig {
 	}
 }
 
-// SetLockoutSource wires the per-organization lockout settings.
-func (s *Service) SetLockoutSource(f LockoutSource) { s.lockoutSource = f }
-
 // AccountLock describes a lock at the moment it is set, for security monitoring.
 type AccountLock struct {
 	Email       string        // the account's lowercased address
@@ -169,9 +166,6 @@ func (s *Service) SignInOrganization(ctx context.Context, clientID string) (uuid
 
 // newSignInAttempt resolves the lockout an attempt is held to.
 func (s *Service) newSignInAttempt(ctx context.Context, in SignInAttempt) (signInAttempt, error) {
-	if s.lockoutSource == nil {
-		return s.signInAttemptIn(ctx, uuid.Nil, in.Email, in.IP)
-	}
 	lctx, cancel := lockoutContext(ctx)
 	defer cancel()
 	organizationID, err := s.SignInOrganization(lctx, in.ClientID)
@@ -200,9 +194,6 @@ func (s *Service) signInAttemptIn(ctx context.Context, organizationID uuid.UUID,
 	var err error
 	if a.email, err = s.q.FoldAddress(ctx, strings.TrimSpace(account)); err != nil {
 		return a, lockoutFailed(stageSettings, err)
-	}
-	if s.lockoutSource == nil {
-		return a, nil
 	}
 	if a.lockout, err = s.lockoutSource(ctx, organizationID); err != nil {
 		return a, lockoutFailed(stageSettings, err)
@@ -275,17 +266,13 @@ func (s *Service) recordFailedSignIn(ctx context.Context, a signInAttempt, f Sig
 		lockoutsSet.WithLabelValues(lock.Counter).Inc()
 		slog.Warn("sign-in lockout: account locked",
 			"counter", lock.Counter, "network", lock.Network, "failures", lock.Failures, "locked_until", lock.LockedUntil)
-		if s.anomaly != nil {
-			s.anomaly.OnAccountLocked(ctx, lock)
-		}
+		s.anomaly.OnAccountLocked(ctx, lock)
 	}
 	if throttle != nil {
 		sourceThrottles.Inc()
 		slog.Warn("sign-in lockout: source network throttled for spraying",
 			"network", throttle.Network, "distinct_accounts", len(throttle.Accounts), "throttled_until", throttle.ThrottledUntil)
-		if s.anomaly != nil {
-			s.anomaly.OnSourceThrottled(ctx, *throttle)
-		}
+		s.anomaly.OnSourceThrottled(ctx, *throttle)
 	}
 	return nil
 }

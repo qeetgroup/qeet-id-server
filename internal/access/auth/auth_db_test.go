@@ -23,7 +23,9 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
@@ -32,11 +34,83 @@ func TestMain(m *testing.M) { dbtest.Main(m) }
 
 const testPassword = "Kx7mQ2vLp9Wz"
 
-// newService returns the authentication service with no optional policies.
+// newService returns the authentication service with dependencies that
+// decide nothing: no account holds a second factor, no sign-in is risky,
+// every method is allowed, no new password is accepted, no device is
+// remembered and no address is captured or refused. A test changes the
+// dependency it is about.
 func newService(t *testing.T) *Service {
 	t.Helper()
 	pool := dbtest.Pool(t)
-	return NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
+	box, err := envelope.New([]byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc, err := New(Deps{
+		Pool: pool, Users: user.NewRepository(pool), Tokens: dbtest.Issuer(t), Cipher: box,
+		MFA: noFactors{}, Risk: &riskStub{}, Registration: noRegistration{}, Methods: allMethods{},
+		Devices: noRememberedDevices{}, Lockout: platformLockout, Capture: noCapture{},
+		Addresses: addressFunc(func(context.Context, uuid.UUID, uuid.UUID, string, string) error { return nil }),
+		Anomalies: &anomalies{}, Sender: &dbtest.Mailbox{},
+		LoginHook: hookFunc(func(context.Context, uuid.UUID, uuid.UUID, string) (map[string]any, error) { return nil, nil }),
+		SignOut:   noSignOut{}, Signals: sessionsignal.New(nil),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return svc
+}
+
+// passThrough is a route throttle that holds nothing back.
+func passThrough(h http.Handler) http.Handler { return h }
+
+// noBots scores no attempt as a bot.
+type noBots struct{}
+
+func (noBots) Evaluate(context.Context, string, string, string) {}
+
+// noRegistration refuses self-registration and every new password.
+type noRegistration struct{}
+
+func (noRegistration) SelfRegistrationEnabled(context.Context, uuid.UUID) (bool, error) {
+	return false, nil
+}
+
+func (noRegistration) ValidateForOrganization(context.Context, uuid.UUID, string, string) error {
+	return errs.ErrNotImplemented
+}
+
+// allMethods allows every sign-in method.
+type allMethods struct{}
+
+func (allMethods) PasswordEnabled(context.Context, uuid.UUID) (bool, error) { return true, nil }
+
+// noRememberedDevices remembers no device.
+type noRememberedDevices struct{}
+
+func (noRememberedDevices) RememberDeviceEnabled(context.Context, uuid.UUID) (bool, error) {
+	return false, nil
+}
+
+func (noRememberedDevices) RememberDevicePolicy(context.Context, uuid.UUID) (bool, time.Duration, error) {
+	return false, 0, nil
+}
+
+// platformLockout holds every organization to the platform's lockout.
+func platformLockout(context.Context, uuid.UUID) (Lockout, error) {
+	return DefaultLockoutConfig().Defaults, nil
+}
+
+// noCapture captures no address.
+type noCapture struct{}
+
+func (noCapture) RefuseCaptured(context.Context, string) error { return nil }
+
+// noSignOut has no application to tell of a sign-out.
+type noSignOut struct{}
+
+func (noSignOut) NotifySignOut(context.Context, uuid.UUID, uuid.UUID, string) ([]string, error) {
+	return nil, nil
 }
 
 // member creates an organization and an active member of it who signs in with
@@ -152,7 +226,7 @@ func answered(rec *httptest.ResponseRecorder, status int, code string) bool {
 
 // newHandler returns the HTTP handler of svc, with its cookies marked Secure.
 func newHandler(svc *Service) *Handler {
-	return &Handler{Service: svc, Validate: validator.New(validator.WithRequiredStructEnabled()), CookieSecure: true,
+	return &Handler{Service: svc, Throttle: passThrough, Bot: noBots{}, Validate: validator.New(validator.WithRequiredStructEnabled()), CookieSecure: true,
 		ActOnCheck: rbac.NewRepository(svc.pool).CheckActOn}
 }
 

@@ -18,7 +18,7 @@ import (
 // read; and that ip is the call's address.
 func TestPlatformAttributes(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
-	svc := NewService(pool)
+	svc := newService(t)
 	organization, other := dbtest.Organization(t), dbtest.Organization(t)
 	person := dbtest.User(t, organization)
 	dbtest.Assign(t, person.ID, organization, namedRole(t, organization, "Billing Admin"))

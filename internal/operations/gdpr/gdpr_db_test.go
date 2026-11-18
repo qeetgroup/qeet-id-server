@@ -3,15 +3,19 @@
 package gdpr
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 )
 
 // erased reports whether the account's PII was redacted, its password and
@@ -52,11 +56,42 @@ func requestStatus(t *testing.T, id uuid.UUID) string {
 	return status
 }
 
+// testService is a Service over pool whose erasure requests wait grace, and
+// whose ended sessions are announced to no one.
+func testService(t *testing.T, pool *pgxpool.Pool, grace time.Duration) *Service {
+	t.Helper()
+	signals := sessionsignal.New(func(context.Context, pgx.Tx, uuid.UUID, string, any) error { return nil })
+	svc, err := NewService(pool, grace, signals)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return svc
+}
+
+// noPassword holds every account password-less, so deleting one needs only
+// its session.
+type noPassword struct{}
+
+func (noPassword) ReauthPassword(context.Context, uuid.UUID, string) (bool, bool, error) {
+	return false, true, nil
+}
+
+// handler is the handler for svc, with reauth and the outrank check bootstrap
+// wires.
+func handler(t *testing.T, svc *Service, reauth ReauthChecker) *Handler {
+	t.Helper()
+	h, err := NewHandler(svc, reauth, rbac.NewRepository(dbtest.Pool(t)).CheckActOn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h
+}
+
 // requests is the data-request handler for svc, with the outrank check
 // bootstrap wires.
 func requests(t *testing.T, svc *Service) *Handler {
 	t.Helper()
-	return &Handler{Service: svc, ActOnCheck: rbac.NewRepository(dbtest.Pool(t)).CheckActOn}
+	return handler(t, svc, noPassword{})
 }
 
 // recorded checks that one action event was recorded in organization for request id,
@@ -87,7 +122,7 @@ func TestDataRequestsAreAudited(t *testing.T) {
 	organization := dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
 	due, cancelled, exported := account(t, organization), account(t, organization), account(t, organization)
-	svc := NewService(pool, time.Nanosecond)
+	svc := testService(t, pool, time.Nanosecond)
 	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), requests(t, svc).Mount)
 
 	file := func(path string, userID uuid.UUID) uuid.UUID {

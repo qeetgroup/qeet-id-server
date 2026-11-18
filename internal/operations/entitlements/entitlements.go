@@ -6,6 +6,7 @@ package entitlements
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/google/uuid"
@@ -184,8 +185,7 @@ type PlanResolver interface {
 }
 
 // UsageResolver returns an organization's current consumption, keyed like Limits
-// (seats, apps, api_keys, …). It is optional and only feeds the billing usage
-// display.
+// (seats, apps, api_keys, …), for the billing usage display (Handler).
 type UsageResolver interface {
 	Usage(ctx context.Context, organizationID uuid.UUID) (map[string]int, error)
 }
@@ -194,36 +194,22 @@ type UsageResolver interface {
 // it through their own small interfaces.
 type Service struct {
 	resolver PlanResolver
-	usage    UsageResolver
 }
 
-// NewService returns a Service that resolves plans with r. A nil r puts every
-// organization on the free tier.
-func NewService(r PlanResolver) *Service { return &Service{resolver: r} }
-
-// SetUsageResolver sets the optional usage provider. Without one, Usage reports
-// nothing.
-func (s *Service) SetUsageResolver(u UsageResolver) { s.usage = u }
-
-// Usage returns the organization's current consumption per resource, or an empty map
-// without a usage provider.
-func (s *Service) Usage(ctx context.Context, organizationID uuid.UUID) (map[string]int, error) {
-	if s.usage == nil {
-		return map[string]int{}, nil
+// NewService returns a Service that resolves plans with r. It refuses a nil r.
+func NewService(r PlanResolver) (*Service, error) {
+	if r == nil {
+		return nil, errors.New("entitlements: a plan resolver is required")
 	}
-	return s.usage.Usage(ctx, organizationID)
+	return &Service{resolver: r}, nil
 }
 
-// Resolve returns the organization's entitlements. With a nil PlanResolver, or an
-// unknown plan, that is the free tier.
+// Resolve returns the organization's entitlements: an unknown plan's are the
+// free tier's.
 func (s *Service) Resolve(ctx context.Context, organizationID uuid.UUID) (Entitlements, error) {
-	code := "free"
-	if s.resolver != nil {
-		c, err := s.resolver.EffectivePlan(ctx, organizationID)
-		if err != nil {
-			return Entitlements{}, err
-		}
-		code = c
+	code, err := s.resolver.EffectivePlan(ctx, organizationID)
+	if err != nil {
+		return Entitlements{}, err
 	}
 	return For(code), nil
 }

@@ -5,8 +5,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-
-	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 )
 
 // signInEnder ends, inside tx, every way a user is signed in and reports how
@@ -31,17 +29,8 @@ func (e SignInsEnded) Total() int64 { return e.Sessions + e.LoginSessions + e.Ap
 
 // endEverySignIn ends, inside tx, every way userID is signed in: sessions,
 // hosted-login sessions, application grants, trusted devices and pending
-// authorizations, so none of them works again if the account comes back. With
-// no signIns it ends the sessions alone.
+// authorizations, so none of them works again if the account comes back.
 func (a accounts) endEverySignIn(ctx context.Context, tx pgx.Tx, userID uuid.UUID, reason string) error {
-	if a.signIns != nil {
-		_, err := a.signIns.EndAllSignIns(ctx, tx, userID, reason)
-		return err
-	}
-	ended, err := sessionsignal.EndUserSessions(ctx, tx, userID)
-	if err != nil {
-		return err
-	}
-	a.signals.Revoked(ctx, tx, reason, ended...)
-	return nil
+	_, err := a.signIns.EndAllSignIns(ctx, tx, userID, reason)
+	return err
 }

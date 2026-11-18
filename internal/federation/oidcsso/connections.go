@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidcsso/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
@@ -251,9 +251,6 @@ func (s *Service) insert(ctx context.Context, tx pgx.Tx, organizationID uuid.UUI
 	if err := in.check(s.egress); err != nil {
 		return nil, err
 	}
-	if s.box == nil {
-		return nil, ErrSecretEncryptionMissing
-	}
 	id := uuid.New()
 	ciphertext, nonce, err := s.box.Seal(organizationID, secretPurpose, id.String(), []byte(in.ClientSecret))
 	if err != nil {
@@ -455,9 +452,6 @@ func (s *Service) update(ctx context.Context, tx pgx.Tx, id, organizationID uuid
 		params.FamilyNameClaim, params.GroupsClaim = m.FamilyName, m.Groups
 	}
 	if in.ClientSecret != nil && *in.ClientSecret != "" {
-		if s.box == nil {
-			return nil, ErrSecretEncryptionMissing
-		}
 		ciphertext, nonce, err := s.box.Seal(organizationID, secretPurpose, id.String(), []byte(*in.ClientSecret))
 		if err != nil {
 			return nil, err

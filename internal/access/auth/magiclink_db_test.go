@@ -54,7 +54,7 @@ func TestMagicLinkSignIn(t *testing.T) {
 	})
 	t.Run("second factor", func(t *testing.T) {
 		svc := newService(t)
-		svc.SetMFA(heldFactor{code: "975310"})
+		svc.mfa = heldFactor{code: "975310"}
 		a, organization := member(t)
 		res, err := svc.BeginMagicLinkSignIn(ctx, a.ID, organization, ip, testUserAgent)
 		if err != nil || res.Pair != nil || !res.MFARequired {
@@ -74,8 +74,8 @@ func TestMagicLinkSignIn(t *testing.T) {
 	})
 	t.Run("risky", func(t *testing.T) {
 		svc := newService(t)
-		svc.SetMFA(noFactors{})
-		svc.SetRiskAssessor(&riskStub{risky: true})
+		svc.mfa = noFactors{}
+		svc.riskAssessor = &riskStub{risky: true}
 		a, organization := member(t)
 		if res, err := svc.BeginMagicLinkSignIn(ctx, a.ID, organization, ip, testUserAgent); err != nil || res.Pair == nil {
 			t.Errorf("risky link sign-in: %+v, %v; want a session, the email being proved", res, err)
@@ -83,9 +83,9 @@ func TestMagicLinkSignIn(t *testing.T) {
 	})
 	t.Run("hosted", func(t *testing.T) {
 		svc := newService(t)
-		svc.SetMFA(heldFactor{code: "975310"})
+		svc.mfa = heldFactor{code: "975310"}
 		a, organization := member(t)
-		svc.SetDevicePolicy(rememberIn(organization))
+		svc.devicePolicy = rememberIn(organization)
 		device, err := svc.CreateTrustedDevice(ctx, a.ID, organization, testUserAgent, time.Hour)
 		if err != nil {
 			t.Fatal(err)

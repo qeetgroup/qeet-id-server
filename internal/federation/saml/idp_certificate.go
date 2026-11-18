@@ -84,11 +84,10 @@ func checkCertificateUse(certPEM string, requireSigned, encrypt bool) error {
 	return nil
 }
 
-// verifiedAuthnRequest checks that the sign-in request raw, as r carried it,
-// is signed with certPEM, and returns it as signed. A Redirect-binding request
-// is signed over its query parameters, and the SAMLRequest read is the one the
-// signature covers; one posted, or posted and carried back from the hosted
-// login, by an enveloped XML signature, and only the element it covers is read.
+// verifiedAuthnRequest checks that sign-in request raw, as r carried it, is signed with certPEM, and
+// returns it as signed. A Redirect-binding request is signed over its query and the SAMLRequest read is
+// the one signed; a posted one (or one carried back from the hosted login) by an enveloped XML
+// signature, and only the element it covers is read.
 func verifiedAuthnRequest(r *http.Request, raw []byte, certPEM string) (*authnRequest, error) {
 	cert, err := parseCertificate(certPEM)
 	if err != nil {
@@ -132,11 +131,10 @@ func verifiedAuthnRequest(r *http.Request, raw []byte, certPEM string) (*authnRe
 	return &ar, nil
 }
 
-// verifyRedirectSignature checks a Redirect-binding query's Signature: over
-// SAMLRequest, RelayState when present, and SigAlg, as their URL-encoded values
-// arrived (SAML bindings §3.4.4.1), and returns the SAMLRequest it covers. Any
-// of the four given twice, or under a percent-encoded name, is refused, so the
-// values a form parser reads are the signed ones. SHA-1 is refused.
+// verifyRedirectSignature checks a Redirect-binding query's Signature over SAMLRequest, RelayState when
+// present, and SigAlg, as their URL-encoded values arrived (SAML bindings §3.4.4.1), and returns the
+// signed SAMLRequest. Any of the four given twice, or under a percent-encoded name, is refused, so a
+// form parser reads the signed values. SHA-1 is refused.
 func verifyRedirectSignature(rawQuery string, cert *x509.Certificate) (string, error) {
 	values := map[string]string{}
 	for _, part := range strings.Split(rawQuery, "&") {

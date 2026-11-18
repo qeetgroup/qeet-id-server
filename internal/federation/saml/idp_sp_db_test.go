@@ -20,15 +20,9 @@ import (
 func TestCreateSPPlanGateWithOneConnection(t *testing.T) {
 	pool := dbtest.Pool(t)
 	paid, free := dbtest.Organization(t), dbtest.Organization(t)
-	keyPEM, certPEM, err := GenerateIdPKeyPEM("Test Qeet IdP")
-	if err != nil {
-		t.Fatal(err)
-	}
-	idp, err := NewIdP(pool, keyPEM, certPEM, "https://login.id.qeet.in", sessionsByCookie{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	idp.SetPlanGate(poolGate{pool: pool, allowed: map[uuid.UUID]bool{paid: true}})
+	idp := newTestIdP(t, pool, sessionsByCookie{}, func(d *IdPDeps) {
+		d.Gate = poolGate{pool: pool, allowed: map[uuid.UUID]bool{paid: true}}
+	})
 	admins := map[uuid.UUID]uuid.UUID{paid: dbtest.User(t, paid, paid).ID, free: dbtest.User(t, free, free).ID}
 	create := func(organization uuid.UUID, acs string) *httptest.ResponseRecorder {
 		h := dbtest.Serve(dbtest.Principal(admins[organization], organization), (&Handler{Service: &Service{}, IdP: idp}).Mount)

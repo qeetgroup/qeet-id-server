@@ -12,7 +12,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/verification/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/emailtmpl"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
@@ -65,11 +65,10 @@ func (s *Service) StartEmailChange(ctx context.Context, userID uuid.UUID, newEma
 	}))
 }
 
-// checkEmailChange refuses, with ErrVerifyEmailManaged, moving userID's address
-// to newEmail where an organization decides it: its directory or single
-// sign-on provides the address, the address is on a domain the account's
-// organization manages and newEmail isn't, or newEmail is on a domain another
-// organization manages. db is the pool, or the confirming transaction.
+// checkEmailChange refuses, with ErrVerifyEmailManaged, moving userID's address to newEmail where an
+// organization decides it: its directory or SSO provides the address, the address is on a domain the
+// account's organization manages and newEmail isn't, or newEmail is on a domain another organization
+// manages. db is the pool, or the confirming transaction.
 func checkEmailChange(ctx context.Context, db dbgen.DBTX, userID uuid.UUID, newEmail string) error {
 	holder, err := dbgen.New(db).AddressHolder(ctx, userID)
 	if err != nil {

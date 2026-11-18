@@ -21,13 +21,11 @@ this repository** — this file points at them and stops.
 
 ### File-naming convention — read this before looking for a file
 
-**The convention is `<domain>.go`, not layered file names.** Domain logic, persistence and HTTP
-handlers usually live in one file named after the package. Additional files split by **feature**,
-not by layer.
-
-Only four packages use `service.go` / `repository.go` naming, and 17 domain packages have a
-dedicated `http.go` (the platform database-test helper is the eighteenth). **Do not assume a
-`service.go` or `repository.go` exists** — check the L4 pointers below.
+**Every domain package has the same shape.** `<package>.go` holds the package doc, the Service and
+`New`; `http.go` the routes and handlers (59 packages); `errors.go` its error codes; then one file per
+topic, split by **feature**, not by layer (`register.go`, `login.go`, …). Tests sit beside the file
+they test: `foo_test.go` (no database) and `foo_db_test.go` (PostgreSQL, `//go:build integration`).
+Only three packages (rbac, organization, user) also have a `service.go` or `repository.go`: don't add one elsewhere. Check the L4 pointers below.
 
 Every leaf package additionally carries `queries.sql` (an entry in the root `sqlc.yaml`) + a generated `dbgen/`
 (`db.go`, `models.go`, `queries.sql.go`). **`dbgen/` is sqlc output and is never hand-edited.**
@@ -125,7 +123,7 @@ authpolicy/securitypolicy.go   organization security policy: sessions, second fa
 **Purpose** — MFA: *"TOTP enrollment and verification plus a small set of recovery codes. Recovery
 codes are Argon2id-hashed."* Passkeys: *"implements WebAuthn passkey registration and login on top of
 go-webauthn."* Recovery: *"forgot-password and magic-link login. Both are stateless tokens."*
-**Path** `internal/access/{mfa,passkeys,recovery}/`
+**Path** `internal/access/{mfa,passkey,recovery}/`
 **Key dependencies** `platform/crypto/password` · `platform/crypto/totp` · `platform/messaging/{notifier,emailtmpl}` ·
 `platform/http/{errs,httpx}` · **`operations/audit`**
 **Security** **Critical** — second factors and account recovery
@@ -182,9 +180,9 @@ ipallow/ipallow.go        CIDR allow/deny
 **Purpose** — organizations, users, groups, invitations, verification. Invitations: *"lets an organization admin
 invite an email address into an organization with a pre-assigned role … the invite is consumed in the same
 transaction."*
-**Path** `internal/identity/{organization,users,groups,invitations,verification,domainverify}/`
+**Path** `internal/identity/{organization,user,group,invite,verification,domainverify}/`
 **Key dependencies** `platform/http/{errs,httpx,paging}` — **the only `http/paging` consumer** ·
-`platform/database/postgres/{dbutil,pgxerr}` · `platform/messaging/{notifier,emailtmpl}` ·
+`platform/database/postgres` · `platform/messaging/{notifier,emailtmpl}` ·
 `platform/events/outbox` · **`access/auth`**, **`operations/audit`**
 **Security** **High** — organization and user lifecycle
 
@@ -193,7 +191,7 @@ transaction."*
 ```text
 organization/organization.go · organization/http.go · organization/repository.go · organization/selection.go
 organization/branding/branding.go · branding/http.go · branding/logo.go
-users/user.go · users/http.go · users/repository.go
+user/user.go · user/http.go · user/repository.go
 users/endsignins.go       ending every way a person is signed in
 users/accounts.go         an administrator's changes to accounts, each in a transaction it owns
 users/list.go · users/suspension.go · users/signins.go   lists whose SQL is built from their filters
@@ -272,7 +270,7 @@ its audit row in it, with the `audit.Actor` the handler passes (`audit.ActorOf(r
 **Purpose** — service principals: *"non-human callers that authenticate via client_credentials grant
 and receive a short-lived service JWT scoped to a single organization."* Agents: *"non-human AI-agent
 identities … tokens (`actor_type="agent"`) that are re-minted rather than refreshed."*
-**Path** `internal/developer/{agents,api-keys,principal,auth-hooks,webhooks,credentials}/`
+**Path** `internal/developer/{agent,apikey,principal,authhook,webhook,credentials}/`
 **Key dependencies** `platform/http/{errs,httpx}` · `platform/crypto/{tokens,encryption}` ·
 **`operations/audit`**
 **Security** **Critical** — machine credentials and other systems' secrets
@@ -308,7 +306,7 @@ SHA-256 hash chaining to the previous row in the same organization; tampering (d
 breaks the chain and is caught by `Verifier.Verify`."* Rows with no organization go on one of 16
 platform chains (`chain_shard`, the writer's database connection's), so their writers don't
 queue on one lock; each is a whole chain with its own tip, lock and checkpoint.
-**Path** `internal/operations/{audit,billing,gdpr,compliance,analytics,retention,siem,activity,notifications,entitlements,ratelimits,search,sales,email,qeetai,servicehealth}/`
+**Path** `internal/operations/{audit,billing,gdpr,compliance,analytics,retention,siem,activity,notification,entitlements,ratelimits,search,sales,email,qeetai,servicehealth}/`
 **Key dependencies** `platform/http/{errs,httpx}` · `platform/ai` (+`openai`, `anthropic`) — **sole
 consumer** · `platform/cache/ratelimit`
 **Security** **Critical** for `audit/`; **High** for `billing/`, `gdpr/`, `siem/`
@@ -412,8 +410,9 @@ of platform
 ```text
 dependencies.go   shared infrastructure, the order the contexts are built in, the workers
 wire_<context>.go one per context (access, identity, federation, developer, operations): its
-                  services, its Set… wiring, its handlers, its route permissions, user-only
-                  routes and step-ups, its scheduled jobs
+                  services, each built with every dependency it needs (a missing one stops
+                  start-up), its handlers, its route permissions, user-only routes and
+                  step-ups, its scheduled jobs
 keys.go · mail.go · infra.go · sso.go · adapters.go — building blocks (keys, message chain, limits, SSO identity, adapters)
 router.go         middleware chain, route tree, all mounts
 permissions.go    RoutePolicies: "METHOD /chi/route/pattern" → route policy, from the contexts' tables
@@ -434,26 +433,11 @@ authenticated route needs an explicit policy, and every route must be in the Ope
 
 ---
 
-## Cross-context imports — the unguarded seam
+## Cross-context imports — enforced directions
 
-No test enforces R1, R2 or cross-context imports.
-
-**Status:** verified · **Evidence:** import-graph scan — 38 import statements across 8 pairs
-
-```text
-operations/audit       ← access(9) · federation(8) · identity(5) · developer(5)
-access/auth  ← federation(6) · identity(2)
-identity/user         ← federation(2) · access(1)
-```
-
-- **`operations/audit` is imported by all four other contexts** — a shared kernel in practice, not by
-  design.
-- `access ↔ identity` is bidirectional at package granularity (`access/auth` → `identity/user`,
-  `identity/organization` → `access/auth`) without forming a Go import cycle.
-- **Nothing imports `developer`.**
-
-Depend on interfaces, not another context's concrete types (the shared ones are declared once beside
-their implementation), so the extraction seam described in [context.md](context.md) survives.
+`depguard` rules R1–R6 in `.golangci.yml` fix which context may import which (federation builds on
+access and identity; operations and developer are leaves; the audit writer is `internal/platform/audit`).
+The map and the reasons are in [context.md](context.md) and [AGENTS.md](../../AGENTS.md) rule 3.
 
 ---
 

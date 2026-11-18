@@ -11,7 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -61,7 +61,7 @@ func TestANewOrganizationHasItsBuiltinRoles(t *testing.T) {
 // sending it back unchanged with other fields is accepted.
 func TestRegionIsTheDeployments(t *testing.T) {
 	h, _, _ := newHandler(t)
-	h.Repo.SetHostingRegion("ap-south-2")
+	h.Repo = NewRepository(dbtest.Pool(t), "ap-south-2")
 	a := verifiedAccount(t)
 	create := func(region string) *httptest.ResponseRecorder {
 		body := map[string]any{"slug": dbtest.Unique("org"), "name": "Acme"}
@@ -109,7 +109,7 @@ func TestRegionIsTheDeployments(t *testing.T) {
 // fails part way leaves no organization and no record behind.
 func TestCreateCommitsWithItsAuditRow(t *testing.T) {
 	ctx := dbtest.Context(t)
-	repo := NewRepository(dbtest.Pool(t))
+	repo := NewRepository(dbtest.Pool(t), "")
 	owner := verifiedAccount(t)
 	actor := audit.Actor{UserID: &owner.ID, Type: "user", IP: "198.51.100.9", UserAgent: "organization-test", RequestID: "req-organization"}
 	org, err := repo.Create(ctx, CreateInput{Slug: dbtest.Unique("org"), Name: "Acme"}, owner.ID, actor)

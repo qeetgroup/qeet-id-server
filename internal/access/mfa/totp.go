@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/totp"
@@ -39,11 +39,10 @@ type Enrollment struct {
 // confirmed one may wait for its confirming code before the setup is ignored.
 const pendingTOTPTTL = 30 * time.Minute
 
-// StartEnroll starts setting up an authenticator app for userID, named account
-// in the app, recorded as by's. While the account holds a confirmed app, the
-// new one waits beside it (pending_secret_*) until a code from it confirms it,
-// so starting a setup never switches the working app off; a pending setup left
-// unconfirmed for pendingTOTPTTL is ignored.
+// StartEnroll starts setting up an authenticator app for userID, named account in the app, recorded
+// as by's. While the account holds a confirmed app the new one waits beside it (pending_secret_*)
+// until a code confirms it, so starting a setup never switches the working app off; one unconfirmed
+// for pendingTOTPTTL is ignored.
 func (s *Service) StartEnroll(ctx context.Context, userID uuid.UUID, account string, by Caller) (*Enrollment, error) {
 	var out *Enrollment
 	err := s.inTx(ctx, func(tx pgx.Tx) (err error) {
@@ -63,9 +62,6 @@ func (s *Service) startEnroll(ctx context.Context, tx pgx.Tx, userID uuid.UUID, 
 	secret, err := totp.NewSecret()
 	if err != nil {
 		return nil, err
-	}
-	if s.box == nil {
-		return nil, errs.ErrInternalServer.WithDetail("MFA secret encryption is unavailable")
 	}
 	ciphertext, nonce, err := s.box.Seal(userID, "mfa-totp", userID.String(), []byte(secret))
 	if err != nil {
@@ -184,9 +180,6 @@ func (s *Service) confirmReplacementTOTP(ctx context.Context, tx pgx.Tx, userID 
 	if time.Since(started) > pendingTOTPTTL {
 		return nil, false, errs.ErrMFAEnrollNotStarted.WithDetail("This authenticator setup has expired. Start it again.")
 	}
-	if s.box == nil {
-		return nil, false, errors.New("MFA secret encryption is unavailable")
-	}
 	plain, err := s.box.Open(userID, "mfa-totp", userID.String(), ct, nonce)
 	if err != nil {
 		return nil, false, err
@@ -209,9 +202,6 @@ func (s *Service) loadTOTP(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (st
 	row, err := s.q.WithTx(tx).GetTOTPSecret(ctx, userID)
 	if err != nil {
 		return "", nil, err
-	}
-	if s.box == nil {
-		return "", row.ConfirmedAt, errors.New("MFA secret encryption is unavailable")
 	}
 	plain, err := s.box.Open(userID, "mfa-totp", userID.String(), row.SecretCt, row.SecretNonce)
 	return string(plain), row.ConfirmedAt, err

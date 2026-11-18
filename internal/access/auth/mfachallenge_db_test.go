@@ -143,7 +143,7 @@ func TestVerifyAndConsumeMFAChallenge(t *testing.T) {
 	setup := func(t *testing.T, f pinnedFactors) (*Service, dbtest.Account, uuid.UUID) {
 		t.Helper()
 		svc := newService(t)
-		svc.SetMFA(f)
+		svc.mfa = f
 		a, organization := member(t)
 		return svc, a, organization
 	}
@@ -162,10 +162,6 @@ func TestVerifyAndConsumeMFAChallenge(t *testing.T) {
 		}
 		if st := stateOf(t, a, token); st.exists || st.budget != 0 || st.failedSignIns != 0 {
 			t.Errorf("after an expired challenge: %+v; want it removed and nothing counted", st)
-		}
-		svc.SetMFA(nil)
-		if _, err := svc.verifyAndConsumeMFAChallenge(ctx, uuid.NewString(), MFAProof{}, "", ""); !errors.Is(err, errs.ErrNotImplemented) {
-			t.Errorf("without an MFA service: %v, want %v", err, errs.ErrNotImplemented)
 		}
 	})
 
@@ -284,7 +280,7 @@ func TestVerifyAndConsumeMFAChallenge(t *testing.T) {
 		if st := stateOf(t, a, token); st.exists || st.deferred != 1 || st.budget != 0 {
 			t.Errorf("after deferring: %+v; want auth.mfa_enrollment_deferred and nothing counted", st)
 		}
-		svc.SetMFA(pinnedFactors{factors: []LoginFactor{{Type: "totp"}}, enrolCode: "112233"})
+		svc.mfa = pinnedFactors{factors: []LoginFactor{{Type: "totp"}}, enrolCode: "112233"}
 		token = newChallenge(t, a, organization, pendingChallenge{enrollment: true, enrollmentStarted: true})
 		if _, err := svc.verifyAndConsumeMFAChallenge(ctx, token, MFAProof{Code: "112233"}, "", ""); !errors.Is(err, errs.ErrAuthMFAChallengeExpired) {
 			t.Errorf("enrolling after gaining a factor: %v, want %v", err, errs.ErrAuthMFAChallengeExpired)
@@ -299,7 +295,7 @@ func TestVerifyAndConsumeMFAChallenge(t *testing.T) {
 		if err != nil || met.stepUpMethod != "push" {
 			t.Fatalf("approved push: %+v, %v", met, err)
 		}
-		svc.SetMFA(pinnedFactors{push: "denied"})
+		svc.mfa = pinnedFactors{push: "denied"}
 		token = newChallenge(t, a, organization, pendingChallenge{pushChallenge: &push})
 		if _, err := svc.verifyAndConsumeMFAChallenge(ctx, token, MFAProof{Push: true}, "", ""); !errors.Is(err, errs.ErrMFACodeInvalid) {
 			t.Errorf("denied push: %v, want %v", err, errs.ErrMFACodeInvalid)

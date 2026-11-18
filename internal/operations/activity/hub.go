@@ -123,11 +123,9 @@ func (h *Hub) dispatch(msg *nats.Msg) {
 	h.fanOut(organizationID, ev)
 }
 
-// fanOut delivers ev to every subscriber of organizationID without blocking. A
-// subscriber whose channel is full doesn't get it and is told it lost an
-// event, so its stream can have the client catch up from the audit log. It
-// holds the read lock throughout, because unsubscribe rewrites the slice it
-// iterates.
+// fanOut delivers ev to every subscriber of organizationID without blocking. A subscriber whose
+// channel is full misses it and is told so, so its stream can catch up from the audit log. It holds
+// the read lock throughout, because unsubscribe rewrites the slice it iterates.
 func (h *Hub) fanOut(organizationID uuid.UUID, ev ActivityEvent) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()

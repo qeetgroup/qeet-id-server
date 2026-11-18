@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/invite/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -46,9 +46,6 @@ type AcceptResult struct {
 // under the inviting organization's sign-in rules. The acceptance is recorded
 // as the new account's, with actor's request details.
 func (s *Service) Accept(ctx context.Context, in AcceptInput, actor audit.Actor) (*AcceptResult, error) {
-	if s.rules == nil {
-		return nil, errs.ErrNotImplemented
-	}
 	// The new account will belong to the inviting organization, so its
 	// methods and rules apply: no password account where passwords can't sign
 	// in. Checked once the invite is known to be good and before the

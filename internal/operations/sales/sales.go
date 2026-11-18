@@ -6,6 +6,7 @@ package sales
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -37,9 +38,13 @@ type Service struct {
 }
 
 // NewService returns a Service that emails leads to salesInbox through sender;
-// an empty salesInbox or nil sender only saves them.
-func NewService(pool *pgxpool.Pool, sender notifier.Sender, salesInbox string) *Service {
-	return &Service{q: dbgen.New(pool), sender: sender, salesInbox: salesInbox}
+// with an empty salesInbox (none configured) it only saves them. It refuses a
+// nil sender.
+func NewService(pool *pgxpool.Pool, sender notifier.Sender, salesInbox string) (*Service, error) {
+	if sender == nil {
+		return nil, errors.New("sales: a sender is required to email the sales inbox")
+	}
+	return &Service{q: dbgen.New(pool), sender: sender, salesInbox: salesInbox}, nil
 }
 
 // Submit saves the lead and, best-effort, emails the sales inbox. The email
@@ -68,7 +73,7 @@ func (s *Service) Submit(ctx context.Context, organizationID, userID *uuid.UUID,
 // notify emails the lead to the sales inbox, if one is configured. A failure is
 // only logged: the lead is already saved.
 func (s *Service) notify(ctx context.Context, in Lead, email string) {
-	if s.sender == nil || s.salesInbox == "" {
+	if s.salesInbox == "" {
 		return
 	}
 	body := fmt.Sprintf(

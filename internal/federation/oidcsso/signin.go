@@ -17,7 +17,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidcrp"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidcsso/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/provision"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -109,13 +109,10 @@ type Callback struct {
 	StartedHere   bool   // the browser holds the sign-in's binding
 }
 
-// CompleteSignIn spends the sign-in's state, then, when this browser began it,
-// trades the code for an ID token, validates it, finds or provisions the
-// person it names and returns a one-time code the console trades for a
-// session at ExchangeLogin, and the hosted login at its session route, with
-// the return_to the hosted login stored when it began ("" for the console's).
-// A refusal after the state is found to be this browser's still returns that
-// return_to. Each refusal is recorded as a failed sign-in.
+// CompleteSignIn spends the sign-in's state and, when this browser began it, trades the code for an
+// ID token, validates it, finds or provisions its person and returns a one-time code (for the
+// console's ExchangeLogin or the hosted login's session route) with the stored return_to. Refusals
+// after the browser check still return that return_to; each is recorded as a failed sign-in.
 func (s *Service) CompleteSignIn(ctx context.Context, cb Callback) (loginCode, returnTo string, err error) {
 	c, err := s.loadForSignIn(ctx, cb.ConnectionID)
 	if c == nil {
@@ -179,11 +176,9 @@ func (s *Service) CompleteSignIn(ctx context.Context, cb Callback) (loginCode, r
 		recorded = true
 		return "", back, err
 	}
-	if s.auth != nil {
-		// A suspended or deleted account gets no code to sign in with.
-		if err := s.auth.CheckSignInAccount(ctx, userID, c.OrganizationID, provider, cb.IP, cb.UserAgent); err != nil {
-			return "", back, err
-		}
+	// A suspended or deleted account gets no code to sign in with.
+	if err := s.auth.CheckSignInAccount(ctx, userID, c.OrganizationID, provider, cb.IP, cb.UserAgent); err != nil {
+		return "", back, err
 	}
 	rawCode, err := logincode.Issue(ctx, s.pool, logincode.Code{
 		Kind: logincode.KindOIDCConnection, UserID: userID, OrganizationID: c.OrganizationID, ConnectionID: c.ID,
@@ -198,9 +193,6 @@ func (s *Service) CompleteSignIn(ctx context.Context, cb Callback) (loginCode, r
 // recordFailure records a refused sign-in through c in the organization's
 // audit trail, with the error code as its reason.
 func (s *Service) recordFailure(ctx context.Context, c *signInConnection, cb Callback, err error) {
-	if s.auth == nil {
-		return
-	}
 	reason := errs.CodeInternal
 	if e := errs.As(err); e != nil {
 		reason = e.Code
@@ -304,9 +296,6 @@ func (s *Service) loadForSignIn(ctx context.Context, id uuid.UUID) (*signInConne
 	})}
 	if err := signInStatus(c.Status); err != nil {
 		return c, err
-	}
-	if s.box == nil {
-		return c, ErrSecretEncryptionMissing
 	}
 	plain, err := s.box.Open(c.OrganizationID, secretPurpose, c.ID.String(), r.ClientSecretCt, r.ClientSecretNonce)
 	if err != nil {

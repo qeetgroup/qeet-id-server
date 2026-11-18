@@ -32,14 +32,7 @@ type idpOrganizationFixture struct {
 
 func newIdPRouter(t *testing.T, sessions sessionsByCookie) (*IdP, chi.Router) {
 	t.Helper()
-	keyPEM, certPEM, err := GenerateIdPKeyPEM("Test Qeet IdP")
-	if err != nil {
-		t.Fatalf("GenerateIdPKeyPEM: %v", err)
-	}
-	idp, err := NewIdP(dbtest.Pool(t), keyPEM, certPEM, "https://login.id.qeet.in", sessions)
-	if err != nil {
-		t.Fatalf("NewIdP: %v", err)
-	}
+	idp := newTestIdP(t, dbtest.Pool(t), sessions)
 	r := chi.NewRouter()
 	(&Handler{Service: &Service{}, IdP: idp, PublicBaseURL: testPublicBase}).MountPublic(r)
 	return idp, r

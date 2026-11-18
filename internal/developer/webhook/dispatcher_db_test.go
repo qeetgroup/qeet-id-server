@@ -17,9 +17,8 @@ import (
 // audited and its organization's webhook managers alone are alerted, and that
 // enabling it again delivers what was queued meanwhile.
 func TestFailingSubscriptionIsDisabled(t *testing.T) {
-	svc, ep := dispatchService(t), newEndpoint(t)
 	sent := &alerts{}
-	svc.SetNotifier(sent)
+	svc, ep := dispatchService(t, func(d *Deps) { d.Notifier = sent }), newEndpoint(t)
 	organization := dbtest.Organization(t)
 	manager := dbtest.User(t, organization)
 	dbtest.Assign(t, manager.ID, organization, dbtest.Role(t, organization, "webhook.write"))
@@ -99,10 +98,9 @@ func TestFailingSubscriptionIsDisabled(t *testing.T) {
 // goes out.
 func TestLapsedPlanStopsDeliveries(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc, ep := dispatchService(t), newEndpoint(t)
 	organization := dbtest.Organization(t)
 	plans := planGate{organization: true}
-	svc.SetPlanGate(plans)
+	svc, ep := dispatchService(t, func(d *Deps) { d.PlanGate = plans }), newEndpoint(t)
 	subscribe(t, svc, organization, ep.URL, "group.created")
 
 	delete(plans, organization) // the plan lapses

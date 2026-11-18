@@ -2,11 +2,10 @@ package bootstrap
 
 import "github.com/qeetgroup/qeet-id-server/internal/access/mfa"
 
-// StepUpRoutes lists the authenticated routes that need a recent step-up, so a
-// stolen access token alone can't change factors, credentials, secrets, policy or
-// authority. StepUpOrRecentSignIn applies to a person's own factors and sign-in
-// methods; everything else is StepUpAlways, which machine principals can never
-// meet. Each context lists its own routes (wire_<context>.go).
+// StepUpRoutes lists the authenticated routes that need a recent step-up, so a stolen access token
+// alone can't change factors, credentials, secrets, policy or authority. StepUpOrRecentSignIn covers a
+// person's own factors and sign-in methods; the rest is StepUpAlways, which machines can never meet.
+// Each context lists its own routes in wire_<context>.go.
 func StepUpRoutes() map[string]mfa.StepUpRule {
 	return routeTable(accessStepUps(), identityStepUps(), federationStepUps(), developerStepUps(), operationsStepUps())
 }

@@ -54,11 +54,10 @@ const StatusClientClosedRequest = 499
 // back spread out rather than all at once.
 const overloadRetryAfter = 3
 
-// WriteError writes err as the JSON error envelope with its code's HTTP status.
-// An error that is not an *errs.Error is logged and sent as ErrInternalServer,
-// except the database's last-owner guard, which becomes ErrOrganizationLastOwner, and
-// work cancelled because the client went away, which is answered 499.
-// server.overloaded also carries Retry-After, as a header and as metadata.
+// WriteError writes err as the JSON error envelope with its code's HTTP status. A non-*errs.Error is
+// logged and sent as ErrInternalServer, except the last-owner guard (ErrOrganizationLastOwner) and
+// work cancelled by a departed client (499). server.overloaded also carries Retry-After, as a header
+// and as metadata.
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	e := errs.As(err)
 	if e == nil {

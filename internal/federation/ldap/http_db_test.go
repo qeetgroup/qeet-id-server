@@ -49,9 +49,8 @@ func TestDirectoryConnectionsOverHTTP(t *testing.T) {
 		},
 	}
 	serverURL := dir.start(t)
-	svc := directoryService(t)
 	observed := &operations{}
-	svc.SetOperationObserver(observed)
+	svc := directoryService(t, func(d *Deps) { d.Observer = observed })
 	h := &Handler{Service: svc}
 	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)
 	public := chi.NewRouter()

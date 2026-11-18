@@ -32,7 +32,7 @@ func TestStreamReplaysEventsAfterLastEventID(t *testing.T) {
 	}
 	insertEvent(t, other, "user.created", base.Add(time.Second))
 
-	srv := httptest.NewServer(dbtest.Serve(dbtest.Principal(admin.ID, organization), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount))
+	srv := httptest.NewServer(dbtest.Serve(dbtest.Principal(admin.ID, organization), testHandler(t, dbtest.Pool(t), NewHub(nil)).Mount))
 	defer srv.Close()
 	ctx, cancel := context.WithCancel(dbtest.Context(t))
 	defer cancel()
@@ -126,7 +126,7 @@ func TestLiveFramesAreTheAuditRecords(t *testing.T) {
 	seen := insertEvent(t, organization, "user.created", base)
 	missed := insertEvent(t, organization, "user.updated", base.Add(time.Second))
 	hub := NewHub(nil)
-	srv := httptest.NewServer(dbtest.Serve(dbtest.Principal(admin.ID, organization), NewHandler(dbtest.Pool(t), hub).Mount))
+	srv := httptest.NewServer(dbtest.Serve(dbtest.Principal(admin.ID, organization), testHandler(t, dbtest.Pool(t), hub).Mount))
 	defer srv.Close()
 
 	frames, stop := streamFrames(t, srv, paging.EncodeTimeUUID(seen.at, seen.id))
@@ -162,7 +162,7 @@ func TestReconnectReplaysRecordsCommittedLate(t *testing.T) {
 	organization := dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
 	hub := NewHub(nil)
-	srv := httptest.NewServer(dbtest.Serve(dbtest.Principal(admin.ID, organization), NewHandler(dbtest.Pool(t), hub).Mount))
+	srv := httptest.NewServer(dbtest.Serve(dbtest.Principal(admin.ID, organization), testHandler(t, dbtest.Pool(t), hub).Mount))
 	defer srv.Close()
 
 	frames, stop := streamFrames(t, srv, "")
@@ -244,7 +244,7 @@ func TestReplayCatchesUpPastOnePage(t *testing.T) {
 		missed = append(missed, insertEvent(t, organization, "user.updated", base.Add(time.Duration(i+1)*time.Millisecond)).id)
 	}
 	wanted := insertEvent(t, organization, "user.deleted", base.Add(time.Second))
-	srv := httptest.NewServer(dbtest.Serve(dbtest.Principal(admin.ID, organization), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount))
+	srv := httptest.NewServer(dbtest.Serve(dbtest.Principal(admin.ID, organization), testHandler(t, dbtest.Pool(t), NewHub(nil)).Mount))
 	defer srv.Close()
 
 	ids, _, reconnect := replayed(t, srv, "/activity/stream", paging.EncodeTimeUUID(seen.at, seen.id), 152)
@@ -272,7 +272,7 @@ func TestReplayBeyondItsBoundCarriesOn(t *testing.T) {
 	for i := range 250 {
 		missed = append(missed, insertEvent(t, organization, "user.updated", base.Add(time.Duration(i+1)*time.Millisecond)).id)
 	}
-	srv := httptest.NewServer(dbtest.Serve(dbtest.Principal(admin.ID, organization), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount))
+	srv := httptest.NewServer(dbtest.Serve(dbtest.Principal(admin.ID, organization), testHandler(t, dbtest.Pool(t), NewHub(nil)).Mount))
 	defer srv.Close()
 
 	var all []uuid.UUID

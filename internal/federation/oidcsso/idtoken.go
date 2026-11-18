@@ -82,11 +82,9 @@ func (c *Connection) profileOf(claims jwt.MapClaims) profile {
 	return p
 }
 
-// groupsOf returns the group names the claim holds: a list of strings or a
-// single one, up to maxGroups of at most maxGroupLen bytes each. withheld is
-// true when the connection reads no groups claim, or the provider left the
-// groups out for being too many (Microsoft Entra ID's overage, named in
-// _claim_names, or hasgroups).
+// groupsOf returns the group names the claim holds (a list of strings or one), up to maxGroups of at
+// most maxGroupLen bytes. withheld is true when the connection reads no groups claim or the provider
+// left them out for being too many (Microsoft Entra ID's overage: _claim_names or hasgroups).
 func groupsOf(claims jwt.MapClaims, name string) (groups []string, withheld bool) {
 	if name == "" {
 		return nil, true

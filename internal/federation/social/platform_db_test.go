@@ -49,9 +49,7 @@ func TestSignupRefusedOnADomainAnOrganizationManages(t *testing.T) {
 // would be adopted by address, and links nothing new; a break-glass member
 // still signs in.
 func TestPlatformSocialSignInRefusedOnACapturedDomain(t *testing.T) {
-	f := newSocialFixture(t)
-	capturing(t, f)
-	f.svc.SetPlatformProvider("console", "qeet", "idp-client-secret", f.idp.URL+"/.well-known/openid-configuration")
+	f := newSocialFixture(t, capturing(t), platform("console"))
 	organization := dbtest.Organization(t)
 	domain := dbtest.Domain(t, organization)
 	member := func() (dbtest.Account, userInfo) {
@@ -134,8 +132,7 @@ func TestASignInCodeWorksOnlyInTheFlowThatIssuedIt(t *testing.T) {
 // an account only when asked to, sign-in needs one, and a signed-in person can
 // link the provider to their account, which only they can complete and unlink.
 func TestPlatformSocialSignIn(t *testing.T) {
-	f := newSocialFixture(t)
-	f.svc.SetPlatformProvider("google", "qeet", "idp-client-secret", f.idp.URL+"/.well-known/openid-configuration")
+	f := newSocialFixture(t, platform("google"))
 	if names := f.svc.PlatformProviderNames(); len(names) != 1 || names[0] != "google" {
 		t.Errorf("platform providers %v", names)
 	}

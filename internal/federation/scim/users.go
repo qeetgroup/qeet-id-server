@@ -14,7 +14,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -388,10 +388,8 @@ func (s *Service) createProvisioned(ctx context.Context, actor audit.Actor, orga
 	if err := s.tagProvisionedTx(ctx, tx, u.ID, nu.externalID); err != nil {
 		return uuid.Nil, refusal(http.StatusInternalServerError, "", "tagging failed")
 	}
-	if s.mapper != nil {
-		if err := s.mapper.StoreProfile(ctx, tx, organizationID, u.ID, "scim:"+organizationID.String(), nu.profile); err != nil {
-			return uuid.Nil, refusal(http.StatusInternalServerError, "", "Profile mapping could not be saved")
-		}
+	if err := s.mapper.StoreProfile(ctx, tx, organizationID, u.ID, "scim:"+organizationID.String(), nu.profile); err != nil {
+		return uuid.Nil, refusal(http.StatusInternalServerError, "", "Profile mapping could not be saved")
 	}
 	if !nu.active {
 		suspended := "suspended"

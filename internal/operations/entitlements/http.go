@@ -1,6 +1,7 @@
 package entitlements
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -9,10 +10,24 @@ import (
 )
 
 // Handler serves an organization's entitlements, so the console gates its UI on the
-// same source the backend enforces.
+// same source the backend enforces, and its current usage.
 type Handler struct {
-	Service *Service
+	service  *Service
+	consumed UsageResolver
 }
+
+// NewHandler returns a Handler serving service's entitlements and usage's
+// consumption. It refuses a nil service or usage.
+func NewHandler(service *Service, usage UsageResolver) (*Handler, error) {
+	if service == nil || usage == nil {
+		return nil, errors.New("entitlements: the handler needs the service and a usage resolver")
+	}
+	return &Handler{service: service, consumed: usage}, nil
+}
+
+// Service returns the service h serves, for a tool that reads plans directly,
+// such as the development seed.
+func (h *Handler) Service() *Service { return h.service }
 
 // Mount registers the entitlement routes. Their {organizationID} parameter makes
 // EnforceOrganizationScope reject any organization but the caller's own.
@@ -28,7 +43,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	ent, err := h.Service.Resolve(r.Context(), scope)
+	ent, err := h.service.Resolve(r.Context(), scope)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -45,7 +60,7 @@ func (h *Handler) usage(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	u, err := h.Service.Usage(r.Context(), scope)
+	u, err := h.consumed.Usage(r.Context(), scope)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

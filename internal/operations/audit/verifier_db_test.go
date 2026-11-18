@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -18,17 +19,17 @@ import (
 // chain with no row, or a row on no chain, is reported.
 func TestPlatformChainsVerify(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
-	if err := OpenPlatformChains(ctx, pool); err != nil {
+	if err := audit.OpenPlatformChains(ctx, pool); err != nil {
 		t.Fatalf("open the platform chains: %v", err)
 	}
-	if n := dbtest.Count(t, `SELECT count(DISTINCT chain_shard) FROM audit.events WHERE organization_id IS NULL`); n != PlatformChainShards {
-		t.Fatalf("%d platform chains have a row, want %d", n, PlatformChainShards)
+	if n := dbtest.Count(t, `SELECT count(DISTINCT chain_shard) FROM audit.events WHERE organization_id IS NULL`); n != audit.PlatformChainShards {
+		t.Fatalf("%d platform chains have a row, want %d", n, audit.PlatformChainShards)
 	}
-	if err := OpenPlatformChains(ctx, pool); err != nil {
+	if err := audit.OpenPlatformChains(ctx, pool); err != nil {
 		t.Fatalf("open the platform chains again: %v", err)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id IS NULL AND action = 'audit.chain_opened'`); n > PlatformChainShards {
-		t.Errorf("opening the chains twice wrote %d chain_opened rows, want at most %d", n, PlatformChainShards)
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id IS NULL AND action = 'audit.chain_opened'`); n > audit.PlatformChainShards {
+		t.Errorf("opening the chains twice wrote %d chain_opened rows, want at most %d", n, audit.PlatformChainShards)
 	}
 	recordPlatform(t, 3, "auth.signed_up")
 	changed := recordPlatform(t, 3, "auth.login_succeeded")
@@ -38,7 +39,7 @@ func TestPlatformChainsVerify(t *testing.T) {
 	legacy := writeAsTheSinglePlatformChain(t)
 
 	res, err := NewVerifier(pool, nil).Verify(ctx, nil)
-	if err != nil || !res.OK || res.RowsChecked < PlatformChainShards+5 {
+	if err != nil || !res.OK || res.RowsChecked < audit.PlatformChainShards+5 {
 		t.Fatalf("verify the platform chains: %+v, %v; want every row intact", res, err)
 	}
 	for shard, want := range map[int16]int{0: 1, 3: 3, 4: 2} {
@@ -84,12 +85,12 @@ func TestPlatformChainsVerify(t *testing.T) {
 	})
 	inTx(t, func(tx pgx.Tx, v *Verifier) {
 		stray := recordPlatform(t, 6, "auth.signed_up")
-		if _, err := tx.Exec(ctx, `UPDATE audit.events SET chain_shard = $2 WHERE id = $1 AND organization_id IS NULL`, stray, PlatformChainShards); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE audit.events SET chain_shard = $2 WHERE id = $1 AND organization_id IS NULL`, stray, audit.PlatformChainShards); err != nil {
 			t.Fatal(err)
 		}
 		res, err := v.Verify(ctx, nil)
 		if err != nil || res.OK || res.ReasonCode != chainShardOutOfRange || res.BrokenAtID == nil || *res.BrokenAtID != stray {
-			t.Errorf("verify with a row on chain %d: %+v, %v; want %s at %s", PlatformChainShards, res, err, chainShardOutOfRange, stray)
+			t.Errorf("verify with a row on chain %d: %+v, %v; want %s at %s", audit.PlatformChainShards, res, err, chainShardOutOfRange, stray)
 		}
 		run, err := v.verifyAll(ctx, true)
 		if !errors.Is(err, ErrChainBroken) || len(run.Broken) == 0 || *run.Broken[len(run.Broken)-1].EventID != stray {

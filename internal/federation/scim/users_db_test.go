@@ -13,7 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -439,7 +439,7 @@ func refuseAudit(t *testing.T, organization uuid.UUID, action string) {
 func TestProvisioningChangesKeepTheirEvidence(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	svc := NewService(pool, user.NewRepository(pool))
+	svc := newTestService(t, pool)
 	organization := dbtest.Organization(t)
 	directory := audit.Actor{Type: "scim", IP: "192.0.2.51", RequestID: "req-" + uuid.NewString()}
 	recorded := func(action string, userID uuid.UUID) int {

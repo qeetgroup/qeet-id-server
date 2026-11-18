@@ -44,8 +44,7 @@ func TestRetryRecordsItsOwnCheck(test *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO account.users(id,organization_id,email,status) VALUES($1,$2,$3,'active')`, userID, organizationID, userID.String()+"@example.test"); err != nil {
 		test.Fatal(err)
 	}
-	service := NewService(&scimFixture{config: &scim.ConfigView{}}, &ldapFixture{})
-	service.SetEventStore(pool)
+	service := newService(test, pool, &scimFixture{config: &scim.ConfigView{}}, &ldapFixture{})
 	service.ldap = &recordingTester{service: service}
 	if err := service.RecordOperation(ctx, organizationID, connection.String(), "test", "connection", "", http.StatusBadGateway, time.Now(), time.Second); err != nil {
 		test.Fatal(err)

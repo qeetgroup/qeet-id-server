@@ -4,6 +4,7 @@ package directory
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,12 +12,14 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ldap"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -29,8 +32,7 @@ func TestPreviewOfSavedMappingsReportsIssueCodes(test *testing.T) {
 	ctx := dbtest.Context(test)
 	organizationID := dbtest.Organization(test)
 	actor := dbtest.User(test, organizationID, organizationID)
-	service := NewService(&scimFixture{config: &scim.ConfigView{TokenSet: true}}, &ldapFixture{})
-	service.SetEventStore(pool)
+	service := newService(test, pool, &scimFixture{config: &scim.ConfigView{TokenSet: true}}, &ldapFixture{})
 	router := dbtest.Serve(dbtest.Principal(actor.ID, organizationID), (&Handler{Service: service}).Mount)
 	connectionID := "scim:" + organizationID.String()
 	base := "/organizations/" + organizationID.String() + "/directory/connections/" + connectionID + "/mappings"
@@ -124,10 +126,21 @@ func TestSavedMappingAppliesToSCIMAndRejectsStaleOrForeignWrites(test *testing.T
 	if _, err := pool.Exec(ctx, `INSERT INTO account.users(id,organization_id,email,status) VALUES($1,$2,$3,'active')`, actorID, organizationID, actorID.String()+"@example.test"); err != nil {
 		test.Fatal(err)
 	}
-	scimService := scim.NewService(pool, user.NewRepository(pool))
-	service := NewService(scimService, &ldapFixture{})
-	service.SetEventStore(pool)
-	scimService.SetProfileMapper(service)
+	store, err := NewStore(pool)
+	if err != nil {
+		test.Fatal(err)
+	}
+	scimService, err := scim.NewService(scim.Deps{
+		Pool: pool, Users: user.NewRepository(pool), Signals: sessionsignal.New(nil),
+		Gate: everyPlan{}, Seats: noSeatLimit{}, Mapper: store, Observer: store,
+	})
+	if err != nil {
+		test.Fatal(err)
+	}
+	service, err := NewService(store, scimService, &ldapFixture{})
+	if err != nil {
+		test.Fatal(err)
+	}
 	_, token, err := scimService.Rotate(ctx, organizationID, audit.Actor{Type: "system"})
 	if err != nil {
 		test.Fatal(err)
@@ -211,8 +224,7 @@ func TestPersonsDirectoryProfileIsReturned(test *testing.T) {
 	organizationID, other := dbtest.Organization(test), dbtest.Organization(test)
 	admin, person, elsewhere := dbtest.User(test, organizationID, organizationID), dbtest.User(test, organizationID, organizationID), dbtest.User(test, other, other)
 	connection := uuid.New()
-	service := NewService(&scimFixture{config: &scim.ConfigView{}}, &ldapFixture{records: []ldap.Connection{{ID: connection, OrganizationID: organizationID, Name: "Head office"}}})
-	service.SetEventStore(pool)
+	service := newService(test, pool, &scimFixture{config: &scim.ConfigView{}}, &ldapFixture{records: []ldap.Connection{{ID: connection, OrganizationID: organizationID, Name: "Head office"}}})
 	for _, row := range []struct {
 		organization, user uuid.UUID
 	}{{organizationID, person.ID}, {other, elsewhere.ID}} {
@@ -232,5 +244,82 @@ func TestPersonsDirectoryProfileIsReturned(test *testing.T) {
 	dbtest.Decode(test, dbtest.Do(test, h, http.MethodGet, "/organizations/"+organizationID.String()+"/directory/profiles/"+elsewhere.ID.String(), nil), &got)
 	if len(got.Items) != 0 {
 		test.Errorf("another organization's person: %+v, want nothing", got.Items)
+	}
+}
+
+// everyPlan includes every feature.
+type everyPlan struct{}
+
+func (everyPlan) FeatureAllowed(context.Context, uuid.UUID, string) (bool, error) { return true, nil }
+
+// noSeatLimit leaves group membership uncapped.
+type noSeatLimit struct{}
+
+func (noSeatLimit) SeatLimit(context.Context, uuid.UUID) (int, error) { return -1, nil }
+
+func (noSeatLimit) WithinSeats(_ context.Context, _ pgx.Tx, _ uuid.UUID, _ int, change func() error) error {
+	return change()
+}
+
+// TestSaveRefusesAnInvalidMappingWithItsCode checks that saving a mapping the
+// rules refuse answers 422 validation_failed naming the field at fault and the
+// mapping code, before anything is written.
+func TestSaveRefusesAnInvalidMappingWithItsCode(test *testing.T) {
+	organizationID := uuid.New()
+	ldapID := uuid.New()
+	valid := Mapping{Source: "department", Target: "department", ValueType: "string", Transform: "none", Enabled: true}
+	with := func(change func(*Mapping)) Mapping {
+		mapping := valid
+		change(&mapping)
+		return mapping
+	}
+	scimPath := "/organizations/" + organizationID.String() + "/directory/connections/scim:" + organizationID.String() + "/mappings"
+	ldapPath := "/organizations/" + organizationID.String() + "/directory/connections/" + ldapID.String() + "/mappings"
+	cases := []struct {
+		name, method, path string
+		mapping            Mapping
+		field, code        string
+	}{
+		{"credential source", http.MethodPost, scimPath, with(func(m *Mapping) { m.Source = "userPassword" }), "source_attribute", CodeMappingSourceCredential},
+		{"padded source", http.MethodPut, scimPath + "/" + uuid.NewString(), with(func(m *Mapping) { m.Source, m.Version = " department", 1 }), "source_attribute", CodeMappingSourceInvalid},
+		{"unsupported target", http.MethodPost, scimPath, with(func(m *Mapping) { m.Target = "roles" }), "target_field", CodeMappingTargetUnsupported},
+		{"value type mismatch", http.MethodPost, scimPath, with(func(m *Mapping) { m.ValueType = "array" }), "value_type", CodeMappingValueTypeMismatch},
+		{"unsupported transform", http.MethodPost, scimPath, with(func(m *Mapping) { m.Transform = "reverse" }), "transform", CodeMappingTransformUnsupported},
+		{"pattern without extract", http.MethodPost, scimPath, with(func(m *Mapping) { m.Pattern = "(x)" }), "pattern", CodeMappingPatternUnexpected},
+		{"invalid extract pattern", http.MethodPost, scimPath, with(func(m *Mapping) { m.Transform, m.Pattern = "extract", "(" }), "pattern", CodeMappingPatternInvalid},
+		{"LDAP source not an attribute name", http.MethodPost, ldapPath, with(func(m *Mapping) { m.Source = "/name/givenName" }), "source_attribute", CodeMappingSourceInvalid},
+	}
+	pool := dbtest.Pool(test)
+	for _, scenario := range cases {
+		test.Run(scenario.name, func(test *testing.T) {
+			ldapSource := &ldapFixture{records: []ldap.Connection{{ID: ldapID, OrganizationID: organizationID, Name: "Corporate", Status: "active"}}}
+			router := chi.NewRouter()
+			(&Handler{Service: newService(test, pool, &scimFixture{config: &scim.ConfigView{TokenSet: true}}, ldapSource)}).Mount(router)
+			raw, err := json.Marshal(scenario.mapping)
+			if err != nil {
+				test.Fatal(err)
+			}
+			request := httptest.NewRequest(scenario.method, scenario.path, bytes.NewReader(raw))
+			request.Header.Set("Content-Type", "application/json")
+			request = request.WithContext(httpx.WithPrincipal(request.Context(), &httpx.Principal{ActorType: "user", OrganizationID: &organizationID}))
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			var body struct {
+				Error struct {
+					Code   string            `json:"code"`
+					Fields []errs.FieldError `json:"fields"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+				test.Fatal(err)
+			}
+			if response.Code != http.StatusUnprocessableEntity || body.Error.Code != errs.CodeValidation || len(body.Error.Fields) != 1 {
+				test.Fatalf("got %d %s, want 422 validation_failed with one field", response.Code, response.Body.String())
+			}
+			got := body.Error.Fields[0]
+			if got.Field != scenario.field || got.Code != scenario.code || got.Message == "" {
+				test.Errorf("field error = %+v, want field %q code %q", got, scenario.field, scenario.code)
+			}
+		})
 	}
 }

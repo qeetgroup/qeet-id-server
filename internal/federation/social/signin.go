@@ -17,7 +17,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oauthstate"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidcrp"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/social/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -92,9 +92,6 @@ func (s *Service) loadProvider(ctx context.Context, organizationID uuid.UUID, pr
 		pc.teamID, pc.keyID = *teamID, *keyID
 	}
 	pc.clientID = clientID
-	if s.box == nil {
-		return pc, errs.ErrSocialProviderNotConfigured
-	}
 	plain, err := s.box.Open(organizationID, "social-provider", provider, ciphertext, nonce)
 	if err != nil {
 		return pc, err
@@ -206,11 +203,10 @@ type CallbackResult struct {
 // stateRefusals are the errors a social sign-in's state is refused with.
 var stateRefusals = oauthstate.Refusals{Invalid: ErrStateInvalid, Expired: ErrStateExpired}
 
-// CompleteCallback consumes the state, exchanges the code, finds or creates the
-// user and linked identity, and returns a one-time code the SPA trades for a
-// session. Without startedHere it fails with ErrSocialBrowserMismatch; that error
-// and a closed organization still return the result's ReturnTo. ip and ua are
-// the browser's, for the record of a refusal.
+// CompleteCallback consumes the state, exchanges the code, finds or creates the user and linked
+// identity, and returns a one-time code the SPA trades for a session. Without startedHere it fails with
+// ErrSocialBrowserMismatch; that and a closed organization still return the result's ReturnTo. ip and
+// ua are the browser's, for the record of a refusal.
 func (s *Service) CompleteCallback(ctx context.Context, provider, state, code string, startedHere bool, ip, ua string) (*CallbackResult, error) {
 	if state == "" || code == "" {
 		return nil, ErrCallbackParamsMissing
@@ -515,11 +511,10 @@ func (h *Handler) platformCallbackAnswered(w http.ResponseWriter, r *http.Reques
 	return false
 }
 
-// finishHostedSignIn ends a social sign-in the hosted login began: an address
-// the organization refuses is told so on the hosted login, as every other
-// method is, not shown a provider failure; otherwise it sets the SSO cookie
-// and returns to /oauth/authorize, or hands a second-factor challenge to the
-// hosted login first.
+// finishHostedSignIn ends a social sign-in the hosted login began: an address the organization refuses
+// is told so on the hosted login, as with every other method, not shown a provider failure; otherwise
+// it sets the SSO cookie and returns to /oauth/authorize, or first hands the hosted login a
+// second-factor challenge.
 func (h *Handler) finishHostedSignIn(w http.ResponseWriter, r *http.Request, res *CallbackResult) {
 	// An address the organization refuses is told so on the hosted login,
 	// as every other method is, not shown a provider failure.

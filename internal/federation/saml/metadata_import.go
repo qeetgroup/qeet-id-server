@@ -18,10 +18,9 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
 const (
@@ -164,13 +163,6 @@ func idpFromEntity(e mdEntity) (*IdPMetadata, error) {
 		return nil, metadataInvalid("The metadata lists more than %d signing certificates.", maxCertificates)
 	}
 	return md, nil
-}
-
-// SetEgressPolicy sets the outbound policy metadata URLs are fetched through;
-// public https addresses only until it is called.
-func (s *Service) SetEgressPolicy(p *egress.Policy) {
-	s.egress = p
-	s.metadataHTTP = p.HTTPClient(metadataFetchTimeout)
 }
 
 // fetchMetadata reads the metadata at rawURL through the egress policy. The

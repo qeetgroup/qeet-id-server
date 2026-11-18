@@ -30,7 +30,7 @@ func Seed(w *world.World) {
 	// summary prints the links worth having.
 	defer slog.SetLogLoggerLevel(slog.SetLogLoggerLevel(slog.LevelWarn))
 	s := &seeder{w: w, dns: published{}}
-	w.Deps.DomainVerify.Service.SetResolver(s.dns)
+	w.Deps.DomainVerify.Service = w.Deps.DomainVerify.Service.WithResolver(s.dns)
 	for _, o := range w.Orgs {
 		s.branding(o)
 		s.domains(o)
@@ -193,7 +193,7 @@ func erasureReason(o *world.Org) string {
 // one filed in error for an account on legal hold and cancelled; and an
 // export of a suspended account's data, which the server's sweeper builds.
 func (s *seeder) dataRequests(o *world.Org) {
-	w, svc := s.w, s.w.Deps.GDPR.Service
+	w, svc := s.w, s.w.Deps.GDPR.Service()
 	by := o.First(world.HasRole(world.RoleAdmin))
 	cancelled, exported := false, false
 	for _, p := range o.People {

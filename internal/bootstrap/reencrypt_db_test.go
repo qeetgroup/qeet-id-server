@@ -11,11 +11,13 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/developer/credentials/secret"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/credentials/tokenvault"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/developer/webhook"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/qeetai"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope/reseal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/idempotency"
 )
@@ -107,8 +109,12 @@ func TestRotationKeepsStoredSecretsReadable(t *testing.T) {
 	answer(before)
 
 	rotated := reencryptCipher(t, newKey, oldKey)
+	jobs, err := MaintenanceJobs(pool, sessionsignal.New(webhook.NewQueue(pool).EnqueueTx), rotated)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var job func() error
-	for _, j := range MaintenanceJobs(pool, nil, rotated) {
+	for _, j := range jobs {
 		if j.Name == "secrets-reencrypt" {
 			job = func() error { return j.Run(ctx) }
 		}
@@ -143,7 +149,11 @@ func TestRotationKeepsStoredSecretsReadable(t *testing.T) {
 			t.Errorf("%s access token = %q, %v", provider, got, err)
 		}
 	}
-	if _, err := qeetai.NewProviderConfig(pool, after, qeetai.PlatformProvider{}).ProviderFor(ctx, organization); err != nil {
+	providers, err := qeetai.NewProviderConfig(pool, after, qeetai.PlatformProvider{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := providers.ProviderFor(ctx, organization); err != nil {
 		t.Errorf("Qeet AI provider key: %v", err)
 	}
 	if rec := answer(after); rec.Header().Get("Idempotent-Replayed") != "true" || rec.Body.String() != `{"shown":"once"}` {

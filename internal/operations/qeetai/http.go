@@ -3,6 +3,7 @@ package qeetai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
@@ -10,8 +11,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
@@ -26,17 +27,29 @@ type Handler struct {
 	Service      serviceStore          // conversations and messages
 	Orchestrator *Orchestrator         // runs one streamed turn
 	Resolver     ProviderResolver      // the organization's effective provider, for status and gating
-	Config       *ProviderConfig       // backs the BYOK admin endpoints; may be nil in tests
-	Plan         entitlements.PlanGate // plan gate for the platform key; nil means no gate
+	Config       *ProviderConfig       // backs the BYOK admin endpoints
+	Plan         entitlements.PlanGate // plan gate for the platform key
 	Admin        *Service              // usage and settings, for the organization's admins
 }
 
-// planAllows reports whether the organization's plan includes the qeetai feature.
-// A nil gate (unset) allows it; a resolver error is treated as not allowed.
-func (h *Handler) planAllows(r *http.Request, organizationID uuid.UUID) bool {
-	if h.Plan == nil {
-		return true
+// NewHandler returns h once it has every dependency.
+func NewHandler(h Handler) (*Handler, error) {
+	switch {
+	case h.Service == nil || h.Admin == nil:
+		return nil, errors.New("qeetai: the handler needs its conversation and admin services")
+	case h.Orchestrator == nil:
+		return nil, errors.New("qeetai: the handler needs an orchestrator to run turns")
+	case h.Resolver == nil || h.Config == nil:
+		return nil, errors.New("qeetai: the handler needs the provider config")
+	case h.Plan == nil:
+		return nil, errors.New("qeetai: a plan gate is required, as the platform key is a plan feature")
 	}
+	return &h, nil
+}
+
+// planAllows reports whether the organization's plan includes the qeetai feature;
+// a resolver error is treated as not allowed.
+func (h *Handler) planAllows(r *http.Request, organizationID uuid.UUID) bool {
 	ok, err := h.Plan.FeatureAllowed(r.Context(), organizationID, "ai_qeetai")
 	return err == nil && ok
 }
@@ -98,10 +111,8 @@ func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
 // allowed on any plan; otherwise the plan gate applies.
 func (h *Handler) qeetaiAllowed(r *http.Request, organizationID uuid.UUID) (source ConfigSource, allowed bool) {
 	source = SourceNone
-	if h.Resolver != nil {
-		if eff, err := h.Resolver.Resolve(r.Context(), organizationID); err == nil {
-			source = eff.Source
-		}
+	if eff, err := h.Resolver.Resolve(r.Context(), organizationID); err == nil {
+		source = eff.Source
 	}
 	if source == SourceOrganization {
 		return source, true // BYOK bypasses the plan gate
@@ -480,9 +491,6 @@ func (h *Handler) testProviderConfig(w http.ResponseWriter, r *http.Request) {
 // own, after the change. The resource is the organization itself; no key
 // material is ever recorded.
 func (h *Handler) recordProviderConfigAudit(r *http.Request, organizationID uuid.UUID, action string, meta map[string]any) {
-	if h.Config == nil {
-		return
-	}
 	if err := h.Config.RecordChange(r.Context(), organizationID, action, meta, audit.ActorOf(r)); err != nil {
 		slog.Warn("qeetai: audit provider-config", "err", err, "action", action)
 	}

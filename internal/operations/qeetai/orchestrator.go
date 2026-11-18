@@ -12,8 +12,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/ai"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/sse"
 )
 
@@ -184,12 +184,10 @@ func drainAfterCancel(events <-chan ai.Event, errC <-chan error) {
 	}
 }
 
-// collect reads one turn's stream into its text and tool calls, sending the
-// text to out as it arrives. A tool call must start on the next slot, below
-// ai.MaxToolCalls, and its input stay within ai.MaxToolInputBytes; otherwise
-// the stream is cancelled and the turn refused. ok is false once collect has
-// sent the error and done frames. Text past maxOutput bytes ends the turn
-// there, as the model's own token limit would, without its tool calls.
+// collect reads one turn's stream into its text and tool calls, sending text to out as it arrives.
+// A tool call must start on the next slot below ai.MaxToolCalls with input within
+// ai.MaxToolInputBytes, or the stream is cancelled and the turn refused (ok false, error and done
+// sent). Text past maxOutput bytes ends the turn there, without its tool calls.
 func collect(events <-chan ai.Event, errC <-chan error, cancel context.CancelFunc, out *sse.Writer, maxOutput int, used *usage) (text string, tools []*toolUseAccum, ok bool) {
 	var textBuilder strings.Builder
 	fail := func(code, message string) (string, []*toolUseAccum, bool) {

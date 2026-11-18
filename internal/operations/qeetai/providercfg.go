@@ -20,11 +20,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/qeetai/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/ai"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/ai/anthropic"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/ai/openai"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -102,8 +102,12 @@ func newStreamClient(policy *egress.Policy, headerTimeout time.Duration) *http.C
 }
 
 // NewProviderConfig builds the service, sealing organization keys with box, the
-// deployment's envelope cipher (the one the secrets vault uses).
-func NewProviderConfig(pool *pgxpool.Pool, box *envelope.Cipher, platform PlatformProvider, policies ...*egress.Policy) *ProviderConfig {
+// deployment's envelope cipher (the one the secrets vault uses). It refuses a
+// nil box.
+func NewProviderConfig(pool *pgxpool.Pool, box *envelope.Cipher, platform PlatformProvider, policies ...*egress.Policy) (*ProviderConfig, error) {
+	if box == nil {
+		return nil, errors.New("qeetai: a cipher is required to seal organizations' provider keys")
+	}
 	policy := egress.PublicPolicy(policies...)
 	return &ProviderConfig{
 		pool:         pool,
@@ -113,7 +117,7 @@ func NewProviderConfig(pool *pgxpool.Pool, box *envelope.Cipher, platform Platfo
 		egress:       policy,
 		httpClient:   policy.HTTPClient(probeTimeout),
 		streamClient: newStreamClient(policy, streamHeaderTimeout),
-	}
+	}, nil
 }
 
 // PlatformConfigured reports whether a deployment-level fallback key is set.
@@ -128,18 +132,12 @@ const (
 )
 
 func (c *ProviderConfig) encrypt(organizationID uuid.UUID, plaintext string) (ciphertext, nonce []byte, err error) {
-	if c.box == nil {
-		return nil, nil, errs.ErrInternalServer.WithDetail("Qeet AI key encryption is unavailable")
-	}
 	return c.box.Seal(organizationID, qeetaiKeyPurpose, qeetaiKeyResource, []byte(plaintext))
 }
 
 // decrypt opens an organization's provider key, sealed with the current data key
 // or a previous one; ProviderFor then reseals one sealed with a previous key.
 func (c *ProviderConfig) decrypt(organizationID uuid.UUID, ciphertext, nonce []byte) (string, error) {
-	if c.box == nil {
-		return "", errs.ErrInternalServer.WithDetail("Qeet AI key encryption is unavailable")
-	}
 	plaintext, err := c.box.Open(organizationID, qeetaiKeyPurpose, qeetaiKeyResource, ciphertext, nonce)
 	if err != nil {
 		return "", err
@@ -151,7 +149,7 @@ func (c *ProviderConfig) decrypt(organizationID uuid.UUID, ciphertext, nonce []b
 // it. Best-effort: a failure here must not break the inference path
 // that just decrypted fine.
 func (c *ProviderConfig) reseal(ctx context.Context, organizationID uuid.UUID, plaintext string, existing []byte) {
-	if c.box == nil || c.box.IsCurrent(existing) {
+	if c.box.IsCurrent(existing) {
 		return
 	}
 	ct, nonce, err := c.encrypt(organizationID, plaintext)

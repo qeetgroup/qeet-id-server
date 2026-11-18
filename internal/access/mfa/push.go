@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -55,9 +54,6 @@ func (s *Service) loadPushTokens(ctx context.Context, tx pgx.Tx, userID uuid.UUI
 	}
 	var tokens []pushTarget
 	for _, row := range rows {
-		if s.box == nil {
-			return nil, errors.New("MFA secret encryption is unavailable")
-		}
 		plain, err := s.box.Open(userID, "mfa-push-token", row.PushTokenHash, row.PushTokenCt, row.PushTokenNonce)
 		if err != nil {
 			return nil, err

@@ -1,9 +1,7 @@
-// Package provision is the one account-provisioning flow every federated
-// sign-in (SAML, LDAP, OpenID Connect single sign-on, social) runs: the
-// account linked to the provider's subject, else the one with the address it
-// asserts, adopted under identitylink's checks, else a new one; then the link,
-// and for a connection's sign-in the account kept in step (ssosync). Each
-// protocol keeps only its attribute mapping and its own errors.
+// Package provision is the one account-provisioning flow every federated sign-in (SAML, LDAP, OIDC
+// single sign-on, social) runs: the account linked to the subject, else the one with the asserted
+// address adopted under identitylink's checks, else a new one; then the link and, for a connection,
+// ssosync. Each protocol keeps only its attribute mapping and its own errors.
 package provision
 
 import (
@@ -20,7 +18,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/federation/provision/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ssosync"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/strutil"
@@ -34,11 +32,9 @@ type Source struct {
 	ConnectionID   uuid.UUID // the connection; uuid.Nil for a social provider
 }
 
-// Person is what the provider asserts about whom it signs in. EmailVerified
-// is its own word on Email, nil when it gives none; GroupsWithheld says it
-// left the groups out. LinkMetadata is what the link keeps of the profile
-// (nil keeps what it holds), Profile what the connection's attribute mapping
-// made of it, for Flow.Store.
+// Person is what the provider asserts about whom it signs in. EmailVerified is its own word on Email
+// (nil for none); GroupsWithheld says it left groups out. LinkMetadata is what the link keeps of the
+// profile (nil keeps what it holds), Profile what the attribute mapping made of it, for Flow.Store.
 type Person struct {
 	Subject        string
 	Email          string
@@ -50,11 +46,9 @@ type Person struct {
 	Profile        map[string]any
 }
 
-// Vouching is what the provider's word for the address is worth to the
-// organization. Unproved, when set, is why the provider doesn't prove it: no
-// account is adopted by it, and an account created for it isn't marked
-// verified. Adopt and Create are other reasons it may not adopt an account
-// by it or create one for it.
+// Vouching is what the provider's word for the address is worth to the organization. Unproved, when
+// set, is why it doesn't prove it: no account is adopted by it, and one created for it isn't marked
+// verified. Adopt and Create are other reasons it may not adopt or create an account by it.
 type Vouching struct {
 	Unproved error
 	Adopt    error
@@ -79,12 +73,10 @@ type Recorder interface {
 	RecordSignInFailure(ctx context.Context, f auth.SignInFailure)
 }
 
-// Flow provisions the accounts one protocol's sign-ins name. Method is the
-// sign-in method refusals are recorded under ("saml", "ldap", "oidc",
-// "social"), by Recorder (nil records none). Weigh weighs the provider's
-// word for an address; nil weighs it as SingleSignOn does. Store, when set,
-// stores what else the connection maps onto the account, in the flow's
-// transaction.
+// Flow provisions the accounts one protocol's sign-ins name. Method ("saml", "ldap", "oidc",
+// "social") is what the required Recorder records refusals under. Weigh weighs the provider's word
+// for an address (nil: as SingleSignOn does); Store, when set, stores what else the connection maps
+// onto the account, in the flow's transaction.
 type Flow struct {
 	Pool     *pgxpool.Pool
 	Method   string
@@ -105,14 +97,10 @@ func refusal(err error) error {
 	return err
 }
 
-// Resolve returns the account p signs in through src: the one linked to
-// p.Subject, else the one with p.Email, adopted, else a new one, linking the
-// subject to it. A linked account signs in only while the organization is its
-// home; an adopted one must also have proved owning an address the provider
-// proves, and not administer the organization; a new one needs the
-// provider's leave (Vouching). A connection's sign-in then keeps the account
-// in step with what it asserts. One transaction, so concurrent sign-ins can't
-// duplicate rows; every refusal is recorded as a failed sign-in.
+// Resolve returns the account p signs in through src: the one linked to p.Subject (only while this
+// organization is its home), else the one with p.Email (adopted only if home here, it proved an address
+// the provider proves and doesn't administer it), else a new one (Vouching permitting), then linked and,
+// for a connection, kept in step. One transaction, so sign-ins can't duplicate rows; refusals recorded.
 func (f *Flow) Resolve(ctx context.Context, src Source, p Person, actor audit.Actor) (userID uuid.UUID, err error) {
 	p.Email = strings.ToLower(strings.TrimSpace(p.Email))
 	// The record of a refusal names the account only once it is known to be
@@ -248,12 +236,10 @@ func (f *Flow) requireHome(ctx context.Context, tx pgx.Tx, account, organization
 	return nil
 }
 
-// SingleSignOn weighs p's address as an organization's own identity provider
-// speaks for it. Anyone who can configure a connection runs one, so it proves
-// only addresses on the domains the organization manages, and none it says
-// itself it hasn't verified (one that doesn't say, as Microsoft Entra ID, is
-// trusted for those domains); it creates accounts only where the domain has
-// just-in-time provisioning on.
+// SingleSignOn weighs p's address as the organization's own identity provider speaks for it. Anyone who
+// can configure a connection runs one, so it proves only addresses on domains the organization manages,
+// and none it says it hasn't verified (one that doesn't say, as Microsoft Entra ID, is trusted there);
+// it creates accounts only where the domain has just-in-time provisioning on.
 func (f *Flow) SingleSignOn(ctx context.Context, src Source, p Person) (Vouching, error) {
 	domain, managed, err := domainverify.ManagingDomain(postgres.AcrossOrganizations(ctx), f.Pool, strings.ToLower(strings.TrimSpace(p.Email)))
 	if err != nil {
@@ -275,9 +261,6 @@ func (f *Flow) SingleSignOn(ctx context.Context, src Source, p Person) (Vouching
 // record records a refused sign-in through src, with the error code as its
 // reason and the organization's own account it named, if any.
 func (f *Flow) record(ctx context.Context, src Source, account uuid.UUID, actor audit.Actor, err error) {
-	if f.Recorder == nil {
-		return
-	}
 	reason := errs.CodeInternal
 	if e := errs.As(err); e != nil {
 		reason = e.Code

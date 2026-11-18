@@ -12,7 +12,7 @@ import (
 
 	"github.com/mattn/go-isatty"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/migrations"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
@@ -152,7 +152,11 @@ func Run() {
 		slog.Info("outbox publishing to NATS", "url", logging.StripURLCredentials(cfg.NATSURL))
 	}
 
-	deps, workers := buildDeps(rootCtx, cfg, pool, outboxPub)
+	deps, workers, err := buildDeps(rootCtx, cfg, pool, outboxPub)
+	if err != nil {
+		slog.Error("start-up refused", "err", err)
+		os.Exit(1)
+	}
 	deps.Health.Schema = &schema
 
 	if cfg.CSRFDisabled {

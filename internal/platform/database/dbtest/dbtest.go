@@ -1,10 +1,8 @@
 //go:build integration
 
-// Package dbtest runs a package's database tests against a disposable
-// PostgreSQL 16 database migrated with the repository's own migrations, shared
-// across the package's tests. Given a server in DBTEST_SERVER (make test-db
-// starts one), each test package gets its own copy of a database migrated once
-// for the whole run; otherwise the package starts a container of its own.
+// Package dbtest runs a package's database tests against a disposable PostgreSQL 16 database migrated
+// with this repository's migrations. With DBTEST_SERVER set (make test-db starts one), each test
+// package gets its own copy of a database migrated once per run; otherwise it starts a container.
 package dbtest
 
 import (

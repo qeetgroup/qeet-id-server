@@ -11,15 +11,13 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/developer/credentials/tokenvault/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// GetAccessToken returns a live access token for (organizationID, userID,
-// provider), refreshing it first if it's expired (or about to be) and a refresh
-// token is on file, once its read is recorded as actor's: a read that can't be
-// recorded is refused. The refresh token is never returned, only used to mint
-// a new access token.
+// GetAccessToken returns a live access token for (organizationID, userID, provider), refreshing it
+// first when it is (nearly) expired and a refresh token is on file, once the read is recorded as
+// actor's; a read that can't be recorded is refused. The refresh token is never returned.
 func (s *Service) GetAccessToken(ctx context.Context, organizationID, userID uuid.UUID, provider string, actor audit.Actor) (string, error) {
 	token, err := s.accessToken(ctx, organizationID, userID, provider)
 	if err != nil {

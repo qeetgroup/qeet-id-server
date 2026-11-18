@@ -22,8 +22,8 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/apikey/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -53,14 +53,14 @@ type Service struct {
 	limits entitlements.PlanLimiter
 }
 
-// NewService returns the API key service.
-func NewService(pool *pgxpool.Pool) *Service {
-	return &Service{pool: pool, q: dbgen.New(pool)}
+// NewService returns the API key service, which caps an organization's keys
+// at its plan's api_keys limit from limits. It refuses a nil limits.
+func NewService(pool *pgxpool.Pool, limits entitlements.PlanLimiter) (*Service, error) {
+	if limits == nil {
+		return nil, errors.New("apikey: a plan limiter is required to cap an organization's keys")
+	}
+	return &Service{pool: pool, q: dbgen.New(pool), limits: limits}, nil
 }
-
-// SetPlanLimiter wires the plan-limit checker. nil (the default) disables the
-// gate — every create is allowed.
-func (s *Service) SetPlanLimiter(l entitlements.PlanLimiter) { s.limits = l }
 
 // CountActive returns the organization's number of non-revoked API keys — the
 // "api_keys" limit value, surfaced as usage in billing.
@@ -139,19 +139,17 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Key, string, err
 	}
 	// Plan gate: refuse once the organization's plan cap for API keys is reached. The
 	// resource key ("api_keys") matches the entitlements catalog.
-	if s.limits != nil {
-		lim, err := s.limits.Limit(ctx, in.OrganizationID, "api_keys")
+	lim, err := s.limits.Limit(ctx, in.OrganizationID, "api_keys")
+	if err != nil {
+		return nil, "", err
+	}
+	if lim >= 0 {
+		n, err := s.q.CountActiveAPIKeys(ctx, in.OrganizationID)
 		if err != nil {
 			return nil, "", err
 		}
-		if lim >= 0 {
-			n, err := s.q.CountActiveAPIKeys(ctx, in.OrganizationID)
-			if err != nil {
-				return nil, "", err
-			}
-			if int(n) >= lim {
-				return nil, "", errs.ErrPlanLimit.WithMetadata(map[string]any{"resource": "api_keys", "limit": lim})
-			}
+		if int(n) >= lim {
+			return nil, "", errs.ErrPlanLimit.WithMetadata(map[string]any{"resource": "api_keys", "limit": lim})
 		}
 	}
 	prefix, secret, full, err := generateRaw()

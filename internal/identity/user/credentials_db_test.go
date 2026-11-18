@@ -85,14 +85,13 @@ func TestCredentialChangesNeedAnAccountOfOneOrganization(t *testing.T) {
 		t.Errorf("set the password of an account shared only with a deleted organization: %d %s, want 204", rec.Code, rec.Body.String())
 	}
 
-	h.SignIns, h.MFA, h.PasswordPolicy = nil, nil, nil
+	h.MFA, h.PasswordPolicy = nil, nil
 	for _, tc := range []struct {
 		method, path string
 		body         any
 	}{
 		{http.MethodPost, soloPath + "/password", newPassword},
 		{http.MethodDelete, soloPath + "/mfa", nil},
-		{http.MethodPost, soloPath + "/sessions/revoke-all", nil},
 	} {
 		if rec := dbtest.Do(t, as, tc.method, tc.path, tc.body); rec.Code != http.StatusNotImplemented {
 			t.Errorf("%s %s with nothing to do it: %d, want 501", tc.method, tc.path, rec.Code)

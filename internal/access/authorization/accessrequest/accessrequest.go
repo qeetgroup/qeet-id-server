@@ -1,8 +1,7 @@
-// Package accessrequest lets a person ask their organization for a role, for a
-// while or for good, and lets an administrator approve or deny it, from the
-// console or the phone. Approving gives the role through RBAC (with its seat,
-// audit and token-change signal); a time-limited grant is taken back by a
-// scheduled job when its time is up. A pending request nobody answers lapses.
+// Package accessrequest lets a person ask their organization for a role, for a while or for good, and
+// an administrator approve or deny it from the console or the phone. Approving grants the role through
+// RBAC (seat, audit, token-change signal); a scheduled job takes back time-limited grants and lapses
+// requests nobody answered.
 package accessrequest
 
 import (
@@ -20,8 +19,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/accessrequest/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/notification"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/strutil"
@@ -113,10 +112,16 @@ type Approvers interface {
 }
 
 // PhoneNotifier tells someone's linked phones (Qeet ID on the phone) about
-// something waiting for them. Optional.
+// something waiting for them; NoPhones for a process that sends no push.
 type PhoneNotifier interface {
 	NotifyPhones(ctx context.Context, userID uuid.UUID, title, body string, data map[string]string)
 }
+
+// NoPhones is a PhoneNotifier that tells no phone.
+type NoPhones struct{}
+
+// NotifyPhones does nothing.
+func (NoPhones) NotifyPhones(context.Context, uuid.UUID, string, string, map[string]string) {}
 
 // Service answers for access requests.
 type Service struct {
@@ -129,16 +134,22 @@ type Service struct {
 	now       func() time.Time
 }
 
-// NewService returns a Service over pool that grants through roles.
-func NewService(pool *pgxpool.Pool, roles RoleGranter, approvers Approvers) *Service {
-	return &Service{pool: pool, q: dbgen.New(pool), roles: roles, approvers: approvers, now: time.Now}
+// NewService returns a Service over pool that grants through roles, finds
+// who answers through approvers and tells people in the app through notifier
+// and on their phones through phones.
+func NewService(pool *pgxpool.Pool, roles RoleGranter, approvers Approvers, notifier notification.Notifier, phones PhoneNotifier) (*Service, error) {
+	switch {
+	case roles == nil:
+		return nil, errors.New("accessrequest: the service needs a role granter")
+	case approvers == nil:
+		return nil, errors.New("accessrequest: the service needs approvers")
+	case notifier == nil:
+		return nil, errors.New("accessrequest: the service needs a notifier")
+	case phones == nil:
+		return nil, errors.New("accessrequest: the service needs a phone notifier")
+	}
+	return &Service{pool: pool, q: dbgen.New(pool), roles: roles, approvers: approvers, notifier: notifier, phones: phones, now: time.Now}, nil
 }
-
-// SetNotifier sets where in-app notifications go.
-func (s *Service) SetNotifier(n notification.Notifier) { s.notifier = n }
-
-// SetPhoneNotifier sets how linked phones are told.
-func (s *Service) SetPhoneNotifier(p PhoneNotifier) { s.phones = p }
 
 // cleanText trims s and checks it is 1..maxText characters (or, when optional,
 // empty).
@@ -223,9 +234,6 @@ func (s *Service) Create(ctx context.Context, organizationID, requesterID uuid.U
 // tellApprovers tells everyone who can answer req, except its requester, in
 // the app and on their linked phones. Best effort: a failure is logged.
 func (s *Service) tellApprovers(ctx context.Context, organizationID uuid.UUID, req *AccessRequest) {
-	if s.approvers == nil {
-		return
-	}
 	ids, err := s.approvers.UsersWithPermission(ctx, organizationID, ReviewPermission)
 	if err != nil {
 		slog.WarnContext(ctx, "access request: listing approvers", "err", err)
@@ -237,17 +245,12 @@ func (s *Service) tellApprovers(ctx context.Context, organizationID uuid.UUID, r
 			continue
 		}
 		s.notify(ctx, organizationID, id, "info", title, req.Reason)
-		if s.phones != nil {
-			s.phones.NotifyPhones(ctx, id, "Access request", title,
-				map[string]string{"kind": "access_request", "access_request_id": req.ID.String(), "organization_id": organizationID.String()})
-		}
+		s.phones.NotifyPhones(ctx, id, "Access request", title,
+			map[string]string{"kind": "access_request", "access_request_id": req.ID.String(), "organization_id": organizationID.String()})
 	}
 }
 
 func (s *Service) notify(ctx context.Context, organizationID, userID uuid.UUID, kind, title, description string) {
-	if s.notifier == nil {
-		return
-	}
 	if err := s.notifier.Notify(ctx, organizationID, userID, kind, title, description, ""); err != nil {
 		slog.WarnContext(ctx, "access request: notifying", "err", err)
 	}

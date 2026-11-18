@@ -7,12 +7,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/identity/invite"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -31,8 +29,7 @@ func TestBulkImportRolesTakeSeats(t *testing.T) {
 	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (organization_id, name) VALUES ($1, 'Member') RETURNING id`, organization).Scan(&member); err != nil {
 		t.Fatal(err)
 	}
-	seats := invite.NewService(pool, nil, 14*24*time.Hour, "https://app.example.test")
-	seats.SetPlanLimiter(seatPlan(3))
+	seats := inviteSeats(t, pool, 3)
 	h := &user.Handler{Repo: user.NewRepository(pool), Validate: validator.New(validator.WithRequiredStructEnabled()),
 		Roles: ImportRoles{Repo: NewRepository(pool), Seats: seats}}
 	rows := []map[string]any{}
@@ -61,8 +58,7 @@ func TestImportRolesNeedRoleWrite(t *testing.T) {
 	dbtest.Assign(t, writer.ID, organization, dbtest.Role(t, organization, "role.write"))
 	dbtest.Assign(t, reader.ID, organization, dbtest.Role(t, organization, "user.write"))
 	role := dbtest.Role(t, organization)
-	seats := invite.NewService(pool, nil, 14*24*time.Hour, "https://app.example.test")
-	seats.SetPlanLimiter(seatPlan(3))
+	seats := inviteSeats(t, pool, 3)
 	grants := ImportRoles{Repo: NewRepository(pool), Seats: seats}
 	as := func(userID uuid.UUID) *http.Request {
 		r := httptest.NewRequestWithContext(dbtest.Context(t), http.MethodPost, "/v1/users/bulk", nil)

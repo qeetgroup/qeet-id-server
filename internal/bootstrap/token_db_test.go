@@ -3,6 +3,7 @@
 package bootstrap
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,13 +13,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/developer/agent"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/principal"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
 // TestTokenEndpointServesEveryClient checks the client_credentials grant at
@@ -31,8 +34,16 @@ func TestTokenEndpointServesEveryClient(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
 	issuer := dbtest.Issuer(t)
 	principals, agents := principal.NewService(pool, issuer), agent.NewService(pool, issuer)
-	svc := oidc.NewService(pool, issuer)
-	svc.SetMachineClients(principals, agents)
+	svc, err := oidc.NewService(oidc.Deps{
+		Pool: pool, Issuer: issuer, Addresses: openAddresses{}, Egress: egress.PublicPolicy(), Notifier: unnotified{},
+		Limits: noLimits{}, AgentStatus: agents.AgentStatus, PrincipalLive: principals.PrincipalLive,
+		SessionLive:    func(context.Context, uuid.UUID, uuid.UUID) (bool, error) { return true, nil },
+		SessionFactors: func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error { return nil },
+		GrantMaxAge:    time.Hour, MachineClients: []oidc.MachineClient{principals, agents},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	deps := routeInventoryDeps(t)
 	deps.OIDC = &oidc.Handler{Service: svc}
 	router := NewRouter(deps)
@@ -151,3 +162,26 @@ func TestTokenEndpointServesEveryClient(t *testing.T) {
 	}
 	refused("a suspended agent", post("/v1/oauth/token", clientCredentials, aid, a.Secret), http.StatusBadRequest, "unauthorized_client")
 }
+
+// openAddresses lets every address sign in.
+type openAddresses struct{}
+
+func (openAddresses) CheckSignIn(context.Context, uuid.UUID, uuid.UUID, string, string) error {
+	return nil
+}
+
+func (openAddresses) CheckSignInTx(context.Context, pgx.Tx, uuid.UUID, uuid.UUID, string, string) error {
+	return nil
+}
+
+// unnotified drops every notification.
+type unnotified struct{}
+
+func (unnotified) Notify(context.Context, uuid.UUID, uuid.UUID, string, string, string, string) error {
+	return nil
+}
+
+// noLimits caps nothing.
+type noLimits struct{}
+
+func (noLimits) Limit(context.Context, uuid.UUID, string) (int, error) { return -1, nil }

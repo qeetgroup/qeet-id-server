@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -187,10 +187,9 @@ type PushPairingAccount struct {
 	Email string `json:"email"`
 }
 
-// ClaimPushPairing links the phone presenting code to the account that asked
-// for it, as RegisterPushDevice does, and uses the code up. A wrong, used or
-// expired code, or one for an inactive account, gets the same
-// ErrMFAPairingCodeInvalid. Audited as mfa.push_device_linked, the phone the
+// ClaimPushPairing links the phone presenting code to the account that asked for it, as
+// RegisterPushDevice does, and uses the code up. A wrong, used or expired code, or one for an inactive
+// account, gets the same ErrMFAPairingCodeInvalid. Audited as mfa.push_device_linked, the phone the
 // actor, from the request from.
 func (s *Service) ClaimPushPairing(ctx context.Context, code, name, pushToken, platform string, from audit.Actor) (PushPairingClaim, error) {
 	normalized := normalizePairingCode(code)

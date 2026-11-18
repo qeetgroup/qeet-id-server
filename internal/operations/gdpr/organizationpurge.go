@@ -13,8 +13,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/gdpr/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 )
 
@@ -39,11 +39,9 @@ type OrganizationPurge struct {
 	AccountsDetached int              `json:"accounts_detached"`
 }
 
-// PurgeDeletedOrganizations removes the data of up to organizationPurgesPerRun
-// organizations deleted longer ago than after, and returns how many it
-// purged. An organization whose deletion was called off was never deleted, so
-// it is never purged. One that fails is logged, counted and tried again next
-// run; the others are still purged.
+// PurgeDeletedOrganizations removes the data of up to organizationPurgesPerRun organizations deleted
+// longer ago than after (a called-off deletion was never one) and returns how many it purged. One that
+// fails is logged, counted and retried next run; the others are still purged.
 func (s *Service) PurgeDeletedOrganizations(ctx context.Context, after time.Duration) (int, error) {
 	ctx = postgres.AcrossOrganizations(ctx)
 	ids, err := s.q.ListPurgeableOrganizations(ctx, dbgen.ListPurgeableOrganizationsParams{
@@ -64,12 +62,10 @@ func (s *Service) PurgeDeletedOrganizations(ctx context.Context, after time.Dura
 	return purged, nil
 }
 
-// PurgeOrganization removes the data of organizationID, deleted longer ago than after:
-// the people whose home it was (erased and removed, or, still members of
-// another organization, kept with no home organization), then every table's
-// rows of it in batches, its audit chain included, then the organization.
-// It records the purge in platform.organization_purges and the platform audit
-// chain, which outlive the data. Interrupted, it carries on at the next run.
+// PurgeOrganization removes organizationID's data once deleted longer ago than after: its home
+// members (erased, or kept homeless when they belong elsewhere), every table's rows in batches, its
+// audit chain, then the organization. The purge is recorded in platform.organization_purges and the
+// platform chain, which outlive the data; an interrupted purge resumes at the next run.
 func (s *Service) PurgeOrganization(ctx context.Context, organizationID uuid.UUID, after time.Duration) (*OrganizationPurge, error) {
 	ctx = postgres.AcrossOrganizations(ctx)
 	org, err := s.q.GetPurgeableOrganization(ctx, dbgen.GetPurgeableOrganizationParams{

@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/directory/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
@@ -281,8 +281,8 @@ func (handler *Handler) createAlert(response http.ResponseWriter, request *http.
 	httpx.WriteJSON(response, http.StatusCreated, created)
 }
 
-func (service *Service) notifyAlerts(ctx context.Context, organizationID uuid.UUID, connectionID string) error {
-	return service.q.NotifyDirectoryAlerts(ctx, dbgen.NotifyDirectoryAlertsParams{
+func (store *Store) notifyAlerts(ctx context.Context, organizationID uuid.UUID, connectionID string) error {
+	return store.q.NotifyDirectoryAlerts(ctx, dbgen.NotifyDirectoryAlertsParams{
 		OrganizationID: &organizationID, ConnectionID: connectionID,
 		Description: "Directory failures reached your alert threshold in the last 15 minutes.",
 	})

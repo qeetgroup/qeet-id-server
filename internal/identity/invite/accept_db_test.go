@@ -8,8 +8,7 @@ import (
 	"testing"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
-	"github.com/qeetgroup/qeet-id-server/internal/access/authpolicy"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -61,9 +60,8 @@ func TestInviteAccept(t *testing.T) {
 // password rules are read from the database.
 func TestInviteAcceptWithOneConnection(t *testing.T) {
 	ctx := dbtest.Context(t)
-	pool := dbtest.Pool(t)
 	h, _ := newHandler(t)
-	h.Service.SetAcceptMethods(authpolicy.NewService(pool))
+	h.Service.methods = policies(t)
 	organization := dbtest.Organization(t)
 	_, token, err := h.Service.Create(ctx, CreateInput{OrganizationID: organization, Email: dbtest.Unique("invitee") + "@example.test"}, audit.Actor{})
 	if err != nil {

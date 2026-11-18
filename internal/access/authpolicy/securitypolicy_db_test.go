@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -18,7 +18,7 @@ import (
 func TestPatchChangesOnlyWhatItSends(t *testing.T) {
 	organization := dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
-	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&SecurityPolicyHandler{Repo: NewSecurityPolicies(dbtest.Pool(t))}).Mount)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&SecurityPolicyHandler{Repo: NewSecurityPolicies(dbtest.Pool(t), 0, 0)}).Mount)
 	path := "/organizations/" + organization.String() + "/policy"
 	read := func() SecurityPolicy {
 		t.Helper()
@@ -69,7 +69,7 @@ func TestPolicyChangeCommitsWithItsAudit(t *testing.T) {
 	ctx := dbtest.Context(t)
 	organization := dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
-	repo := NewSecurityPolicies(dbtest.Pool(t))
+	repo := NewSecurityPolicies(dbtest.Pool(t), 0, 0)
 	by := audit.Actor{UserID: &admin.ID, Type: "user", IP: "203.0.113.5", UserAgent: "policy-test", RequestID: dbtest.Unique("request")}
 
 	if _, err := repo.Replace(ctx, organization, SecurityPolicy{MFAEnforcement: "required"}, by); err != nil {

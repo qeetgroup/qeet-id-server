@@ -27,7 +27,7 @@ func withReuseGrace(t *testing.T, grace time.Duration) *Service {
 		t.Fatal(err)
 	}
 	svc := newService(t)
-	svc.SetRefreshReuseGrace(grace, cipher)
+	svc.refreshGrace, svc.refreshCipher = grace, cipher
 	return svc
 }
 

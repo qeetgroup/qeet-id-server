@@ -29,16 +29,10 @@ var maxReplayRows = 1000
 // ReplayActivityHistory's LIMIT.
 const replayPage = 100
 
-// stream serves GET /v1/activity/stream as Server-Sent Events of the audit
-// records themselves, each with its own id, so a live event can be opened and
-// related as a historical one. It replays the records newer than
-// Last-Event-ID, then follows the audit log, every streamPoll or as soon as
-// the hub says the organization did something, until the client disconnects,
-// the hub shuts down, the reader's credential expires or Access refuses them;
-// the query filters apply throughout. Delivery is at least once: a frame's
-// cursor is set back streamLag, so a reconnect may resend a record, and when
-// the client is too far behind, or the hub couldn't keep up with it, the
-// stream ends with a reconnect hint so the next connection catches up.
+// stream serves GET /v1/activity/stream as Server-Sent Events of the audit records themselves (each
+// with its id), replaying those newer than Last-Event-ID, then following the log every streamPoll or
+// on a hub signal until the client leaves, the hub stops, the credential expires or Access refuses.
+// At least once: cursors lag streamLag, and a client too far behind is told to reconnect.
 func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 	organizationID, _, ok := h.requireOrganizationUser(w, r)
 	if !ok {
@@ -208,12 +202,9 @@ func (h *Handler) recheckEvery() time.Duration {
 }
 
 // stillAllowed reports whether reader may go on reading, failing closed when
-// Access can't say.
+// access can't say.
 func (h *Handler) stillAllowed(ctx context.Context, reader *httpx.Principal) bool {
-	if h.Access == nil {
-		return true
-	}
-	ok, err := h.Access(ctx, reader)
+	ok, err := h.access(ctx, reader)
 	if err != nil {
 		slog.Warn("activity: stream access check failed; ending the stream", "err", err)
 		return false
@@ -221,14 +212,10 @@ func (h *Handler) stillAllowed(ctx context.Context, reader *httpx.Principal) boo
 	return ok
 }
 
-// replayHistory sends the audit events newer than the lastEventID cursor,
-// oldest first, as a connected client would have seen them, page after page
-// until it has caught up, and has t follow on from them. It reads at most
-// maxReplayRows: further behind, it sends the cursor of the last row read and
-// reports false, for the stream to end and the client to carry on from there.
-// The cursor of a row the filters pass over is sent too, so a filtered backlog
-// is read only once. A lastEventID that does not decode skips the replay, so
-// the stream just starts live.
+// replayHistory sends the events newer than lastEventID, oldest first, page by page until caught up,
+// then lets t follow on. Past maxReplayRows it sends the last cursor read and reports false, for the
+// client to reconnect from there; filtered-out rows' cursors are sent too, so a backlog is read once.
+// A lastEventID that doesn't decode skips the replay.
 func (h *Handler) replayHistory(ctx context.Context, out *sse.Writer, organizationID uuid.UUID, lastEventID string, f StreamFilter, t *auditTail) bool {
 	afterTs, afterID, err := paging.DecodeTimeUUID(lastEventID)
 	if err != nil {

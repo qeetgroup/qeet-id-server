@@ -10,7 +10,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -219,12 +219,10 @@ func EndSignIns(ctx context.Context, tx pgx.Tx, signals *sessionsignal.Signaller
 	return ended, nil
 }
 
-// endOtherSignIns ends, inside tx, every way the user signs in besides their
-// API sessions: hosted-login sessions, unused password-reset and sign-in
-// links, remembered devices, which skip the second factor, pending
-// authorisations, which would become grants, and application grants. It also
-// lifts a lock of their second-factor sign-in: the person proved who they are
-// another way. The caller has locked the user row.
+// endOtherSignIns ends, inside tx, every way the user signs in besides their API sessions: hosted-login
+// sessions, unused reset and sign-in links, remembered devices (which skip the second factor), pending
+// authorisations and application grants; and it lifts a second-factor sign-in lock, since the person
+// proved who they are another way. The caller has locked the user row.
 func endOtherSignIns(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (SignInsEnded, error) {
 	var ended SignInsEnded
 	q := dbgen.New(tx)

@@ -32,11 +32,9 @@ type EvaluationInput struct {
 	Context     map[string]any `json:"context"`
 }
 
-// Decision is the result of an Evaluate call. ReasonCode is one of the
-// authz.* codes below and Reason the same in English; ReasonParams names the
-// policy that decided (policy_id, policy_name, priority). Trace lists, readably,
-// each policy evaluated and why; the evaluate endpoint returns it only with
-// ?explain=true.
+// Decision is the result of an Evaluate call. ReasonCode is one of the authz.* codes below and Reason
+// the same in English; ReasonParams names the deciding policy (policy_id, policy_name, priority).
+// Trace lists each policy evaluated and why; the evaluate endpoint returns it only with ?explain=true.
 type Decision struct {
 	Allow           bool           `json:"allow"`
 	Effect          string         `json:"effect"`

@@ -44,7 +44,7 @@ const (
 // changed their credentials; passkey names the passkey removed, if any. Best
 // effort, after the change has committed: a failure is logged, the change stands.
 func (h *Handler) tellCredentialChange(ctx context.Context, organizationID uuid.UUID, email string, change credentialChange, passkey string) {
-	if h.Mailer == nil || email == "" {
+	if email == "" {
 		return
 	}
 	org := "your organization"

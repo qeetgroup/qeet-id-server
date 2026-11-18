@@ -45,11 +45,9 @@ func (r *Repository) EmailAppearance(ctx context.Context, organizationID uuid.UU
 
 // EmailIdentity returns the name and reply-to address of the organization's email.
 func (r *Repository) EmailIdentity(ctx context.Context, organizationID uuid.UUID) (name, replyTo string, err error) {
-	if r.gate != nil {
-		allowed, gateErr := r.gate.FeatureAllowed(ctx, organizationID, "custom_branding")
-		if gateErr != nil || !allowed {
-			return "", "", gateErr
-		}
+	allowed, gateErr := r.gate.FeatureAllowed(ctx, organizationID, "custom_branding")
+	if gateErr != nil || !allowed {
+		return "", "", gateErr
 	}
 	brand, err := r.Get(ctx, organizationID)
 	if err != nil {

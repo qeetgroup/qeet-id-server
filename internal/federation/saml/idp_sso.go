@@ -18,7 +18,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -163,21 +163,15 @@ func writeSSOError(w http.ResponseWriter, r *http.Request, err error) {
 // ask again, so it needn't be signed.
 const loginAfterParam = "login_after"
 
-// meetsSignInRules applies sp's organization's sign-in rules to the hosted-login
-// session, as OIDC authorize does: an address its rules refuse is refused (and
-// recorded), and a second factor it requires that the session didn't meet sends
-// the browser to sign in again for this request, once; a fresh sign-in still
-// short of it is refused. It reports whether to go on, having answered if not.
+// meetsSignInRules applies sp's organization's sign-in rules to the hosted-login session, as OIDC
+// authorize does: an address its rules refuse is refused and recorded, and a required second factor
+// the session didn't meet sends the browser to sign in again, once (a fresh sign-in still short of it
+// is refused). It reports whether to go on, having answered if not.
 func (h *Handler) meetsSignInRules(w http.ResponseWriter, r *http.Request, sp *ServiceProvider, userID uuid.UUID) bool {
 	ctx := r.Context()
-	if h.IdP.addresses != nil {
-		if err := h.IdP.addresses.CheckSignIn(ctx, sp.OrganizationID, userID, httpx.ClientIP(r), "saml_idp"); err != nil {
-			writeSSOError(w, r, err)
-			return false
-		}
-	}
-	if h.IdP.factors == nil {
-		return true
+	if err := h.IdP.addresses.CheckSignIn(ctx, sp.OrganizationID, userID, httpx.ClientIP(r), "saml_idp"); err != nil {
+		writeSSOError(w, r, err)
+		return false
 	}
 	c, err := r.Cookie(auth.LoginSessionCookie)
 	if err != nil {
@@ -255,11 +249,10 @@ func (h *Handler) idpOrganization(r *http.Request) (uuid.UUID, error) {
 	return organizationID, nil
 }
 
-// idpSSO is the organization's SingleSignOnService. It handles SP-initiated SSO (a
-// SAMLRequest via HTTP-Redirect GET or HTTP-POST) and IdP-initiated SSO
-// (?sp=<id|entityID>), for SPs of the path's organization only. Without a hosted-login
-// SSO cookie, the browser is bounced to the hosted login and returns here. An
-// SP set to assigned people only refuses, and audits refusing, anyone else.
+// idpSSO is the organization's SingleSignOnService: SP-initiated (a SAMLRequest by HTTP-Redirect or
+// HTTP-POST) and IdP-initiated (?sp=<id|entityID>) SSO, for the path organization's SPs only. Without a
+// hosted-login SSO cookie the browser goes to the hosted login and back. An SP limited to assigned
+// people refuses, and audits refusing, anyone else.
 func (h *Handler) idpSSO(w http.ResponseWriter, r *http.Request) {
 	if h.IdP == nil {
 		writeSSOError(w, r, ErrIdPNotConfigured)

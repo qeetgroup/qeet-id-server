@@ -78,18 +78,32 @@ type Report struct {
 	Incidents  []Incident  `json:"incidents"`
 }
 
-// Service reads the service's health.
+// Service reads the service's health; its Incidents are the incidents
+// operators post.
 type Service struct {
-	pool *pgxpool.Pool
-	q    *dbgen.Queries
-	// SignInReady reports whether tokens can be signed; nil counts as ready.
-	SignInReady func(ctx context.Context) error
+	*Incidents
+	pool        *pgxpool.Pool
+	q           *dbgen.Queries
+	signInReady func(ctx context.Context) error
 }
 
-// NewService returns the service-health Service.
-func NewService(pool *pgxpool.Pool) *Service {
-	return &Service{pool: pool, q: dbgen.New(pool)}
+// NewService returns the service-health Service. signInReady reports whether
+// tokens can be signed, for the sign-in component; it refuses a nil one.
+func NewService(pool *pgxpool.Pool, signInReady func(ctx context.Context) error) (*Service, error) {
+	if signInReady == nil {
+		return nil, errors.New("servicehealth: a sign-in readiness check is required")
+	}
+	return &Service{Incidents: NewIncidents(pool), pool: pool, q: dbgen.New(pool), signInReady: signInReady}, nil
 }
+
+// Incidents records the incidents operators post. It needs nothing but the
+// database.
+type Incidents struct {
+	q *dbgen.Queries
+}
+
+// NewIncidents returns the Incidents over pool.
+func NewIncidents(pool *pgxpool.Pool) *Incidents { return &Incidents{q: dbgen.New(pool)} }
 
 // Report returns the state of each component for organizationID, and the incidents
 // open or resolved in the last 14 days.
@@ -100,11 +114,9 @@ func (s *Service) Report(ctx context.Context, organizationID uuid.UUID) (*Report
 		api.State, api.Reason = StateOutage, "api.database_unreachable"
 	}
 	signIn := Component{Name: ComponentSignIn, State: StateOperational}
-	if s.SignInReady != nil {
-		if err := s.SignInReady(ctx); err != nil {
-			slog.Warn("service health: signing keys unavailable", "err", err)
-			signIn.State, signIn.Reason = StateOutage, "sign_in.keys_unavailable"
-		}
+	if err := s.signInReady(ctx); err != nil {
+		slog.Warn("service health: signing keys unavailable", "err", err)
+		signIn.State, signIn.Reason = StateOutage, "sign_in.keys_unavailable"
 	}
 	email, err := s.email(ctx, organizationID)
 	if err != nil {
@@ -203,7 +215,7 @@ func (s *Service) directory(ctx context.Context, organizationID uuid.UUID) (Comp
 }
 
 // OpenIncident posts an incident on component and returns its id.
-func (s *Service) OpenIncident(ctx context.Context, component, impact, title, detail string) (uuid.UUID, error) {
+func (s *Incidents) OpenIncident(ctx context.Context, component, impact, title, detail string) (uuid.UUID, error) {
 	if _, ok := stateRank[impact]; !ok || impact == StateOperational || impact == StateNotConfigured {
 		return uuid.Nil, fmt.Errorf("impact %q: want maintenance, degraded or outage", impact)
 	}
@@ -219,7 +231,7 @@ func (s *Service) OpenIncident(ctx context.Context, component, impact, title, de
 }
 
 // ResolveIncident ends an open incident.
-func (s *Service) ResolveIncident(ctx context.Context, id uuid.UUID) error {
+func (s *Incidents) ResolveIncident(ctx context.Context, id uuid.UUID) error {
 	n, err := s.q.ResolveIncident(ctx, id)
 	if err != nil {
 		return err

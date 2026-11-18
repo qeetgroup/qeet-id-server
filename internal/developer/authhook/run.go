@@ -16,7 +16,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/qeetgroup/qeet-id-server/internal/developer/authhook/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/requestsig"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -71,11 +71,10 @@ func stateOf(hooks []dbgen.ListEnabledSignInHooksRow) hookState {
 	return hookState{present: true, id: hooks[0].ID, failOpen: true}
 }
 
-// Run implements auth.LoginHook. It calls each of the organization's enabled
-// hooks, oldest first. The first to deny refuses the sign-in with
-// ErrAuthHookDenied; otherwise Run returns the claims they asked to add to the
-// access token, a later hook's replacing an earlier one's of the same name.
-// A hook that gives no answer is handled by skipped.
+// Run implements auth.LoginHook: it calls the organization's enabled hooks, oldest first. The first
+// deny refuses the sign-in with ErrAuthHookDenied; otherwise it returns the claims to add to the
+// access token, a later hook's replacing an earlier one's of the same name. skipped handles a hook
+// that gives no answer.
 func (s *Service) Run(ctx context.Context, organizationID, userID uuid.UUID, email string) (map[string]any, error) {
 	if organizationID == uuid.Nil {
 		return nil, nil
@@ -182,9 +181,6 @@ type previousSecret struct {
 // while it overlaps the one it replaced. A replaced secret that can't be
 // opened is left out, with a warning, rather than stop the calls.
 func (s *Service) secretsOf(organizationID, hookID uuid.UUID, ct, nonce []byte, previous previousSecret) ([]string, error) {
-	if s.box == nil {
-		return nil, errors.New("no cipher to open the signing secret")
-	}
 	current, err := s.box.Open(organizationID, "auth-hook-signing", hookID.String(), ct, nonce)
 	if err != nil {
 		return nil, err

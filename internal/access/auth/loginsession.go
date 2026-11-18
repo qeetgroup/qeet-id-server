@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -65,11 +65,10 @@ func (s *Service) CreatePasskeyLoginSession(ctx context.Context, userID uuid.UUI
 	return s.createLoginSession(ctx, userID, uuid.Nil, ip, ua, "passkey", secondFactorPasskey)
 }
 
-// createLoginSession mints the session and records the sign-in by method to
-// organizationID (uuid.Nil: the account's own organization), with how it met a
-// second factor ("": it didn't). The session reaches the account's
-// self-service routes, so its own organization's address rules apply however
-// it signed in, whichever organization's application asked.
+// createLoginSession mints the session and records the sign-in by method to organizationID
+// (uuid.Nil: the account's own), with how it met a second factor ("": it didn't). The session reaches
+// the account's self-service routes, so its own organization's address rules apply whichever
+// organization's application asked.
 func (s *Service) createLoginSession(ctx context.Context, userID, organizationID uuid.UUID, ip, ua, method, secondFactor string) (string, error) {
 	// Every hosted sign-in ends here, whatever its method.
 	if err := s.refuseInactiveAccount(ctx, userID, uuid.Nil, "hosted", ip, ua); err != nil {
@@ -294,9 +293,6 @@ type SignOutNotifier interface {
 	NotifySignOut(ctx context.Context, sessionID, userID uuid.UUID, initiatedBy string) ([]string, error)
 }
 
-// SetSignOutNotifier wires the sign-out notices.
-func (s *Service) SetSignOutNotifier(n SignOutNotifier) { s.signOutNotifier = n }
-
 // EndLoginSession signs a browser out of the hosted login. In one transaction it
 // deletes the session named by the cookie, spends its unredeemed authorization
 // codes, revokes the application grants it started and records the sign-out.
@@ -353,13 +349,11 @@ func (s *Service) EndLoginSession(ctx context.Context, in EndLoginSessionInput) 
 	}
 	// The session has ended whatever happens next; telling the applications
 	// is best effort (a failure is logged, and back-channel notices retry).
-	if s.signOutNotifier != nil {
-		uris, err := s.signOutNotifier.NotifySignOut(ctx, row.ID, row.UserID, in.ClientID)
-		if err != nil {
-			slog.Warn("auth: tell applications of a sign-out", "session_id", row.ID, "err", err)
-		}
-		ended.FrontChannelLogoutURIs = uris
+	uris, err := s.signOutNotifier.NotifySignOut(ctx, row.ID, row.UserID, in.ClientID)
+	if err != nil {
+		slog.Warn("auth: tell applications of a sign-out", "session_id", row.ID, "err", err)
 	}
+	ended.FrontChannelLogoutURIs = uris
 	return ended, nil
 }
 

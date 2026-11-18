@@ -1,8 +1,7 @@
-// Package decisionlog keeps the access decisions an organization asks of the
-// platform (the check, relationship check, AuthZEN and ABAC evaluate calls)
-// for 30 days, and lists them. Decisions are queued and written in batches in
-// the background, so a check never waits on its record; when the queue is
-// full a record is dropped, and counted in the log, rather than slow the check.
+// Package decisionlog keeps for 30 days, and lists, the access decisions an organization asks of the
+// platform (check, relationship check, AuthZEN and ABAC evaluate). Records are queued and written in
+// background batches so a check never waits; a full queue drops a record, counting it, rather than
+// slow the check.
 package decisionlog
 
 import (

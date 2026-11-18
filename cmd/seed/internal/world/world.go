@@ -35,8 +35,10 @@ type World struct {
 
 // New wires the server's services against pool.
 func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, password, hash string) *World {
+	deps, err := bootstrap.Services(ctx, cfg, pool)
+	Must(err, "wire the services")
 	w := &World{
-		Ctx: ctx, Cfg: cfg, Pool: pool, Deps: bootstrap.Services(ctx, cfg, pool),
+		Ctx: ctx, Cfg: cfg, Pool: pool, Deps: deps,
 		Rand: rand.New(rand.NewPCG(20261024, 1)), Password: password, PasswordHash: hash,
 	}
 	w.API = newAPI(w)

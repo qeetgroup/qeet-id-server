@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/developer/webhook/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -77,9 +77,6 @@ func (s *Service) Create(ctx context.Context, in CreateInput, actor audit.Actor)
 	if err != nil {
 		return nil, err
 	}
-	if s.box == nil {
-		return nil, errs.ErrInternalServer.WithDetail("webhook secret encryption is unavailable")
-	}
 	id := uuid.New()
 	ciphertext, nonce, err := s.box.Seal(in.OrganizationID, "webhook-signing", id.String(), []byte(secret))
 	if err != nil {
@@ -128,9 +125,6 @@ func (s *Service) planAllows(ctx context.Context, organizationID uuid.UUID) erro
 // planIncludesWebhooks reports whether the organization's plan includes
 // webhooks; with no gate set, every plan does.
 func (s *Service) planIncludesWebhooks(ctx context.Context, organizationID uuid.UUID) (bool, error) {
-	if s.gate == nil {
-		return true, nil
-	}
 	return s.gate.FeatureAllowed(ctx, organizationID, "webhooks")
 }
 
@@ -311,9 +305,6 @@ const SecretRotationOverlap = 24 * time.Hour
 // stops signing. Rotating again within the overlap ends the older secret's at
 // once.
 func (s *Service) RotateSecret(ctx context.Context, id, organizationID uuid.UUID, actor audit.Actor) (string, time.Time, error) {
-	if s.box == nil {
-		return "", time.Time{}, errs.ErrInternalServer.WithDetail("webhook secret encryption is unavailable")
-	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return "", time.Time{}, err

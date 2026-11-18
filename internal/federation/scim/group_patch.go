@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
@@ -19,7 +19,7 @@ import (
 // changes plus member add/remove/replace. A member it gives a first role takes
 // a seat, as replaceGroup does.
 func (s *Service) patchGroup(ctx context.Context, actor audit.Actor, organizationID, id uuid.UUID, p *groupPatch) (*groupRow, error) {
-	limit, err := s.seatLimit(ctx, organizationID)
+	limit, err := s.seats.SeatLimit(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -50,7 +50,7 @@ func (s *Service) patchGroup(ctx context.Context, actor audit.Actor, organizatio
 		}
 		action = "group.updated"
 	}
-	if err := s.withinSeats(ctx, tx, organizationID, limit, func() error {
+	if err := s.seats.WithinSeats(ctx, tx, organizationID, limit, func() error {
 		if p.replaceMembers {
 			if err := q.DeleteGroupMembers(ctx, dbgen.DeleteGroupMembersParams{GroupID: id, OrganizationID: organizationID}); err != nil {
 				return err
@@ -124,11 +124,10 @@ func (h *Handler) patchGroup(w http.ResponseWriter, r *http.Request) {
 	writeSCIM(w, http.StatusOK, res)
 }
 
-// parseGroupPatch resolves a SCIM PatchOp body into a groupPatch. It accepts
-// ops on "displayName", "externalId" and "members" (a value-less remove clears
-// externalId and members, and is refused for the required displayName), Okta's
-// `members[value eq "<id>"]` path, and path-less ops whose value holds those
-// attributes. Anything else is ignored.
+// parseGroupPatch resolves a SCIM PatchOp body into a groupPatch: ops on "displayName", "externalId"
+// and "members" (a value-less remove clears externalId and members and is refused for displayName),
+// Okta's `members[value eq "<id>"]` path, and path-less ops whose value holds those attributes.
+// Anything else is ignored.
 func parseGroupPatch(body patchBody) (*groupPatch, error) {
 	p := &groupPatch{}
 	for _, op := range body.Operations {

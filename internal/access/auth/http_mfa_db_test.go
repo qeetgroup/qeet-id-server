@@ -20,7 +20,7 @@ import (
 // fresh challenge met with the right code.
 func TestMFAChallengeOverHTTP(t *testing.T) {
 	svc := newService(t)
-	svc.SetMFA(heldFactor{code: "246810"})
+	svc.mfa = heldFactor{code: "246810"}
 	b := newBrowser(t, publicRoutes(newHandler(svc)))
 	a, _ := member(t)
 	challenge := func() string {

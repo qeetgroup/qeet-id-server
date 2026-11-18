@@ -16,7 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/developer/webhook/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/requestsig"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/strutil"
@@ -75,9 +75,6 @@ func (s *Service) tick(ctx context.Context) error {
 			}
 			continue
 		}
-		if s.box == nil {
-			return errors.New("webhook secret encryption is unavailable")
-		}
 		current, openErr := s.box.Open(it.OrganizationID, "webhook-signing", it.SubscriptionID.String(), it.SecretCt, it.SecretNonce)
 		if openErr != nil {
 			return openErr
@@ -114,11 +111,9 @@ func (s *Service) tick(ctx context.Context) error {
 		if derr != nil {
 			failure = strutil.NilIfEmpty(derr.Error())
 		}
-		// Give up after maxDeliveryAttempts, or at once when the endpoint
-		// refused the delivery itself: a permanently-failing endpoint (dead
-		// domain, decommissioned integration) would otherwise retry forever at
-		// the 1h backoff ceiling. dead_at marks it dead-lettered; RetryDelivery
-		// clears it for a manual re-send.
+		// Give up after maxDeliveryAttempts, or at once when the endpoint refused the delivery itself, so a
+		// dead endpoint doesn't retry forever at the 1h ceiling. dead_at marks it dead-lettered;
+		// RetryDelivery clears it for a manual re-send.
 		if int(it.Attempt)+1 >= maxDeliveryAttempts || !retryable(status) {
 			if err := s.q.DeadLetterDelivery(ctx, dbgen.DeadLetterDeliveryParams{
 				StatusCode: int32Ptr(status), ResponseBody: body, Error: failure, ID: it.ID, LeaseOwner: s.workerID,
@@ -224,12 +219,10 @@ func (s *Service) noteFailure(ctx context.Context, subscriptionID, organizationI
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	if s.notifier != nil {
-		description := "Deliveries to " + row.Url + " failed for 3 days, so the webhook was turned off. Fix the endpoint, then turn the webhook back on."
-		for _, userID := range managers {
-			if err := s.notifier.Notify(ctx, organizationID, userID, "alert", "Webhook turned off", description, "/developer/webhooks/"+subscriptionID.String()); err != nil {
-				slog.Warn("notify webhook disabled", "subscription_id", subscriptionID, "err", err)
-			}
+	description := "Deliveries to " + row.Url + " failed for 3 days, so the webhook was turned off. Fix the endpoint, then turn the webhook back on."
+	for _, userID := range managers {
+		if err := s.notifier.Notify(ctx, organizationID, userID, "alert", "Webhook turned off", description, "/developer/webhooks/"+subscriptionID.String()); err != nil {
+			slog.Warn("notify webhook disabled", "subscription_id", subscriptionID, "err", err)
 		}
 	}
 	return nil

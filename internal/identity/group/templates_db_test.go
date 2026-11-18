@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -17,7 +17,7 @@ import (
 // organization, the second apply naming the group that already exists.
 func TestTemplateGroupNames(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t))
+	svc := newService(t)
 	organization := dbtest.Organization(t)
 	actor := audit.Actor{Type: "user"}
 

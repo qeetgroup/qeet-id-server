@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/passkey/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 )
 
@@ -45,11 +45,10 @@ func (s *Service) BeginRegister(ctx context.Context, userID uuid.UUID) (uuid.UUI
 	return id, options, nil
 }
 
-// FinishRegister verifies the attestation and stores the new credential, named
-// name or, if empty, after who's browser; the addition is recorded as who's and
-// the account holder told. The name is checked before the ceremony is spent,
-// so a refused name can be corrected and retried; the organization's passkey
-// setting is checked again in case it was switched off.
+// FinishRegister verifies the attestation and stores the credential, named name or after who's
+// browser, recorded as who's and the holder told. The name is checked before the ceremony is spent,
+// so a refused name can be retried; the organization's passkey setting is checked again in case it
+// was switched off.
 func (s *Service) FinishRegister(ctx context.Context, userID, sessionID uuid.UUID, credential json.RawMessage, name string, who Requester) error {
 	name, err := enrolmentName(name, who.UserAgent)
 	if err != nil {

@@ -30,7 +30,7 @@ func TestHistoryPagesThroughEveryEvent(t *testing.T) {
 		events = append(events, insertEvent(t, organization, "user.updated", at))
 	}
 
-	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), testHandler(t, dbtest.Pool(t), NewHub(nil)).Mount)
 	if got, want := allPages(t, h, "limit=3"), newestFirst(events); !slices.Equal(got, want) {
 		t.Errorf("paged history = %v\nwant %v", got, want)
 	}
@@ -50,7 +50,7 @@ func TestFilteredHistoryReachesOlderMatches(t *testing.T) {
 		insertEvent(t, organization, "user.created", base.Add(time.Minute+time.Duration(i)*time.Second))
 	}
 
-	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), testHandler(t, dbtest.Pool(t), NewHub(nil)).Mount)
 	if got, want := allPages(t, h, "limit=1&min_severity=warning"), newestFirst(warnings); !slices.Equal(got, want) {
 		t.Errorf("filtered history = %v, want %v", got, want)
 	}
@@ -77,7 +77,7 @@ func TestSubjectIncludesEventsNamingThePerson(t *testing.T) {
 	insert(other.ID.String())
 	insert("not-a-uuid") // a malformed value doesn't break the filter
 
-	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), testHandler(t, dbtest.Pool(t), NewHub(nil)).Mount)
 	if got := allPages(t, h, "subject="+person.ID.String()); !slices.Equal(got, []uuid.UUID{added}) {
 		t.Errorf("the person's timeline = %v, want their group membership %v", got, added)
 	}
@@ -109,7 +109,7 @@ func TestHistorySearchTakesWildcardsLiterally(t *testing.T) {
 		}
 		events[name] = id
 	}
-	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), testHandler(t, dbtest.Pool(t), NewHub(nil)).Mount)
 	for q, want := range map[string]string{"qa_b": "qa_b", "%": "100%"} {
 		if got := allPages(t, h, "q="+url.QueryEscape(q)); !slices.Equal(got, []uuid.UUID{events[want]}) {
 			t.Errorf("search %q: %v, want only the event of %q", q, got, want)
@@ -164,7 +164,7 @@ func TestHistoryFiltersInTheQueryAndCounts(t *testing.T) {
 	deleted := insert("group.deleted", "group", &target, "198.51.100.9", base.Add(time.Minute))
 	failed := insert("auth.sign_in_failed", "session", nil, "198.51.100.9", base.Add(2*time.Minute))
 
-	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), testHandler(t, dbtest.Pool(t), NewHub(nil)).Mount)
 	type page struct {
 		Events []struct {
 			ID uuid.UUID `json:"id"`

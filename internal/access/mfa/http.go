@@ -3,6 +3,7 @@ package mfa
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -26,8 +27,8 @@ type WebAuthnVerifier interface {
 }
 
 // Handler serves the MFA routes. WebAuthn, when set, offers the user's passkeys
-// as a second factor (POST /mfa/webauthn/...). PairingThrottle, when set, wraps
-// the public pairing-code claim route, where a wrong code is a guess.
+// as a second factor (POST /mfa/webauthn/...). PairingThrottle wraps the public
+// pairing-code claim route, where a wrong code is a guess.
 type Handler struct {
 	Service         *Service
 	WebAuthn        WebAuthnVerifier
@@ -363,11 +364,7 @@ func (h *Handler) MountPublic(r chi.Router) {
 	// A linked phone asks for requests waiting on it, for when a push was late or lost.
 	r.Post("/mfa/push/devices/{id}/pending", h.listPendingPushChallenges)
 	// The mobile app links the phone with a pairing code, holding no session.
-	if h.PairingThrottle != nil {
-		r.With(h.PairingThrottle).Post("/mfa/push/pairing/claim", h.claimPushPairing)
-	} else {
-		r.Post("/mfa/push/pairing/claim", h.claimPushPairing)
-	}
+	r.With(h.PairingThrottle).Post("/mfa/push/pairing/claim", h.claimPushPairing)
 }
 
 // MountAdmin mounts an administrator's view of a member's linked phones, in
@@ -375,4 +372,13 @@ func (h *Handler) MountPublic(r chi.Router) {
 func (h *Handler) MountAdmin(r chi.Router) {
 	r.Get("/users/{id}/push-devices", h.listMemberPushDevices)
 	r.Delete("/users/{id}/push-devices/{deviceID}", h.revokeMemberPushDevice)
+}
+
+// Check refuses a handler without the pairing-code throttle, so bootstrap
+// stops at start rather than serve the claim route unthrottled.
+func (h *Handler) Check() error {
+	if h.PairingThrottle == nil {
+		return errors.New("mfa: the second-factor handler needs a pairing throttle")
+	}
+	return nil
 }

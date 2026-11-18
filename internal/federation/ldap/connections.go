@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ldap/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -70,9 +70,6 @@ func (s *Service) Create(ctx context.Context, organizationID uuid.UUID, in Creat
 	// Plan gate: LDAP/AD directory sync is an Enterprise feature.
 	if err := s.requireLDAP(ctx, organizationID); err != nil {
 		return nil, err
-	}
-	if s.box == nil {
-		return nil, errs.ErrInternalServer.WithDetail("LDAP secret encryption is unavailable")
 	}
 	id := uuid.New()
 	ciphertext, nonce, err := s.box.Seal(organizationID, "ldap-bind", id.String(), []byte(in.BindPassword))
@@ -158,9 +155,6 @@ func (s *Service) getFull(ctx context.Context, id, organizationID uuid.UUID) (*c
 	connFields(&c.Connection, r.ID, r.OrganizationID, r.Name, r.ServerUrl, r.StartTls, r.SkipTlsVerify,
 		r.BindDn, r.BaseDn, r.UserFilter, r.EmailAttribute, r.NameAttribute, r.Status,
 		r.CreatedAt, r.UpdatedAt, r.LastLoginAt)
-	if s.box == nil {
-		return nil, errors.New("LDAP secret encryption is unavailable")
-	}
 	plain, err := s.box.Open(c.OrganizationID, "ldap-bind", c.ID.String(), r.BindPasswordCt, r.BindPasswordNonce)
 	if err != nil {
 		return nil, err
@@ -239,9 +233,6 @@ func (s *Service) Update(ctx context.Context, id, organizationID uuid.UUID, in U
 		return nil, err
 	}
 	if bindPassword != nil {
-		if s.box == nil {
-			return nil, errs.ErrInternalServer.WithDetail("LDAP secret encryption is unavailable")
-		}
 		ciphertext, nonce, sealErr := s.box.Seal(organizationID, "ldap-bind", id.String(), []byte(*bindPassword))
 		if sealErr != nil {
 			return nil, sealErr

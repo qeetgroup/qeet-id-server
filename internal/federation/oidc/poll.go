@@ -49,12 +49,10 @@ type pollGrant struct {
 	consume    func(ctx context.Context, q *dbgen.Queries, id uuid.UUID) error
 }
 
-// pollToken answers a client polling with the code of a device or backchannel
-// request: slow_down sooner than the interval, authorization_pending,
-// access_denied or expired_token until approved, and then, once, the tokens
-// of the authorization-code flow. In one transaction it spends the request,
-// re-checks the person and stores the refresh token, so a refusal spends the
-// code and a failure loses nothing. ip is the poller's address.
+// pollToken answers a client polling with a device or backchannel request's code: slow_down sooner
+// than the interval, authorization_pending, access_denied or expired_token until approved, then once
+// the authorization-code tokens. One transaction spends the request, re-checks the person and stores
+// the refresh token, so a refusal spends the code and a failure loses nothing. ip is the poller's.
 func (s *Service) pollToken(ctx context.Context, g *pollGrant, clientID, clientSecret, rawCode, ip string) (*TokenResponse, error) {
 	client, err := s.pollingClient(ctx, g, clientID, clientSecret)
 	if err != nil {

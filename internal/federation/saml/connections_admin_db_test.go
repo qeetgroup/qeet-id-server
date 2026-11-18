@@ -34,7 +34,7 @@ func withChanges(body, change map[string]any) map[string]any {
 func TestSAMLConnectionsOverHTTP(t *testing.T) {
 	organization, other := dbtest.Organization(t), dbtest.Organization(t)
 	admin, otherAdmin := dbtest.User(t, organization, organization), dbtest.User(t, other, other)
-	h := &Handler{Service: NewService(dbtest.Pool(t), nil, testAppBase), PublicBaseURL: testPublicBase}
+	h := &Handler{Service: newTestService(t, dbtest.Pool(t), newAuthService(t)), PublicBaseURL: testPublicBase}
 	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)
 	asOther := dbtest.Serve(dbtest.Principal(otherAdmin.ID, other), h.Mount)
 	public := chi.NewRouter()
@@ -149,15 +149,8 @@ func TestSAMLConnectionsOverHTTP(t *testing.T) {
 func TestSAMLRegistryRefusesBadInputAsInvalid(t *testing.T) {
 	organization := dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
-	keyPEM, certPEM, err := GenerateIdPKeyPEM("Test Qeet IdP")
-	if err != nil {
-		t.Fatal(err)
-	}
-	idp, err := NewIdP(dbtest.Pool(t), keyPEM, certPEM, "https://login.id.qeet.in", sessionsByCookie{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	h := &Handler{Service: NewService(dbtest.Pool(t), nil, testAppBase), IdP: idp}
+	idp := newTestIdP(t, dbtest.Pool(t), sessionsByCookie{})
+	h := &Handler{Service: newTestService(t, dbtest.Pool(t), newAuthService(t)), IdP: idp}
 	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)
 	cert, _ := selfSignedCert(t)
 	connection := map[string]any{"name": "Okta", "idp_entity_id": "https://idp.example.test", "idp_sso_url": "https://idp.example.test/sso", "idp_certificate": cert, "status": "enabled"}

@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
@@ -163,3 +165,29 @@ func TestLoginDomainStages(t *testing.T) {
 		})
 	}
 }
+
+// TestNewServiceNeedsItsDependencies checks that the domain service can't be
+// built without its plan gate, its owner check or the member permissions
+// domain capture tells administrators by.
+func TestNewServiceNeedsItsDependencies(t *testing.T) {
+	full := Deps{Gate: stubGate{}, Owners: stubOwners{}, MemberPermissions: []string{"user.read"}}
+	for name, drop := range map[string]func(*Deps){
+		"Gate":              func(d *Deps) { d.Gate = nil },
+		"Owners":            func(d *Deps) { d.Owners = nil },
+		"MemberPermissions": func(d *Deps) { d.MemberPermissions = nil },
+	} {
+		d := full
+		drop(&d)
+		if svc, err := NewService(&pgxpool.Pool{}, d); err == nil {
+			t.Errorf("NewService without %s: %v, nil; want an error", name, svc)
+		}
+	}
+	if _, err := NewService(&pgxpool.Pool{}, full); err != nil {
+		t.Errorf("NewService with every dependency: %v", err)
+	}
+}
+
+type (
+	stubGate   struct{ entitlements.PlanGate }
+	stubOwners struct{ OwnerChecker }
+)

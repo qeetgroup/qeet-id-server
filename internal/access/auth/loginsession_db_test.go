@@ -138,9 +138,9 @@ func TestHostedSignInCookie(t *testing.T) {
 func TestHostedSecondFactor(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := newService(t)
-	svc.SetMFA(heldFactor{code: "135790"})
+	svc.mfa = heldFactor{code: "135790"}
 	a, home := member(t)
-	svc.SetDevicePolicy(rememberIn(home))
+	svc.devicePolicy = rememberIn(home)
 	h := publicRoutes(newHandler(svc))
 	complete := func(b *browser, token string, remember bool) *httptest.ResponseRecorder {
 		t.Helper()
@@ -200,7 +200,7 @@ func TestHostedSecondFactor(t *testing.T) {
 	if rec := complete(b, hostedChallenge(t, b, a), false); setCookie(rec, TrustedDeviceCookie) != nil {
 		t.Error("a device was remembered without being asked")
 	}
-	svc.SetDevicePolicy(rememberIn(uuid.Nil))
+	svc.devicePolicy = rememberIn(uuid.Nil)
 	b = newBrowser(t, h)
 	if rec := complete(b, hostedChallenge(t, b, a), true); setCookie(rec, TrustedDeviceCookie) != nil {
 		t.Error("a device was remembered where the organization remembers none")
@@ -275,7 +275,7 @@ func TestHostedSignInsAreRecorded(t *testing.T) {
 	})
 	t.Run("second factor", func(t *testing.T) {
 		svc := newService(t)
-		svc.SetMFA(heldFactor{code: "246810"})
+		svc.mfa = heldFactor{code: "246810"}
 		a, home := member(t)
 		res, err := svc.BeginLoginSession(ctx, SignInAttempt{Email: a.Email, Password: testPassword, IP: freshIP()}, testUserAgent, "", "")
 		if err != nil || !res.MFARequired {
@@ -316,7 +316,7 @@ func TestHostedSignInsAreRecorded(t *testing.T) {
 	})
 	t.Run("sign-up", func(t *testing.T) {
 		svc := newService(t)
-		svc.SetRegistrationPolicy(anyPassword{})
+		svc.regPolicy = anyPassword{}
 		pair, u, _, err := svc.Signup(ctx, SignupInput{Email: dbtest.Unique("signup") + "@example.test", Password: testPassword, IP: freshIP(), UserAgent: testUserAgent})
 		if err != nil {
 			t.Fatalf("sign up: %v", err)
@@ -336,7 +336,7 @@ func TestHostedSignInsAreRecorded(t *testing.T) {
 func TestHostedLoginSessionRefusedFromABlockedAddress(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := newService(t)
-	svc.SetAddressPolicy(ipallow.NewService(dbtest.Pool(t)))
+	svc.addresses = ipallow.NewService(dbtest.Pool(t))
 	a, home := member(t)
 	enforceAddressRules(t, home) // only 192.0.2.0/24
 	other := dbtest.Organization(t)

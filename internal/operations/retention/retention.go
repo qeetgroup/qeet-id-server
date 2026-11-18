@@ -16,8 +16,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/retention/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 )
 
 const sweepInterval = time.Hour

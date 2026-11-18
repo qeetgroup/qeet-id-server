@@ -2,13 +2,12 @@ package bootstrap
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
-	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/adminportal"
@@ -20,7 +19,6 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/social"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ssosync"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/worker"
 )
@@ -40,108 +38,133 @@ type federationServices struct {
 	directoryService   *directory.Service
 }
 
-// newFederation builds the federation context's services.
-func (w *wiring) newFederation() *federationServices {
-	f := &federationServices{
-		oidcService:        oidc.NewService(w.pool, w.issuer),
-		socialService:      social.NewService(w.pool, w.authService, w.cfg.AppBaseURL, w.outboundPolicy),
-		scimService:        scim.NewService(w.pool, w.userRepo),
-		samlService:        saml.NewService(w.pool, w.authService, w.cfg.AppBaseURL),
-		oidcSSOService:     oidcsso.NewService(w.pool, w.authService, w.cfg.AppBaseURL, w.outboundPolicy),
-		samlIdP:            newSAMLIdP(w.pool, w.cfg, w.authService),
-		adminPortalService: adminportal.NewService(w.pool, w.brandingRepo, w.cfg.LoginBaseURL),
-		ldapService:        ldap.NewService(w.pool, w.authService, w.outboundPolicy),
+// newFederation builds the federation context's services, or says which one
+// can't be built and why.
+func (w *wiring) newFederation() (*federationServices, error) {
+	f := &federationServices{adminPortalService: adminportal.NewService(w.pool, w.brandingRepo, w.cfg.LoginBaseURL)}
+	for _, build := range []func(*federationServices) error{w.newOIDCProvider, w.newSocialSignIn, w.newSSO, w.newDirectorySync} {
+		if err := build(f); err != nil {
+			return nil, err
+		}
 	}
-	f.directoryService = directory.NewService(f.scimService, f.ldapService)
-	return f
+	return f, nil
 }
 
-// newSAMLIdP returns Qeet ID's SAML identity provider, exiting when its
-// identity can't be loaded.
-func newSAMLIdP(pool *pgxpool.Pool, cfg *config.Config, authService *auth.Service) *saml.IdP {
-	samlIdPKeyPEM, samlIdPCertPEM := samlIdPIdentity(cfg)
-	samlIdP, err := saml.NewIdP(pool, samlIdPKeyPEM, samlIdPCertPEM, cfg.LoginBaseURL, authService)
+// newOIDCProvider builds Qeet ID as an OpenID Connect provider.
+func (w *wiring) newOIDCProvider(f *federationServices) error {
+	var err error
+	f.oidcService, err = oidc.NewService(oidc.Deps{
+		Pool: w.pool, Issuer: w.issuer,
+		Addresses:     w.ipAllowService, // address rules: application authorize, device approval and collection
+		Egress:        w.outboundPolicy, // back-channel sign-out notices
+		Notifier:      w.notificationService,
+		Limits:        w.entitlementSvc,                 // apps (relying parties)
+		AgentStatus:   w.agentService.AgentStatus,       // a suspended agent's tokens introspect inactive
+		SessionLive:   w.authService.SessionLive,        // an ended session's tokens introspect inactive and can't be exchanged
+		PrincipalLive: w.principalService.PrincipalLive, // a disabled service principal's tokens introspect inactive
+		// A CIBA approval is a sign-in: the session it comes through meets the organization's second factor.
+		SessionFactors: w.authService.SessionFactorShortfall,
+		GrantMaxAge:    w.cfg.SessionMaxAge, // grant bound where the organization sets none
+		// The client_credentials grant serves the service principals, then the agents.
+		MachineClients: []oidc.MachineClient{w.principalService, w.agentService},
+	})
 	if err != nil {
-		slog.Error("init saml idp", "err", err)
-		os.Exit(1)
+		return fmt.Errorf("oidc service: %w", err)
 	}
-	return samlIdP
+	return nil
 }
 
-// wireFederation connects the federation context's services to the rest.
-func (w *wiring) wireFederation() {
-	w.wireOIDC()
-	w.wireSocial()
-	w.wireSSO()
-	w.wireDirectories()
+// newSocialSignIn builds social sign-in.
+func (w *wiring) newSocialSignIn(f *federationServices) error {
+	var err error
+	f.socialService, err = social.NewService(social.Deps{
+		Pool: w.pool, Auth: w.authService, Cipher: w.sharedCipher,
+		Capture: w.domainVerifyService, // social sign-up
+		Egress:  w.outboundPolicy, AppBaseURL: w.cfg.AppBaseURL,
+		// The callback sets the SSO cookie before redirecting, so an unvalidated
+		// return_to would be an open redirect on the auth domain.
+		ReturnOrigins: w.hostedReturnOrigins(),
+		Platform:      platformSocialProviders(w.cfg),
+	})
+	if err != nil {
+		return fmt.Errorf("social service: %w", err)
+	}
+	return nil
 }
 
-// wireOIDC connects Qeet ID as an OpenID Connect provider.
-func (w *wiring) wireOIDC() {
-	w.oidcService.SetAgentStatus(w.agentService.AgentStatus)         // a suspended agent's tokens introspect inactive
-	w.oidcService.SetSessionLive(w.authService.SessionLive)          // an ended session's tokens introspect inactive and can't be exchanged
-	w.oidcService.SetPrincipalLive(w.principalService.PrincipalLive) // a disabled service principal's tokens introspect inactive
-	w.oidcService.SetGrantMaxAge(w.cfg.SessionMaxAge)                // grant bound where the organization sets none
-	w.oidcService.SetNotifier(w.notificationService)                 // CIBA async consent prompts
-	// A CIBA approval is a sign-in: the session it comes through meets the organization's second factor.
-	w.oidcService.SetSessionFactors(w.authService.SessionFactorShortfall)
-	// The client_credentials grant serves the service principals, then the agents.
-	w.oidcService.SetMachineClients(w.principalService, w.agentService)
-	w.oidcService.SetLogoutHTTPClient(w.outboundPolicy)
-	w.oidcService.SetAddressPolicy(w.ipAllowService) // address rules: application authorize, device approval and collection
-	w.oidcService.SetPlanLimiter(w.entitlementSvc)   // apps (relying parties)
+// hostedReturnOrigins are where a sign-in started on the hosted login may
+// return to. AllowedOrigins is already the vetted browser origin set
+// (Validate() refuses a wildcard outside dev).
+func (w *wiring) hostedReturnOrigins() []string {
+	return append([]string{w.cfg.AppBaseURL, w.cfg.LoginBaseURL}, w.cfg.AllowedOrigins()...)
 }
 
-// wireSocial connects social sign-in.
-func (w *wiring) wireSocial() {
+// newSSO builds single sign-on: the organizations' SAML and OpenID Connect
+// connections, and Qeet ID's SAML identity provider.
+func (w *wiring) newSSO(f *federationServices) error {
 	cfg := w.cfg
-	w.socialService.SetCipher(w.sharedCipher)
-	// Allowlist for the hosted flow's return_to. The callback sets the SSO
-	// cookie before redirecting, so an unvalidated value would be an open
-	// redirect on the auth domain. AllowedOrigins is already the vetted browser
-	// origin set (Validate() refuses a wildcard outside dev).
-	w.socialService.SetAllowedReturnOrigins(
-		append([]string{cfg.AppBaseURL, cfg.LoginBaseURL}, cfg.AllowedOrigins()...)...)
-	setPlatformSocialProviders(w.socialService, cfg)
-	w.socialService.SetDomainCapture(w.domainVerifyService) // social sign-up
+	var err error
+	if f.samlService, err = saml.NewService(saml.Deps{
+		Pool: w.pool, Auth: w.authService,
+		Cipher: w.sharedCipher, // the connections' SP encryption keys
+		Gate:   w.entitlementSvc, Egress: w.outboundPolicy, AppBaseURL: cfg.AppBaseURL,
+		// A sign-in started on the hosted login returns there, under the hosted social sign-in's allowlist.
+		LoginBaseURL: cfg.LoginBaseURL, ReturnOrigins: w.hostedReturnOrigins(),
+	}); err != nil {
+		return fmt.Errorf("saml service: %w", err)
+	}
+	if f.oidcSSOService, err = oidcsso.NewService(oidcsso.Deps{
+		Pool: w.pool, Auth: w.authService, Cipher: w.sharedCipher, Gate: w.entitlementSvc,
+		Egress: w.outboundPolicy, AppBaseURL: cfg.AppBaseURL,
+		LoginBaseURL: cfg.LoginBaseURL, ReturnOrigins: w.hostedReturnOrigins(),
+	}); err != nil {
+		return fmt.Errorf("oidc connection service: %w", err)
+	}
+	keyPEM, certPEM, err := samlIdPIdentity(cfg)
+	if err != nil {
+		return fmt.Errorf("saml idp: %w", err)
+	}
+	if f.samlIdP, err = saml.NewIdP(saml.IdPDeps{
+		Pool: w.pool, KeyPEM: keyPEM, CertPEM: certPEM, LoginBaseURL: cfg.LoginBaseURL, Sessions: w.authService,
+		// An assertion is signed under the same address rules and second factor as an OIDC authorize.
+		Addresses: w.ipAllowService, Factors: w.authService, Gate: w.entitlementSvc,
+	}); err != nil {
+		return fmt.Errorf("saml idp: %w", err)
+	}
+	return nil
 }
 
-// wireSSO connects single sign-on: Qeet ID's SAML identity provider and the
-// organizations' SAML and OpenID Connect connections.
-func (w *wiring) wireSSO() {
-	cfg := w.cfg
-	w.oidcSSOService.SetCipher(w.sharedCipher)
-	w.samlService.SetEgressPolicy(w.outboundPolicy) // IdP metadata URLs
-	w.samlService.SetCipher(w.sharedCipher)         // the connections' SP encryption keys
-	// A SAML or OpenID Connect sign-in started on the hosted login returns there: the same return_to
-	// allowlist as the hosted social sign-in's.
-	ssoReturnOrigins := append([]string{cfg.AppBaseURL, cfg.LoginBaseURL}, cfg.AllowedOrigins()...)
-	w.samlService.SetHostedLogin(cfg.LoginBaseURL, ssoReturnOrigins...)
-	w.oidcSSOService.SetHostedLogin(cfg.LoginBaseURL, ssoReturnOrigins...)
-	// The SAML IdP signs an assertion under the same address rules and second factor.
-	w.samlIdP.SetSignInRules(w.ipAllowService, w.authService)
-	w.samlIdP.SetPlanGate(w.entitlementSvc)        // SSO (SAML), as identity provider
-	w.samlService.SetPlanGate(w.entitlementSvc)    // SSO (SAML), through an organization's identity provider
-	w.oidcSSOService.SetPlanGate(w.entitlementSvc) // SSO (OpenID Connect connections)
-}
-
-// wireDirectories connects SCIM and LDAP and the directory view over both.
-func (w *wiring) wireDirectories() {
-	w.scimService.SetSessionSignals(w.sessionSignals)
-	w.ldapService.SetCipher(w.sharedCipher)
-	w.ldapService.SetAllowSkipTLSVerify(w.cfg.IsDev()) // skip_tls_verify is a dev-only escape hatch
-	w.directoryService.SetEventStore(w.pool)
-	w.scimService.SetOperationObserver(w.directoryService)
-	w.ldapService.SetOperationObserver(w.directoryService)
-	w.scimService.SetProfileMapper(w.directoryService)
-	w.ldapService.SetProfileMapper(w.directoryService)
-	w.scimService.SetSeatGuard(w.inviteService) // seats: the same, through a directory-managed group
-	w.scimService.SetPlanGate(w.entitlementSvc) // SCIM
-	w.ldapService.SetPlanGate(w.entitlementSvc) // LDAP
+// newDirectorySync builds SCIM and LDAP and the directory view over both.
+// Both report their operations to the directory's store and map profiles
+// through it, so it is built first; the view then lists their connections.
+func (w *wiring) newDirectorySync(f *federationServices) error {
+	store, err := directory.NewStore(w.pool)
+	if err != nil {
+		return fmt.Errorf("directory store: %w", err)
+	}
+	if f.scimService, err = scim.NewService(scim.Deps{
+		Pool: w.pool, Users: w.userRepo, Signals: w.sessionSignals,
+		Gate:   w.entitlementSvc, // SCIM
+		Seats:  w.inviteService,  // seats: the same, through a directory-managed group
+		Mapper: store, Observer: store,
+	}); err != nil {
+		return fmt.Errorf("scim service: %w", err)
+	}
+	if f.ldapService, err = ldap.NewService(ldap.Deps{
+		Pool: w.pool, Auth: w.authService, Cipher: w.sharedCipher,
+		Gate: w.entitlementSvc, Mapper: store, Observer: store, Egress: w.outboundPolicy,
+		AllowSkipTLSVerify: w.cfg.IsDev(), // skip_tls_verify is a dev-only escape hatch
+	}); err != nil {
+		return fmt.Errorf("ldap service: %w", err)
+	}
+	if f.directoryService, err = directory.NewService(store, f.scimService, f.ldapService); err != nil {
+		return fmt.Errorf("directory service: %w", err)
+	}
+	return nil
 }
 
 // federationHandlers serves the federation context.
-func (w *wiring) federationHandlers(d *Deps) {
+func (w *wiring) federationHandlers(d *Deps) error {
 	cfg := w.cfg
 	samlHandler := &saml.Handler{Service: w.samlService, IdP: w.samlIdP, PublicBaseURL: cfg.PublicBaseURL, CookieSecure: !cfg.IsDev(), ActOnCheck: w.rbacRepo.CheckActOn}
 	d.OIDC = &oidc.Handler{Service: w.oidcService, Sessions: w.authService, Providers: w.socialService, Registration: w.authPolicyService, DeviceTrust: w.authPolicyService, Methods: w.authPolicyService, Policy: w.authPolicyService, Branding: w.brandingRepo, LoginBaseURL: cfg.LoginBaseURL, CookieSecure: !cfg.IsDev(), PublicBaseURL: cfg.PublicBaseURL}
@@ -153,6 +176,7 @@ func (w *wiring) federationHandlers(d *Deps) {
 	d.SSOGroups = &ssosync.Handler{Service: ssosync.NewService(w.pool), GrantCheck: w.rbacRepo.CheckGrantGroup}
 	d.OIDCSSO = &oidcsso.Handler{Service: w.oidcSSOService, PublicBaseURL: cfg.PublicBaseURL, CookieSecure: !cfg.IsDev(), ActOnCheck: w.rbacRepo.CheckActOn}
 	d.Directory = &directory.Handler{Service: w.directoryService}
+	return nil
 }
 
 // federationPolicies are the federation context's routes whose policy is

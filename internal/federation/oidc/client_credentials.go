@@ -17,10 +17,6 @@ type MachineClient interface {
 	ClientCredentials(ctx context.Context, clientID, secret string) (tok *tokens.MachineToken, known bool, err error)
 }
 
-// SetMachineClients wires the machine identities the client_credentials grant
-// serves, asked in order. With none it authenticates no one.
-func (s *Service) SetMachineClients(clients ...MachineClient) { s.machineClients = clients }
-
 // ClientCredentials is the client_credentials grant (RFC 6749 §4.4): a service
 // principal or an agent authenticates with its id and secret and receives an
 // access token for itself. An application is refused it, as

@@ -2,6 +2,7 @@ package activity
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
@@ -15,21 +16,26 @@ import (
 // Handler serves the organization-scoped Live Activity endpoints: the SSE stream,
 // history, summary and related events.
 type Handler struct {
-	Hub  *Hub
-	pool *pgxpool.Pool
-	// Access decides again, while a stream is open, whether its reader may
-	// still read it, as the request was admitted: their session or credential
-	// still live and audit.read still theirs. A stream it refuses, or can't
-	// ask, ends. nil leaves an open stream unchecked.
-	Access func(ctx context.Context, p *httpx.Principal) (bool, error)
-	// RecheckEvery is how often Access is asked; 0 means streamRecheck.
+	Hub    *Hub
+	pool   *pgxpool.Pool
+	access Access
+	// RecheckEvery is how often access is asked; 0 means streamRecheck.
 	RecheckEvery time.Duration
 }
 
+// Access decides again, while a stream is open, whether its reader may still
+// read it, as the request was admitted: their session or credential still live
+// and audit.read still theirs. A stream it refuses, or can't ask, ends.
+type Access func(ctx context.Context, p *httpx.Principal) (bool, error)
+
 // NewHandler returns a Handler that reads history from pool and live events
-// from hub.
-func NewHandler(pool *pgxpool.Pool, hub *Hub) *Handler {
-	return &Handler{pool: pool, Hub: hub}
+// from hub, and keeps asking access whether an open stream's reader may go
+// on. It refuses a nil hub or access.
+func NewHandler(pool *pgxpool.Pool, hub *Hub, access Access) (*Handler, error) {
+	if hub == nil || access == nil {
+		return nil, errors.New("activity: the handler needs the hub and a stream access check")
+	}
+	return &Handler{pool: pool, Hub: hub, access: access}, nil
 }
 
 // Mount registers the activity routes. Every route requires the audit.read

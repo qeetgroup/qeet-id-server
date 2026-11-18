@@ -1,6 +1,8 @@
 package bootstrap
 
 import (
+	"fmt"
+
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/agent"
@@ -30,30 +32,38 @@ type developerServices struct {
 }
 
 // newDeveloper builds the developer context's services.
-func (w *wiring) newDeveloper() *developerServices {
+func (w *wiring) newDeveloper() (*developerServices, error) {
+	apikeyService, err := apikey.NewService(w.pool, w.entitlementSvc) // api_keys
+	if err != nil {
+		return nil, fmt.Errorf("api key service: %w", err)
+	}
+	authHookService, err := authhook.NewService(w.pool, w.sharedCipher, w.outboundPolicy)
+	if err != nil {
+		return nil, fmt.Errorf("auth hook service: %w", err)
+	}
+	webhookService, err := webhook.NewService(w.pool, webhook.Deps{
+		Cipher:   w.sharedCipher,
+		PlanGate: w.entitlementSvc,      // webhooks (feature)
+		Notifier: w.notificationService, // alert webhook managers when a failing endpoint is turned off
+		Egress:   w.outboundPolicy,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("webhook service: %w", err)
+	}
 	return &developerServices{
-		apikeyService:     apikey.NewService(w.pool),
+		apikeyService:     apikeyService,
 		principalService:  principal.NewService(w.pool, w.issuer),
-		authHookService:   authhook.NewService(w.pool, w.outboundPolicy),
+		authHookService:   authHookService,
 		agentService:      agent.NewService(w.pool, w.issuer),
 		vcService:         vc.NewService(w.pool, w.issuer),
-		webhookService:    webhook.NewService(w.pool, w.outboundPolicy),
+		webhookService:    webhookService,
 		secretService:     secret.NewService(w.pool, w.sharedCipher),
 		tokenVaultService: tokenvault.NewService(w.pool, w.sharedCipher, w.outboundPolicy),
-	}
-}
-
-// wireDeveloper connects the developer context's services to the rest.
-func (w *wiring) wireDeveloper() {
-	w.authHookService.SetCipher(w.sharedCipher)
-	w.webhookService.SetCipher(w.sharedCipher)
-	w.webhookService.SetNotifier(w.notificationService) // alert webhook managers when a failing endpoint is turned off
-	w.webhookService.SetPlanGate(w.entitlementSvc)      // webhooks (feature)
-	w.apikeyService.SetPlanLimiter(w.entitlementSvc)    // api_keys
+	}, nil
 }
 
 // developerHandlers serves the developer context.
-func (w *wiring) developerHandlers(d *Deps) {
+func (w *wiring) developerHandlers(d *Deps) error {
 	cfg := w.cfg
 	d.APIKey = &apikey.Handler{Service: w.apikeyService, GrantCheck: w.rbacRepo.CheckGrantScopes}
 	d.APIKeyService = w.apikeyService
@@ -64,6 +74,7 @@ func (w *wiring) developerHandlers(d *Deps) {
 	d.AuthHook = &authhook.Handler{Service: w.authHookService}
 	d.Agent = &agent.Handler{Service: w.agentService, GrantCheck: w.rbacRepo.CheckGrantScopes}
 	d.VC = &vc.Handler{Service: w.vcService}
+	return nil
 }
 
 // developerPolicies are the developer context's routes whose policy is

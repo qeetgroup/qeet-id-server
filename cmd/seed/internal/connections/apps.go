@@ -175,7 +175,7 @@ type app struct {
 // plan's limit, then the grants, consents and device sign-ins its people made.
 func (f *fed) applications(o *world.Org) {
 	w := f.w
-	limit, err := w.Deps.Entitlement.Service.Limit(w.Ctx, o.ID, "apps")
+	limit, err := w.Deps.Entitlement.Service().Limit(w.Ctx, o.ID, "apps")
 	w.Check(err, "apps limit of "+o.Spec.Slug)
 	count := 0
 	for _, s := range catalogue[o.Spec.Slug] {
@@ -249,11 +249,9 @@ func challenge(v string) string {
 	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
-// grants signs the application's users in to it through the OIDC service:
-// their consent and, where it renews, a refresh grant, some renewed since. On
-// Lumen Desktop an old refresh token turns up again from another address and
-// is caught as theft; on the hosted applications an administrator revokes one
-// grant.
+// grants signs the application's users in through the OIDC service: consent and, where it renews, a
+// refresh grant. On Lumen Desktop an old refresh token reappears from another address and is caught
+// as theft; on the hosted applications an administrator revokes one grant.
 func (f *fed) grants(o *world.Org, a *app) {
 	w, svc := f.w, f.w.Deps.OIDC.Service
 	renews := slices.Contains(a.spec.grants, refreshGrant)

@@ -7,8 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 )
 
 func TestDefaulted(t *testing.T) {
@@ -28,7 +27,7 @@ func TestDefaulted(t *testing.T) {
 // allowed.
 func TestSkipTLSVerifyRefused(t *testing.T) {
 	ctx := context.Background()
-	svc := NewService(nil, nil, egress.DevelopmentPolicy())
+	svc := unitService(t)
 	skip := true
 	if _, err := svc.Create(ctx, uuid.New(), CreateInput{ServerURL: "ldaps://ad.example.org:636", SkipTLSVerify: true}, audit.Actor{}); !errors.Is(err, ErrTLSVerifyRequired) {
 		t.Errorf("create: %v, want %v", err, ErrTLSVerifyRequired)
@@ -44,8 +43,8 @@ func TestSkipTLSVerifyRefused(t *testing.T) {
 		t.Errorf("sign-in bind: %v, want %v", err, ErrTLSVerifyRequired)
 	}
 
-	svc.SetAllowSkipTLSVerify(true)
-	if err := svc.checkTLSVerify(true); err != nil {
+	allowed := unitService(t, func(d *Deps) { d.AllowSkipTLSVerify = true })
+	if err := allowed.checkTLSVerify(true); err != nil {
 		t.Errorf("allowed: %v", err)
 	}
 }

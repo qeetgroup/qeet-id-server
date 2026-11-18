@@ -29,9 +29,9 @@ func (g planGate) FeatureAllowed(_ context.Context, organizationID uuid.UUID, _ 
 // included SCIM provisions nothing once the plan has lapsed.
 func TestLapsedPlanStopsSCIM(t *testing.T) {
 	ctx := dbtest.Context(t)
-	f := newSCIMFixture(t, ctx)
-	plans := planGate{f.organizationID: true}
-	f.svc.SetPlanGate(plans)
+	plans := planGate{}
+	f := newSCIMFixture(t, ctx, func(d *Deps) { d.Gate = plans })
+	plans[f.organizationID] = true
 	if rec := f.do(t, http.MethodGet, "/scim/v2/Users", nil); rec.Code != http.StatusOK {
 		t.Fatalf("SCIM on a plan with it: status %d", rec.Code)
 	}
@@ -59,7 +59,7 @@ type scimFixture struct {
 	svc            *Service
 }
 
-func newSCIMFixture(t *testing.T, ctx context.Context) *scimFixture {
+func newSCIMFixture(t *testing.T, ctx context.Context, with ...func(*Deps)) *scimFixture {
 	t.Helper()
 	tid := dbtest.Organization(t)
 
@@ -72,7 +72,7 @@ func newSCIMFixture(t *testing.T, ctx context.Context) *scimFixture {
 		t.Fatalf("seed token: %v", err)
 	}
 
-	svc := NewService(dbtest.Pool(t), user.NewRepository(dbtest.Pool(t)))
+	svc := newTestService(t, dbtest.Pool(t), with...)
 	h := &Handler{Service: svc}
 	r := chi.NewRouter()
 	h.MountPublic(r)

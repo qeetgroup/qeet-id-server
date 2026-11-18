@@ -17,11 +17,10 @@ const (
 	CodeAuthSSORequired         = "auth.sso_required"
 )
 
-// Sign-in errors. ErrAuthMethodDisabled, ErrAuthSignInUnavailable and
-// ErrAuthAddressNotAllowed reveal nothing about the account or the rule that
-// matched. ErrAuthSSORequired depends only on the address's domain, and names the
-// connections to sign in with in its metadata. ErrAuthPasswordBreached is no
-// longer returned; its code stays reserved.
+// Sign-in errors. ErrAuthMethodDisabled, ErrAuthSignInUnavailable and ErrAuthAddressNotAllowed reveal
+// nothing about the account or the rule that matched. ErrAuthSSORequired depends only on the domain
+// and names the connections in its metadata. ErrAuthPasswordBreached is no longer returned; its code
+// stays reserved.
 var (
 	ErrAuthSessionInvalid   = New(CodeAuthSessionInvalid, KindInvalid, "Your sign-in session is invalid. Please sign in again.").AsRetryable()
 	ErrAuthAccountInactive  = New(CodeAuthAccountInactive, KindForbidden, "Your account isn't active. Contact your administrator.")

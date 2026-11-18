@@ -12,14 +12,15 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/strutil"
 )
 
@@ -34,11 +35,24 @@ const (
 	logoutConfirmTTL       = 10 * time.Minute
 )
 
-// SetLogoutHTTPClient sets the outbound policy back-channel notices are sent
-// under (the platform's SSRF guard).
-func (s *Service) SetLogoutHTTPClient(p *egress.Policy) {
-	s.logoutEgress = p
-	s.logoutClient = p.HTTPClient(5 * time.Second)
+// LogoutNotices queues the notices of an ended hosted-login session for its
+// applications. The sign-in service ends sessions, so it is built before the
+// provider, which itself needs the sign-in service.
+type LogoutNotices struct {
+	pool   *pgxpool.Pool
+	q      *dbgen.Queries
+	issuer *tokens.Issuer
+}
+
+// NewLogoutNotices returns the notices on pool, signed by issuer.
+func NewLogoutNotices(pool *pgxpool.Pool, issuer *tokens.Issuer) (*LogoutNotices, error) {
+	switch {
+	case pool == nil:
+		return nil, errors.New("oidc: logout notices missing pool")
+	case issuer == nil:
+		return nil, errors.New("oidc: logout notices missing issuer")
+	}
+	return &LogoutNotices{pool: pool, q: dbgen.New(pool), issuer: issuer}, nil
 }
 
 // validLogoutURI is an absolute http(s) URL without a fragment ("" clears).
@@ -50,13 +64,11 @@ func validLogoutURI(raw string) bool {
 	return err == nil && (u.Scheme == "https" || u.Scheme == "http") && u.Host != "" && u.Fragment == ""
 }
 
-// NotifySignOut tells the applications in an ended hosted-login session. It
-// queues a back-channel logout token for each, records who was told in each
-// organization's own audit trail, and returns the front-channel addresses for
-// the signed-out page. initiatedBy is the application that asked for the
-// sign-out ("" for none).
-func (s *Service) NotifySignOut(ctx context.Context, sessionID, userID uuid.UUID, initiatedBy string) ([]string, error) {
-	clients, err := s.q.SessionClients(ctx, postgres.NullIfZero(sessionID))
+// NotifySignOut tells the applications in an ended hosted-login session: it queues a back-channel
+// logout token for each, records who was told in each organization's audit trail, and returns the
+// front-channel addresses for the signed-out page. initiatedBy is the asking application ("" for none).
+func (ln *LogoutNotices) NotifySignOut(ctx context.Context, sessionID, userID uuid.UUID, initiatedBy string) ([]string, error) {
+	clients, err := ln.q.SessionClients(ctx, postgres.NullIfZero(sessionID))
 	if err != nil || len(clients) == 0 {
 		return nil, err
 	}
@@ -68,12 +80,12 @@ func (s *Service) NotifySignOut(ctx context.Context, sessionID, userID uuid.UUID
 	var frontchannel []string
 	notices := map[uuid.UUID]*notice{}
 	var organizations []uuid.UUID
-	tx, err := s.pool.Begin(ctx)
+	tx, err := ln.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	q := s.q.WithTx(tx)
+	q := ln.q.WithTx(tx)
 	for _, c := range clients {
 		n := notices[c.OrganizationID]
 		if n == nil {
@@ -82,7 +94,7 @@ func (s *Service) NotifySignOut(ctx context.Context, sessionID, userID uuid.UUID
 			organizations = append(organizations, c.OrganizationID)
 		}
 		if c.BackchannelLogoutUri != "" {
-			token, err := s.logoutToken(c.ClientID, userID, sessionID)
+			token, err := ln.logoutToken(c.ClientID, userID, sessionID)
 			if err != nil {
 				return nil, err
 			}
@@ -95,7 +107,7 @@ func (s *Service) NotifySignOut(ctx context.Context, sessionID, userID uuid.UUID
 		}
 		if c.FrontchannelLogoutUri != "" {
 			frontchannel = append(frontchannel, appendQuery(c.FrontchannelLogoutUri,
-				"iss", s.issuer.JWTIssuer(), "sid", sessionID.String()))
+				"iss", ln.issuer.JWTIssuer(), "sid", sessionID.String()))
 			n.frontchannel++
 		}
 	}
@@ -112,10 +124,10 @@ func (s *Service) NotifySignOut(ctx context.Context, sessionID, userID uuid.UUID
 }
 
 // logoutToken is the signed notice a back-channel address receives.
-func (s *Service) logoutToken(clientID string, userID, sessionID uuid.UUID) (string, error) {
+func (ln *LogoutNotices) logoutToken(clientID string, userID, sessionID uuid.UUID) (string, error) {
 	now := time.Now().UTC()
-	return s.issuer.Sign(jwt.MapClaims{
-		"iss":    s.issuer.JWTIssuer(),
+	return ln.issuer.Sign(jwt.MapClaims{
+		"iss":    ln.issuer.JWTIssuer(),
 		"aud":    clientID,
 		"iat":    now.Unix(),
 		"exp":    now.Add(2 * time.Minute).Unix(),
@@ -176,9 +188,6 @@ func (s *Service) DeliverLogoutNotices(ctx context.Context) (int, error) {
 }
 
 func (s *Service) postLogoutToken(ctx context.Context, uri, token string) error {
-	if s.logoutClient == nil {
-		return errors.New("no outbound client configured")
-	}
 	if _, err := s.logoutEgress.ValidateHTTPURL(uri); err != nil {
 		return err
 	}

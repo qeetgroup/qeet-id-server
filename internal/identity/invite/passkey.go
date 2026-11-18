@@ -10,10 +10,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/authpolicy"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/invite/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -24,16 +23,9 @@ import (
 // /invites/accept/passkey/begin and /finish); this file finds the invitation a
 // link names and accepts it for the account the ceremony creates.
 
-// SetAcceptMethods sets the source of each organization's sign-in methods, used
-// by Accept and Lookup. Without it every invitation offers a password only.
-func (s *Service) SetAcceptMethods(m authpolicy.SignInMethodsChecker) { s.methods = m }
-
 // acceptMethods reports whether a new account may accept an invitation to
 // organizationID with a password, and with a passkey.
 func (s *Service) acceptMethods(ctx context.Context, organizationID uuid.UUID) (passwordOn, passkeyOn bool, err error) {
-	if s.methods == nil {
-		return true, false, nil
-	}
 	passwordOn, passkeyOn, _, err = s.methods.AllowedSignInMethods(ctx, organizationID)
 	return passwordOn, passkeyOn, err
 }

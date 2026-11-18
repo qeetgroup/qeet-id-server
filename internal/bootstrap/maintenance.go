@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -10,10 +11,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/qeetgroup/qeet-id-server/internal/identity/organization"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/billing"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/gdpr"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/retention"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope/reseal"
@@ -28,17 +28,18 @@ import (
 // AuditVerifyInterval is how often every audit chain is verified.
 const AuditVerifyInterval = 6 * time.Hour
 
-// MaintenanceJobs returns the scheduled housekeeping jobs. Each runs once per
-// interval across all instances. Expired sessions the cleanup removes are
-// announced through signals as session.revoked (reason expired); stored values
-// are re-sealed with box's current key, which also signs the audit chains'
-// checkpoints. outbound, public addresses only if not given, bounds the jobs
-// that fetch from the web.
-func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller, box *envelope.Cipher, outbound ...*egress.Policy) []worker.Scheduled {
-	verifier := audit.NewVerifier(pool, box)
+// MaintenanceJobs returns the scheduled housekeeping jobs, each run once per interval across all
+// instances. Cleanups announce what they end through signals; stored values are re-sealed with box's
+// current key, which also signs audit checkpoints; outbound (public addresses only by default) bounds
+// the jobs that fetch from the web.
+func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller, box *envelope.Cipher, outbound ...*egress.Policy) ([]worker.Scheduled, error) {
+	purges, err := gdpr.NewService(pool, 0, signals)
+	if err != nil {
+		return nil, fmt.Errorf("organization purges: %w", err)
+	}
 	return []worker.Scheduled{
 		samlMetadataRefreshJob(pool, outbound),
-		auditChainVerifyJob(verifier),
+		auditChainVerifyJob(audit.NewVerifier(pool, box)),
 		sessionExpiryCleanupJob(pool, signals),
 		organizationDeletionsJob(pool, signals),
 		refreshRetryCleanupJob(pool),
@@ -50,12 +51,12 @@ func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller, box *
 		outboxDLQCleanupJob(pool),
 		signInStateCleanupJob(pool),
 		recordCleanupJob(pool),
-		organizationPurgesJob(pool, signals),
+		organizationPurgesJob(purges),
 		qeetaiConversationRetentionJob(pool),
 		gdprExportExpiryJob(pool),
 		emailDeliveryCleanupJob(pool),
 		secretsReencryptJob(pool, box),
-	}
+	}, nil
 }
 
 // outboxCleanupJob removes published outbox events past their retention.
@@ -132,11 +133,9 @@ func secretsReencryptJob(pool *pgxpool.Pool, box *envelope.Cipher) worker.Schedu
 const AuditRetentionInterval = 24 * time.Hour
 
 // AuditRetentionJobs returns the job that deletes each organization's audit
-// events older than its plan keeps them (audit_retention_days), the plan
-// resolved as everywhere else: its billing subscription, then its plan label.
-// box signs the chains' purge checkpoints.
-func AuditRetentionJobs(pool *pgxpool.Pool, billingService *billing.Service, box *envelope.Cipher) []worker.Scheduled {
-	plans := entitlements.NewService(planResolver(billingService, organization.NewRepository(pool)))
+// events older than plans lets it keep them (audit_retention_days). box signs
+// the chains' purge checkpoints.
+func AuditRetentionJobs(pool *pgxpool.Pool, plans entitlements.PlanLimiter, box *envelope.Cipher) []worker.Scheduled {
 	return []worker.Scheduled{{
 		Name:     "audit-retention",
 		Interval: AuditRetentionInterval,
@@ -164,11 +163,9 @@ func runSweeps(ctx context.Context, pool *pgxpool.Pool, msg string, sweeps []ret
 	return err
 }
 
-// RegisterMaintenanceMetrics exposes when each scheduled job, and the audit
-// verification, last succeeded (read from the database at scrape time, so it
-// holds whichever instance ran them), the outbox backlog, the stored values
-// not yet on box's current key and this instance's connection pool.
-// Registering twice is a no-op.
+// RegisterMaintenanceMetrics exposes each job's and the audit verification's last success (read from
+// the database at scrape time, so any instance's run counts), the outbox backlog, the values not yet
+// on box's current key and this instance's pool. Registering twice is a no-op.
 func RegisterMaintenanceMetrics(pool *pgxpool.Pool, box *envelope.Cipher) {
 	for _, c := range []prometheus.Collector{
 		worker.LastSuccessCollector(pool), audit.VerificationMetrics(pool),

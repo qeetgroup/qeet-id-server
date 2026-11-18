@@ -3,6 +3,7 @@
 package passkey
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -13,13 +14,17 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/google/uuid"
+
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth/authtest"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
+
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/protocol/webauthncbor"
 	"github.com/go-webauthn/webauthn/protocol/webauthncose"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -92,10 +97,18 @@ func TestPasskeySecondFactorWithOneConnection(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	passkeys := newService(t)
-	factors := mfa.NewService(pool, "qeet", nil)
-	factors.SetWebAuthn(passkeys)
-	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
-	authSvc.SetMFA(factors)
+	box, err := envelope.New([]byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	factors, err := mfa.NewService(pool, mfa.Deps{
+		Issuer: "qeet", Sender: &dbtest.Mailbox{}, Cipher: box, Plan: allPlans{},
+		Deliverable: func(string) bool { return true }, WebAuthn: passkeys.RelyingParty,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	authSvc := authtest.New(t, pool, func(d *auth.Deps) { d.MFA = factors })
 	organization := dbtest.Organization(t)
 	a := dbtest.User(t, organization, organization)
 	dbtest.SetPassword(t, a.ID, "Kx7mQ2vLp9Wz")
@@ -130,3 +143,8 @@ func TestPasskeySecondFactorWithOneConnection(t *testing.T) {
 		t.Error("the ceremony was not spent")
 	}
 }
+
+// allPlans is a plan gate that allows every feature.
+type allPlans struct{}
+
+func (allPlans) FeatureAllowed(context.Context, uuid.UUID, string) (bool, error) { return true, nil }

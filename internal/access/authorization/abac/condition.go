@@ -40,11 +40,10 @@ func resolvePath(attr string, bag AttributeBag) (any, bool) {
 	return cur, true
 }
 
-// truth is a condition's three-valued result. A leaf is unknown when the
-// attribute it compares, or one its value references, is absent or null; only
-// exists, which tests presence, is always known. all, any and not combine
-// unknown as Kleene logic does, so all with a false child is false and any with
-// a true child is true. truth.applies turns the result into a policy match.
+// truth is a condition's three-valued result. A leaf is unknown when the attribute it compares, or one
+// its value references, is absent or null; only exists is always known. all, any and not combine
+// unknown as Kleene logic does (all with a false child is false, any with a true child true);
+// truth.applies turns the result into a policy match.
 type truth uint8
 
 const (
@@ -256,11 +255,10 @@ func evalRole(raw json.RawMessage, bag AttributeBag) (truth, error) {
 	return truthOf(slices.ContainsFunc(list, func(r any) bool { return r == name })), nil
 }
 
-// EvaluateCondition reports whether a policy with effect and condition node
-// applies to attrs: a tree of all, any, not and leaves such as {"attr":
-// "subject.dept", "op": "eq", "value": "eng"}, {} always applying. One left
-// unknown by a missing attribute (see truth) fails closed: it applies to a deny
-// and not to an allow. An error means the tree is invalid: callers must deny.
+// EvaluateCondition reports whether a policy with effect and condition node applies to attrs: a tree
+// of all, any, not and leaves like {"attr": "subject.dept", "op": "eq", "value": "eng"}; {} always
+// applies. Unknown (see truth) fails closed: it applies to a deny, not an allow. An error means the
+// tree is invalid, and callers must deny.
 func EvaluateCondition(node json.RawMessage, effect string, attrs AttributeBag) (bool, error) {
 	t, err := evaluateNode(node, attrs)
 	return err == nil && t.applies(effect), err

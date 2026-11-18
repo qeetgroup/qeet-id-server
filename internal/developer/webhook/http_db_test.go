@@ -40,7 +40,7 @@ func TestAWebhookIsChangedAndItsDeliveriesFollowed(t *testing.T) {
 	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: svc}).Mount)
 	base := "/organizations/" + organization.String() + "/webhooks/" + sub.ID.String()
 
-	strict := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: NewService(dbtest.Pool(t))}).Mount) // public addresses only
+	strict := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: testService(t)}).Mount) // public addresses only
 	if rec := dbtest.Do(t, strict, http.MethodPatch, base, map[string]any{"url": "http://10.0.0.1/hook"}); !strings.Contains(rec.Body.String(), CodeURLNotAllowed) {
 		t.Errorf("change to a private address: %d %s, want %s", rec.Code, rec.Body.String(), CodeURLNotAllowed)
 	}

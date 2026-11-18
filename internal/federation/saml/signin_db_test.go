@@ -449,11 +449,10 @@ func TestSAMLLinkSignsInOnlyHomeAccounts(t *testing.T) {
 // on a plan with SSO, and that one set up while the plan had it signs no one
 // in once the plan has lapsed: neither the redirect to the IdP nor its answer.
 func TestSAMLSignInNeedsSSOInThePlan(t *testing.T) {
-	sp := newSPSide(t)
-	idp := newUpstreamIdP(t)
 	paid, free := dbtest.Organization(t), dbtest.Organization(t)
 	allowed := map[uuid.UUID]bool{paid: true}
-	sp.handler.Service.SetPlanGate(poolGate{pool: dbtest.Pool(t), allowed: allowed})
+	sp := newSPSide(t, func(d *Deps) { d.Gate = poolGate{pool: dbtest.Pool(t), allowed: allowed} })
+	idp := newUpstreamIdP(t)
 
 	rec := dbtest.Do(t, sp.asAdmin(t, free), http.MethodPost, "/organizations/"+free.String()+"/saml", map[string]any{
 		"name": "Okta", "idp_entity_id": idp.entityID, "idp_sso_url": upstreamSSO, "idp_certificate": idp.certPEM, "status": "active",
@@ -768,9 +767,8 @@ func TestSAMLSignInSyncsGroupsAndName(t *testing.T) {
 // back to the hosted login's sign-in page with its return address and the one-time code in the
 // fragment, and that the code buys the hosted login session once, not a token pair.
 func TestAHostedSignInReturnsToTheHostedLogin(t *testing.T) {
-	sp := newSPSide(t)
 	const accounts = "https://accounts.example.test"
-	sp.handler.Service.SetHostedLogin(accounts, testPublicBase)
+	sp := newSPSide(t, func(d *Deps) { d.LoginBaseURL, d.ReturnOrigins = accounts, []string{testPublicBase} })
 	idp := newUpstreamIdP(t)
 	organization := dbtest.Organization(t)
 	conn := sp.connect(t, organization, idp)
@@ -814,9 +812,8 @@ func TestAHostedSignInReturnsToTheHostedLogin(t *testing.T) {
 // with a generic error and the return address stored when it began, found by the browser's
 // binding cookie; and that another browser posting it gets the error itself.
 func TestAFailedHostedSignInReturnsToTheHostedLogin(t *testing.T) {
-	sp := newSPSide(t)
 	const accounts = "https://accounts.example.test"
-	sp.handler.Service.SetHostedLogin(accounts, testPublicBase)
+	sp := newSPSide(t, func(d *Deps) { d.LoginBaseURL, d.ReturnOrigins = accounts, []string{testPublicBase} })
 	idp := newUpstreamIdP(t)
 	organization := dbtest.Organization(t)
 	conn := sp.connect(t, organization, idp)

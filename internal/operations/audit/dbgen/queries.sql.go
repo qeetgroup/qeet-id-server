@@ -119,22 +119,6 @@ func (q *Queries) FindAuditRowOutsideShards(ctx context.Context, shards int16) (
 	return i, err
 }
 
-const getABACPolicyName = `-- name: GetABACPolicyName :one
-SELECT name FROM auth.abac_policies WHERE id = $1 AND organization_id = $2
-`
-
-type GetABACPolicyNameParams struct {
-	ID             uuid.UUID
-	OrganizationID *uuid.UUID
-}
-
-func (q *Queries) GetABACPolicyName(ctx context.Context, arg GetABACPolicyNameParams) (string, error) {
-	row := q.db.QueryRow(ctx, getABACPolicyName, arg.ID, arg.OrganizationID)
-	var name string
-	err := row.Scan(&name)
-	return name, err
-}
-
 const getAuditChainCheckpoint = `-- name: GetAuditChainCheckpoint :one
 SELECT event_id, event_created_at, row_hash, key_id, mac FROM platform.audit_chain_checkpoints
 WHERE chain_shard = $1
@@ -166,50 +150,6 @@ func (q *Queries) GetAuditChainCheckpoint(ctx context.Context, arg GetAuditChain
 		&i.KeyID,
 		&i.Mac,
 	)
-	return i, err
-}
-
-const getAuditChainTip = `-- name: GetAuditChainTip :one
-
-(SELECT o.row_hash, o.created_at FROM audit.events o
- WHERE o.organization_id = $1 AND o.row_hash IS NOT NULL
- ORDER BY o.created_at DESC, o.id DESC LIMIT 1)
-UNION ALL
-(SELECT p.row_hash, p.created_at FROM audit.events p
- WHERE $1::uuid IS NULL AND p.organization_id IS NULL AND p.chain_shard = $2 AND p.row_hash IS NOT NULL
- ORDER BY p.created_at DESC, p.id DESC LIMIT 1)
-LIMIT 1
-`
-
-type GetAuditChainTipParams struct {
-	OrganizationID *uuid.UUID
-	ChainShard     int16
-}
-
-type GetAuditChainTipRow struct {
-	RowHash   *string
-	CreatedAt time.Time
-}
-
-// Queries for the audit domain.
-//
-// The hash-chained append-only audit log.  Static queries are here; two stay
-// hand-written in Go:
-//   - Reader.List (list.go): dynamic WHERE clause with optional action, resource
-//     type, actor, free-text search, and cursor filters.
-//   - Record advisory-lock call (audit.go): pg_advisory_xact_lock is a
-//     void-returning side-effect function; it stays as a raw tx.Exec call.
-//
-// Fetch the most recent row_hash and created_at for an organization's chain, or, when
-// organization_id is NULL, for platform chain chain_shard. Called by Record() inside
-// the caller's transaction to chain the next row. One branch per kind of chain,
-// the other always empty, so each is an index scan (idx_audit_chain_tip, and
-// idx_audit_platform_chain): IS NOT DISTINCT FROM can't use an index and read
-// the whole table on every audited action.
-func (q *Queries) GetAuditChainTip(ctx context.Context, arg GetAuditChainTipParams) (GetAuditChainTipRow, error) {
-	row := q.db.QueryRow(ctx, getAuditChainTip, arg.OrganizationID, arg.ChainShard)
-	var i GetAuditChainTipRow
-	err := row.Scan(&i.RowHash, &i.CreatedAt)
 	return i, err
 }
 
@@ -313,22 +253,6 @@ func (q *Queries) GetAuditPurgeCheckpoint(ctx context.Context, organizationID uu
 	return i, err
 }
 
-const getGroupName = `-- name: GetGroupName :one
-SELECT name FROM organization.groups WHERE id = $1 AND organization_id = $2
-`
-
-type GetGroupNameParams struct {
-	ID             uuid.UUID
-	OrganizationID *uuid.UUID
-}
-
-func (q *Queries) GetGroupName(ctx context.Context, arg GetGroupNameParams) (string, error) {
-	row := q.db.QueryRow(ctx, getGroupName, arg.ID, arg.OrganizationID)
-	var name string
-	err := row.Scan(&name)
-	return name, err
-}
-
 const getLatestVerificationRun = `-- name: GetLatestVerificationRun :one
 SELECT finished_at, scope FROM platform.audit_verification_runs ORDER BY started_at DESC LIMIT 1
 `
@@ -371,25 +295,6 @@ func (q *Queries) GetOrganizationChainCheckpoint(ctx context.Context, organizati
 	return i, err
 }
 
-const getRoleName = `-- name: GetRoleName :one
-
-SELECT name FROM rbac.roles WHERE id = $1 AND organization_id = $2
-`
-
-type GetRoleNameParams struct {
-	ID             uuid.UUID
-	OrganizationID *uuid.UUID
-}
-
-// The names of what an event is about, as they are now, in the event's
-// organization: no row for an event with none (a NULL @organization_id).
-func (q *Queries) GetRoleName(ctx context.Context, arg GetRoleNameParams) (string, error) {
-	row := q.db.QueryRow(ctx, getRoleName, arg.ID, arg.OrganizationID)
-	var name string
-	err := row.Scan(&name)
-	return name, err
-}
-
 const insertAuditChainCheckpoint = `-- name: InsertAuditChainCheckpoint :exec
 INSERT INTO platform.audit_chain_checkpoints (organization_id, chain_shard, event_id, event_created_at, row_hash, key_id, mac)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -417,61 +322,6 @@ func (q *Queries) InsertAuditChainCheckpoint(ctx context.Context, arg InsertAudi
 		arg.RowHash,
 		arg.KeyID,
 		arg.Mac,
-	)
-	return err
-}
-
-const insertAuditEvent = `-- name: InsertAuditEvent :exec
-INSERT INTO audit.events (
-    id, organization_id, actor_user_id, actor_type, action,
-    resource_type, resource_id, ip, user_agent, request_id,
-    metadata, created_at, prev_hash, row_hash, chain_shard
-) VALUES (
-    $1, $2, $3, $4, $5,
-    $6, $7, NULLIF($8, '')::inet, $9, $10,
-    $11, $12, $13, $14, $15
-)
-`
-
-type InsertAuditEventParams struct {
-	ID             uuid.UUID
-	OrganizationID *uuid.UUID
-	ActorUserID    *uuid.UUID
-	ActorType      string
-	Action         string
-	ResourceType   string
-	ResourceID     *uuid.UUID
-	Ip             interface{}
-	UserAgent      *string
-	RequestID      *string
-	Metadata       []byte
-	CreatedAt      time.Time
-	PrevHash       *string
-	RowHash        *string
-	ChainShard     int16
-}
-
-// Append one row to the hash-chained audit log.  Column order matches the
-// canonicalRow struct in audit.go — never reorder.  ip is stored as inet;
-// NULLIF converts an empty string to NULL before the cast so empty IPs are
-// stored cleanly rather than causing a parse error.
-func (q *Queries) InsertAuditEvent(ctx context.Context, arg InsertAuditEventParams) error {
-	_, err := q.db.Exec(ctx, insertAuditEvent,
-		arg.ID,
-		arg.OrganizationID,
-		arg.ActorUserID,
-		arg.ActorType,
-		arg.Action,
-		arg.ResourceType,
-		arg.ResourceID,
-		arg.Ip,
-		arg.UserAgent,
-		arg.RequestID,
-		arg.Metadata,
-		arg.CreatedAt,
-		arg.PrevHash,
-		arg.RowHash,
-		arg.ChainShard,
 	)
 	return err
 }
@@ -620,6 +470,7 @@ func (q *Queries) ListAuditChainOrganizations(ctx context.Context) ([]uuid.UUID,
 }
 
 const listAuditEventsForVerify = `-- name: ListAuditEventsForVerify :many
+
 (SELECT o.id, o.organization_id, o.actor_user_id, o.actor_type, o.action,
         o.resource_type, o.resource_id,
         COALESCE(host(o.ip), '') AS ip,
@@ -676,6 +527,12 @@ type ListAuditEventsForVerifyRow struct {
 	ChainShard     int16
 }
 
+// Queries for the audit domain.
+//
+// Reading, verifying and purging the hash-chained audit log; the writer and
+// its queries are internal/platform/audit. Reader.List (list.go) stays
+// hand-written: a dynamic WHERE clause with optional action, resource type,
+// actor, free-text search, and cursor filters.
 // Walk the chain in chronological insert order for hash-chain verification,
 // one page after (after_created_at, after_id) at a time: an organization's chain, or
 // platform chain chain_shard when organization_id is NULL, each branch an index scan

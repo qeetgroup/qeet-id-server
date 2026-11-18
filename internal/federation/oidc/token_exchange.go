@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -44,11 +44,9 @@ func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, sub
 	if err != nil {
 		return nil, err
 	}
-	// Downscope: the result is at most the subject's scopes (never escalate),
-	// and at most what the caller may hold: the scopes it is registered for
-	// and, when it holds the token by the person's consent, those consented
-	// to. Otherwise exchanging another application's token would hand the
-	// caller that application's access.
+	// Downscope: at most the subject's scopes, and at most what the caller may hold (its registered
+	// scopes and, when it holds the token by the person's consent, those consented to); otherwise
+	// exchanging another application's token would hand the caller that application's access.
 	held := intersect(strings.Fields(sub.claims.Scope), client.Scopes)
 	if sub.consented != nil {
 		held = intersect(held, sub.consented)

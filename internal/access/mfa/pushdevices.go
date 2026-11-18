@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
@@ -44,9 +44,6 @@ func (s *Service) registerPushDeviceTx(ctx context.Context, tx pgx.Tx, userID uu
 	tok, err := randomHex(32)
 	if err != nil {
 		return PushDevice{}, "", err
-	}
-	if s.box == nil {
-		return PushDevice{}, "", errs.ErrInternalServer.WithDetail("MFA secret encryption is unavailable")
 	}
 	pushTokenHash := secretHash(pushToken)
 	ciphertext, nonce, err := s.box.Seal(userID, "mfa-push-token", pushTokenHash, []byte(pushToken))
@@ -254,15 +251,10 @@ func (h *Handler) updatePushToken(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// UpdatePushToken stores a phone's new push token, sealed like the one it replaces. The phone
-// proves itself with its device credential, which must not have expired. Another of the
-// user's links already holding the same token (the same app, linked before) is removed, so the
-// phone is sent each request once. ErrMFAPushUnauthorized when the device or credential does
-// not match.
+// UpdatePushToken stores a phone's new push token, sealed like the one it replaces; the phone proves
+// itself with its unexpired device credential (ErrMFAPushUnauthorized otherwise). Another of the
+// user's links holding the same token is removed, so the phone gets each request once.
 func (s *Service) UpdatePushToken(ctx context.Context, deviceID, userID uuid.UUID, deviceToken, pushToken string) error {
-	if s.box == nil {
-		return errs.ErrInternalServer.WithDetail("MFA secret encryption is unavailable")
-	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err

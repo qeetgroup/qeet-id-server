@@ -21,7 +21,7 @@ import (
 // the tokens.
 func TestPolledGrantsRedeemAlike(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
-	svc := NewService(pool, dbtest.Issuer(t))
+	svc := newTestService(t, pool, dbtest.Issuer(t))
 	organization, home := dbtest.Organization(t), dbtest.Organization(t)
 	exec := func(sql string, args ...any) {
 		t.Helper()
@@ -139,7 +139,7 @@ func TestPolledGrantsRedeemAlike(t *testing.T) {
 // client's device_code alone.
 func TestDevicePollingAuthenticatesConfidentialClients(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
+	svc := newTestService(t, dbtest.Pool(t), dbtest.Issuer(t))
 	organization := dbtest.Organization(t)
 	user := dbtest.User(t, organization, organization)
 	grants := []string{"urn:ietf:params:oauth:grant-type:device_code"}
@@ -177,7 +177,7 @@ func TestDevicePollingAuthenticatesConfidentialClients(t *testing.T) {
 // grant's tokens needs the client's secret.
 func TestBackchannelPollingAuthenticatesTheClient(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
+	svc := newTestService(t, dbtest.Pool(t), dbtest.Issuer(t))
 	organization := dbtest.Organization(t)
 	user := dbtest.User(t, organization, organization)
 	client, secret := registerClientWith(t, svc, CreateClientInput{OrganizationID: organization, GrantTypes: []string{grantTypeCIBA}})
@@ -208,7 +208,7 @@ func TestBackchannelPollingAuthenticatesTheClient(t *testing.T) {
 // request, and the tokens of the one successful poll.
 func TestPollTokenAnswersInOrder(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
-	svc := NewService(pool, dbtest.Issuer(t))
+	svc := newTestService(t, pool, dbtest.Issuer(t))
 	organization := dbtest.Organization(t)
 	device, _ := registerClientWith(t, svc, CreateClientInput{
 		OrganizationID: organization, Type: "public", GrantTypes: []string{grantTypeDeviceCode, "refresh_token"},

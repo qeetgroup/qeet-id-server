@@ -1,11 +1,9 @@
 package scim
 
-// SCIM 2.0 Groups (RFC 7643 §4.2, RFC 7644), which IdPs use to push groups and
-// sync membership. They are the organization's ordinary groups: displayName is the
-// name, members[].value are user IDs, and externalId is the IdP's own key.
-// SCIM reads and changes only the groups it created, so an IdP can't put
-// anyone in a group an administrator gave roles to; every change is audited
-// in its transaction.
+// SCIM 2.0 Groups (RFC 7643 §4.2, RFC 7644), which IdPs use to push groups and membership. They are
+// the organization's ordinary groups: displayName the name, members[].value user IDs, externalId the
+// IdP's key. SCIM reads and changes only groups it created, so an IdP can't add anyone to a group an
+// administrator gave roles to; every change is audited in its transaction.
 
 import (
 	"context"
@@ -18,7 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -207,7 +205,7 @@ func (s *Service) createGroup(ctx context.Context, actor audit.Actor, organizati
 // member it gives a first role, through the group's, takes a seat, refused
 // with errs.ErrPlanLimit beyond the plan's seats.
 func (s *Service) replaceGroup(ctx context.Context, actor audit.Actor, organizationID, id uuid.UUID, name string, externalID *string, members []uuid.UUID) (*groupRow, error) {
-	limit, err := s.seatLimit(ctx, organizationID)
+	limit, err := s.seats.SeatLimit(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -226,7 +224,7 @@ func (s *Service) replaceGroup(ctx context.Context, actor audit.Actor, organizat
 	if err != nil {
 		return nil, err
 	}
-	if err := s.withinSeats(ctx, tx, organizationID, limit, func() error {
+	if err := s.seats.WithinSeats(ctx, tx, organizationID, limit, func() error {
 		if err := q.DeleteGroupMembers(ctx, dbgen.DeleteGroupMembersParams{GroupID: id, OrganizationID: organizationID}); err != nil {
 			return err
 		}

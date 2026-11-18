@@ -64,5 +64,4 @@ var (
 	ErrLoginCodeInvalid         = errs.New(CodeLoginCodeInvalid, errs.KindUnauthenticated, "That sign-in code is invalid. Please sign in again.")
 	ErrLoginCodeUsed            = errs.New(CodeLoginCodeUsed, errs.KindUnauthenticated, "That sign-in code has already been used. Please sign in again.")
 	ErrLoginCodeExpired         = errs.New("oidc_connection.login_code_expired", errs.KindUnauthenticated, "That sign-in code has expired. Please sign in again.")
-	ErrSecretEncryptionMissing  = errs.New("oidc_connection.secret_encryption_unavailable", errs.KindInternal, "Connection secrets can't be stored right now. Contact support.")
 )

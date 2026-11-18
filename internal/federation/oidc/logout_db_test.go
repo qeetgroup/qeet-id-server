@@ -48,8 +48,7 @@ func signInThrough(t *testing.T, p *provider, client *Client, secret string, use
 // token, from no session, names none and stays active.
 func TestIntrospectionReportsInactiveAfterSignOut(t *testing.T) {
 	ctx := dbtest.Context(t)
-	p := newProvider(t)
-	p.svc.SetSessionLive(p.sessions.SessionLive)
+	p := newProvider(t, func(d *Deps, sessions *auth.Service) { d.SessionLive = sessions.SessionLive })
 	organization := dbtest.Organization(t)
 	person := dbtest.User(t, organization, organization)
 	client, secret := registerClientWith(t, p.svc, CreateClientInput{
@@ -123,8 +122,7 @@ func TestIntrospectionReportsInactiveAfterSignOut(t *testing.T) {
 // a signed back-channel notice and continues only to a registered address.
 func TestRPInitiatedLogout(t *testing.T) {
 	ctx := dbtest.Context(t)
-	p := newProvider(t)
-	p.svc.SetLogoutHTTPClient(egress.DevelopmentPolicy())
+	p := newProvider(t, func(d *Deps, _ *auth.Service) { d.Egress = egress.DevelopmentPolicy() })
 	notices := make(chan url.Values, 4)
 	rp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
@@ -256,7 +254,7 @@ func TestLogoutHintMustBeAnIDToken(t *testing.T) {
 		"an application's access token": func(sid uuid.UUID) string {
 			return issued(p.svc.issuer.IssueClientAccess(tokens.ClientAccess{UserID: person.ID, OrganizationID: organization, SessionID: sid, ClientID: client.ClientID}))
 		},
-		"a back-channel logout token": func(sid uuid.UUID) string { return must(p.svc.logoutToken(client.ClientID, person.ID, sid)) },
+		"a back-channel logout token": func(sid uuid.UUID) string { return must(p.notices.logoutToken(client.ClientID, person.ID, sid)) },
 		"a token with no subject": func(sid uuid.UUID) string {
 			return sign(jwt.MapClaims{"aud": client.ClientID, "sid": sid.String()})
 		},

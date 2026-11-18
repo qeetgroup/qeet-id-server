@@ -288,11 +288,9 @@ func SplitPermission(permission string) (resourceType, action string) {
 // policyRead is the permission that lets a caller read ABAC policies.
 const policyRead = "policy.read"
 
-// ForViewer returns dec as the caller p may see it: the ABAC policy that
-// decided (its rule, id and reason parameters), and the ABAC steps of the
-// trace, are shown only to a caller who may read policies (policy.read); anyone
-// else learns that a policy decided, and why, not which. An error checking that
-// hides them.
+// ForViewer returns dec as caller p may see it: the deciding ABAC policy (its rule, id and reason
+// parameters) and the trace's ABAC steps are shown only to a caller with policy.read; anyone else
+// learns that a policy decided, and why, not which. An error checking that hides them.
 func (d *Decider) ForViewer(ctx context.Context, p *httpx.Principal, organizationID uuid.UUID, dec Decision) Decision {
 	if d.mayReadPolicies(ctx, p, organizationID) {
 		return dec

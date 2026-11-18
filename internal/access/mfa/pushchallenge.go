@@ -25,13 +25,10 @@ const (
 	maxPushDenialsPerHour = 3
 )
 
-// CreatePushChallenge records a pending challenge, sends it to every phone
-// the user has linked, and returns its ID and the number the phone must send
-// back to approve it, shown where it was asked for. It fails with
-// ErrMFAPushLimited past the bounds above, and with ErrMFAPushDeliveryFailed,
-// closing the challenge, when no phone accepted it. A phone whose push service
-// has no credentials here is not a failure: like every phone when no push
-// service is configured, it finds the request when the app next opens.
+// CreatePushChallenge records a pending challenge, sends it to the user's linked phones and returns
+// its ID and the number to send back, shown where it was asked. ErrMFAPushLimited past the bounds;
+// ErrMFAPushDeliveryFailed, closing it, when no phone accepted. A phone whose push service has no
+// credentials here isn't a failure: it finds the request when the app next opens.
 func (s *Service) CreatePushChallenge(ctx context.Context, userID uuid.UUID, action string, pctx PushChallengeContext) (uuid.UUID, int, error) {
 	if pctx.Location == "" {
 		pctx.Location = pushLocation(ctx)

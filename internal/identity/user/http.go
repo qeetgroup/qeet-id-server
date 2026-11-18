@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -9,7 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -498,10 +499,6 @@ func (h *Handler) setPassword(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if h.SignIns == nil {
-		httpx.WriteError(w, r, errs.ErrNotImplemented)
-		return
-	}
 	var in setPasswordInput
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
@@ -531,4 +528,20 @@ func (h *Handler) setPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	h.tellCredentialChange(r.Context(), organizationID, target.Email, credentialPasswordSet, "")
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// Check refuses a handler without the mailer that tells people of credential
+// changes, what ends every way they are signed in, or what announces the
+// sessions that ends, so bootstrap stops at start rather than serve without
+// them.
+func (h *Handler) Check() error {
+	switch {
+	case h.Mailer == nil:
+		return errors.New("user: the user handler needs a mailer")
+	case h.SignIns == nil:
+		return errors.New("user: the user handler needs a sign-in ender")
+	case h.Signals == nil:
+		return errors.New("user: the user handler needs session signals")
+	}
+	return nil
 }

@@ -40,11 +40,10 @@ type Row struct {
 	Metadata       map[string]any `json:"metadata"`
 }
 
-// ListFilter narrows List's results; zero-value fields do not filter, and set
-// ones combine. Actions and ResourceTypes match any of theirs. Search finds
-// words of the action, resource, user agent, address and metadata, as
-// prefixes ("quoted phrases", -exclusions and OR as websearch_to_tsquery
-// reads them), or the actor's name or email.
+// ListFilter narrows List's results; zero fields don't filter, and set ones combine. Actions and
+// ResourceTypes match any of theirs. Search matches words of the action, resource, user agent,
+// address and metadata as prefixes (with websearch_to_tsquery's "phrases", -exclusions and OR), or
+// the actor's name or email.
 type ListFilter struct {
 	Actions       []string
 	ResourceTypes []string

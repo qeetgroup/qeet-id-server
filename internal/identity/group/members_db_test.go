@@ -6,12 +6,16 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/qeetgroup/qeet-id-server/internal/access/authpolicy"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/invite"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -19,16 +23,35 @@ import (
 // seatPlan is a plan of n seats.
 type seatPlan int
 
+// inviteSeats returns the invitation service as a seat guard of a plan of n
+// seats; nothing else of it is used.
+func inviteSeats(t *testing.T, pool *pgxpool.Pool, n int) *invite.Service {
+	t.Helper()
+	seats, err := invite.NewService(pool, invite.Deps{
+		Sender: &dbtest.Mailbox{}, Rules: unusedPolicy{}, Methods: unusedPolicy{}, Limits: seatPlan(n),
+		Grants: func(context.Context, *httpx.Principal, uuid.UUID, uuid.UUID) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return seats
+}
+
+// unusedPolicy stands for the password rules and sign-in methods a seat
+// guard never asks.
+type unusedPolicy struct {
+	authpolicy.PasswordRules
+	authpolicy.SignInMethodsChecker
+}
+
 // TestJoiningAGroupWithARoleTakesASeat checks that joining a group that
 // carries a role gives someone holding none a seat, refused once the plan's
 // seats are taken, while joining a group without one takes no seat.
 func TestJoiningAGroupWithARoleTakesASeat(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	seats := invite.NewService(pool, &dbtest.Mailbox{}, time.Hour, "https://app.example.test")
-	seats.SetPlanLimiter(seatPlan(1))
-	svc := NewService(pool)
-	svc.SetSeatGuard(seats)
+	svc := newService(t)
+	svc.seats = inviteSeats(t, pool, 1)
 	organization := dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization) // the one seat
 	customer := dbtest.User(t, organization)

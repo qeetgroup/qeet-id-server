@@ -23,12 +23,10 @@ type CORSConfig struct {
 	AppOrigin func(ctx context.Context, origin string) bool
 }
 
-// CORS answers cross-origin requests. The operator's origins may send
-// credentials anywhere. The public paths answer any origin, without
-// credentials. The application paths answer an origin one of the applications
-// allows (AppOrigin), without credentials, so a page reads only what its own
-// request, holding its own code or token, gets. Nothing is ever allowed for
-// every origin with credentials.
+// CORS answers cross-origin requests: the operator's origins may send credentials anywhere; the
+// public paths answer any origin without credentials; the application paths answer an origin an
+// application allows (AppOrigin), without credentials, so a page reads only what its own request
+// gets. Nothing is ever allowed for every origin with credentials.
 func CORS(c CORSConfig) func(http.Handler) http.Handler {
 	operator := cors.Handler(cors.Options{
 		AllowedOrigins:   c.Operator,

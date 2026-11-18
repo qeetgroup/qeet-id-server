@@ -15,8 +15,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/billing/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -24,10 +24,17 @@ import (
 func TestMain(m *testing.M) { dbtest.Main(m) }
 
 // newTestService returns a Service over the test database with the built-in
-// plans seeded.
-func newTestService(t *testing.T) *Service {
+// plans seeded: no card provider and no tax, changed by each of change.
+func newTestService(t *testing.T, change ...func(*Config)) *Service {
 	t.Helper()
-	svc := NewService(dbtest.Pool(t))
+	c := Config{Payments: NewPayments("", "", "", "", ""), OrgProvisioner: orgProvisioner{pool: dbtest.Pool(t)}}
+	for _, ch := range change {
+		ch(&c)
+	}
+	svc, err := NewService(dbtest.Pool(t), c)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := svc.SeedBuiltins(dbtest.Context(t)); err != nil {
 		t.Fatalf("seed plans: %v", err)
 	}
@@ -210,8 +217,7 @@ func TestSwitchPlan(t *testing.T) {
 }
 
 func TestSwitchPlanUnderInvoiceOnlyBilling(t *testing.T) {
-	svc := newTestService(t)
-	svc.SetAllowUnpaidActivation(true)
+	svc := newTestService(t, unpaid)
 	organization := dbtest.Organization(t)
 	subscribe(t, svc, organization, "starter", "USD")
 
@@ -224,7 +230,7 @@ func TestSwitchPlanUnderInvoiceOnlyBilling(t *testing.T) {
 	}
 
 	// Once a card provider charges USD, a dearer plan goes through checkout.
-	svc.SetPayments(NewPayments("", "", "", "", "").WithSandbox("http://localhost:8080", "test-webhook-secret"))
+	svc = newTestService(t, unpaid, withSandbox)
 	if err := switchPlan(t, svc, organization, "enterprise", "USD"); !errors.Is(err, errs.ErrBillingCheckoutRequired) {
 		t.Fatalf("switch to enterprise with a provider: %v, want %v", err, errs.ErrBillingCheckoutRequired)
 	}
@@ -264,10 +270,17 @@ func TestPutSubscriptionAnswersCheckoutRequired(t *testing.T) {
 // gstIndia charges 18% GST as a seller in Karnataka.
 var gstIndia = TaxConfig{Enabled: true, SellerCountry: "IN", SellerState: "Karnataka", GSTRateBps: 1800}
 
-// withSandbox gives svc the sandbox card provider, which serves every checkout.
-func withSandbox(svc *Service) {
-	svc.SetPayments(NewPayments("", "", "", "", "").WithSandbox("http://localhost:8080", "test-webhook-secret"))
+// withSandbox gives the service the sandbox card provider, which serves every
+// checkout.
+func withSandbox(c *Config) {
+	c.Payments = NewPayments("", "", "", "", "").WithSandbox("http://localhost:8080", "test-webhook-secret")
 }
+
+// unpaid turns invoice-only billing on.
+func unpaid(c *Config) { c.AllowUnpaidActivation = true }
+
+// taxed charges India's GST.
+func taxed(c *Config) { c.Tax = gstIndia }
 
 // sandboxCharge returns the checkout reference and the amount the sandbox
 // provider was asked to charge, read from its hosted-checkout URL.
@@ -319,9 +332,7 @@ func serial(t *testing.T, inv Invoice) int {
 // billing profile changes before the payment completes.
 func TestCheckoutChargesTheInvoiceTotal(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := newTestService(t)
-	svc.SetTaxConfig(gstIndia)
-	withSandbox(svc)
+	svc := newTestService(t, taxed, withSandbox)
 	organization := dbtest.Organization(t)
 	if err := svc.UpsertBillingProfile(ctx, organization, BillingProfile{Country: "IN", State: "Maharashtra"}); err != nil {
 		t.Fatal(err)
@@ -358,9 +369,7 @@ func TestCheckoutChargesTheInvoiceTotal(t *testing.T) {
 // invoices are numbered one after another.
 func TestInvoiceStatusFollowsPayment(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := newTestService(t)
-	svc.SetTaxConfig(gstIndia)
-	svc.SetAllowUnpaidActivation(true)
+	svc := newTestService(t, taxed, unpaid)
 
 	first, second := dbtest.Organization(t), dbtest.Organization(t)
 	for _, organization := range []uuid.UUID{first, second} {
@@ -392,10 +401,7 @@ func TestInvoiceStatusFollowsPayment(t *testing.T) {
 // the new organization's invoice shows that charge.
 func TestSignupCheckoutChargesTheInvoiceTotal(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := newTestService(t)
-	svc.SetTaxConfig(gstIndia)
-	withSandbox(svc)
-	svc.SetOrgProvisioner(orgProvisioner{pool: dbtest.Pool(t)})
+	svc := newTestService(t, taxed, withSandbox)
 
 	res, err := svc.StartSignupCheckout(ctx, dbtest.User(t, uuid.Nil).ID, SignupCheckoutInput{
 		OrgName: "Example", OrgSlug: dbtest.Unique("org"), PlanCode: "pro", Currency: "INR", Country: "IN",
@@ -437,7 +443,6 @@ func TestCompleteCheckoutUsesOneConnection(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	svc := newTestService(t)
-	svc.SetOrgProvisioner(orgProvisioner{pool: pool})
 	organization := dbtest.Organization(t)
 	organizationCheckout, err := svc.q.InsertBillingCheckout(ctx, dbgen.InsertBillingCheckoutParams{
 		OrganizationID: organization, Provider: "sandbox", PlanCode: "starter", Currency: "USD", AmountMinor: 2900, TaxType: TaxTypeNone,
@@ -489,7 +494,6 @@ func TestSignupCheckoutResumesAfterAFailure(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	svc := newTestService(t)
-	svc.SetOrgProvisioner(orgProvisioner{pool: pool})
 	name := dbtest.Unique("Resume")
 	var checkout uuid.UUID
 	if err := pool.QueryRow(ctx, `

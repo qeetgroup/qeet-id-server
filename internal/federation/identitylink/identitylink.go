@@ -17,11 +17,10 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// HomeIn reports whether organizationID is userID's home organization and the account isn't
-// deleted. An organization's identity provider vouches only for its own
-// accounts: if it also signed in its guests (a role there, home elsewhere), that
-// organization's admin could assert a guest's address and switch the session
-// into the guest's home. Callers must refuse the sign-in on false.
+// HomeIn reports whether organizationID is userID's home organization and the account isn't deleted.
+// An organization's identity provider vouches only for its own accounts: if it also signed in its
+// guests, its admin could assert a guest's address and switch the session into the guest's home.
+// Callers must refuse the sign-in on false.
 func HomeIn(ctx context.Context, q postgres.Querier, userID, organizationID uuid.UUID) (bool, error) {
 	return dbgen.New(q).HomeIn(ctx, dbgen.HomeInParams{UserID: userID, OrganizationID: &organizationID})
 }
@@ -74,10 +73,9 @@ func LinkedAdministrators(ctx context.Context, q postgres.Querier, organizationI
 	})
 }
 
-// CheckTrustChange refuses caller changing what organizationID's connection (see
-// LinkedAdministrators) trusts unless actOn lets them act on every
-// administrator linked to it, as the changed connection could sign in as any
-// of them. A caller who is no person (an admin-portal session) is refused
+// CheckTrustChange refuses caller changing what organizationID's connection trusts unless actOn lets
+// them act on every administrator linked to it (see LinkedAdministrators), since the changed
+// connection could sign in as any of them. A non-person caller (an admin-portal session) is refused
 // whenever one is linked, as is every caller when actOn is nil.
 func CheckTrustChange(ctx context.Context, q postgres.Querier, caller *httpx.Principal, actOn ActOn, organizationID, connID uuid.UUID, provider string) error {
 	admins, err := LinkedAdministrators(ctx, q, organizationID, connID, provider)

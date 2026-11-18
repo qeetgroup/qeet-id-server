@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
@@ -53,7 +53,7 @@ func codeFlows(ctx context.Context, svc *Service) map[string]codeFlow {
 func TestGuessBudgetSpansResends(t *testing.T) {
 	ctx := dbtest.Context(t)
 	mail := &dbtest.Mailbox{}
-	svc := NewService(dbtest.Pool(t), mail, 10*time.Minute)
+	svc := newService(t, mail)
 	organization := dbtest.Organization(t)
 	for name, flow := range codeFlows(ctx, svc) {
 		a := dbtest.User(t, organization, organization)
@@ -92,7 +92,7 @@ func TestGuessBudgetSpansResends(t *testing.T) {
 func TestCodesToOneAddressAreCappedPerHour(t *testing.T) {
 	ctx := dbtest.Context(t)
 	mail := &dbtest.Mailbox{}
-	svc := NewService(dbtest.Pool(t), mail, 10*time.Minute)
+	svc := newService(t, mail)
 	organization := dbtest.Organization(t)
 	target := dbtest.UserAt(t, dbtest.Unique("target")+"@example.test", organization, organization)
 	free := dbtest.Unique("free") + "@example.test"
@@ -150,9 +150,8 @@ type failingSender struct {
 // it still replaces the code sent before it.
 func TestUndeliveredCodeIsWithdrawn(t *testing.T) {
 	ctx := dbtest.Context(t)
-	pool := dbtest.Pool(t)
 	mail, failing := &dbtest.Mailbox{}, &failingSender{}
-	delivering, refusing := codeFlows(ctx, NewService(pool, mail, 10*time.Minute)), codeFlows(ctx, NewService(pool, failing, 10*time.Minute))
+	delivering, refusing := codeFlows(ctx, newService(t, mail)), codeFlows(ctx, newService(t, failing))
 	organization := dbtest.Organization(t)
 	for name, flow := range refusing {
 		a := dbtest.User(t, organization, organization)

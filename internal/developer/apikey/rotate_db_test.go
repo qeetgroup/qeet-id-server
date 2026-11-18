@@ -38,7 +38,7 @@ func TestRotatingAKeyNeedsItsScopesHoweverManyKeysThereAre(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := dbtest.Serve(dbtest.Principal(developer.ID, organization),
-		(&Handler{Service: NewService(pool), GrantCheck: rbac.NewRepository(pool).CheckGrantScopes}).Mount)
+		(&Handler{Service: testService(t, pool), GrantCheck: rbac.NewRepository(pool).CheckGrantScopes}).Mount)
 	rec := dbtest.Do(t, h, http.MethodPost, "/organizations/"+organization.String()+"/api-keys/"+old.String()+"/rotate", nil)
 	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeRBACGrantExceedsCaller) {
 		t.Errorf("rotate an old key carrying role.write: %d %s, want 403 %s", rec.Code, rec.Body.String(), errs.CodeRBACGrantExceedsCaller)

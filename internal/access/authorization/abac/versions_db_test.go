@@ -7,7 +7,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -18,7 +18,7 @@ import (
 // next one, in its organization only.
 func TestPolicyVersionsAreKeptWholeAndRestore(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t))
+	svc := newService(t)
 	organization, other := dbtest.Organization(t), dbtest.Organization(t)
 	asha, ravi := dbtest.User(t, organization, organization), dbtest.User(t, organization, organization)
 	byAsha, byRavi := audit.Actor{UserID: &asha.ID, Type: "user"}, audit.Actor{UserID: &ravi.ID, Type: "user"}

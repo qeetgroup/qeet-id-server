@@ -15,7 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth/authtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
@@ -27,24 +27,38 @@ func TestMain(m *testing.M) { dbtest.Main(m) }
 // browser signing in.
 type rp struct {
 	svc     *Service
+	plan    *plan
 	handler *Handler
 	public  chi.Router
 	browser []*http.Cookie
 }
 
-func newRP(t *testing.T) *rp {
+// newRP returns the relying party, its service's dependencies changed by
+// each of with.
+func newRP(t *testing.T, with ...func(*Deps)) *rp {
 	t.Helper()
 	pool := dbtest.Pool(t)
-	svc := NewService(pool, auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t)), testAppBase, egress.DevelopmentPolicy())
 	box, err := envelope.New([]byte("0123456789abcdef0123456789abcdef"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc.SetCipher(box)
+	plans := &plan{}
+	svc := newTestService(t, pool, newAuthService(t), func(d *Deps) {
+		d.Cipher, d.Gate, d.Egress = box, plans, egress.DevelopmentPolicy()
+		for _, change := range with {
+			change(d)
+		}
+	})
 	h := &Handler{Service: svc, PublicBaseURL: testPublicBase}
 	public := chi.NewRouter()
 	h.MountPublic(public)
-	return &rp{svc: svc, handler: h, public: public}
+	return &rp{svc: svc, plan: plans, handler: h, public: public}
+}
+
+// newAuthService is the sign-in service connection sign-ins go through.
+func newAuthService(t *testing.T) *auth.Service {
+	t.Helper()
+	return authtest.New(t, dbtest.Pool(t))
 }
 
 // send serves req from the browser, keeping the cookies it is given.

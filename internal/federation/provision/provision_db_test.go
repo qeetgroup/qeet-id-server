@@ -3,13 +3,15 @@
 package provision
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -31,7 +33,7 @@ const maxDisplayName = 200
 // testFlow is a single sign-on flow through a connection.
 func testFlow(t *testing.T) *Flow {
 	t.Helper()
-	return &Flow{Pool: dbtest.Pool(t), Method: "saml",
+	return &Flow{Pool: dbtest.Pool(t), Method: "saml", Recorder: unrecorded{},
 		Errors: Errors{NotHome: errNotHome, EmailMissing: errMissing, AccountUnverified: errUnverified, AccountAdministers: errAdministers,
 			DomainUnverified: errDomain, EmailUnverified: errProviderSaysNo, JITNotAllowed: errJIT}}
 }
@@ -121,7 +123,7 @@ func TestResolveFailsClosed(t *testing.T) {
 	ctx := dbtest.Context(t)
 	organization := dbtest.Organization(t)
 	src := Source{OrganizationID: organization, Provider: "saml", ConnectionID: uuid.New()}
-	bare := &Flow{Pool: dbtest.Pool(t)}
+	bare := &Flow{Pool: dbtest.Pool(t), Recorder: unrecorded{}}
 	email := dbtest.Unique("a") + "@example.test"
 	if id, err := bare.Resolve(ctx, src, Person{Subject: "s-1", Email: email}, audit.Actor{}); err == nil {
 		t.Errorf("an address off the organization's domains, with no error named: signed in %s", id)
@@ -130,3 +132,8 @@ func TestResolveFailsClosed(t *testing.T) {
 		t.Error("the refused sign-in created an account")
 	}
 }
+
+// unrecorded records no refused sign-in.
+type unrecorded struct{}
+
+func (unrecorded) RecordSignInFailure(context.Context, auth.SignInFailure) {}

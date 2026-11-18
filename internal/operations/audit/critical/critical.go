@@ -1,8 +1,6 @@
-// Package critical is the short list an on-call administrator triages from a
-// phone: the organization's open anomaly alerts and its critical audit events
-// of the last hours, newest first, read only. Which events are critical, and
-// how severe, is decided here, so every client shows the same list. Anything
-// deeper (the full trail, search) stays in the console.
+// Package critical is the short list an on-call administrator triages from a phone: the open anomaly
+// alerts and the critical audit events of the last hours, newest first, read only. Which events are
+// critical, and how severe, is decided here so every client shows the same list.
 package critical
 
 import (

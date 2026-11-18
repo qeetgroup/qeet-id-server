@@ -6,6 +6,7 @@ package siem
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -51,9 +52,8 @@ type AuditEvent struct {
 	CreatedAt      time.Time       `json:"created_at"`
 }
 
-// Service manages organizations' log sinks and forwards audit events to them. Sink
-// tokens are sealed with the cipher from SetCipher; without one, no sink can be
-// created.
+// Service manages organizations' log sinks and forwards audit events to them,
+// with each sink's token sealed by the vault cipher.
 type Service struct {
 	pool   *pgxpool.Pool
 	q      *dbgen.Queries
@@ -62,19 +62,21 @@ type Service struct {
 	box    *envelope.Cipher
 }
 
-// SetCipher sets the cipher that encrypts sink tokens.
-func (s *Service) SetCipher(box *envelope.Cipher) { s.box = box }
-
-// NewService returns a Service whose HTTP client follows policies[0], or by
-// default may reach only public https endpoints.
-func NewService(pool *pgxpool.Pool, policies ...*egress.Policy) *Service {
+// NewService returns a Service that seals sink tokens with box and whose HTTP
+// client follows policies[0], or by default may reach only public https
+// endpoints. It refuses a nil box.
+func NewService(pool *pgxpool.Pool, box *envelope.Cipher, policies ...*egress.Policy) (*Service, error) {
+	if box == nil {
+		return nil, errors.New("siem: a cipher is required to seal sink tokens")
+	}
 	policy := egress.PublicPolicy(policies...)
 	return &Service{
 		pool:   pool,
 		q:      dbgen.New(pool),
 		client: policy.HTTPClient(10 * time.Second),
 		egress: policy,
-	}
+		box:    box,
+	}, nil
 }
 
 func validType(t string) bool {

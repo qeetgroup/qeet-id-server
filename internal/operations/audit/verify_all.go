@@ -14,6 +14,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/strutil"
 )
 
@@ -35,11 +36,9 @@ type BrokenChain struct {
 	Reason         string
 }
 
-// VerificationRun is one verification of every chain, as VerifyAll stores it
-// in platform.audit_verification_runs. Scope is "all" when it walked every
-// chain from its first row, "incremental" when from their checkpoints. Outcome
-// is "intact", "broken" (a chain does not verify) or "error" (a chain could not
-// be read, which stops the run).
+// VerificationRun is one verification of every chain, stored in platform.audit_verification_runs.
+// Scope is "all" (every chain from its first row) or "incremental" (from checkpoints); Outcome is
+// "intact", "broken" (a chain doesn't verify) or "error" (a chain couldn't be read; the run stops).
 type VerificationRun struct {
 	ID                  uuid.UUID
 	StartedAt           time.Time
@@ -56,14 +55,10 @@ type VerificationRun struct {
 // row rather than from its checkpoint, so a changed old row is still found.
 const FullVerifyInterval = 7 * 24 * time.Hour
 
-// VerifyAll verifies the platform chains and every organization's chain, and
-// stores the run. Once its checkpoint row, the last a run found intact, is
-// checked unchanged, a chain is walked on from it; from its first row when it
-// has none, was found broken, or no run has walked every chain from the start
-// within FullVerifyInterval. A broken chain is logged at ERROR; the stored run
-// names the first. A broken or failed run counts toward
-// audit_verify_failures_total and returns an error, so the job records a
-// failure.
+// VerifyAll verifies every platform and organization chain and stores the run: from each chain's
+// checkpoint once it is checked unchanged, else from its first row (no checkpoint, found broken, or no
+// full run within FullVerifyInterval). A broken chain is logged at ERROR; a broken or failed run
+// counts toward audit_verify_failures_total and returns an error, so the job records a failure.
 func (v *Verifier) VerifyAll(ctx context.Context) (VerificationRun, error) {
 	full, err := v.q.CountFullAuditVerificationsSince(ctx, time.Now().Add(-FullVerifyInterval))
 	if err != nil {
@@ -127,8 +122,8 @@ func (v *Verifier) walkAll(ctx context.Context, run *VerificationRun, fromStart 
 	if err != nil {
 		return err, nil
 	}
-	chains := make([]chain, 0, PlatformChainShards+len(organizations))
-	for shard := range int16(PlatformChainShards) {
+	chains := make([]chain, 0, audit.PlatformChainShards+len(organizations))
+	for shard := range int16(audit.PlatformChainShards) {
 		chains = append(chains, chain{shard: shard})
 	}
 	for _, t := range organizations {

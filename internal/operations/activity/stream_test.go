@@ -46,7 +46,7 @@ func TestSendActivityWritesCursorAsID(t *testing.T) {
 // server's streams don't hold up its drain.
 func TestStreamEndsWhenTheHubShutsDown(t *testing.T) {
 	hub := NewHub(nil)
-	h := NewHandler(nil, hub)
+	h := testHandler(t, nil, hub)
 	organizationID, userID := uuid.New(), uuid.New()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := &httpx.Principal{OrganizationID: &organizationID, UserID: &userID}
@@ -159,14 +159,16 @@ func TestStreamEndsWhenAccessEnds(t *testing.T) {
 			organizationID, userID := uuid.New(), uuid.New()
 			var allowed atomic.Bool
 			allowed.Store(true)
-			h := NewHandler(nil, NewHub(nil))
-			h.RecheckEvery = 20 * time.Millisecond
-			h.Access = func(context.Context, *httpx.Principal) (bool, error) {
+			h, err := NewHandler(nil, NewHub(nil), func(context.Context, *httpx.Principal) (bool, error) {
 				if allowed.Load() {
 					return true, nil
 				}
 				return tc.answer()
+			})
+			if err != nil {
+				t.Fatal(err)
 			}
+			h.RecheckEvery = 20 * time.Millisecond
 			got, subscribed := openStream(t, h, &httpx.Principal{OrganizationID: &organizationID, UserID: &userID})
 			subscribed()
 			time.Sleep(100 * time.Millisecond)
@@ -190,7 +192,7 @@ func TestStreamEndsWhenAccessEnds(t *testing.T) {
 func TestStreamEndsWhenTheCredentialExpires(t *testing.T) {
 	organizationID, userID := uuid.New(), uuid.New()
 	expires := time.Now().Add(150 * time.Millisecond)
-	got, _ := openStream(t, NewHandler(nil, NewHub(nil)), &httpx.Principal{OrganizationID: &organizationID, UserID: &userID, ExpiresAt: &expires})
+	got, _ := openStream(t, testHandler(t, nil, NewHub(nil)), &httpx.Principal{OrganizationID: &organizationID, UserID: &userID, ExpiresAt: &expires})
 	ended(t, got, 2*time.Second, "an expired credential")
 	if time.Now().Before(expires) {
 		t.Error("the stream ended before its credential expired")
@@ -202,7 +204,7 @@ func TestStreamEndsWhenTheCredentialExpires(t *testing.T) {
 // audit log instead of silently missing events.
 func TestStreamReconnectsWhenItFallsBehind(t *testing.T) {
 	organizationID, userID := uuid.New(), uuid.New()
-	h := NewHandler(nil, NewHub(nil))
+	h := testHandler(t, nil, NewHub(nil))
 	got, subscribed := openStream(t, h, &httpx.Principal{OrganizationID: &organizationID, UserID: &userID})
 	subscribed()
 	h.Hub.mu.RLock()

@@ -46,11 +46,9 @@ type Result struct {
 	Finished   bool // false when the time budget ran out first
 }
 
-// Run seals again with box's current key every value in columns that isn't
-// sealed with it, batch rows at a time, and stops early once budget has
-// passed; a later run carries on. A row is replaced only while it still holds
-// what was read, so a run is safe beside the application's writes and another
-// run, and running it twice changes nothing more.
+// Run seals again with box's current key every value in columns not sealed with it, batch rows at a
+// time, stopping once budget has passed (a later run carries on). A row is replaced only while it
+// still holds what was read, so a run is safe beside writes and other runs, and idempotent.
 func Run(ctx context.Context, pool *pgxpool.Pool, box *envelope.Cipher, columns []Column, batch int, budget time.Duration) (Result, error) {
 	ctx = postgres.AcrossOrganizations(ctx)
 	deadline := time.Now().Add(budget)

@@ -11,17 +11,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 )
 
 // purgeBatch is how many events one purge transaction deletes from a chain.
 var purgeBatch int32 = 1000
 
-// PurgeExpired deletes each organization's audit events older than the days
-// days returns for it (less than one: kept for good), oldest first and a
-// batch at a time, and records each organization's purge on its chain. It
-// returns how many it deleted. key signs each purge checkpoint. A lookup or
-// purge that fails skips its organization and is returned with the others' errors.
+// PurgeExpired deletes each organization's audit events older than days returns for it (below one:
+// kept for good), oldest first and a batch at a time, records each purge on its chain (key signs the
+// checkpoint) and returns how many it deleted. A failing organization is skipped and its error joined.
 func PurgeExpired(ctx context.Context, pool *pgxpool.Pool, key CheckpointKey, days func(ctx context.Context, organizationID uuid.UUID) (int, error)) (int64, error) {
 	ctx = postgres.AcrossOrganizations(ctx)
 	organizations, err := dbgen.New(pool).ListRetentionOrganizations(ctx)
@@ -51,11 +50,10 @@ func PurgeExpired(ctx context.Context, pool *pgxpool.Pool, key CheckpointKey, da
 	return total, errors.Join(failed...)
 }
 
-// purgeChain deletes organizationID's events sent before cutoff, never the chain's
-// newest, and returns how many. Each batch is deleted in the transaction that
-// moves the chain's purge checkpoint to the last event it deletes, holding the
-// chain's lock, so the chain verifies from there at every moment. A chain the
-// scheduled verification found broken is left for whoever investigates it.
+// purgeChain deletes organizationID's events sent before cutoff, never the chain's newest, and returns
+// how many. Each batch is deleted, holding the chain's lock, in the transaction that moves the purge
+// checkpoint to the last event it deletes, so the chain always verifies. A chain found broken is
+// left for whoever investigates it.
 func purgeChain(ctx context.Context, pool *pgxpool.Pool, key CheckpointKey, organizationID uuid.UUID, cutoff time.Time) (int64, error) {
 	if broken, err := dbgen.New(pool).AuditChainBroken(ctx, organizationID); err != nil || broken {
 		return 0, err
@@ -77,7 +75,7 @@ func purgeBatchOf(ctx context.Context, pool *pgxpool.Pool, key CheckpointKey, or
 		return 0, err
 	}
 	defer tx.Rollback(ctx)
-	if err := lockChain(ctx, tx, &organizationID, 0); err != nil {
+	if err := audit.LockChain(ctx, tx, &organizationID, 0); err != nil {
 		return 0, err
 	}
 	q := dbgen.New(tx)
@@ -105,6 +103,6 @@ func purgeBatchOf(ctx context.Context, pool *pgxpool.Pool, key CheckpointKey, or
 // recordPurge records on organizationID's chain that deleted of its events, older
 // than days, were removed.
 func recordPurge(ctx context.Context, pool *pgxpool.Pool, organizationID uuid.UUID, deleted int64, days int) error {
-	return RecordAlone(ctx, pool, Actor{Type: "system"}.Event(organizationID, "audit.events_purged", "organization", organizationID,
+	return audit.RecordAlone(ctx, pool, audit.Actor{Type: "system"}.Event(organizationID, "audit.events_purged", "organization", organizationID,
 		map[string]any{"deleted": deleted, "days": days}))
 }

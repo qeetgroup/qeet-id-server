@@ -70,7 +70,7 @@ func TestPurgingADeletedOrganization(t *testing.T) {
 	exec(`UPDATE organization.organizations SET status = 'deleted', deleted_at = NOW() - interval '31 days' WHERE id = $1`, gone)
 	exec(`UPDATE organization.organizations SET status = 'deleted', deleted_at = NOW() - interval '1 day' WHERE id = $1`, recent)
 
-	svc := NewService(pool, 0)
+	svc := testService(t, pool, 0)
 	n, err := svc.PurgeDeletedOrganizations(ctx, OrganizationPurgeAfter)
 	if err != nil || n < 1 {
 		t.Fatalf("purge: %d, %v", n, err)

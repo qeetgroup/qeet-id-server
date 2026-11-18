@@ -19,8 +19,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
@@ -35,36 +35,62 @@ const dnsHostPrefix = "_qeet-verification."
 type Service struct {
 	pool     *pgxpool.Pool
 	q        *dbgen.Queries
-	resolver interface {
-		LookupTXT(ctx context.Context, name string) ([]string, error)
-	}
-	web    *http.Client
-	gate   entitlements.PlanGate
-	owners OwnerChecker
+	resolver Resolver
+	web      *http.Client
+	gate     entitlements.PlanGate
+	owners   OwnerChecker
 	// memberPermissions are all a member may hold without being an
 	// administrator for domain capture.
 	memberPermissions []string
 }
 
-// NewService returns the domain verification service. Its checks of a custom
-// login hostname reach only destinations the given policy (by default public
-// addresses over https) allows.
-func NewService(pool *pgxpool.Pool, policies ...*egress.Policy) *Service {
-	return &Service{pool: pool, q: dbgen.New(pool), resolver: net.DefaultResolver,
-		web: loginProbeClient(egress.PublicPolicy(policies...))}
+// Deps are what the domain verification service is built from.
+type Deps struct {
+	Gate   entitlements.PlanGate // decides whether an organization's plan includes custom domains
+	Owners OwnerChecker          // decides who may name break-glass members
+	// MemberPermissions are all a member may hold without being an
+	// administrator single sign-on doesn't adopt by address (identitylink's);
+	// any other permission, and the owner role, make one.
+	MemberPermissions []string
+	// Outbound is where a check of a custom login hostname may go (nil:
+	// public addresses over https).
+	Outbound *egress.Policy
+	// Resolver is where verification looks up TXT records (nil: the system
+	// resolver).
+	Resolver Resolver
 }
 
-// SetPlanGate sets the plan-feature gate (nil allows all features).
-func (s *Service) SetPlanGate(g entitlements.PlanGate) { s.gate = g }
+// NewService returns the domain verification service built from d.
+func NewService(pool *pgxpool.Pool, d Deps) (*Service, error) {
+	switch {
+	case d.Gate == nil:
+		return nil, errors.New("domainverify: the domain service needs a plan gate")
+	case d.Owners == nil:
+		return nil, errors.New("domainverify: the domain service needs an owner check")
+	case len(d.MemberPermissions) == 0:
+		return nil, errors.New("domainverify: the domain service needs the member permissions")
+	}
+	var resolver Resolver = net.DefaultResolver
+	if d.Resolver != nil {
+		resolver = d.Resolver
+	}
+	return &Service{pool: pool, q: dbgen.New(pool), resolver: resolver,
+		web: loginProbeClient(egress.PublicPolicy(d.Outbound)), gate: d.Gate, owners: d.Owners,
+		memberPermissions: d.MemberPermissions}, nil
+}
 
 // Resolver looks up the TXT records at a DNS name.
 type Resolver interface {
 	LookupTXT(ctx context.Context, name string) ([]string, error)
 }
 
-// SetResolver sets where verification looks up TXT records; by default the
-// system resolver.
-func (s *Service) SetResolver(r Resolver) { s.resolver = r }
+// WithResolver returns a copy of s that looks up TXT records with r, for a
+// tool that answers them itself.
+func (s *Service) WithResolver(r Resolver) *Service {
+	c := *s
+	c.resolver = r
+	return &c
+}
 
 // Domain is a domain an organization has claimed, and whether it is verified.
 type Domain struct {
@@ -160,14 +186,12 @@ func rowToDomain(id uuid.UUID, domain, token string, verifiedAt *time.Time, crea
 // recorded as actor's.
 func (s *Service) Add(ctx context.Context, organizationID uuid.UUID, raw string, actor audit.Actor) (*Domain, error) {
 	// Plan gate: custom (verified) domains are a paid feature.
-	if s.gate != nil {
-		ok, err := s.gate.FeatureAllowed(ctx, organizationID, "custom_domain")
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			return nil, errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "custom_domain"})
-		}
+	allowed, err := s.gate.FeatureAllowed(ctx, organizationID, "custom_domain")
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
+		return nil, errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "custom_domain"})
 	}
 	domain := normalizeDomain(raw)
 	if !validDomain(domain) {

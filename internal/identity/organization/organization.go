@@ -66,10 +66,6 @@ type Repository struct {
 // defaultRegion is the hosting region when none is configured.
 const defaultRegion = "us-east-1"
 
-// SetHostingRegion sets the region organizations are created in; empty keeps
-// defaultRegion.
-func (r *Repository) SetHostingRegion(region string) { r.hostingRegion = region }
-
 // HostingRegion is the region every organization is created in.
 func (r *Repository) HostingRegion() string {
 	if r.hostingRegion == "" {
@@ -78,7 +74,8 @@ func (r *Repository) HostingRegion() string {
 	return r.hostingRegion
 }
 
-// NewRepository returns a Repository over pool.
-func NewRepository(pool *pgxpool.Pool) *Repository {
-	return &Repository{pool: pool, q: dbgen.New(pool)}
+// NewRepository returns a Repository over pool that creates every
+// organization in hostingRegion (empty: defaultRegion).
+func NewRepository(pool *pgxpool.Pool, hostingRegion string) *Repository {
+	return &Repository{pool: pool, q: dbgen.New(pool), hostingRegion: hostingRegion}
 }

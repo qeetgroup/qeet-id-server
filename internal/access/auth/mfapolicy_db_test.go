@@ -18,8 +18,8 @@ func TestAdminMFARequirementCoversEveryAdministrativePermission(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	svc := newService(t)
-	svc.SetMFA(&poolFactors{pool: pool})
-	svc.SetMemberPermissions(identitylink.MemberPermissions())
+	svc.mfa = &poolFactors{pool: pool}
+	svc.memberPermissions = identitylink.MemberPermissions()
 	signInHolding := func(permissions ...string) *LoginResult {
 		t.Helper()
 		organization := dbtest.Organization(t)
@@ -54,7 +54,7 @@ func TestEnrollmentChallengeWithOneConnection(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	svc := newService(t)
-	svc.SetMFA(&poolFactors{pool: pool})
+	svc.mfa = &poolFactors{pool: pool}
 	a, organization := member(t)
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO organization.security_policies (organization_id, mfa_enforcement, mfa_grace_days, mfa_enforced_since)

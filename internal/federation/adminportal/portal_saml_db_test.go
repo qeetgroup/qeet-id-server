@@ -11,9 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -29,8 +27,7 @@ func TestPortalSAMLNeedsSSOInThePlan(t *testing.T) {
 	pool := dbtest.Pool(t)
 	organization := dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
-	samlService := saml.NewService(pool, auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t)), "https://id.example.test")
-	samlService.SetPlanGate(noSSO{})
+	samlService := newSAML(t, noSSO{})
 	h := &Handler{Service: NewService(pool, branded{}, "https://login.example.test"), SAML: samlService}
 	public := chi.NewRouter()
 	public.Route("/v1", h.MountPublic)
@@ -73,10 +70,9 @@ func TestPortalCantChangeTrustOnceAnAdministratorIsLinked(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
 	organization := dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
-	users := user.NewRepository(pool)
 	h := &Handler{
 		Service: NewService(pool, branded{}, "https://login.example.test"),
-		SAML:    saml.NewService(pool, auth.NewService(pool, users, dbtest.Issuer(t)), "https://id.example.test"),
+		SAML:    newSAML(t, everyPlan{}),
 	}
 	public := chi.NewRouter()
 	public.Route("/v1", h.MountPublic)

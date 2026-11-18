@@ -14,7 +14,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/rotation"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -26,7 +26,7 @@ func TestMain(m *testing.M) { dbtest.Main(m) }
 // its name.
 func TestAPIKeysStayInTheirOrganization(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t))
+	svc := testService(t, dbtest.Pool(t))
 	organizationA, organizationB := dbtest.Organization(t), dbtest.Organization(t)
 	adminA := dbtest.User(t, organizationA, organizationA)
 	adminB := dbtest.User(t, organizationB, organizationB)
@@ -77,7 +77,7 @@ func TestAPIKeysStayInTheirOrganization(t *testing.T) {
 func TestAPIKeyNameIsAtMost200Characters(t *testing.T) {
 	organization := dbtest.Organization(t)
 	h := dbtest.Serve(dbtest.Principal(dbtest.User(t, organization, organization).ID, organization),
-		(&Handler{Service: NewService(dbtest.Pool(t)), GrantCheck: rbac.NewRepository(dbtest.Pool(t)).CheckGrantScopes}).Mount)
+		(&Handler{Service: testService(t, dbtest.Pool(t)), GrantCheck: rbac.NewRepository(dbtest.Pool(t)).CheckGrantScopes}).Mount)
 	if rec := dbtest.Do(t, h, http.MethodPost, "/api-keys", map[string]any{"name": strings.Repeat("é", 201)}); rec.Code != http.StatusUnprocessableEntity ||
 		!strings.Contains(rec.Body.String(), errs.CodeValidation) || !strings.Contains(rec.Body.String(), `"field":"name"`) {
 		t.Errorf("a 201-character name: %d %s, want 422 %s on name", rec.Code, rec.Body.String(), errs.CodeValidation)
@@ -96,7 +96,7 @@ func TestAPIKeyNameIsAtMost200Characters(t *testing.T) {
 func TestPersonalKeysStopWithTheirPerson(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	svc := NewService(pool)
+	svc := testService(t, pool)
 	organization := dbtest.Organization(t)
 	a := dbtest.User(t, organization, organization)
 	actor := audit.Actor{UserID: &a.ID, Type: "user"}
@@ -136,7 +136,7 @@ func TestPersonalKeysStopWithTheirPerson(t *testing.T) {
 func TestRotateReplacesAKeyWithAnOverlap(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	svc := NewService(pool)
+	svc := testService(t, pool)
 	organization := dbtest.Organization(t)
 	a, b := dbtest.User(t, organization, organization), dbtest.User(t, organization, organization)
 	asA, asB := audit.Actor{UserID: &a.ID, Type: "user"}, audit.Actor{UserID: &b.ID, Type: "user"}
@@ -193,7 +193,7 @@ func TestRotateReplacesAKeyWithAnOverlap(t *testing.T) {
 func TestKeyOfDeletedOrganizationIsRefused(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	svc := NewService(pool)
+	svc := testService(t, pool)
 	organization := dbtest.Organization(t)
 	a := dbtest.User(t, organization, organization)
 	actor := audit.Actor{UserID: &a.ID, Type: "user"}
@@ -239,7 +239,7 @@ func TestAPIKeysCarryOnlyTheCreatorsAuthority(t *testing.T) {
 	developer := dbtest.User(t, organization)
 	dbtest.Assign(t, developer.ID, organization, dbtest.Role(t, organization, "apikey.write", "user.read"))
 	h := dbtest.Serve(dbtest.Principal(developer.ID, organization),
-		(&Handler{Service: NewService(pool), GrantCheck: rbac.NewRepository(pool).CheckGrantScopes}).Mount)
+		(&Handler{Service: testService(t, pool), GrantCheck: rbac.NewRepository(pool).CheckGrantScopes}).Mount)
 	path := "/api-keys"
 
 	body := func(scopes ...string) map[string]any {

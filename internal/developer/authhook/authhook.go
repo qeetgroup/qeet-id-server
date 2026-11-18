@@ -1,11 +1,11 @@
-// Package authhook runs an organization's synchronous sign-in hooks: after the
-// credentials check, Run POSTs a signed event to each enabled hook's URL, which
-// answers allow or deny. When a hook gives no answer, its fail_open decides
-// (allow by default, so an outage never locks everyone out) and the skip is
+// Package authhook runs an organization's synchronous sign-in hooks: after the credentials check, Run
+// POSTs a signed event to each enabled hook, which answers allow or deny. A hook that doesn't answer
+// follows its fail_open (allow by default, so an outage never locks everyone out), and the skip is
 // recorded.
 package authhook
 
 import (
+	"errors"
 	"net/http"
 	"sync"
 	"time"
@@ -50,11 +50,13 @@ type Service struct {
 	known  sync.Map
 }
 
-// NewService returns the login hook service.
-func NewService(pool *pgxpool.Pool, policies ...*egress.Policy) *Service {
+// NewService returns the login hook service, sealing hook secrets with box
+// and calling hooks through policies[0], or by default only public https
+// endpoints. It refuses a nil box.
+func NewService(pool *pgxpool.Pool, box *envelope.Cipher, policies ...*egress.Policy) (*Service, error) {
+	if box == nil {
+		return nil, errors.New("authhook: a cipher is required to seal hook secrets")
+	}
 	policy := egress.PublicPolicy(policies...)
-	return &Service{pool: pool, q: dbgen.New(pool), client: policy.HTTPClient(hookTimeout), egress: policy}
+	return &Service{pool: pool, q: dbgen.New(pool), client: policy.HTTPClient(hookTimeout), egress: policy, box: box}, nil
 }
-
-// SetCipher sets the cipher that encrypts login hook secrets at rest.
-func (s *Service) SetCipher(box *envelope.Cipher) { s.box = box }

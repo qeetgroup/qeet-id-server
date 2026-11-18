@@ -10,16 +10,14 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/developer/apikey/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/rotation"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// Rotate replaces one of the organization's live keys with a new one of the same
-// name, scopes, person and expiry, shown only now, and leaves the old one
-// working for overlap (0: it stops at once). A key acting for a person is
-// replaced only by that person, as only they may create one. Recorded as
-// actor's.
+// Rotate replaces one of the organization's live keys with a new one of the same name, scopes,
+// person and expiry, shown only now, and keeps the old one working for overlap (0: it stops at once).
+// A key acting for a person is rotated only by that person. Recorded as actor's.
 func (s *Service) Rotate(ctx context.Context, organizationID, id uuid.UUID, overlap time.Duration, actor audit.Actor) (*Key, string, error) {
 	if err := rotation.CheckOverlap(overlap, "key"); err != nil {
 		return nil, "", err

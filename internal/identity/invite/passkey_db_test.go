@@ -5,8 +5,7 @@ package invite
 import (
 	"testing"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/authpolicy"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -17,7 +16,7 @@ func TestInviteLookupOffersWhatAcceptAllows(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	h, _ := newHandler(t)
-	h.Service.SetAcceptMethods(authpolicy.NewService(pool))
+	h.Service.methods = policies(t)
 	for _, tc := range []struct {
 		name              string
 		password, passkey bool

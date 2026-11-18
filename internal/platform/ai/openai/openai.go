@@ -330,11 +330,9 @@ func (t *toolSlots) arguments(index, n int) (slot int, ok bool, err error) {
 	return slot, true, nil
 }
 
-// parseOpenAISSE reads the OpenAI Chat Completions SSE stream, emitting
-// normalized ai.Event values to out until "data: [DONE]" or ctx cancellation.
-// OpenAI SSE: one "data: <json>" line per event (no "event:" prefix). Tool
-// calls go out on dense slots (see toolSlots); a call out of bounds ends the
-// stream with an error, the event not sent.
+// parseOpenAISSE reads the Chat Completions SSE stream ("data: <json>" lines, no "event:" prefix) and
+// sends normalized ai.Event values to out until "data: [DONE]" or ctx ends. Tool calls go out on dense
+// slots (see toolSlots); a call out of bounds ends the stream with an error, unsent.
 func parseOpenAISSE(ctx context.Context, r io.Reader, out chan<- ai.Event) error {
 	scanner := bufio.NewScanner(r)
 	tools := toolSlots{slot: map[int]int{}}

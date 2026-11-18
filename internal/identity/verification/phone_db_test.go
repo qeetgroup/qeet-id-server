@@ -11,7 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -22,7 +22,7 @@ import (
 func TestPhoneVerificationIsAudited(t *testing.T) {
 	ctx := dbtest.Context(t)
 	mail := &dbtest.Mailbox{}
-	svc := NewService(dbtest.Pool(t), mail, 10*time.Minute)
+	svc := newService(t, mail)
 	organization := dbtest.Organization(t)
 	a := dbtest.User(t, organization, organization)
 	who := Requester{Actor: audit.Actor{UserID: &a.ID, Type: "user"}, OrganizationID: &organization}
@@ -86,7 +86,7 @@ func TestPhoneVerificationIsAudited(t *testing.T) {
 func TestPhoneVerificationSendsAreCapped(t *testing.T) {
 	ctx := dbtest.Context(t)
 	mail := &dbtest.Mailbox{}
-	svc := NewService(dbtest.Pool(t), mail, 10*time.Minute)
+	svc := newService(t, mail)
 	organization := dbtest.Organization(t)
 	person := func() (dbtest.Account, Requester) {
 		a := dbtest.User(t, organization, organization)
@@ -139,11 +139,13 @@ type planGate struct{ allowed map[uuid.UUID]bool }
 func TestPhoneVerificationNeedsSMSInThePlan(t *testing.T) {
 	ctx := dbtest.Context(t)
 	mail := &dbtest.Mailbox{}
-	svc := NewService(dbtest.Pool(t), mail, 10*time.Minute)
 	paid, free := dbtest.Organization(t), dbtest.Organization(t)
-	svc.SetPlan(planGate{allowed: map[uuid.UUID]bool{paid: true}})
 	deliverable := true
-	svc.SetDeliveryCheck(func(channel string) bool { return channel == "sms" && deliverable })
+	svc, err := NewService(dbtest.Pool(t), mail, 10*time.Minute, planGate{allowed: map[uuid.UUID]bool{paid: true}},
+		func(channel string) bool { return channel == "sms" && deliverable })
+	if err != nil {
+		t.Fatal(err)
+	}
 	a := dbtest.User(t, paid, paid, free)
 	in := func(organization *uuid.UUID) Requester {
 		return Requester{Actor: audit.Actor{UserID: &a.ID, Type: "user"}, OrganizationID: organization}

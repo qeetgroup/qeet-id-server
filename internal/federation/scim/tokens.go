@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -155,9 +155,6 @@ func (s *Service) Tokens(ctx context.Context, organizationID uuid.UUID) ([]Token
 
 // requirePlan refuses an organization whose plan doesn't include SCIM.
 func (s *Service) requirePlan(ctx context.Context, organizationID uuid.UUID) error {
-	if s.gate == nil {
-		return nil
-	}
 	ok, err := s.gate.FeatureAllowed(ctx, organizationID, "scim")
 	if err != nil {
 		return err

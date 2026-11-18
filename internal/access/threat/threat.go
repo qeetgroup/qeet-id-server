@@ -17,8 +17,8 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
 	"github.com/qeetgroup/qeet-id-server/internal/access/threat/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/notification"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
@@ -31,14 +31,14 @@ type Service struct {
 	notifier notification.Notifier
 }
 
-// NewService returns the security anomaly service.
-func NewService(pool *pgxpool.Pool) *Service {
-	return &Service{pool: pool, q: dbgen.New(pool)}
+// NewService returns the security anomaly service, which alerts the affected
+// user in-app through notifier.
+func NewService(pool *pgxpool.Pool, notifier notification.Notifier) (*Service, error) {
+	if notifier == nil {
+		return nil, errors.New("threat: the anomaly service needs a notifier")
+	}
+	return &Service{pool: pool, q: dbgen.New(pool), notifier: notifier}, nil
 }
-
-// SetNotifier sets the in-app notifier that also alerts the affected user (nil:
-// no notifications).
-func (s *Service) SetNotifier(n notification.Notifier) { s.notifier = n }
 
 // Event is a detection's input. OrganizationID is required; UserID/IP/UserAgent are
 // optional context. Status defaults to "open" and Severity to "low" when empty.
@@ -154,13 +154,11 @@ func (s *Service) OnAccountLocked(ctx context.Context, lock auth.AccountLock) {
 		slog.Warn("record credential_stuffing anomaly", "err", rerr)
 	}
 	// Also alert the affected user in-app — a "was this you?" security nudge.
-	if s.notifier != nil {
-		if nerr := s.notifier.Notify(ctx, organizationID, userID, "alert",
-			"Unusual sign-in activity",
-			"Your account was temporarily locked after several failed sign-in attempts. If this wasn't you, reset your password.",
-			"/account/security"); nerr != nil {
-			slog.Warn("notify account locked", "err", nerr)
-		}
+	if nerr := s.notifier.Notify(ctx, organizationID, userID, "alert",
+		"Unusual sign-in activity",
+		"Your account was temporarily locked after several failed sign-in attempts. If this wasn't you, reset your password.",
+		"/account/security"); nerr != nil {
+		slog.Warn("notify account locked", "err", nerr)
 	}
 }
 

@@ -8,7 +8,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -19,7 +18,7 @@ import (
 func TestAdminListsPageAndConfigTellsTheLastRequest(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	svc := NewService(pool, user.NewRepository(pool))
+	svc := newTestService(t, pool)
 	organization := dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
 	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Service: svc}).Mount)

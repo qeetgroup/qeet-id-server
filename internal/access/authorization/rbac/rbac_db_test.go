@@ -13,13 +13,38 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
+
+// newRoleService returns the role service over repo with no plan limit, no
+// seat limit, no webhook events and no session announcements.
+func newRoleService(t *testing.T, repo *Repository) *Service {
+	t.Helper()
+	svc, err := NewService(repo, ServiceDeps{
+		Emitter: func(context.Context, uuid.UUID, string, any) error { return nil },
+		Limits:  unlimited{}, Seats: unlimited{}, Signals: sessionsignal.New(nil),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return svc
+}
+
+// unlimited is a plan with no limit on anything.
+type unlimited struct{}
+
+func (unlimited) Limit(context.Context, uuid.UUID, string) (int, error) { return -1, nil }
+func (unlimited) SeatLimit(context.Context, uuid.UUID) (int, error)     { return -1, nil }
+func (unlimited) WithinSeats(_ context.Context, _ pgx.Tx, _ uuid.UUID, _ int, change func() error) error {
+	return change()
+}
 
 // TestRolesStayInTheirOrganization checks that one organization can neither read nor change
 // another organization's roles, nor assign them, nor assign its own roles to another
@@ -41,7 +66,7 @@ func TestRolesStayInTheirOrganization(t *testing.T) {
 		t.Fatalf("permission id: %v", err)
 	}
 
-	h := &Handler{Repo: repo, Service: NewService(repo), Validate: validator.New(validator.WithRequiredStructEnabled())}
+	h := &Handler{Repo: repo, Service: newRoleService(t, repo), Validate: validator.New(validator.WithRequiredStructEnabled())}
 	asB := dbtest.Serve(dbtest.Principal(adminB.ID, organizationB), h.Mount)
 	roleAPath := "/roles/" + roleA.String() + "/permissions"
 	for _, tc := range []struct {
@@ -90,12 +115,12 @@ func TestRoleLifecycle(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	repo := NewRepository(pool)
-	svc := NewService(repo)
+	svc := newRoleService(t, repo)
 	var announced []string
-	svc.SetEmitter(func(_ context.Context, _ uuid.UUID, eventType string, payload any) error {
+	svc.emitter = func(_ context.Context, _ uuid.UUID, eventType string, payload any) error {
 		announced = append(announced, eventType+":"+payload.(map[string]any)["change"].(string))
 		return nil
-	})
+	}
 	organization := dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
 	direct, viaGroup := dbtest.User(t, organization), dbtest.User(t, organization)
@@ -132,11 +157,11 @@ func TestRoleLifecycle(t *testing.T) {
 		return dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = $1 AND organization_id = $2`, action, organization)
 	}
 
-	svc.SetPlanLimiter(limit(0))
+	svc.limits = limit(0)
 	if _, err := svc.CreateRole(ctx, organization, "Analyst", "", actor); !errors.Is(err, errs.ErrPlanLimit) {
 		t.Errorf("a custom role over the plan's limit: %v, want %v", err, errs.ErrPlanLimit)
 	}
-	svc.SetPlanLimiter(limit(5))
+	svc.limits = limit(5)
 	role, err := svc.CreateRole(ctx, organization, "Analyst", "Reads reports", actor)
 	if err != nil || audited("role.created") != 1 {
 		t.Fatalf("create role: %+v, %v, audited %d times", role, err, audited("role.created"))
@@ -236,7 +261,7 @@ func TestRolesSayWhoHoldsThem(t *testing.T) {
 	exec(`UPDATE account.users SET deleted_at = NOW() WHERE id = $1`, gone.ID)
 
 	repo := NewRepository(pool)
-	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Repo: repo, Service: NewService(repo), Validate: validator.New()}).Mount)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Repo: repo, Service: newRoleService(t, repo), Validate: validator.New()}).Mount)
 	base := "/organizations/" + organization.String() + "/roles"
 	var list struct {
 		Items []Role `json:"items"`
@@ -290,7 +315,7 @@ func TestRemovingAGuestsLastRoleEndsTheirSessions(t *testing.T) {
 	home, organization := dbtest.Organization(t), dbtest.Organization(t)
 	admin := dbtest.User(t, organization)
 	dbtest.Assign(t, admin.ID, organization, dbtest.Role(t, organization, "role.write", "role.read", "user.read"))
-	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Repo: repo, Service: NewService(repo), Validate: validator.New(validator.WithRequiredStructEnabled())}).Mount)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, organization), (&Handler{Repo: repo, Service: newRoleService(t, repo), Validate: validator.New(validator.WithRequiredStructEnabled())}).Mount)
 	session := func(userID, in uuid.UUID) uuid.UUID {
 		t.Helper()
 		var id uuid.UUID

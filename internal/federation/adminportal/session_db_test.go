@@ -11,10 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml"
-	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -27,11 +24,10 @@ func TestPortalLinkConfiguresOnlyWhatItGrants(t *testing.T) {
 	pool := dbtest.Pool(t)
 	organization, other := dbtest.Organization(t), dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
-	users := user.NewRepository(pool)
 	h := &Handler{
 		Service: NewService(pool, branded{}, "https://login.example.test"),
-		SAML:    saml.NewService(pool, auth.NewService(pool, users, dbtest.Issuer(t)), "https://id.example.test"),
-		SCIM:    scim.NewService(pool, users),
+		SAML:    newSAML(t, everyPlan{}),
+		SCIM:    newSCIM(t),
 	}
 	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)
 	public := chi.NewRouter()

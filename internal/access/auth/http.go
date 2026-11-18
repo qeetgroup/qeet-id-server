@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -13,8 +14,8 @@ import (
 )
 
 // BotEvaluator scores an auth attempt's User-Agent for bot-likeness and records
-// the verdict (detect-only — it never blocks). nil = bot detection off. Kept as
-// an interface so auth doesn't import the bot package; satisfied by *bot.Service.
+// the verdict (detect-only — it never blocks). Kept as an interface so auth
+// doesn't import the bot package; satisfied by *bot.Service.
 type BotEvaluator interface {
 	Evaluate(ctx context.Context, email, ip, ua string)
 }
@@ -26,26 +27,24 @@ type Handler struct {
 	// CookieSecure marks the hosted-login SSO cookie Secure (HTTPS-only).
 	// Set from SERVICE_ENV != "dev".
 	CookieSecure bool
-	// Bot, when set, scores login/session attempts for bot-likeness.
+	// Bot scores login/session attempts for bot-likeness.
 	Bot BotEvaluator
 	// GeoCountryHeader names a header set by a trusted proxy (for example
 	// Cloudflare's CF-IPCountry) with the client's country, used for
 	// impossible-travel checks. Empty disables that signal.
 	GeoCountryHeader string
 	// Throttle wraps sensitive self-service routes (password change/set) with a
-	// tight per-user rate limit to blunt online guessing. Nil = no extra throttle.
+	// tight per-user rate limit to blunt online guessing.
 	Throttle func(http.Handler) http.Handler
 	// ActOnCheck refuses an administrator changing the sign-in methods of a
 	// member who outranks them (rbac CheckActOn); nil refuses every change.
 	ActOnCheck func(ctx context.Context, caller *httpx.Principal, organizationID, targetID uuid.UUID) error
 }
 
-// evalBot runs the bot scorer for an auth attempt when detection is wired. The
-// scorer holds the request's UA + client IP and records suspicious verdicts.
+// evalBot runs the bot scorer for an auth attempt. The scorer holds the
+// request's UA + client IP and records suspicious verdicts.
 func (h *Handler) evalBot(r *http.Request, email string) {
-	if h.Bot != nil {
-		h.Bot.Evaluate(r.Context(), email, httpx.ClientIP(r), r.UserAgent())
-	}
+	h.Bot.Evaluate(r.Context(), email, httpx.ClientIP(r), r.UserAgent())
 }
 
 // geoCountry reads the configured trusted-proxy header, or "" when unset —
@@ -96,11 +95,7 @@ func (h *Handler) MountAuthed(r chi.Router) {
 	r.Get("/auth/me", h.me)
 	r.Get("/auth/password", h.passwordStatus)
 	r.Get("/auth/sign-in-methods", h.signInMethods)
-	if h.Throttle != nil {
-		r.With(h.Throttle).Post("/auth/password", h.changePassword)
-	} else {
-		r.Post("/auth/password", h.changePassword)
-	}
+	r.With(h.Throttle).Post("/auth/password", h.changePassword)
 }
 
 func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
@@ -116,4 +111,16 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 		"actor":           p.ActorType,
 		"scopes":          p.Scopes,
 	})
+}
+
+// Check refuses a handler without the password-change throttle or the bot
+// scorer, so bootstrap stops at start rather than serve without them.
+func (h *Handler) Check() error {
+	switch {
+	case h.Throttle == nil:
+		return errors.New("auth: the sign-in handler needs a throttle")
+	case h.Bot == nil:
+		return errors.New("auth: the sign-in handler needs a bot scorer")
+	}
+	return nil
 }

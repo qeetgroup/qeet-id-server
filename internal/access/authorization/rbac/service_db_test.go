@@ -6,12 +6,16 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/qeetgroup/qeet-id-server/internal/access/authpolicy"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/invite"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -19,16 +23,35 @@ import (
 // seatPlan is a plan of n seats.
 type seatPlan int
 
+// inviteSeats returns the invitation service as a seat guard of a plan of n
+// seats; nothing else of it is used.
+func inviteSeats(t *testing.T, pool *pgxpool.Pool, n int) *invite.Service {
+	t.Helper()
+	seats, err := invite.NewService(pool, invite.Deps{
+		Sender: &dbtest.Mailbox{}, Rules: unusedPolicy{}, Methods: unusedPolicy{}, Limits: seatPlan(n),
+		Grants: func(context.Context, *httpx.Principal, uuid.UUID, uuid.UUID) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return seats
+}
+
+// unusedPolicy stands for the password rules and sign-in methods a seat
+// guard never asks.
+type unusedPolicy struct {
+	authpolicy.PasswordRules
+	authpolicy.SignInMethodsChecker
+}
+
 // TestRoleGrantsTakeSeats checks that giving someone a first role, directly or
 // through a group they are in, takes a seat and is refused once the plan's
 // seats are taken, while a second role for someone holding one is not.
 func TestRoleGrantsTakeSeats(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	seats := invite.NewService(pool, &dbtest.Mailbox{}, time.Hour, "https://app.example.test")
-	seats.SetPlanLimiter(seatPlan(2))
-	svc := NewService(NewRepository(pool))
-	svc.SetSeatGuard(seats)
+	svc := newRoleService(t, NewRepository(pool))
+	svc.seats = inviteSeats(t, pool, 2)
 	organization := dbtest.Organization(t)
 	role := dbtest.Role(t, organization)
 	admin := dbtest.User(t, organization, organization)
@@ -64,7 +87,7 @@ func TestRoleGrantsTakeSeats(t *testing.T) {
 		t.Errorf("the refused group role was granted")
 	}
 
-	seats.SetPlanLimiter(seatPlan(-1)) // a plan without a seat limit
+	svc.seats = inviteSeats(t, pool, -1) // a plan without a seat limit
 	if err := svc.AssignRoleToGroup(ctx, group, organization, role, &admin.ID, actor); err != nil {
 		t.Errorf("a group role on a plan without a seat limit: %v", err)
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/strutil"
 )
 
@@ -81,11 +82,10 @@ func NewVerifier(pool *pgxpool.Pool, key CheckpointKey) *Verifier {
 	return &Verifier{pool: pool, q: dbgen.New(pool), key: key}
 }
 
-// Verify recomputes the hash chain of organizationID's audit rows, oldest first, or
-// when organizationID is nil every platform chain in turn, each of which must have a
-// row, and checks no platform row is outside them. At the first row that fails
-// it returns OK=false with BrokenAtID set. Rows without a hash are skipped. A
-// chain's checkpoint must be signed and name an unchanged row.
+// Verify recomputes the hash chain of organizationID's audit rows, oldest first, or with a nil
+// organizationID every platform chain (each must have a row, and no platform row may be outside
+// them). It returns OK=false with BrokenAtID at the first failing row; rows without a hash are
+// skipped. A chain's checkpoint must be signed and name an unchanged row.
 func (v *Verifier) Verify(ctx context.Context, organizationID *uuid.UUID) (VerifyResult, error) {
 	if organizationID != nil {
 		from, err := v.savedCheckpoint(ctx, organizationID, 0)
@@ -96,7 +96,7 @@ func (v *Verifier) Verify(ctx context.Context, organizationID *uuid.UUID) (Verif
 		return res, err
 	}
 	all := VerifyResult{OK: true}
-	for shard := range int16(PlatformChainShards) {
+	for shard := range int16(audit.PlatformChainShards) {
 		from, err := v.savedCheckpoint(ctx, nil, shard)
 		if err != nil {
 			return VerifyResult{}, err
@@ -123,14 +123,14 @@ func (v *Verifier) Verify(ctx context.Context, organizationID *uuid.UUID) (Verif
 // strayPlatformRow is the first platform row on none of the platform chains,
 // as a BrokenChain, or nil when there is none.
 func (v *Verifier) strayPlatformRow(ctx context.Context) (*BrokenChain, error) {
-	row, err := v.q.FindAuditRowOutsideShards(ctx, PlatformChainShards)
+	row, err := v.q.FindAuditRowOutsideShards(ctx, audit.PlatformChainShards)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	reason := fmt.Sprintf("a platform row is on chain %d, outside 0..%d", row.ChainShard, PlatformChainShards-1)
+	reason := fmt.Sprintf("a platform row is on chain %d, outside 0..%d", row.ChainShard, audit.PlatformChainShards-1)
 	return &BrokenChain{EventID: &row.ID, Shard: row.ChainShard, Reason: reason}, nil
 }
 
@@ -150,6 +150,14 @@ type checkpoint struct {
 func checkpointMessage(kind string, organizationID *uuid.UUID, shard int16, cp *checkpoint) []byte {
 	return []byte(strings.Join([]string{kind, uuidStr(organizationID), strconv.Itoa(int(shard)), cp.EventID.String(),
 		cp.CreatedAt.UTC().Format(time.RFC3339Nano), cp.RowHash}, "|"))
+}
+
+// uuidStr is u as text, "" for nil.
+func uuidStr(u *uuid.UUID) string {
+	if u == nil {
+		return ""
+	}
+	return u.String()
 }
 
 // signCheckpoint returns cp's key id and MAC under key, nil without one.
@@ -179,13 +187,10 @@ func (v *Verifier) savedCheckpoint(ctx context.Context, organizationID *uuid.UUI
 	return &checkpoint{EventID: row.EventID, CreatedAt: row.EventCreatedAt, RowHash: trimmed(&row.RowHash), KeyID: strutil.Deref(row.KeyID), MAC: row.Mac}, nil
 }
 
-// walk verifies organizationID's chain, or with a nil organizationID platform chain shard,
-// as Verify does. Given from, a checkpoint, it first checks that from's row is
-// unchanged and, unless fromStart, walks on from the row after it instead of
-// the first row. It also returns the last row it found intact: nil for none,
-// from itself when no row follows it. A platform chain with no row is broken.
-// An organization's chain whose oldest events were purged starts at its purge
-// checkpoint; a purge made while the walk ran makes it walk once more.
+// walk verifies organizationID's chain, or with nil a platform chain shard, as Verify does. Given a
+// checkpoint from, it checks from's row is unchanged and, unless fromStart, walks on after it. It
+// returns the last intact row (nil for none). A platform chain with no row is broken; a purged chain
+// starts at its purge checkpoint, and a purge during the walk makes it walk again.
 func (v *Verifier) walk(ctx context.Context, organizationID *uuid.UUID, shard int16, from *checkpoint, fromStart bool) (VerifyResult, *checkpoint, error) {
 	start, err := v.purgeStart(ctx, organizationID)
 	if err != nil {
@@ -244,7 +249,7 @@ func notAfter(a, b *checkpoint) bool {
 // walkFrom is walk starting at start, a purge checkpoint (nil: the seed): the
 // first row must link to it, and a from at or before it was purged with it.
 func (v *Verifier) walkFrom(ctx context.Context, organizationID *uuid.UUID, shard int16, from *checkpoint, fromStart bool, start *checkpoint) (VerifyResult, *checkpoint, error) {
-	expectedPrev := chainSeed
+	expectedPrev := audit.ChainSeed
 	var (
 		rowsChecked int
 		lastID      *uuid.UUID
@@ -336,7 +341,7 @@ func rowHash(row dbgen.ListAuditEventsForVerifyRow) (string, error) {
 	}
 	// ip is COALESCE(host(ip), ''), which sqlc types as interface{}.
 	ip, _ := row.Ip.(string)
-	canonical, err := canonicalize(Event{
+	return audit.RowHash(audit.Event{
 		OrganizationID: row.OrganizationID,
 		ActorUserID:    row.ActorUserID,
 		ActorType:      row.ActorType,
@@ -347,10 +352,6 @@ func rowHash(row dbgen.ListAuditEventsForVerifyRow) (string, error) {
 		UserAgent:      row.UserAgent, // already COALESCE'd to ""
 		RequestID:      row.RequestID, // already COALESCE'd to ""
 	}, row.ChainShard, row.ID, row.CreatedAt, metaJSON, trimmed(row.PrevHash))
-	if err != nil {
-		return "", err
-	}
-	return hashHex(canonical), nil
 }
 
 // trimmed is a stored hash without its CHAR padding, "" for NULL.

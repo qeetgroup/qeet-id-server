@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -260,9 +260,6 @@ func (s *Service) passRecentSignIn(w http.ResponseWriter, r *http.Request) bool 
 // transaction. Best effort: the refusal or success it describes stands either
 // way.
 func (s *Service) auditStepUp(r *http.Request, action string, meta map[string]any) {
-	if s.pool == nil {
-		return
-	}
 	by := CallerOf(r)
 	if by.SessionID != nil {
 		meta["session_id"] = *by.SessionID

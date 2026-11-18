@@ -105,11 +105,9 @@ var tokenErrorCodes = map[string]string{
 	errs.CodeAgentInactive:               "unauthorized_client",
 }
 
-// writeTokenError answers a failed token request in the RFC 6749 §5.2 shape,
-// with a Basic challenge on invalid_client when the client sent Basic
-// credentials. Every invalid_client says the same, so the answer doesn't tell
-// what kind of client, if any, the id names. An internal error keeps the
-// generic answer.
+// writeTokenError answers a failed token request in the RFC 6749 §5.2 shape, with a Basic challenge on
+// invalid_client when the client sent Basic credentials. Every invalid_client reads the same, so the
+// answer doesn't tell what client, if any, the id names; an internal error keeps the generic answer.
 func writeTokenError(w http.ResponseWriter, r *http.Request, err error) {
 	var oe *oauthError
 	if !errors.As(err, &oe) {

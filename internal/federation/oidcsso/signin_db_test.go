@@ -298,7 +298,7 @@ func TestOIDCSignInNeedsSSOInThePlan(t *testing.T) {
 
 	authURL := s.begin(t, conn.ID)
 	idp.expect(t, authURL, "code-1", as(idp, "u-1", email, nil), nil, "")
-	s.svc.SetPlanGate(denyPlan{})
+	s.plan.lapsed = true
 	refused(t, "the answer after the plan lapsed", s.callback(t, conn.ID, authURL, "code-1", nil), errs.CodeUpgradeRequired)
 	rec := s.send(httptest.NewRequestWithContext(dbtest.Context(t), http.MethodGet, "/oidc-connections/"+conn.ID.String()+"/login", nil))
 	refused(t, "a sign-in started on a plan without single sign-on", rec, errs.CodeUpgradeRequired)
@@ -311,9 +311,8 @@ func TestOIDCSignInNeedsSSOInThePlan(t *testing.T) {
 // login began, which the provider then refuses, goes back to the hosted login's sign-in page with
 // a generic error and its return address, and is still recorded for the organization.
 func TestAHostedSignInTheProviderRefusesReturnsToTheHostedLogin(t *testing.T) {
-	s := newRP(t)
 	const accounts = "https://accounts.example.test"
-	s.svc.SetHostedLogin(accounts, testPublicBase)
+	s := newRP(t, func(d *Deps) { d.LoginBaseURL, d.ReturnOrigins = accounts, []string{testPublicBase} })
 	idp := newFakeIdP(t)
 	organization := dbtest.Organization(t)
 	conn := s.connect(t, organization, idp, nil)

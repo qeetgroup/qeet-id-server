@@ -71,9 +71,6 @@ func (s *Service) forwardDue(ctx context.Context) error {
 
 	sinks := make([]sinkRow, 0, len(stored))
 	for _, r := range stored {
-		if s.box == nil {
-			return errors.New("SIEM token encryption is unavailable")
-		}
 		plain, openErr := s.box.Open(r.OrganizationID, "siem-token", r.ID.String(), r.TokenCt, r.TokenNonce)
 		if openErr != nil {
 			return openErr

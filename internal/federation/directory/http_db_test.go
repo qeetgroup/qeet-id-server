@@ -1,3 +1,5 @@
+//go:build integration
+
 package directory
 
 import (
@@ -10,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
@@ -27,11 +30,12 @@ func TestConnectionHandlerRequiresMatchingPrincipalOrganization(test *testing.T)
 		{name: "invalid path", principal: &ownOrganization, path: "invalid", want: http.StatusBadRequest},
 		{name: "own organization", principal: &ownOrganization, path: ownOrganization.String(), want: http.StatusOK},
 	}
+	pool := dbtest.Pool(test)
 	for _, scenario := range cases {
 		test.Run(scenario.name, func(test *testing.T) {
 			scimSource := &scimFixture{config: &scim.ConfigView{}}
 			ldapSource := &ldapFixture{}
-			handler := &Handler{Service: NewService(scimSource, ldapSource)}
+			handler := &Handler{Service: newService(test, pool, scimSource, ldapSource)}
 			router := chi.NewRouter()
 			handler.Mount(router)
 			request := httptest.NewRequest(http.MethodGet, "/organizations/"+scenario.path+"/directory/connections?organization_id="+otherOrganization.String(), nil)

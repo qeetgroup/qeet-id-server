@@ -13,8 +13,8 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/auth/authtest"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -45,9 +45,9 @@ func newHandler(t *testing.T) (*Handler, *auth.Service, *announced) {
 	t.Helper()
 	pool := dbtest.Pool(t)
 	signals := &announced{}
-	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
+	authSvc := authtest.New(t, pool)
 	return &Handler{
-		Repo:        NewRepository(pool),
+		Repo:        NewRepository(pool, ""),
 		Validate:    validator.New(validator.WithRequiredStructEnabled()),
 		AuthService: authSvc,
 		Signals:     sessionsignal.New(signals.enqueue),

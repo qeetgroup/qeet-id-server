@@ -14,8 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -71,9 +70,6 @@ type CreateClientInput struct {
 	WebOrigins []string `json:"web_origins"`
 }
 
-// SetPlanLimiter wires the plan-limit checker (nil disables the gate).
-func (s *Service) SetPlanLimiter(l entitlements.PlanLimiter) { s.limits = l }
-
 // CountClients returns the organization's number of registered applications (relying
 // parties) — the "apps" limit value, surfaced as usage in billing.
 func (s *Service) CountClients(ctx context.Context, organizationID uuid.UUID) (int, error) {
@@ -85,9 +81,6 @@ func (s *Service) CountClients(ctx context.Context, organizationID uuid.UUID) (i
 // applications is reached. It reads on the pool, so it runs before the
 // transaction RegisterClient joins opens.
 func (s *Service) checkClientLimit(ctx context.Context, organizationID uuid.UUID) error {
-	if s.limits == nil {
-		return nil
-	}
 	lim, err := s.limits.Limit(ctx, organizationID, "apps")
 	if err != nil || lim < 0 {
 		return err
@@ -386,11 +379,9 @@ func (s *Service) RegisteredRedirect(ctx context.Context, clientID, redirectURI 
 	return redirectRegistered(info.RedirectUris, redirectURI, info.Type)
 }
 
-// redirectRegistered reports whether redirectURI is one of registered: the same
-// string or, for a public client's http redirect to a loopback IP literal, the
-// same but for its port, as a native app listens on whatever port it is given
-// (RFC 8252 §7.3). A confidential client's must match exactly. "localhost" is
-// not a literal and must match exactly.
+// redirectRegistered reports whether redirectURI is one of registered: the same string or, for a
+// public client's http redirect to a loopback IP literal, the same but for its port, since a native
+// app listens where it can (RFC 8252 §7.3). Confidential clients and "localhost" must match exactly.
 func redirectRegistered(registered []string, redirectURI, clientType string) bool {
 	if slices.Contains(registered, redirectURI) {
 		return true

@@ -3,6 +3,7 @@
 package abac
 
 import (
+	"context"
 	"testing"
 
 	"github.com/google/uuid"
@@ -11,6 +12,25 @@ import (
 )
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
+
+// newService returns the ABAC service on a plan that includes it, with no
+// relationship held.
+func newService(t *testing.T) *Service {
+	t.Helper()
+	svc, err := NewService(dbtest.Pool(t), allPlans{}, noRelations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return svc
+}
+
+// allPlans is a plan gate that allows every feature.
+type allPlans struct{}
+
+func (allPlans) FeatureAllowed(context.Context, uuid.UUID, string) (bool, error) { return true, nil }
+
+// noRelations holds no relationship.
+func noRelations(context.Context, uuid.UUID, string, string, string) (bool, error) { return false, nil }
 
 // namedRole creates a role called name in organization and returns its id.
 func namedRole(t *testing.T, organization uuid.UUID, name string) uuid.UUID {

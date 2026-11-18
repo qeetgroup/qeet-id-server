@@ -15,6 +15,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/abac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/decide"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/decisionlog"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rebac"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -67,7 +68,7 @@ func (s *secretDenied) Evaluate(_ context.Context, _ uuid.UUID, in abac.Evaluati
 func TestEvaluationReadsProperties(t *testing.T) {
 	organization, user := uuid.New(), uuid.New()
 	attrs := &secretDenied{}
-	svc := NewService(noGrants{}, noRelations{}, decide.New(noGrants{}, noRelations{}, attrs))
+	svc := newService(t, noGrants{}, noRelations{}, decide.New(noGrants{}, noRelations{}, attrs))
 	for _, resourceType := range []string{"document", permissionResourceType} {
 		req := EvaluationRequest{
 			Subject:  Subject{Type: "user", ID: user.String(), Properties: map[string]any{"department": "sales", "id": "someone-else"}},
@@ -122,7 +123,7 @@ func TestEvaluations(t *testing.T) {
 	organization, user := uuid.New(), uuid.New()
 	attrs := &secretDenied{}
 	grants := onlyGranted{key: "doc:read"}
-	svc := NewService(grants, noRelations{}, decide.New(grants, noRelations{}, attrs))
+	svc := newService(t, grants, noRelations{}, decide.New(grants, noRelations{}, attrs))
 	ctx := context.Background()
 	perm := &Resource{Type: permissionResourceType, ID: "p"}
 	batch := func(semantic string, actions ...string) EvaluationsRequest {
@@ -201,7 +202,7 @@ func TestEvaluations(t *testing.T) {
 func TestEvaluationsEndpoint(t *testing.T) {
 	organization, user := uuid.New(), uuid.New()
 	grants := onlyGranted{key: "doc:read"}
-	svc := NewService(grants, noRelations{}, decide.New(grants, noRelations{}, &secretDenied{}))
+	svc := newService(t, grants, noRelations{}, decide.New(grants, noRelations{}, &secretDenied{}))
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -227,5 +228,28 @@ func TestEvaluationsEndpoint(t *testing.T) {
 	}
 	if code, _ := post(uuid.New(), `{`+subject+`,"evaluations":[{"action":{"name":"doc:read"}}]}`); code != http.StatusForbidden {
 		t.Errorf("another organization's path: %d, want 403", code)
+	}
+}
+
+// newService returns the evaluation service over rbacRepo, rebacSvc and
+// decider, keeping decisions in a log nothing writes out.
+func newService(t *testing.T, rbacRepo rbacChecker, rebacSvc rebacChecker, decider *decide.Decider) *Service {
+	t.Helper()
+	svc, err := NewService(rbacRepo, rebacSvc, decider, decisionlog.New(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return svc
+}
+
+// TestNewServiceNeedsItsDependencies checks that the evaluation service can't
+// be built without its decider or its decision log.
+func TestNewServiceNeedsItsDependencies(t *testing.T) {
+	decider := decide.New(noGrants{}, noRelations{}, &secretDenied{})
+	if svc, err := NewService(noGrants{}, noRelations{}, nil, decisionlog.New(nil)); err == nil {
+		t.Errorf("NewService without a decider: %v, nil; want an error", svc)
+	}
+	if svc, err := NewService(noGrants{}, noRelations{}, decider, nil); err == nil {
+		t.Errorf("NewService without a decision log: %v, nil; want an error", svc)
 	}
 }

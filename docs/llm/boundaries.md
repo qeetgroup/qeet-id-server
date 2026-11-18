@@ -3,7 +3,7 @@
 **Level:** L2 — repository · **Last verified:** 2026-11-15
 **Verification scope:** ownership, inputs, outputs and security boundaries were checked against the
 repository at `c2454fec`; the L1 repository map supplies the cross-repository ownership. Boundary
-rules R1/R2 were checked against `depguard` in `.golangci.yml`.
+rules R1–R6 were checked against `depguard` in `.golangci.yml` on 2026-11-18.
 
 What this repository owns, what it must not touch, and which changes leave it.
 

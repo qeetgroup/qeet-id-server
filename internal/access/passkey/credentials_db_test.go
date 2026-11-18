@@ -10,7 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -24,7 +24,7 @@ func TestPasskeyChangesAreAuditedAndTold(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := signInService(t)
 	mail := &dbtest.Mailbox{}
-	svc.SetSender(mail)
+	svc.sender = mail
 	organization := dbtest.Organization(t)
 	a, other := dbtest.User(t, organization, organization), dbtest.User(t, organization, organization)
 	who := Requester{Actor: audit.Actor{UserID: &a.ID, Type: "user", IP: "192.0.2.7", RequestID: "req-passkey"}, OrganizationID: &organization}

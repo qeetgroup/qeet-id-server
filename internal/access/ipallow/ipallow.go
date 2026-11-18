@@ -16,7 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/ipallow/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -114,11 +114,9 @@ func (d Decision) sentence() string {
 	return "allowed"
 }
 
-// CheckResult is what Check makes of an address. ReasonCode is "ip." and the
-// Decision.Reason, or CodeEnforcementOff; Reason is the same in English.
-// ReasonParams names the deny rule's CIDR when one refused it. Rules is what
-// the rules decide whatever the enforcement flag, so they can be tried before
-// they're turned on; with enforcement on it matches the rest.
+// CheckResult is what Check makes of an address. ReasonCode is "ip." and the Decision.Reason, or
+// CodeEnforcementOff; Reason is the same in English; ReasonParams names a refusing rule's CIDR. Rules
+// is what the rules decide whatever the enforcement flag, so they can be tried before they're on.
 type CheckResult struct {
 	Enabled      bool           `json:"enabled"`
 	Allowed      bool           `json:"allowed"`

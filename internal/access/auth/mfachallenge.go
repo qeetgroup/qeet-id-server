@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/auth/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -119,9 +119,6 @@ func (m metChallenge) method() string {
 // wrong proof is recorded as a failed sign-in and leaves the challenge for a
 // retry.
 func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken string, proof MFAProof, ip, ua string) (metChallenge, error) {
-	if s.mfa == nil {
-		return metChallenge{}, errs.ErrNotImplemented
-	}
 	id, err := uuid.Parse(mfaToken)
 	if err != nil {
 		return metChallenge{}, errs.ErrAuthSessionInvalid
@@ -233,11 +230,10 @@ func (s *Service) refuseUnmeetable(ctx context.Context, tx pgx.Tx, c dbgen.LockM
 	return false, nil
 }
 
-// checkProof reports whether proof meets challenge c, inside tx, noting on met
-// what it met: a risk challenge is confirmed by the latest code sent to the
-// verified email, and meets no second factor, so the session starts with no
-// step-up; an enrolment by the code confirming the app set up for it (minting
-// recovery codes); any other by one of the person's factors.
+// checkProof reports whether proof meets challenge c, inside tx, noting on met what it met: a risk
+// challenge by the latest code sent to the verified email (meeting no second factor, so no step-up),
+// an enrolment by a code from the app set up for it (minting recovery codes), any other by one of
+// the person's factors.
 func (s *Service) checkProof(ctx context.Context, tx pgx.Tx, c dbgen.LockMFAChallengeForProofRow, met *metChallenge, proof MFAProof) (bool, error) {
 	switch {
 	case c.RiskEmail:
@@ -260,11 +256,10 @@ func (s *Service) checkProof(ctx context.Context, tx pgx.Tx, c dbgen.LockMFAChal
 	}
 }
 
-// failProof records a wrong proof of challenge id and returns the answer: it
-// counts against the challenge (removed at its last attempt) and, at the end
-// of a long run of wrong answers (streak), locks second-factor sign-in, then
-// commits tx and records the failed sign-in. accountRemaining is what is left
-// of the account's own attempts.
+// failProof records a wrong proof of challenge id and returns the answer: it counts against the
+// challenge (removed at its last attempt) and, after a long run of wrong answers (streak), locks
+// second-factor sign-in, then commits tx and records the failed sign-in. accountRemaining is what is
+// left of the account's own attempts.
 func (s *Service) failProof(ctx context.Context, tx pgx.Tx, q *dbgen.Queries, id uuid.UUID, c dbgen.LockMFAChallengeForProofRow,
 	proof MFAProof, streak dbgen.CountMFAAttemptRow, accountRemaining int, ip, ua string) error {
 	lockNow := streak.Failures >= maxMFAFailureStreak
@@ -382,9 +377,6 @@ func (s *Service) lockMFASignIn(ctx context.Context, tx pgx.Tx, userID uuid.UUID
 // noticeMFALocked tells the person their second-factor sign-in locked, as
 // whoever entered the codes knew their password. Best effort: the lock stands.
 func (s *Service) noticeMFALocked(ctx context.Context, userID uuid.UUID) {
-	if s.sender == nil {
-		return
-	}
 	email, err := s.q.AccountEmail(ctx, userID)
 	if err != nil {
 		slog.Warn("auth: could not read the address for an MFA lock notice", "user_id", userID, "err", err)

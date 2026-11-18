@@ -87,11 +87,11 @@ func TestEverySignInRunsTheLoginHook(t *testing.T) {
 			svc := newService(t)
 			var calls int
 			var asked uuid.UUID
-			svc.SetLoginHook(hookFunc(func(_ context.Context, organizationID, _ uuid.UUID, _ string) (map[string]any, error) {
+			svc.loginHook = hookFunc(func(_ context.Context, organizationID, _ uuid.UUID, _ string) (map[string]any, error) {
 				calls++
 				asked = organizationID
 				return nil, errs.ErrAuthHookDenied
-			}))
+			})
 			before := sessions()
 			if err := signIn(svc); !errors.Is(err, errs.ErrAuthHookDenied) {
 				t.Fatalf("refused by the hook: %v, want %v", err, errs.ErrAuthHookDenied)
@@ -103,10 +103,10 @@ func TestEverySignInRunsTheLoginHook(t *testing.T) {
 				t.Errorf("a refused sign-in opened %d sessions", n-before)
 			}
 
-			svc.SetLoginHook(hookFunc(func(context.Context, uuid.UUID, uuid.UUID, string) (map[string]any, error) {
+			svc.loginHook = hookFunc(func(context.Context, uuid.UUID, uuid.UUID, string) (map[string]any, error) {
 				calls++
 				return nil, nil
-			}))
+			})
 			calls = 0
 			if err := signIn(svc); err != nil {
 				t.Fatalf("allowed by the hook: %v", err)

@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
@@ -18,8 +19,7 @@ import (
 // recordAt writes one audit event for organization as if at at, and returns its id.
 func recordAt(t *testing.T, organization uuid.UUID, action string, at time.Time) uuid.UUID {
 	t.Helper()
-	clock = func() time.Time { return at }
-	defer func() { clock = time.Now }()
+	defer audit.SetClock(func() time.Time { return at })()
 	return record(t, organization, action)
 }
 

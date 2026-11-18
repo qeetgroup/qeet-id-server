@@ -16,7 +16,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
@@ -31,12 +31,7 @@ func TestMain(m *testing.M) { dbtest.Main(m) }
 func TestWebhooksStayInTheirOrganization(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	box, err := envelope.New([]byte("0123456789abcdef0123456789abcdef"))
-	if err != nil {
-		t.Fatalf("cipher: %v", err)
-	}
-	svc := NewService(pool)
-	svc.SetCipher(box)
+	svc := testService(t)
 	organizationA, organizationB := dbtest.Organization(t), dbtest.Organization(t)
 	adminA, adminB := dbtest.User(t, organizationA, organizationA), dbtest.User(t, organizationB, organizationB)
 
@@ -150,18 +145,43 @@ func (e *endpoint) last(eventType string) (*received, int) {
 	return found, len(e.received)
 }
 
-// dispatchService returns a webhook service that may deliver to a local
-// endpoint.
-func dispatchService(t *testing.T) *Service {
+// testDeps are a webhook service's dependencies for a test: a fixed cipher,
+// every plan including webhooks, and alerts recorded.
+func testDeps(t *testing.T) Deps {
 	t.Helper()
 	box, err := envelope.New([]byte("0123456789abcdef0123456789abcdef"))
 	if err != nil {
 		t.Fatalf("cipher: %v", err)
 	}
-	svc := NewService(dbtest.Pool(t), egress.DevelopmentPolicy())
-	svc.SetCipher(box)
+	return Deps{Cipher: box, PlanGate: allPlans{}, Notifier: &alerts{}}
+}
+
+// testService returns a webhook service built with testDeps, changed by each
+// of change.
+func testService(t *testing.T, change ...func(*Deps)) *Service {
+	t.Helper()
+	d := testDeps(t)
+	for _, c := range change {
+		c(&d)
+	}
+	svc, err := NewService(dbtest.Pool(t), d)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return svc
 }
+
+// dispatchService returns a webhook service that may deliver to a local
+// endpoint, changed by each of change.
+func dispatchService(t *testing.T, change ...func(*Deps)) *Service {
+	t.Helper()
+	return testService(t, append([]func(*Deps){func(d *Deps) { d.Egress = egress.DevelopmentPolicy() }}, change...)...)
+}
+
+// allPlans includes webhooks in every organization's plan.
+type allPlans struct{}
+
+func (allPlans) FeatureAllowed(context.Context, uuid.UUID, string) (bool, error) { return true, nil }
 
 // subscribe subscribes url to events in organization.
 func subscribe(t *testing.T, svc *Service, organization uuid.UUID, url string, events ...string) *Subscription {

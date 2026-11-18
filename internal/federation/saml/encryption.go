@@ -16,7 +16,6 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 )
 
 const (
@@ -38,17 +37,10 @@ const spEncryptionKeyDescriptor = `
       <EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p"/>
     </KeyDescriptor>`
 
-// SetCipher sets the envelope cipher the connections' SP keys are sealed with.
-// Without one no key is made, and an encrypted assertion is refused.
-func (s *Service) SetCipher(box *envelope.Cipher) { s.box = box }
-
 // encryptionCertificate returns, base64 DER, the certificate conn's IdP
 // encrypts assertions to, making the connection's key pair the first time it
-// is asked for; "" without a cipher.
+// is asked for.
 func (s *Service) encryptionCertificate(ctx context.Context, conn *Connection) (string, error) {
-	if s.box == nil {
-		return "", nil
-	}
 	key := dbgen.GetSamlConnectionKeyParams{ConnectionID: conn.ID, OrganizationID: conn.OrganizationID}
 	row, err := s.q.GetSamlConnectionKey(ctx, key)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -113,9 +105,6 @@ func (s *Service) createEncryptionKey(ctx context.Context, conn *Connection) err
 // decryptionKey returns conn's SP key pair for decrypting its IdP's
 // assertions, or nil when it has none.
 func (s *Service) decryptionKey(ctx context.Context, conn *Connection) (*tls.Certificate, error) {
-	if s.box == nil {
-		return nil, nil
-	}
 	row, err := s.q.GetSamlConnectionKey(ctx, dbgen.GetSamlConnectionKeyParams{ConnectionID: conn.ID, OrganizationID: conn.OrganizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil

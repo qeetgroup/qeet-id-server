@@ -1,8 +1,6 @@
-// Package connections seeds how each organization connects to other systems:
-// social sign-in providers, SAML and OpenID Connect identity providers with
-// their group mappings and break-glass members, SAML service providers and
-// who is assigned to them, LDAP directories, SCIM provisioning, OIDC
-// applications and their grants, and enterprise-setup links.
+// Package connections seeds how each organization connects to other systems: social, SAML and OIDC
+// identity providers (with group mappings and break-glass members), SAML service providers, LDAP,
+// SCIM, OIDC applications and their grants, and enterprise-setup links.
 package connections
 
 import (
@@ -29,7 +27,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/social"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ssosync"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 )
 
 // fed is the step's state: what the summary needs.

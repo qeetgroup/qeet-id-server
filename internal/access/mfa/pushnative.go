@@ -111,9 +111,9 @@ type APNsConfig struct {
 	Sandbox  bool   // development builds: api.sandbox.push.apple.com
 }
 
-// EnableAPNs turns on delivery to the iOS app. It fails on a key or setting that can't work,
-// so a misconfigured server stops at startup rather than at the first sign-in.
-func (s *Service) EnableAPNs(cfg APNsConfig) error {
+// enableAPNs turns on delivery to the iOS app, failing on a key or setting
+// that can't work.
+func (s *Service) enableAPNs(cfg APNsConfig) error {
 	c, err := newAPNsClient(cfg, pushHTTPClient())
 	if err != nil {
 		return err
@@ -268,8 +268,9 @@ type FCMConfig struct {
 	ServiceAccountJSON string
 }
 
-// EnableFCM turns on delivery to the Android app, failing at startup on an unusable account.
-func (s *Service) EnableFCM(cfg FCMConfig) error {
+// enableFCM turns on delivery to the Android app, failing on an unusable
+// account.
+func (s *Service) enableFCM(cfg FCMConfig) error {
 	c, err := newFCMClient(cfg, pushHTTPClient())
 	if err != nil {
 		return err

@@ -6,7 +6,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/group/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -15,12 +15,9 @@ import (
 // Joining a group that carries a role gives a user holding none a seat,
 // refused with errs.ErrPlanLimit once the plan's seats are all taken.
 func (s *Service) AddMember(ctx context.Context, groupID, userID, organizationID uuid.UUID, actor audit.Actor) error {
-	limit := -1
-	if s.seats != nil {
-		var err error
-		if limit, err = s.seats.SeatLimit(ctx, organizationID); err != nil {
-			return err
-		}
+	limit, err := s.seats.SeatLimit(ctx, organizationID)
+	if err != nil {
+		return err
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -46,12 +43,7 @@ func (s *Service) AddMember(ctx context.Context, groupID, userID, organizationID
 		}
 		return err
 	}
-	if s.seats != nil {
-		err = s.seats.WithinSeats(ctx, tx, organizationID, limit, insert)
-	} else {
-		err = insert()
-	}
-	if err != nil {
+	if err := s.seats.WithinSeats(ctx, tx, organizationID, limit, insert); err != nil {
 		return err
 	}
 	if err := audit.Record(ctx, tx, actor.Event(organizationID, "group.member_added", "group", groupID,

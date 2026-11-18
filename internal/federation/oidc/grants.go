@@ -10,18 +10,16 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
-// Grant is the current (non-revoked, non-rotated, unexpired) refresh token in
-// an OIDC authorization_code grant chain — what an admin sees as an active
-// "access token" for a (client, user) pair. AuthorizedAt is when the grant
-// began; LastUsedAt (and IssuedAt) when the application was last issued tokens
-// under it; ConsentedAt when the person last consented to the application,
-// nil when it asked for no consent.
+// Grant is the current (not revoked, rotated or expired) refresh token of an OIDC authorization_code
+// grant chain: an admin's active "access token" for a (client, user) pair. AuthorizedAt is when the
+// grant began, LastUsedAt (and IssuedAt) the last token issue under it, ConsentedAt the person's last
+// consent (nil when none was asked).
 type Grant struct {
 	ID           uuid.UUID  `json:"id"`
 	ClientID     string     `json:"client_id"`

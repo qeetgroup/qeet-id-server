@@ -31,6 +31,8 @@ func TestUsersStayInTheirOrganization(t *testing.T) {
 		Repo:           NewRepository(pool),
 		Validate:       validator.New(validator.WithRequiredStructEnabled()),
 		PasswordPolicy: func(context.Context, uuid.UUID, string, string) error { return nil },
+		SignIns:        endSessions{},
+		Mailer:         &dbtest.Mailbox{},
 		ActOnCheck:     rbac.NewRepository(pool).CheckActOn,
 	}
 	asB := dbtest.Serve(dbtest.Principal(adminB.ID, organizationB), h.Mount)

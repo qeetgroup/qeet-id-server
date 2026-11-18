@@ -33,12 +33,8 @@ type activityRelatedSet struct {
 	ByActor     []ActivityEvent `json:"by_actor"`
 }
 
-// related serves GET /v1/activity/{id}/related: the anchor event, the events
-// sharing its request_id, and the same actor's events within the time window.
-// An unknown or other-organization id is a 404; no event appears in both lists.
-// event serves GET /organizations/{organizationID}/activity/{id}: one of the
-// organization's events, with its metadata, actor and browser. Another
-// organization's id answers 404, like an unknown one.
+// event serves GET /organizations/{organizationID}/activity/{id}: one of the organization's events,
+// with its metadata, actor and browser. Another organization's id answers 404, like an unknown one.
 func (h *Handler) event(w http.ResponseWriter, r *http.Request) {
 	organizationID, err := httpx.PathOrganization(r)
 	if err != nil {
@@ -65,6 +61,9 @@ func (h *Handler) event(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, mapAuditRow(toAuditRow(row)))
 }
 
+// related serves GET /v1/activity/{id}/related: the anchor event, the events sharing its request_id,
+// and the same actor's events within the time window. An unknown or other-organization id is a 404;
+// no event appears in both lists.
 func (h *Handler) related(w http.ResponseWriter, r *http.Request) {
 	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {

@@ -11,7 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -21,7 +21,7 @@ import (
 func TestExportSelfCoversEveryOrganization(t *testing.T) {
 	home, other := dbtest.Organization(t), dbtest.Organization(t)
 	a := dbtest.User(t, home, home, other)
-	h := &Handler{Service: NewService(dbtest.Pool(t), 30*24*time.Hour)}
+	h := handler(t, testService(t, dbtest.Pool(t), 30*24*time.Hour), noPassword{})
 	rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(a.ID, home), h.Mount), http.MethodPost, "/account/export", nil)
 	var body struct {
 		Profile struct {
@@ -93,7 +93,7 @@ func TestExportsCoverEveryPart(t *testing.T) {
 	signedIn(t, organization, a.ID, "auth.sign_in_failed")
 	signedIn(t, other, a.ID, "auth.login_succeeded")
 
-	svc := NewService(dbtest.Pool(t), 0)
+	svc := testService(t, dbtest.Pool(t), 0)
 	h := requests(t, svc)
 	var own exported
 	rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(a.ID, organization), h.Mount), http.MethodPost, "/account/export", nil)

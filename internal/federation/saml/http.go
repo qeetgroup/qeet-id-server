@@ -31,11 +31,9 @@ func (h *Handler) checkTrust(r *http.Request, organizationID, id uuid.UUID) erro
 	return identitylink.CheckTrustChange(r.Context(), h.Service.Pool(), httpx.PrincipalFromCtx(r.Context()), h.ActOnCheck, organizationID, id, "")
 }
 
-// binding ties an SP-initiated sign-in to the browser that began it, so the
-// ACS completes it only there, or whoever began one could post its answer
-// from someone else's browser and sign them in as themselves. SameSite=None,
-// as the IdP posts its answer cross-site; Lax where the cookie can't be Secure
-// (development).
+// binding ties an SP-initiated sign-in to the browser that began it, so the ACS completes it only
+// there; otherwise whoever began one could post its answer from someone else's browser and sign them in
+// as themselves. SameSite=None, as the IdP posts cross-site; Lax where it can't be Secure (development).
 func (h *Handler) binding() httpx.BindingCookie {
 	sameSite := http.SameSiteNoneMode
 	if !h.CookieSecure {

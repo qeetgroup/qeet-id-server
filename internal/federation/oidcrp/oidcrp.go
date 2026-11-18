@@ -1,9 +1,7 @@
-// Package oidcrp is the OpenID Connect relying party that organizations'
-// single sign-on connections and social providers sign people in through: it
-// reads a provider's discovery document, trades an authorization code for its
-// tokens and checks the ID token against the provider's published keys. Every
-// request goes through the outbound policy; documents and keys are cached in
-// memory.
+// Package oidcrp is the OpenID Connect relying party behind single sign-on connections and social
+// providers: it reads a provider's discovery document, trades an authorization code for tokens and
+// checks the ID token against the provider's keys. Every request goes through the outbound policy;
+// documents and keys are cached in memory.
 package oidcrp
 
 import (

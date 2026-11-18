@@ -241,10 +241,10 @@ func TestDeliverPushRoutesByPlatform(t *testing.T) {
 
 func TestEnablingPushRefusesUnusableCredentials(t *testing.T) {
 	s := &Service{}
-	if err := s.EnableAPNs(APNsConfig{AuthKey: "not a key", KeyID: "K", TeamID: "T", BundleID: "B"}); err == nil {
+	if err := s.enableAPNs(APNsConfig{AuthKey: "not a key", KeyID: "K", TeamID: "T", BundleID: "B"}); err == nil {
 		t.Error("APNs accepted a key that is not PEM")
 	}
-	if err := s.EnableFCM(FCMConfig{ServiceAccountJSON: `{"project_id":"p"}`}); err == nil {
+	if err := s.enableFCM(FCMConfig{ServiceAccountJSON: `{"project_id":"p"}`}); err == nil {
 		t.Error("FCM accepted a service account without a key")
 	}
 	if s.apns != nil || s.fcm != nil {

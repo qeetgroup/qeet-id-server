@@ -22,7 +22,7 @@ import (
 func TestSignupRefusedOnADomainAnOrganizationManages(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := newService(t)
-	svc.SetRegistrationPolicy(anyPassword{})
+	svc.regPolicy = anyPassword{}
 	organization, manager := dbtest.Organization(t), dbtest.Organization(t)
 	domain := dbtest.Domain(t, manager)
 	accounts := func(email string) int {
@@ -46,7 +46,7 @@ func TestSignupRefusedOnADomainAnOrganizationManages(t *testing.T) {
 		t.Errorf("registration in the organization that manages the domain: %v; want an account", err)
 	}
 
-	h := &Handler{Service: svc, Validate: validator.New()}
+	h := &Handler{Service: svc, Throttle: passThrough, Bot: noBots{}, Validate: validator.New()}
 	srv := chi.NewRouter()
 	h.Mount(srv)
 	type answer struct {
@@ -79,8 +79,8 @@ func TestSignupRefusedOnADomainAnOrganizationManages(t *testing.T) {
 // has an account gets the neutral answer, not one naming the email.
 func TestSignupAnswersAlike(t *testing.T) {
 	svc := newService(t)
-	svc.SetRegistrationPolicy(anyPassword{})
-	h := &Handler{Service: svc, Validate: validator.New()}
+	svc.regPolicy = anyPassword{}
+	h := &Handler{Service: svc, Throttle: passThrough, Bot: noBots{}, Validate: validator.New()}
 	a, organization := member(t)
 	srv := chi.NewRouter()
 	h.Mount(srv)

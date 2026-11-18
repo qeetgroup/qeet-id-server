@@ -92,11 +92,9 @@ func (s *Service) PlatformAttributes(ctx context.Context, r Request) (subject, c
 	return subject, ctxAttrs, nil
 }
 
-// attributeBag builds the bag policies see for in, with the resource's type,
-// id and attrs merged into one namespace, and the action's name and attrs into
-// another. The type, id and name the request decides on win over an attribute
-// of the same name, so a condition never sees a resource the policies weren't
-// chosen for.
+// attributeBag builds the bag policies see for in: the resource's type, id and attrs in one namespace,
+// the action's name and attrs in another. The decided type, id and name win over a same-named
+// attribute, so a condition never sees a resource the policies weren't chosen for.
 func attributeBag(in EvaluationInput) AttributeBag {
 	resourceAttrs := withAttrs(in.Resource.Attrs, map[string]any{"type": in.Resource.Type, "id": in.Resource.ID})
 	subject := in.Subject

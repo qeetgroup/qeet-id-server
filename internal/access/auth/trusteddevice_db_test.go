@@ -25,11 +25,11 @@ import (
 func TestRememberedDeviceSkipsTheFactor(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := newService(t)
-	svc.SetMFA(heldFactor{code: "135790"})
+	svc.mfa = heldFactor{code: "135790"}
 	risk := &riskStub{}
-	svc.SetRiskAssessor(risk)
+	svc.riskAssessor = risk
 	a, home := member(t)
-	svc.SetDevicePolicy(rememberIn(home))
+	svc.devicePolicy = rememberIn(home)
 	colleague := dbtest.User(t, home, home)
 	dbtest.SetPassword(t, colleague.ID, testPassword)
 	other := dbtest.Organization(t)
@@ -82,7 +82,7 @@ func TestRememberedDeviceSkipsTheFactor(t *testing.T) {
 		{"another person", colleague, device, func() {}},
 		{"trust from another organization", a, elsewhere, func() {}},
 		{"a risky sign-in", a, device, func() { risk.risky = true }},
-		{"an organization that stopped remembering devices", a, device, func() { svc.SetDevicePolicy(rememberIn(uuid.Nil)) }},
+		{"an organization that stopped remembering devices", a, device, func() { svc.devicePolicy = rememberIn(uuid.Nil) }},
 		{"an expired device", a, device, func() {
 			if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE auth.trusted_devices SET expires_at = NOW() - INTERVAL '1 second' WHERE token_hash = $1`, tokens.HashRefresh(device)); err != nil {
 				t.Fatal(err)
@@ -93,7 +93,7 @@ func TestRememberedDeviceSkipsTheFactor(t *testing.T) {
 			tc.setup()
 			defer func() {
 				risk.risky = false
-				svc.SetDevicePolicy(rememberIn(home))
+				svc.devicePolicy = rememberIn(home)
 			}()
 			if rec, _ := signInOn(tc.u, tc.raw); skipped(rec) || rec.Code != http.StatusOK {
 				t.Errorf("sign in: %d %s, want a challenge", rec.Code, rec.Body.String())
@@ -120,9 +120,9 @@ func TestRememberedDeviceSkipsTheFactor(t *testing.T) {
 func TestRememberedDeviceForAnotherOrganizationsApplication(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := newService(t)
-	svc.SetMFA(heldFactor{code: "135790"})
+	svc.mfa = heldFactor{code: "135790"}
 	a, home := member(t)
-	svc.SetDevicePolicy(rememberIn(home))
+	svc.devicePolicy = rememberIn(home)
 	strict := requiringOrganization(t, a)
 	client := dbtest.Unique("app")
 	if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO auth.oidc_clients (organization_id, client_id, name) VALUES ($1, $2, $2)`, strict, client); err != nil {

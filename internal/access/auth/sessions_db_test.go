@@ -472,7 +472,7 @@ func TestPurgeEndedSessions(t *testing.T) {
 func TestPasswordOverHTTP(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := newService(t)
-	svc.SetRegistrationPolicy(anyPassword{})
+	svc.regPolicy = anyPassword{}
 	const next = "Nx8!rTq4-Lw2mZ"
 	serve := func(a dbtest.Account, organization uuid.UUID, session *TokenPair) http.Handler {
 		p := dbtest.Principal(a.ID, organization)

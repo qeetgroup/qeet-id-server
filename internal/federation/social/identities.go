@@ -55,11 +55,9 @@ func (s *Service) ListIdentities(ctx context.Context, userID, organizationID uui
 	return out, nil
 }
 
-// Unlink is an administrator removing an identity linked to an account in
-// their organization: organization-scoped, so an identity can only be removed within
-// its organization. Refused when mayChange refuses the account (it runs before the
-// transaction opens), and, recorded, when it is the account's only way to sign
-// in.
+// Unlink is an administrator removing an identity linked to an account in their organization, within
+// that organization only. Refused when mayChange refuses the account (checked before the transaction)
+// and, recorded, when it is the account's only way to sign in.
 func (s *Service) Unlink(ctx context.Context, id, organizationID uuid.UUID, by user.Remover, mayChange func(owner uuid.UUID) error) error {
 	// The account's other ways to sign in span its organizations.
 	ctx = postgres.AcrossOrganizations(ctx)

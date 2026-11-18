@@ -111,7 +111,7 @@ func TestOwnersAndTheOwnerRoleStayProtected(t *testing.T) {
 		}
 	}
 
-	h := &Handler{Repo: repo, Service: NewService(repo), Validate: validator.New(validator.WithRequiredStructEnabled())}
+	h := &Handler{Repo: repo, Service: newRoleService(t, repo), Validate: validator.New(validator.WithRequiredStructEnabled())}
 	as := func(u uuid.UUID) http.Handler { return dbtest.Serve(dbtest.Principal(u, organization), h.Mount) }
 	for _, tc := range []struct {
 		name         string
@@ -187,7 +187,7 @@ func TestBuiltinRolesHoldTheirDefinitions(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	h := &Handler{Repo: repo, Service: NewService(repo), Validate: validator.New(validator.WithRequiredStructEnabled())}
+	h := &Handler{Repo: repo, Service: newRoleService(t, repo), Validate: validator.New(validator.WithRequiredStructEnabled())}
 	asOwner := dbtest.Serve(dbtest.Principal(owner.ID, organization), h.Mount)
 	for _, tc := range []struct{ name, method, path string }{
 		{"an owner grants organization.delete to admin", http.MethodPost, "/roles/" + roles["admin"].String() + "/permissions/" + organizationDelete.String()},
@@ -238,7 +238,7 @@ func TestRemovingARoleFromAGroupNeedsTheRole(t *testing.T) {
 		}
 	}
 	h := dbtest.Serve(dbtest.Principal(editor.ID, organization),
-		(&Handler{Repo: repo, Service: NewService(repo), Validate: validator.New(validator.WithRequiredStructEnabled())}).Mount)
+		(&Handler{Repo: repo, Service: newRoleService(t, repo), Validate: validator.New(validator.WithRequiredStructEnabled())}).Mount)
 	unassign := func(role uuid.UUID) (int, string) {
 		rec := dbtest.Do(t, h, http.MethodDelete, "/organizations/"+organization.String()+"/groups/"+group.String()+"/roles/"+role.String(), nil)
 		return rec.Code, rec.Body.String()

@@ -21,8 +21,7 @@ func TestAlertsCanBeListedChangedPausedAndRemoved(test *testing.T) {
 	ctx := dbtest.Context(test)
 	organizationID, other := dbtest.Organization(test), dbtest.Organization(test)
 	admin, otherAdmin := dbtest.User(test, organizationID, organizationID), dbtest.User(test, other, other)
-	service := NewService(&scimFixture{config: &scim.ConfigView{}}, &ldapFixture{})
-	service.SetEventStore(pool)
+	service := newService(test, pool, &scimFixture{config: &scim.ConfigView{}}, &ldapFixture{})
 	as := func(user, organization uuid.UUID) http.Handler {
 		return dbtest.Serve(dbtest.Principal(user, organization), (&Handler{Service: service}).Mount)
 	}

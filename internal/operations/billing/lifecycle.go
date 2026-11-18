@@ -12,8 +12,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/billing/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/emailtmpl"
@@ -31,11 +31,9 @@ type PeriodEndRun struct {
 	Ended, Renewed, PastDue, Failed int
 }
 
-// RunPeriodEnds acts on every subscription whose trial or period has ended. A
-// trial, or a plan marked to cancel, ends and the organization moves to free.
-// A free plan starts its next period. A paid plan is billed for its next
-// period with an open renewal invoice and is past due until it is paid; still
-// unpaid after the payment grace, it ends. Each change is audited on the
+// RunPeriodEnds acts on every subscription whose trial or period has ended: a trial or a plan marked
+// to cancel moves to free; a free plan starts its next period; a paid plan gets an open renewal invoice
+// and is past due until paid, ending once the payment grace runs out. Each change is audited on the
 // organization's chain, and running again changes nothing more.
 func (s *Service) RunPeriodEnds(ctx context.Context) (PeriodEndRun, error) {
 	var run PeriodEndRun
@@ -250,12 +248,10 @@ func (s *Service) PayInvoice(ctx context.Context, organizationID, invoiceID uuid
 		return nil, ErrInvoiceNotOpen
 	}
 	var provider PaymentProvider
-	if s.payments != nil {
-		if p, err := billingProfile(ctx, s.q, organizationID); err == nil && p != nil && p.Country != "" {
-			provider = s.payments.forCountry(p.Country)
-		} else {
-			provider = s.payments.forCurrency(inv.Currency)
-		}
+	if p, err := billingProfile(ctx, s.q, organizationID); err == nil && p != nil && p.Country != "" {
+		provider = s.payments.forCountry(p.Country)
+	} else {
+		provider = s.payments.forCurrency(inv.Currency)
 	}
 	if provider == nil {
 		return nil, errs.ErrUnprocessable.
@@ -281,14 +277,28 @@ func (s *Service) PayInvoice(ctx context.Context, organizationID, invoiceID uuid
 	}, name, successURL, cancelURL)
 }
 
-// SendInvoiceEmails emails each invoice issued in the last day, and not yet
-// emailed, to the billing address it was billed to, and returns how many it
-// sent. Zero invoices aren't sent. An invoice whose send fails is tried again
-// on the next run.
-func (s *Service) SendInvoiceEmails(ctx context.Context) (int, error) {
-	if s.mailer == nil {
-		return 0, nil
+// InvoiceEmails emails each newly issued invoice to the address it was billed
+// to, linking to the console at consoleURL.
+type InvoiceEmails struct {
+	q          *dbgen.Queries
+	mailer     notifier.Sender
+	consoleURL string
+}
+
+// NewInvoiceEmails returns the invoice emails of svc's invoices, sent through
+// mailer. It refuses a nil svc or mailer.
+func NewInvoiceEmails(svc *Service, mailer notifier.Sender, consoleURL string) (*InvoiceEmails, error) {
+	if svc == nil || mailer == nil {
+		return nil, errors.New("billing: invoice emails need the billing service and a mailer")
 	}
+	return &InvoiceEmails{q: svc.q, mailer: mailer, consoleURL: strings.TrimRight(consoleURL, "/")}, nil
+}
+
+// Send emails each invoice issued in the last day, and not yet emailed, to
+// the billing address it was billed to, and returns how many it sent. Zero
+// invoices aren't sent. An invoice whose send fails is tried again on the
+// next run.
+func (s *InvoiceEmails) Send(ctx context.Context) (int, error) {
 	rows, err := s.q.ClaimInvoiceEmails(ctx)
 	if err != nil {
 		return 0, err
@@ -313,7 +323,7 @@ func (s *Service) SendInvoiceEmails(ctx context.Context) (int, error) {
 }
 
 // invoiceEmail is the message telling to that an invoice was issued.
-func (s *Service) invoiceEmail(row dbgen.ClaimInvoiceEmailsRow, to string) notifier.Message {
+func (s *InvoiceEmails) invoiceEmail(row dbgen.ClaimInvoiceEmailsRow, to string) notifier.Message {
 	number := ""
 	if row.InvoiceNumber != nil {
 		number = " " + *row.InvoiceNumber

@@ -4,6 +4,7 @@
 package invite
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"strings"
@@ -15,8 +16,8 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authpolicy"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/invite/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -67,40 +68,53 @@ type CreateInput struct {
 	RoleID         *uuid.UUID `json:"role_id"`
 }
 
-// Service manages invitations. Until SetPasswordRules is called Accept refuses
-// with 501 rather than set an unchecked password; without SetPlanLimiter there
-// is no seat limit; without SetGrantCheck an invitation a person sent with a
-// role is refused at acceptance.
+// Service manages invitations.
 type Service struct {
+	*Seats
 	pool       *pgxpool.Pool
 	q          *dbgen.Queries
 	sender     notifier.Sender
 	ttl        time.Duration
 	baseAppURL string
 	rules      authpolicy.PasswordRules
-	limits     entitlements.PlanLimiter
 	methods    authpolicy.SignInMethodsChecker
 	grants     func(ctx context.Context, caller *httpx.Principal, organizationID, roleID uuid.UUID) error
 }
 
-// NewService returns the invitation service.
-func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, baseAppURL string) *Service {
-	if ttl <= 0 {
-		ttl = 14 * 24 * time.Hour
-	}
-	return &Service{pool: pool, q: dbgen.New(pool), sender: sender, ttl: ttl, baseAppURL: baseAppURL}
+// Deps are what the invitation service is built from. Every field is
+// required but TTL.
+type Deps struct {
+	Sender     notifier.Sender
+	TTL        time.Duration // how long an invitation stays good (zero: 14 days)
+	BaseAppURL string        // where an invitation's link points
+	// Rules is the password check Accept runs; Methods the sign-in methods an
+	// organization allows, which decide how an invitation may be accepted.
+	Rules   authpolicy.PasswordRules
+	Methods authpolicy.SignInMethodsChecker
+	Limits  entitlements.PlanLimiter // the plan's seats
+	// Grants checks that whoever sent an invitation may still give its role
+	// when it is accepted (rbac.Repository.CheckGrantRole).
+	Grants func(ctx context.Context, caller *httpx.Principal, organizationID, roleID uuid.UUID) error
 }
 
-// SetPasswordRules sets the password check Accept runs.
-func (s *Service) SetPasswordRules(r authpolicy.PasswordRules) { s.rules = r }
-
-// SetPlanLimiter sets the seat-limit checker (nil disables the limit).
-func (s *Service) SetPlanLimiter(l entitlements.PlanLimiter) { s.limits = l }
-
-// SetGrantCheck sets the check that whoever sent an invitation may still give
-// its role when it is accepted (rbac.Repository.CheckGrantRole).
-func (s *Service) SetGrantCheck(check func(ctx context.Context, caller *httpx.Principal, organizationID, roleID uuid.UUID) error) {
-	s.grants = check
+// NewService returns the invitation service built from d.
+func NewService(pool *pgxpool.Pool, d Deps) (*Service, error) {
+	switch {
+	case d.Sender == nil:
+		return nil, errors.New("invite: the invitation service needs a sender")
+	case d.Rules == nil:
+		return nil, errors.New("invite: the invitation service needs password rules")
+	case d.Methods == nil:
+		return nil, errors.New("invite: the invitation service needs sign-in methods")
+	case d.Grants == nil:
+		return nil, errors.New("invite: the invitation service needs a grant check")
+	}
+	seats, err := NewSeats(pool, d.Limits)
+	if err != nil {
+		return nil, err
+	}
+	return &Service{Seats: seats, pool: pool, q: dbgen.New(pool), sender: d.Sender, ttl: cmp.Or(d.TTL, 14*24*time.Hour),
+		baseAppURL: d.BaseAppURL, rules: d.Rules, methods: d.Methods, grants: d.Grants}, nil
 }
 
 func inviteFromInsertRow(row dbgen.InsertInviteRow) Invite {

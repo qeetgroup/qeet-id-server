@@ -74,7 +74,7 @@ contracts:
 data:
   database: postgresql
   driver: pgx/v5
-  query_codegen: sqlc      # 56 queries.sql, listed in the root sqlc.yaml -> dbgen packages
+  query_codegen: sqlc      # 61 queries.sql, listed in the root sqlc.yaml -> dbgen packages
   migrations:
     path: internal/platform/database/migrations/
     tool: golang-migrate
@@ -103,7 +103,7 @@ security:
   authentication: internal/platform/http/httpx/auth.go
   authorization: internal/access/authorization/
   permission_map: internal/bootstrap/permissions.go
-  tokens: internal/platform/crypto/tokens/jwt.go   # ES256 or RS256, RFC 7638 kid
+  tokens: internal/platform/crypto/tokens/          # ES256 or RS256, RFC 7638 kid
   password_hash: argon2id                          # internal/platform/crypto/password/hasher.go
   csrf: internal/platform/http/httpx/csrf.go
   boot_gate: internal/platform/config/config.go    # Config.Validate()
