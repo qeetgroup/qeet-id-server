@@ -4,18 +4,15 @@
 // objectives in observability/README.md; k6 fails the run when one is missed.
 import http from "k6/http";
 import { check } from "k6";
-import { SharedArray } from "k6/data";
+import { randomBytes } from "k6/crypto";
+import exec from "k6/execution";
 
 const base = __ENV.BASE_URL || "http://localhost:4001";
 const duration = __ENV.DURATION || "1m";
 const people = Number(__ENV.PEOPLE || 4);
-const password = "corr3ct-h0rse-battery-staple";
 const json = { headers: { "Content-Type": "application/json" } };
-
-// One run's accounts, each signed up in setup.
-const emails = new SharedArray("emails", () =>
-  Array.from({ length: people }, (_, i) => `load-${Date.now()}-${i}@example.test`),
-);
+const hex = (bytes) =>
+  Array.from(new Uint8Array(bytes), (b) => b.toString(16).padStart(2, "0")).join("");
 
 // The public routes (sign-in, renewal) share 5 requests a second per address; the discovery
 // documents 50; a signed-in person 30. Requests carry a browser's User-Agent: sign-in scores a
@@ -67,9 +64,13 @@ export const options = {
   },
 };
 
-// setup signs every account up and returns its tokens.
+// setup signs one run's accounts up and returns them with their tokens. Their password is made
+// here for the run, so none is written down, and it meets a policy asking for every kind of character.
 export function setup() {
-  return emails.map((email) => {
+  const password = `Lt1-${hex(randomBytes(16))}`;
+  const started = Date.now();
+  const accounts = Array.from({ length: people }, (_, i) => {
+    const email = `load-${started}-${i}@example.test`;
     const res = http.post(
       `${base}/v1/auth/signup`,
       JSON.stringify({ email, password, display_name: "Load Test" }),
@@ -81,11 +82,13 @@ export function setup() {
     if (res.status !== 201) throw new Error(`sign-up ${res.status}: ${res.body}`);
     return { email, access: res.json("access_token"), refresh: res.json("refresh_token") };
   });
+  return { password, accounts };
 }
 
-const pick = (accounts) => accounts[Math.floor(Math.random() * accounts.length)];
+// pick takes the run's accounts in turn, so the load is spread evenly and a run can be repeated.
+const pick = (accounts) => accounts[exec.scenario.iterationInTest % accounts.length];
 
-export function signIn(accounts) {
+export function signIn({ password, accounts }) {
   const res = http.post(
     `${base}/v1/auth/login`,
     JSON.stringify({ email: pick(accounts).email, password }),
@@ -98,7 +101,7 @@ export function signIn(accounts) {
 }
 
 // renew opens a session and renews it, as an application keeping its person signed in does.
-export function renew(accounts) {
+export function renew({ password, accounts }) {
   const session = http.post(
     `${base}/v1/auth/login`,
     JSON.stringify({ email: pick(accounts).email, password }),
@@ -115,7 +118,7 @@ export function renew(accounts) {
   check(res, { renewed: (r) => r.status === 200 && r.json("refresh_token") !== undefined });
 }
 
-export function read(accounts) {
+export function read({ accounts }) {
   const res = http.get(`${base}/v1/auth/me`, {
     headers: { Authorization: `Bearer ${pick(accounts).access}` },
     tags: { name: "read" },

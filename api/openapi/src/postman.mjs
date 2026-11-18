@@ -31,9 +31,19 @@ globalThis.Date = class extends Date {
 };
 const Converter = createRequire(import.meta.url)("openapi-to-postmanv2");
 
-function seeded(a) {
+// byCodeUnit orders strings as sort() does with no argument, said out loud: the same on every
+// machine, where localeCompare would follow the machine's language.
+function byCodeUnit(a, b) {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+}
+
+// seeded is a small generator (mulberry32) whose state wraps at 32 bits, which an Int32Array does.
+function seeded(seed) {
+  const state = new Int32Array([seed]);
   return () => {
-    a = (a + 0x6d2b79f5) | 0;
+    state[0] += 0x6d2b79f5;
+    const a = state[0];
     let t = Math.imul(a ^ (a >>> 15), 1 | a);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
@@ -133,7 +143,7 @@ function savedVariables(spec, template, method, responses) {
     else if (example.user?.id) saves.push(["userID", "user?.id"]);
   }
   const child = Object.keys(spec.paths)
-    .map((p) => p.match(/^(.*)\/\{([^}]+)\}$/))
+    .map((p) => p.match(/^(.*)\/\{([^{}]+)\}$/))
     .find((m) => m?.[1] === template);
   if (method !== "POST" || !child || !(child[2] === "id" || child[2].endsWith("ID"))) return saves;
   // The new id is at the top, or in the object named for the resource ({"organization": {"id"}}).
@@ -238,7 +248,7 @@ const specs = docs.map((doc) => Bun.YAML.parse(readFileSync(join("..", `${doc}.y
 const known = new Set(
   specs.flatMap((spec) =>
     Object.keys(spec.paths).flatMap((p) =>
-      [...p.matchAll(/\{([^}]+)\}/g)].map((m) => pathVariable(p, m[1])),
+      [...p.matchAll(/\{([^{}]+)\}/g)].map((m) => pathVariable(p, m[1])),
     ),
   ),
 );
@@ -289,7 +299,9 @@ const environment = {
       "oauthClientSecret",
       "adminPortalLink",
     ].map(secret),
-    ...[...variables].sort().map((key) => ({ key, value: "", type: "default", enabled: true })),
+    ...[...variables]
+      .sort(byCodeUnit)
+      .map((key) => ({ key, value: "", type: "default", enabled: true })),
   ],
   _postman_variable_scope: "environment",
 };
