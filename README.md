@@ -302,7 +302,7 @@ Releases are monthly and named after the month they ship: `release/2027.1.0` is 
 `main` releases `v2027.1.0`; urgent fixes are `hotfix/2027.1.1`. The branch is cut on the first
 working day of the month, tested for about two weeks and released on the third Tuesday; an urgent
 fix ships as a hotfix as soon as it is tested, and a month with nothing to release is skipped. The
-first release is `2027.1.0`: its branch is cut early, by 1 December 2026, for the one-time
+first release is `2027.1.0`: its branch is cut early, on 1 December 2026, for the one-time
 [release checks](./docs/roadmap/release-checks.md), and it is planned for Tuesday 19 January 2027. The
 [deployment workflow](./.github/workflows/deploy.yml) copies that tested image to AWS ECR without
 rebuilding it, rolls the configured host through AWS Systems Manager, then tags and releases the

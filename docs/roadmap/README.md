@@ -9,7 +9,7 @@ Both came out of a backend review and product research done in October 2026. The
 
 ## Status (19 November 2026)
 
-- **First release:** `2027.1.0`, planned for Tuesday 19 January 2027. Its branch, `release/2027.1.0`, is cut by
+- **First release:** `2027.1.0`, planned for Tuesday 19 January 2027. Its branch, `release/2027.1.0`, is cut on
   1 December 2026 (see Branches and releases in [AGENTS.md](../../AGENTS.md)).
 - **Release checks:** open. CI has to run on the release candidate first (G-01), and the other checks need a staging copy of production, which waits for the AWS production freeze to lift.
 - **Ideas:** none started. The product owner picks one, with a design partner, after the first release is stable.
