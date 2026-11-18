@@ -19,11 +19,11 @@ get:
         type: string
         format: uuid
   responses:
-    '200':
+    "200":
       description: Challenge status
       content:
         application/json:
           schema:
             $ref: ../../components/schemas/PushChallenge.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml

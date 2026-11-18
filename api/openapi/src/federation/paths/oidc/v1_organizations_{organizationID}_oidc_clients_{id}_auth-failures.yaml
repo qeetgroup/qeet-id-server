@@ -29,7 +29,7 @@ get:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '200':
+    "200":
       description: The lockout in force (if any) and recent failures
       content:
         application/json:
@@ -39,7 +39,7 @@ get:
               locked_until:
                 type:
                   - string
-                  - 'null'
+                  - "null"
                 format: date-time
               items:
                 type: array
@@ -53,9 +53,9 @@ get:
                       type: string
                     reason:
                       type: string
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml

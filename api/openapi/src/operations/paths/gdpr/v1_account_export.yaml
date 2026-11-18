@@ -12,7 +12,7 @@ post:
   security:
     - bearerAuth: []
   responses:
-    '200':
+    "200":
       description: The caller's personal data, as a downloadable JSON document.
       content:
         application/json:
@@ -95,5 +95,5 @@ post:
               generated_at:
                 type: string
                 format: date-time
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml

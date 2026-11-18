@@ -24,7 +24,7 @@ get:
       schema:
         type: string
   responses:
-    '200':
+    "200":
       description: The image
       content:
         image/png:
@@ -43,5 +43,5 @@ get:
           schema:
             type: string
             format: binary
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml

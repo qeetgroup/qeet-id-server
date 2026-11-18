@@ -3,18 +3,18 @@ properties:
   display_name:
     type:
       - string
-      - 'null'
+      - "null"
     maxLength: 200
   avatar_url:
     type:
       - string
-      - 'null'
+      - "null"
     maxLength: 300000
     description: A data:image/ URL, or an empty string to clear the picture.
   phone:
     type:
       - string
-      - 'null'
+      - "null"
   status:
     type: string
     enum:

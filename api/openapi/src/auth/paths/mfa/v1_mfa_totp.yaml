@@ -9,7 +9,7 @@ get:
     Reports whether the principal has a confirmed TOTP factor, so the account UI
     can show an active state instead of re-offering enrollment.
   responses:
-    '200':
+    "200":
       description: OK
       content:
         application/json:
@@ -20,15 +20,15 @@ get:
                 type: boolean
             required:
               - enrolled
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml
 delete:
   operationId: disableTotp
@@ -42,15 +42,15 @@ delete:
     step-up. The account holder is emailed that it happened, with what to do if
     it wasn't them.
   responses:
-    '204':
+    "204":
       description: No Content
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

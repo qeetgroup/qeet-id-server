@@ -23,7 +23,7 @@ get:
     operation of the last day failed and is still open (directory.failing).
     status is the worst state of the components. Requires organization.read.
   responses:
-    '200':
+    "200":
       description: OK
       content:
         application/json:
@@ -120,9 +120,9 @@ get:
                     resolved_at:
                       type:
                         - string
-                        - 'null'
+                        - "null"
                       format: date-time
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml

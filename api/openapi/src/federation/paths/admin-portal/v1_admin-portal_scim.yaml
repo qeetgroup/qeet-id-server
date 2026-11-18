@@ -9,13 +9,13 @@ get:
   security:
     - adminPortalCookie: []
   responses:
-    '200':
+    "200":
       description: SCIM config
       content:
         application/json:
           schema:
             $ref: ../../components/schemas/ConfigView.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml

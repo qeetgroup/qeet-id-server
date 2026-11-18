@@ -27,25 +27,25 @@ patch:
     group.cycle). Renaming to a name another of the organization's groups uses,
     ignoring case, answers 409 group.name_exists.
   responses:
-    '200':
+    "200":
       description: Updated
       content:
         application/json:
           schema:
             $ref: ../../components/schemas/Group.yaml
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '409':
+    "409":
       $ref: ../../../shared/responses/Conflict.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml
 delete:
   operationId: deleteGroup
@@ -70,15 +70,15 @@ delete:
     (403 rbac.owner_only), and nobody deletes one whose roles carry a
     permission they lack (403 rbac.grant_exceeds_caller).
   responses:
-    '204':
+    "204":
       description: No Content
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

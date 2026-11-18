@@ -16,9 +16,9 @@ import (
 func TestQueryName(t *testing.T) {
 	for sql, want := range map[string][2]string{
 		"-- name: GetUserByEmail :one\nSELECT id FROM account.users WHERE email = $1": {"GetUserByEmail", "SELECT"},
-		"  update account.users set name = $1":                                         {"UPDATE", "UPDATE"},
-		"(SELECT 1) UNION (SELECT 2)":                                                   {"SELECT", "SELECT"},
-		"":                                                                              {"SQL", "SQL"},
+		"  update account.users set name = $1":                                        {"UPDATE", "UPDATE"},
+		"(SELECT 1) UNION (SELECT 2)":                                                 {"SELECT", "SELECT"},
+		"":                                                                            {"SQL", "SQL"},
 	} {
 		if name, op := queryName(sql); name != want[0] || op != want[1] {
 			t.Errorf("queryName(%q) = %s, %s; want %s, %s", sql, name, op, want[0], want[1])
@@ -56,8 +56,8 @@ func TestQueryTracerRecordsOnlyTracedQueriesWithoutTheirValues(t *testing.T) {
 	for _, s := range rec.Ended() {
 		spans[s.Name()] = s
 		for _, a := range s.Attributes() {
-			if strings.Contains(a.Value.Emit(), "someone@example.com") {
-				t.Errorf("span %s records a value: %s=%s", s.Name(), a.Key, a.Value.Emit())
+			if strings.Contains(a.Value.String(), "someone@example.com") {
+				t.Errorf("span %s records a value: %s=%s", s.Name(), a.Key, a.Value.String())
 			}
 		}
 		if strings.Contains(s.Status().Description, "example.com") {

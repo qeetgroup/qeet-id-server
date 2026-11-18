@@ -3,8 +3,8 @@ description: >-
   make it.
 headers:
   X-Request-Id:
-    $ref: ../../../shared/headers/RequestId.yaml
+    $ref: ../headers/RequestId.yaml
 content:
   application/json:
     schema:
-      $ref: ../../../shared/schemas/Error.yaml
+      $ref: ../schemas/Error.yaml

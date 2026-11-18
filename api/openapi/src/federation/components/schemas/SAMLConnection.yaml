@@ -36,7 +36,7 @@ properties:
   metadata_url:
     type:
       - string
-      - 'null'
+      - "null"
     format: uri
     description: >-
       The IdP metadata URL the connection refreshes its SSO URL and certificates
@@ -44,13 +44,13 @@ properties:
   metadata_refreshed_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
     description: When the connection last took its settings from the IdP's metadata.
   metadata_error:
     type:
       - string
-      - 'null'
+      - "null"
     description: Why the last refresh from metadata_url failed; null once one succeeds.
   email_attribute:
     type: string
@@ -91,5 +91,5 @@ properties:
   last_login_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time

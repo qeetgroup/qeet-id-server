@@ -18,7 +18,7 @@ get:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '200':
+    "200":
       description: OK
       content:
         application/json:
@@ -48,9 +48,9 @@ get:
                     last_seen_at:
                       type: string
                       format: date-time
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml

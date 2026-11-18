@@ -13,13 +13,13 @@ properties:
   display_name:
     type:
       - string
-      - 'null'
+      - "null"
   email:
     type: string
   external_id:
     type:
       - string
-      - 'null'
+      - "null"
   id:
     type: string
     format: uuid

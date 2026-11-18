@@ -37,7 +37,7 @@ post:
               type: string
               writeOnly: true
   responses:
-    '200':
+    "200":
       description: How the destination answered
       content:
         application/json:
@@ -58,9 +58,9 @@ post:
                 description: Why it wasn't delivered.
               duration_ms:
                 type: integer
-    '400':
+    "400":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml

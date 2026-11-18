@@ -107,13 +107,13 @@ get:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '200':
+    "200":
       description: Aggregate activity summary
       content:
         application/json:
           schema:
             $ref: ../../components/schemas/ActivitySummaryResponse.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml

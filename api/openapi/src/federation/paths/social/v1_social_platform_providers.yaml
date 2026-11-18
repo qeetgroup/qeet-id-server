@@ -11,7 +11,7 @@ get:
     - Social
   security: []
   responses:
-    '200':
+    "200":
       description: Enabled provider names
       content:
         application/json:
@@ -24,5 +24,5 @@ get:
                 type: array
                 items:
                   type: string
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

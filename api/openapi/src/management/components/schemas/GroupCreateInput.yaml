@@ -10,7 +10,7 @@ properties:
   parent_id:
     type:
       - string
-      - 'null'
+      - "null"
     format: uuid
     description: >-
       One of the organization's groups to nest it under; omit or null for a

@@ -12,25 +12,25 @@ properties:
   email_verified_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
   phone:
     type:
       - string
-      - 'null'
+      - "null"
   phone_verified_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
   display_name:
     type:
       - string
-      - 'null'
+      - "null"
   avatar_url:
     type:
       - string
-      - 'null'
+      - "null"
     description: The person's picture as a data:image/ URL, or null for none.
   status:
     type: string
@@ -41,7 +41,7 @@ properties:
   metadata:
     type:
       - object
-      - 'null'
+      - "null"
     additionalProperties: true
   created_at:
     type: string
@@ -80,7 +80,7 @@ properties:
   last_seen_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
     description: >-
       Their most recent session activity or sign-in in this organization, or null; on
@@ -88,17 +88,17 @@ properties:
   last_seen_ip:
     type:
       - string
-      - 'null'
+      - "null"
     description: The address of that session or sign-in, or null.
   home_organization_name:
     type:
       - string
-      - 'null'
+      - "null"
     description: The name of the organization that manages the account (organization_id).
   suspension:
     type:
       - object
-      - 'null'
+      - "null"
     description: >-
       On GET /v1/users/{id}, for a suspended person whose home is this organization;
       absent otherwise.
@@ -110,12 +110,12 @@ properties:
       suspended_at:
         type:
           - string
-          - 'null'
+          - "null"
         format: date-time
       suspended_by:
         type:
           - string
-          - 'null'
+          - "null"
         format: uuid
         description: >-
           The person who last suspended them by hand; null for a suspension by
@@ -123,4 +123,4 @@ properties:
       suspended_by_email:
         type:
           - string
-          - 'null'
+          - "null"

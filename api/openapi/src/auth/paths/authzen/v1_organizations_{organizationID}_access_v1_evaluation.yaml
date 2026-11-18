@@ -73,8 +73,8 @@ post:
                 context, and is not an attribute.
               additionalProperties: true
   responses:
-    '200':
-      description: '{ decision: bool, context: { decided_by, paths | path, trace } }'
+    "200":
+      description: "{ decision: bool, context: { decided_by, paths | path, trace } }"
       content:
         application/json:
           schema:
@@ -84,9 +84,9 @@ post:
                 type: boolean
               context:
                 type: object
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml

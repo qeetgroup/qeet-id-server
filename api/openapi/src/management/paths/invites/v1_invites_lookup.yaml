@@ -25,7 +25,7 @@ post:
             token:
               type: string
   responses:
-    '200':
+    "200":
       description: The invitation
       content:
         application/json:
@@ -53,9 +53,9 @@ post:
                     type: boolean
                   passkey:
                     type: boolean
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

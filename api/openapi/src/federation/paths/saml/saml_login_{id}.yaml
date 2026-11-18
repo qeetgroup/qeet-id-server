@@ -33,11 +33,11 @@ get:
         type: string
   security: []
   responses:
-    '302':
+    "302":
       description: Redirect to the external IdP with an AuthnRequest
-    '402':
+    "402":
       description: >-
         The organization's plan does not include enterprise SSO
         (billing.upgrade_required).
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml

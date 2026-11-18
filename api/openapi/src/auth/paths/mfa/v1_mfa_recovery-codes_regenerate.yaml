@@ -10,7 +10,7 @@ post:
     answer and the old ones stop working. Needs a recent step-up. The account
     holder is emailed that it happened, with what to do if it wasn't them.
   responses:
-    '201':
+    "201":
       description: Created
       headers:
         Cache-Control:
@@ -31,15 +31,15 @@ post:
                   type: string
               warning:
                 type: string
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml
-    '503':
+    "503":
       $ref: ../../../shared/responses/Overloaded.yaml

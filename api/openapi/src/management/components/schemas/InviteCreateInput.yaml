@@ -9,7 +9,7 @@ properties:
   role_id:
     type:
       - string
-      - 'null'
+      - "null"
     format: uuid
   organization_id:
     type: string

@@ -54,7 +54,7 @@ post:
         schema:
           $ref: ../../components/schemas/LoginRequest.yaml
   responses:
-    '200':
+    "200":
       description: |
         Either a full token pair (no MFA) or an MFA challenge to complete at
         POST /v1/auth/mfa — when the user holds a second factor, or must have
@@ -72,39 +72,39 @@ post:
               value:
                 access_token: eyJhbGciOiJFUzI1NiIsImtpZCI6ImsxIn0.eyJzdWIiOiIwMThmMmE3MCJ9.FAKE-signature
                 token_type: Bearer
-                expires_at: '2026-09-24T10:30:00Z'
+                expires_at: "2026-09-24T10:30:00Z"
                 refresh_token: Jk3vQm9xT2pL0sWc8hYbR4nZaE6uFi1oPq7dGt5yHw0
-                session_expires_at: '2026-10-24T10:15:00Z'
-                idle_expires_at: '2026-10-01T10:15:00Z'
-                session_id: '018f2a70-5b6c-7d8e-9f01-2a3b4c5d6e7f'
-                user_id: '018f2a70-1a2b-7c3d-9e4f-5a6b7c8d9e0f'
-                organization_id: '018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00'
+                session_expires_at: "2026-10-24T10:15:00Z"
+                idle_expires_at: "2026-10-01T10:15:00Z"
+                session_id: "018f2a70-5b6c-7d8e-9f01-2a3b4c5d6e7f"
+                user_id: "018f2a70-1a2b-7c3d-9e4f-5a6b7c8d9e0f"
+                organization_id: "018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00"
             mfaRequired:
               summary: A second factor is needed; complete it at POST /v1/auth/mfa
               value:
                 mfa_required: true
                 mfa_token: eyJhbGciOiJFUzI1NiIsImtpZCI6ImsxIn0.eyJwdXJwb3NlIjoibWZhIn0.FAKE-signature
                 methods:
-                - totp
-                - email
-                - recovery_code
+                  - totp
+                  - email
+                  - recovery_code
                 factors:
-                - type: totp
-                - type: email
-                  id: '018f2a71-2c3d-7e4f-8a5b-6c7d8e9f0a1b'
-                  destination: a**@example.com
-                - type: recovery_code
+                  - type: totp
+                  - type: email
+                    id: "018f2a71-2c3d-7e4f-8a5b-6c7d8e9f0a1b"
+                    destination: a**@example.com
+                  - type: recovery_code
           schema:
             oneOf:
               - $ref: ../../../shared/schemas/TokenPair.yaml
               - $ref: ../../../shared/schemas/MFAChallenge.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml
-    '503':
+    "503":
       $ref: ../../components/responses/SignInUnavailable.yaml

@@ -13,13 +13,13 @@ get:
     - Health
   security: []
   responses:
-    '200':
+    "200":
       description: Prometheus exposition format
       content:
         text/plain:
           schema:
             type: string
-    '404':
+    "404":
       description: >-
         Metrics are not served to this caller: no METRICS_TOKEN is configured
         outside development, or the request did not send it as `Authorization:

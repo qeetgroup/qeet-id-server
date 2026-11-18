@@ -20,7 +20,7 @@ get:
       schema:
         type: string
   responses:
-    '200':
+    "200":
       description: Rules and supported profile target types
       content:
         application/json:
@@ -37,11 +37,11 @@ get:
                 type: object
                 additionalProperties:
                   type: string
-    '401':
+    "401":
       description: Authentication required
-    '403':
+    "403":
       description: Organization mismatch or missing connection.read
-    '404':
+    "404":
       description: Connection not found in this organization
 post:
   operationId: createProfileMapping
@@ -71,23 +71,23 @@ post:
         schema:
           $ref: ../../components/schemas/DirectoryMapping.yaml
   responses:
-    '201':
+    "201":
       description: Mapping created and audited
       content:
         application/json:
           schema:
             $ref: ../../components/schemas/DirectoryMapping.yaml
-    '400':
+    "400":
       description: Invalid id, version or body
-    '401':
+    "401":
       description: Authentication required
-    '403':
+    "403":
       description: Organization mismatch or missing connection.write
-    '404':
+    "404":
       description: Connection not found in this organization
-    '409':
+    "409":
       description: Duplicate enabled target or rule limit reached
-    '422':
+    "422":
       description: >-
         Mapping refused: validation_failed, with error.fields[0].field naming
         the property at fault (source_attribute, target_field, value_type,

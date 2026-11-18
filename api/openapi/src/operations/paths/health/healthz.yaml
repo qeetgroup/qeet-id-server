@@ -11,7 +11,7 @@ get:
     - Health
   security: []
   responses:
-    '200':
+    "200":
       description: Alive
       content:
         application/json:

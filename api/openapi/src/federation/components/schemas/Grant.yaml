@@ -22,7 +22,7 @@ properties:
   consented_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
     description: >-
       When the person last consented to the application; null for an application
@@ -36,7 +36,7 @@ properties:
   user_name:
     type:
       - string
-      - 'null'
+      - "null"
   client_id:
     type: string
   expires_at:

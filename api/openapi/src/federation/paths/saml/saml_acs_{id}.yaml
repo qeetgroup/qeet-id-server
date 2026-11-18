@@ -46,7 +46,7 @@ post:
     cookie) redirects instead to the hosted login's /sign-in with a generic
     error (sso, or account_inactive for a suspended or deleted account) and the
     same return_to; the detail is logged, never shown.
-  summary: '[acs] Assertion Consumer Service'
+  summary: "[acs] Assertion Consumer Service"
   tags:
     - SAML
   parameters:
@@ -69,13 +69,13 @@ post:
             RelayState:
               type: string
   responses:
-    '302':
+    "302":
       description: Signature-validated; redirect with a one-time login code
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '402':
+    "402":
       description: >-
         The organization's plan does not include enterprise SSO
         (billing.upgrade_required).

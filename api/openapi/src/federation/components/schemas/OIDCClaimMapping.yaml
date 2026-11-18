@@ -20,5 +20,5 @@ properties:
     default: family_name
   groups:
     type: string
-    default: ''
+    default: ""
     description: The claim listing the person's groups, kept on their linked identity.

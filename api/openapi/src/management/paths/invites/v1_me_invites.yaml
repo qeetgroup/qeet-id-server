@@ -11,7 +11,7 @@ get:
     not belong to any org yet. Answers 403 invite.email_not_verified until the
     account's address is verified: anyone can sign up with any address.
   responses:
-    '200':
+    "200":
       description: OK
       content:
         application/json:
@@ -26,9 +26,9 @@ get:
                 type: array
                 items:
                   $ref: ../../components/schemas/ReceivedInvite.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

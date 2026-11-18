@@ -13,14 +13,14 @@ properties:
         display_name:
           type:
             - string
-            - 'null'
+            - "null"
         assigned_at:
           type: string
           format: date-time
         assigned_by:
           type:
             - string
-            - 'null'
+            - "null"
           format: uuid
   groups:
     type: array
@@ -38,5 +38,5 @@ properties:
         assigned_by:
           type:
             - string
-            - 'null'
+            - "null"
           format: uuid

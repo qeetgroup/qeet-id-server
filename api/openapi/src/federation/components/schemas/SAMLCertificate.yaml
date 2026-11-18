@@ -15,12 +15,12 @@ properties:
   not_before:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
   not_after:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
     description: >-
       When the certificate expires; an assertion it signed is refused after

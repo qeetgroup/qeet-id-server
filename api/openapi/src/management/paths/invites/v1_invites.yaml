@@ -12,8 +12,8 @@ post:
       application/json:
         example:
           email: grace@example.com
-          role_id: '018f2a6d-7b8c-7d9e-a0f1-2b3c4d5e6f70'
-          organization_id: '018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00'
+          role_id: "018f2a6d-7b8c-7d9e-a0f1-2b3c4d5e6f70"
+          organization_id: "018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00"
         schema:
           $ref: ../../components/schemas/InviteCreateInput.yaml
   description: >-
@@ -47,7 +47,7 @@ post:
   parameters:
     - $ref: ../../../shared/parameters/IdempotencyKey.yaml
   responses:
-    '201':
+    "201":
       description: Created
       headers:
         Idempotent-Replayed:
@@ -56,14 +56,14 @@ post:
         application/json:
           example:
             invite:
-              id: '018f2a74-5f6a-7b7c-9d8e-9f0a1b2c3d4e'
-              organization_id: '018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00'
+              id: "018f2a74-5f6a-7b7c-9d8e-9f0a1b2c3d4e"
+              organization_id: "018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00"
               email: grace@example.com
-              role_id: '018f2a6d-7b8c-7d9e-a0f1-2b3c4d5e6f70'
+              role_id: "018f2a6d-7b8c-7d9e-a0f1-2b3c4d5e6f70"
               status: pending
-              expires_at: '2026-10-01T10:20:00Z'
+              expires_at: "2026-10-01T10:20:00Z"
               accepted_at: null
-              created_at: '2026-09-24T10:20:00Z'
+              created_at: "2026-09-24T10:20:00Z"
               delivery:
                 status: sent
           schema:
@@ -73,21 +73,21 @@ post:
             properties:
               invite:
                 $ref: ../../components/schemas/Invite.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '402':
+    "402":
       description: The plan has no seat left for another invitation (billing.plan_limit).
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '409':
+    "409":
       description: >-
         A request with this Idempotency-Key is still being processed
         (idempotency.in_progress); retry shortly. Or the first request stopped
         before answering and may have taken effect
         (idempotency.outcome_unknown): check, then retry with a new key.
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

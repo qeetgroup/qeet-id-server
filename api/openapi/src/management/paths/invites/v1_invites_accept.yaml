@@ -26,7 +26,7 @@ post:
     no longer holding its role's permissions) is refused with 400
     invite.invalid.
   responses:
-    '200':
+    "200":
       description: A token pair, or the second-factor challenge to complete first.
       headers:
         Cache-Control:
@@ -39,11 +39,11 @@ post:
             oneOf:
               - $ref: ../../../shared/schemas/TokenPair.yaml
               - $ref: ../../../shared/schemas/MFAChallenge.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml
-    '503':
+    "503":
       $ref: ../../../shared/responses/Overloaded.yaml

@@ -38,7 +38,7 @@ post:
             token:
               type: string
   responses:
-    '200':
+    "200":
       description: >-
         Signed in to the hosted login (the cookie is set), or an MFA challenge
         to complete first
@@ -64,13 +64,13 @@ post:
                     properties:
                       return_to:
                         type: string
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '415':
+    "415":
       $ref: ../../components/responses/UnsupportedMediaType.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

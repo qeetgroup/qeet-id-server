@@ -104,6 +104,21 @@ groups:
 
   - name: qeet-id.data
     rules:
+      - alert: QeetIdTokenEndpointErrors
+        # Token requests the server failed (500), as opposed to clients refused (invalid_grant and the like).
+        expr: sum(increase(oauth_token_requests_total{job="qeet-id",outcome="error"}[10m])) > 0
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "token endpoint failing"
+          description: "{{ $value }} token requests failed with a server error in 10m: applications can't sign people in."
+      - alert: QeetIdWebhookBacklogStale
+        expr: webhook_oldest_pending_age_seconds{job="qeet-id"} > 3600
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "webhook deliveries waiting over an hour"
+          description: "The oldest pending delivery has waited {{ $value | humanizeDuration }}: check the dispatcher and failing endpoints."
       - alert: QeetIdOutboxDeadLetters
         expr: increase(outbox_dead_lettered_total{job="qeet-id"}[15m]) > 0
         labels: { severity: warning }

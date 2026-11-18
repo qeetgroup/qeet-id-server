@@ -5,6 +5,7 @@ page is a one-page tour for a new engineer. The rules live in [AGENTS.md](../AGE
 in [docs/llm/](llm/).
 
 Three words say who holds what:
+
 - an **account** is a person's sign-in;
 - an **organization** is a customer;
 - an **application** is something that signs people in through Qeet ID.
@@ -13,18 +14,19 @@ Three words say who holds what:
 
 One binary (`cmd/api`) holds five bounded contexts, built on a shared platform and wired in one place.
 
-| Folder | What it does | For example |
-|---|---|---|
-| `internal/access` | How someone proves who they are, and what they may do | `authentication` (sign-in, sessions), `passkey`, `mfa`, `recovery`, `authpolicy`, `ipallow`, `threat`, `authorization/{rbac,abac,rebac,authzen}` |
-| `internal/identity` | Who exists: organizations, their people and groups | `organization`, `user`, `group`, `invite`, `verification`, `domainverify` |
-| `internal/federation` | Signing in through someone else, and others signing in through us | `oidc` (our OAuth/OIDC provider), `saml` (both roles), `oidcsso`, `ldap`, `scim`, `social`, `provision` |
-| `internal/developer` | Machine identities and integrations | `apikey`, `principal`, `agent`, `webhook`, `authhook`, `credentials/{secret,tokenvault,vc}` |
-| `internal/operations` | Running the business around it | `audit` (reading and verification), `billing`, `entitlements`, `gdpr`, `compliance`, `activity`, `qeetai` |
-| `internal/platform` | Shared code that knows no context | `http/httpx`, `http/errs`, `audit` (the writer), `database/postgres`, `crypto/{tokens,envelope,password}`, `config` |
-| `internal/bootstrap` | The only place that wires things together | `wire_<context>.go`, `router.go`, `permissions.go` |
-| `cmd/` | The binaries | `api`, `scheduler`, `seed` (development demo data) |
+| Folder                | What it does                                                      | For example                                                                                                                                      |
+| --------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `internal/access`     | How someone proves who they are, and what they may do             | `authentication` (sign-in, sessions), `passkey`, `mfa`, `recovery`, `authpolicy`, `ipallow`, `threat`, `authorization/{rbac,abac,rebac,authzen}` |
+| `internal/identity`   | Who exists: organizations, their people and groups                | `organization`, `user`, `group`, `invite`, `verification`, `domainverify`                                                                        |
+| `internal/federation` | Signing in through someone else, and others signing in through us | `oidc` (our OAuth/OIDC provider), `saml` (both roles), `oidcsso`, `ldap`, `scim`, `social`, `provision`                                          |
+| `internal/developer`  | Machine identities and integrations                               | `apikey`, `principal`, `agent`, `webhook`, `authhook`, `credentials/{secret,tokenvault,vc}`                                                      |
+| `internal/operations` | Running the business around it                                    | `audit` (reading and verification), `billing`, `entitlements`, `gdpr`, `compliance`, `activity`, `qeetai`                                        |
+| `internal/platform`   | Shared code that knows no context                                 | `http/httpx`, `http/errs`, `audit` (the writer), `database/postgres`, `crypto/{tokens,envelope,password}`, `config`                              |
+| `internal/bootstrap`  | The only place that wires things together                         | `wire_<context>.go`, `router.go`, `permissions.go`                                                                                               |
+| `cmd/`                | The binaries                                                      | `api`, `scheduler`, `seed` (development demo data)                                                                                               |
 
 Imports follow fixed directions, which lint enforces:
+
 - federation builds on access and identity;
 - operations and developer are leaves;
 - nothing in a context imports the wiring.
@@ -106,10 +108,10 @@ The step-by-step versions of this and other common changes are in [docs/llm/work
 
 There are two kinds, named after the file they test, in the same folder:
 
-| File | Kind | Needs |
-|---|---|---|
-| `foo_test.go` | small (unit) | nothing; `go test ./...` |
-| `foo_db_test.go` | medium (with a real PostgreSQL 16) | Docker; `make test-db` |
+| File             | Kind                               | Needs                    |
+| ---------------- | ---------------------------------- | ------------------------ |
+| `foo_test.go`    | small (unit)                       | nothing; `go test ./...` |
+| `foo_db_test.go` | medium (with a real PostgreSQL 16) | Docker; `make test-db`   |
 
 End-to-end browser tests live in the console and hosted-login repositories, not here.
 

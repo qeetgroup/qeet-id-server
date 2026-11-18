@@ -70,6 +70,10 @@ type Config struct {
 	// OTelSampleRatio is the head sampling ratio for root spans (0..1). 1 keeps
 	// every trace (sensible in dev); lower it in prod to bound export volume.
 	OTelSampleRatio float64 `envconfig:"OTEL_TRACES_SAMPLER_RATIO" default:"1"`
+	// PprofAddr, when set, serves Go's runtime profiles on this address, on a listener of its own and
+	// never on the API's router, for a continuous profiler (Grafana Alloy into Pyroscope) to scrape.
+	// Outside development it must be a loopback address such as 127.0.0.1:6060.
+	PprofAddr string `envconfig:"PPROF_ADDR" default:""`
 
 	DBURL      string `envconfig:"DB_URL" required:"true"`
 	DBMinConns int32  `envconfig:"DB_MIN_CONNS" default:"2"`

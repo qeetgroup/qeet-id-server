@@ -19,9 +19,9 @@ delete:
         type: string
         format: uuid
   responses:
-    '204':
+    "204":
       description: Device revoked
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml

@@ -9,7 +9,7 @@ properties:
   user_id:
     type:
       - string
-      - 'null'
+      - "null"
     format: uuid
   name:
     type: string
@@ -22,17 +22,17 @@ properties:
   expires_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
   last_used_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
   revoked_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
   created_at:
     type: string
@@ -40,7 +40,7 @@ properties:
   created_by:
     type:
       - string
-      - 'null'
+      - "null"
     format: uuid
     description: >-
       The person who created the key, or rotated it into being; null for a key
@@ -48,6 +48,6 @@ properties:
   rotated_from:
     type:
       - string
-      - 'null'
+      - "null"
     format: uuid
     description: The key this one replaced at a rotation.

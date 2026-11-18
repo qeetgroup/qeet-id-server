@@ -39,7 +39,7 @@ properties:
   lockout_threshold:
     type:
       - integer
-      - 'null'
+      - "null"
     description: >-
       Failed password sign-ins to one account from one network, each within the
       window of the last, that lock the account for that network. null = the
@@ -48,7 +48,7 @@ properties:
   lockout_window_minutes:
     type:
       - integer
-      - 'null'
+      - "null"
     description: >-
       A failure is forgotten once this many minutes pass with no new failure.
       null = the platform default. Must lie within lockout_limits (default
@@ -56,7 +56,7 @@ properties:
   lockout_duration_minutes:
     type:
       - integer
-      - 'null'
+      - "null"
     description: >-
       How long a lock lasts. null = the platform default. Must lie within
       lockout_limits (default bounds 15..1440).

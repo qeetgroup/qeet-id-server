@@ -8,7 +8,7 @@ get:
     ListResponse, with Qeet acting as the SCIM server. Mounted at the root under
     /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope rather
     than the standard Qeet error shape.
-  summary: '[scim] List groups'
+  summary: "[scim] List groups"
   tags:
     - SCIM
   parameters:
@@ -27,15 +27,15 @@ get:
   security:
     - scimBearer: []
   responses:
-    '200':
+    "200":
       description: ListResponse
       content:
         application/scim+json:
           schema:
             $ref: ../../components/schemas/SCIMListResponse.yaml
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
 post:
   operationId: createScimGroup
@@ -46,7 +46,7 @@ post:
     group.updated, group.member_added, group.member_removed, group.deleted;
     actor scim). Mounted at the root under /scim/v2, not under /v1. Errors use
     the RFC 7644 SCIM error envelope, not the standard Qeet error shape.
-  summary: '[scim] Create group'
+  summary: "[scim] Create group"
   tags:
     - SCIM
   security:
@@ -58,15 +58,15 @@ post:
         schema:
           $ref: ../../components/schemas/SCIMGroup.yaml
   responses:
-    '201':
+    "201":
       description: Group created
       content:
         application/scim+json:
           schema:
             $ref: ../../components/schemas/SCIMGroup.yaml
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '409':
+    "409":
       $ref: ../../components/responses/SCIMConflict.yaml

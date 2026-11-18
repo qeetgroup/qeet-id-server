@@ -28,7 +28,7 @@ properties:
   invoice_number:
     type:
       - string
-      - 'null'
+      - "null"
     description: >-
       The GST invoice number, one series per Indian financial year (April to
       March), such as 2026-27/000042. Null on an invoice that charges nothing.
@@ -67,7 +67,7 @@ properties:
   due_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
     description: >-
       When an open invoice falls due; null once it is paid or when nothing was
@@ -75,7 +75,7 @@ properties:
   paid_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
   billed_to:
     description: >-
@@ -83,7 +83,7 @@ properties:
       invoices issued before it was kept.
     oneOf:
       - $ref: ./BillingProfile.yaml
-      - type: 'null'
+      - type: "null"
   supplier_gstin:
     type: string
     description: The seller's GSTIN; empty when the operator has set none.
@@ -95,7 +95,7 @@ properties:
   emailed_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
     description: When the invoice was emailed to its billing email.
   tax_amount_minor:

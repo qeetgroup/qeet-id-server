@@ -46,9 +46,9 @@ post:
                 A confidential client's secret, when it authenticates in the
                 form body (client_secret_post).
   responses:
-    '200':
-      description: 'Revoked (RFC 7009: always 200 even for unknown tokens)'
-    '400':
+    "200":
+      description: "Revoked (RFC 7009: always 200 even for unknown tokens)"
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml

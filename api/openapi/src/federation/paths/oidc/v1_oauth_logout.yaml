@@ -55,9 +55,9 @@ get:
   security:
     - ssoCookie: []
   responses:
-    '302':
+    "302":
       description: Redirect to post_logout_redirect_uri
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
 post:
   operationId: endSessionWithPost
@@ -112,7 +112,7 @@ post:
             logout_confirmation:
               type: string
   responses:
-    '302':
+    "302":
       description: Redirect to post_logout_redirect_uri
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml

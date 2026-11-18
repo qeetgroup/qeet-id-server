@@ -21,6 +21,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/buildinfo"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/logging"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/metrics"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/profiling"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/tracing"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/worker"
 )
@@ -112,6 +113,12 @@ func Run() {
 		slog.Info("tracing enabled", "endpoint", cfg.OTelEndpoint, "sample_ratio", cfg.OTelSampleRatio)
 	} else {
 		slog.Info("tracing disabled (no-op): set OTEL_EXPORTER_OTLP_ENDPOINT to enable")
+	}
+	if addr, err := profiling.Serve(cfg.PprofAddr); err != nil {
+		slog.Error("serve profiles", "addr", cfg.PprofAddr, "err", err)
+		os.Exit(1)
+	} else if addr != "" {
+		slog.Info("profiles served for the profiler", "addr", addr)
 	}
 
 	// Run migrations before opening the runtime pool. A database this build

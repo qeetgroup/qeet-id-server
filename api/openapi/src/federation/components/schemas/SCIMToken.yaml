@@ -35,22 +35,22 @@ properties:
   expires_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
   last_used_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
     description: Recorded at most once a minute.
   revoked_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
   replaced_by:
     type:
       - string
-      - 'null'
+      - "null"
     format: uuid
     description: The token that replaced this one when it was rotated.

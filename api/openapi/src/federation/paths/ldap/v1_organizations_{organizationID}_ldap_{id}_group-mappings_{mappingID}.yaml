@@ -27,13 +27,13 @@ delete:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '204':
+    "204":
       description: Removed
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml

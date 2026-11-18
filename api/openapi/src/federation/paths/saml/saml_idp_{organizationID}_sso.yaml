@@ -44,7 +44,7 @@ get:
     under a percent-encoded name; IdP-initiated sign-in is unaffected. An SP with encrypt_assertions gets the signed assertion as an
     EncryptedAssertion to its certificate. The POST-binding variant is POST
     /saml/idp/{organizationID}/sso.
-  summary: '[idp] IdP SSO (redirect binding)'
+  summary: "[idp] IdP SSO (redirect binding)"
   tags:
     - SAML
   parameters:
@@ -59,7 +59,7 @@ get:
         type: string
   security: []
   responses:
-    '200':
+    "200":
       description: Auto-submit POST form back to the SP ACS with a signed SAMLResponse
       headers:
         Cache-Control:
@@ -70,22 +70,22 @@ get:
         text/html:
           schema:
             type: string
-    '302':
+    "302":
       description: Redirect to hosted login when no SSO session
       headers:
         Cache-Control:
           $ref: ../../../shared/headers/NoStoreCacheControl.yaml
         Pragma:
           $ref: ../../../shared/headers/NoStorePragma.yaml
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '402':
+    "402":
       description: >-
         The organization's plan does not include enterprise SSO
         (billing.upgrade_required).
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
 post:
   operationId: startSamlIdpSsoWithPost
@@ -106,7 +106,7 @@ post:
     inactive organization, or an unknown SP, returns 404. The organization's plan must
     include enterprise SSO at every sign-in (402 billing.upgrade_required), and
     its address rules and second-factor requirement apply as for GET.
-  summary: '[idp] IdP SSO (POST binding)'
+  summary: "[idp] IdP SSO (POST binding)"
   tags:
     - SAML
   parameters:
@@ -124,7 +124,7 @@ post:
             RelayState:
               type: string
   responses:
-    '200':
+    "200":
       description: Auto-submit POST form back to the SP ACS with a signed SAMLResponse
       headers:
         Cache-Control:
@@ -135,20 +135,20 @@ post:
         text/html:
           schema:
             type: string
-    '302':
+    "302":
       description: Redirect to hosted login when no SSO session
       headers:
         Cache-Control:
           $ref: ../../../shared/headers/NoStoreCacheControl.yaml
         Pragma:
           $ref: ../../../shared/headers/NoStorePragma.yaml
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '402':
+    "402":
       description: >-
         The organization's plan does not include enterprise SSO
         (billing.upgrade_required).
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml

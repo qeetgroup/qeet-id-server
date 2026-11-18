@@ -19,7 +19,7 @@ post:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '200':
+    "200":
       description: How many were re-queued
       content:
         application/json:
@@ -28,9 +28,9 @@ post:
             properties:
               requeued:
                 type: integer
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml

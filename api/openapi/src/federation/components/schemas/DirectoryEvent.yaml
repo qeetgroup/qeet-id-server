@@ -62,7 +62,7 @@ properties:
   severity:
     type: string
     enum:
-      - ''
+      - ""
       - warning
       - critical
   resolution:
@@ -74,12 +74,12 @@ properties:
   resolved_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
   retry_of:
     type:
       - string
-      - 'null'
+      - "null"
     format: uuid
   retryable:
     type: boolean
@@ -95,7 +95,7 @@ properties:
     type: object
     additionalProperties:
       type: string
-    description: 'Safe details of the failure: host, the directory server it used.'
+    description: "Safe details of the failure: host, the directory server it used."
   subject:
     type: string
     description: The login name an LDAP sign-in tried.

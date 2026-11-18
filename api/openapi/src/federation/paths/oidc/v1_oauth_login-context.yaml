@@ -26,7 +26,7 @@ get:
         type: string
   security: []
   responses:
-    '200':
+    "200":
       description: Hosted-login context (client name, logo, home page, branding)
       content:
         application/json:
@@ -87,7 +87,7 @@ get:
               branding:
                 type:
                   - object
-                  - 'null'
+                  - "null"
                 properties:
                   logo_url:
                     type: string
@@ -98,7 +98,7 @@ get:
                   background_color:
                     type: string
                     description: Optional page background from organization branding settings.
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml

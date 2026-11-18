@@ -81,7 +81,7 @@ get:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '200':
+    "200":
       description: >-
         SSE stream of ActivityEvent frames. Event name: "activity". Periodic "`:
         keep-alive`" comments maintain the connection.
@@ -89,7 +89,7 @@ get:
         text/event-stream:
           schema:
             type: string
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml

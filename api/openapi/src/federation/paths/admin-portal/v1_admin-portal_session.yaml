@@ -10,7 +10,7 @@ post:
   security:
     - adminPortalLink: []
   responses:
-    '201':
+    "201":
       description: Portal session created
       headers:
         Set-Cookie:
@@ -32,7 +32,7 @@ post:
                 format: date-time
               redirect_url:
                 type: string
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
 delete:
   operationId: deletePortalSession
@@ -47,9 +47,9 @@ delete:
   security:
     - adminPortalCookie: []
   responses:
-    '204':
+    "204":
       description: Session revoked
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml

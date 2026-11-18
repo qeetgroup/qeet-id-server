@@ -12,7 +12,7 @@ get:
   security:
     - bearerAuth: []
   responses:
-    '200':
+    "200":
       description: Registered devices
       content:
         application/json:
@@ -27,7 +27,7 @@ get:
                 type: array
                 items:
                   $ref: ../../components/schemas/PushDevice.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
 post:
   operationId: registerPushDevice
@@ -64,7 +64,7 @@ post:
                 - ios
                 - android
   responses:
-    '201':
+    "201":
       description: Device registered; device_token is returned once
       headers:
         Cache-Control:
@@ -86,5 +86,5 @@ post:
                 type: string
               warning:
                 type: string
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml

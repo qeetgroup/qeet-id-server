@@ -39,7 +39,10 @@
             "minLength": 8,
             "description": "Optional initial password."
           },
-          "organization_id": { "type": "string", "description": "Organization the user belongs to." },
+          "organization_id": {
+            "type": "string",
+            "description": "Organization the user belongs to."
+          },
           "role_id": { "type": "string", "description": "Optional role to assign on creation." }
         },
         "required": ["email", "organization_id"],

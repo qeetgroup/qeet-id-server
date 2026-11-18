@@ -14,7 +14,7 @@ post:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '200':
+    "200":
       description: Agents resumed
       content:
         application/json:
@@ -23,7 +23,7 @@ post:
             properties:
               resumed:
                 type: integer
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml

@@ -10,18 +10,18 @@ get:
     unauthenticated. An unknown or inactive organization returns 404. Register each
     downstream SP with the SAML SP (IdP side) endpoints before it can obtain
     assertions at the organization's IdP SSO endpoint.
-  summary: '[idp] IdP metadata'
+  summary: "[idp] IdP metadata"
   tags:
     - SAML
   parameters:
     - $ref: ../../../shared/parameters/OrganizationID.yaml
   security: []
   responses:
-    '200':
+    "200":
       description: IdP metadata XML
       content:
         application/xml:
           schema:
             type: string
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml

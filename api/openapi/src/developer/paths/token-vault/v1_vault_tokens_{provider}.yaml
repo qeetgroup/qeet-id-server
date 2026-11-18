@@ -15,11 +15,11 @@ delete:
   security:
     - bearerAuth: []
   responses:
-    '204':
+    "204":
       description: No Content
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

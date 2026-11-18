@@ -20,6 +20,11 @@ datasources:
           matcherRegex: trace_id
           datasourceUid: tempo
           url: "$${__value.raw}"
+  - name: Pyroscope
+    uid: pyroscope
+    type: grafana-pyroscope-datasource
+    access: proxy
+    url: http://pyroscope:4040
   - name: Tempo
     uid: tempo
     type: tempo

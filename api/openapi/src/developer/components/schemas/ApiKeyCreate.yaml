@@ -9,7 +9,7 @@ properties:
   user_id:
     type:
       - string
-      - 'null'
+      - "null"
     format: uuid
   name:
     type: string
@@ -22,5 +22,5 @@ properties:
   expires_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time

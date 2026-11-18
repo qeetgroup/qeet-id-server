@@ -7,18 +7,18 @@ get:
     bearer-token authentication scheme. Requires the SCIM bearer token and is
     mounted at the root under /scim/v2, not under /v1. Errors use the RFC 7644
     SCIM error envelope.
-  summary: '[scim] ServiceProviderConfig'
+  summary: "[scim] ServiceProviderConfig"
   tags:
     - SCIM
   security:
     - scimBearer: []
   responses:
-    '200':
+    "200":
       description: SCIM metadata
       content:
         application/scim+json:
           schema:
             type: object
             additionalProperties: true
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml

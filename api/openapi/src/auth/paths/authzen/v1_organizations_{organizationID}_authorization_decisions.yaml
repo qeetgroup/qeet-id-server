@@ -65,7 +65,7 @@ get:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '200':
+    "200":
       description: Decisions
       content:
         application/json:
@@ -123,7 +123,7 @@ get:
                       type: boolean
                     model:
                       type: string
-                      description: 'rbac, rebac, abac or none: the model that decided.'
+                      description: "rbac, rebac, abac or none: the model that decided."
                     rule:
                       type: string
                       description: The role, relation or ABAC policy that decided.
@@ -132,9 +132,9 @@ get:
               next_cursor:
                 type: string
                 description: Present when there is another page.
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml

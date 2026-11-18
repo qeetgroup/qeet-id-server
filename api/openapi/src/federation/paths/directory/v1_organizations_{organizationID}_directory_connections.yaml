@@ -15,7 +15,7 @@ get:
   parameters:
     - $ref: ../../../shared/parameters/OrganizationID.yaml
   responses:
-    '200':
+    "200":
       description: Directory connection inventory
       content:
         application/json:
@@ -67,7 +67,7 @@ get:
                     environment:
                       type:
                         - string
-                        - 'null'
+                        - "null"
                     scope:
                       type: string
                       enum:
@@ -76,22 +76,22 @@ get:
                     created_at:
                       type:
                         - string
-                        - 'null'
+                        - "null"
                       format: date-time
                     last_activity_at:
                       type:
                         - string
-                        - 'null'
+                        - "null"
                       format: date-time
                     last_sync_at:
                       type:
                         - string
-                        - 'null'
+                        - "null"
                       format: date-time
                     user_count:
                       type:
                         - integer
-                        - 'null'
+                        - "null"
                       minimum: 0
                       description: >-
                         SCIM, the people it provisioned; LDAP, the people with
@@ -100,7 +100,7 @@ get:
                     group_count:
                       type:
                         - integer
-                        - 'null'
+                        - "null"
                       minimum: 0
                       description: >-
                         SCIM, the groups it provisioned; null for LDAP, which
@@ -108,12 +108,12 @@ get:
                     server_url:
                       type:
                         - string
-                        - 'null'
-    '400':
+                        - "null"
+    "400":
       description: Invalid organization identifier
-    '401':
+    "401":
       description: Authentication and organization scope required
-    '403':
+    "403":
       description: Organization mismatch or missing connection.read permission
-    '500':
+    "500":
       description: Directory inventory could not be loaded

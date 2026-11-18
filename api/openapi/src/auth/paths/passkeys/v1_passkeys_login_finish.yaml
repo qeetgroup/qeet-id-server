@@ -9,10 +9,10 @@ post:
     content:
       application/json:
         example:
-          session_id: '018f2a72-3d4e-7f5a-9b6c-7d8e9f0a1b2c'
+          session_id: "018f2a72-3d4e-7f5a-9b6c-7d8e9f0a1b2c"
           credential:
-            id: '3xQm7Lk2pR9vT0sWb4nYcE'
-            rawId: '3xQm7Lk2pR9vT0sWb4nYcE'
+            id: "3xQm7Lk2pR9vT0sWb4nYcE"
+            rawId: "3xQm7Lk2pR9vT0sWb4nYcE"
             type: public-key
             response:
               authenticatorData: SZYN5YgOjGh0NBcPZHZgW4_krrmihjLHmVzzuoMdl2MFAAAAAQ
@@ -35,7 +35,7 @@ post:
     organization requires single sign-on is refused with 403 auth.sso_required
     (see the SSORequired response).
   responses:
-    '201':
+    "201":
       description: Created
       headers:
         Cache-Control:
@@ -47,22 +47,22 @@ post:
           example:
             access_token: eyJhbGciOiJFUzI1NiIsImtpZCI6ImsxIn0.eyJzdWIiOiIwMThmMmE3MCJ9.FAKE-signature
             token_type: Bearer
-            expires_at: '2026-09-24T10:30:00Z'
+            expires_at: "2026-09-24T10:30:00Z"
             refresh_token: Jk3vQm9xT2pL0sWc8hYbR4nZaE6uFi1oPq7dGt5yHw0
-            session_expires_at: '2026-10-24T10:15:00Z'
-            idle_expires_at: '2026-10-01T10:15:00Z'
-            session_id: '018f2a70-5b6c-7d8e-9f01-2a3b4c5d6e7f'
-            user_id: '018f2a70-1a2b-7c3d-9e4f-5a6b7c8d9e0f'
-            organization_id: '018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00'
+            session_expires_at: "2026-10-24T10:15:00Z"
+            idle_expires_at: "2026-10-01T10:15:00Z"
+            session_id: "018f2a70-5b6c-7d8e-9f01-2a3b4c5d6e7f"
+            user_id: "018f2a70-1a2b-7c3d-9e4f-5a6b7c8d9e0f"
+            organization_id: "018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00"
           schema:
             $ref: ../../../shared/schemas/TokenPair.yaml
-    '403':
+    "403":
       $ref: ../../components/responses/SSORequired.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '415':
+    "415":
       $ref: ../../components/responses/UnsupportedMediaType.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

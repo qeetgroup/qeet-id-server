@@ -13,11 +13,11 @@ get:
     - OIDC
   security: []
   responses:
-    '200':
+    "200":
       description: JWK Set
       content:
         application/json:
           schema:
             $ref: ../../components/schemas/JWKS.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

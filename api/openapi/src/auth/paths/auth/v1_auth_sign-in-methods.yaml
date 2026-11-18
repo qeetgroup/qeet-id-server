@@ -15,7 +15,7 @@ get:
     auth.last_sign_in_method and recorded (auth.sign_in_method_removal_refused);
     use total to disable or explain that action first.
   responses:
-    '200':
+    "200":
       description: The counts
       content:
         application/json:
@@ -30,7 +30,7 @@ get:
                 type: integer
               total:
                 type: integer
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

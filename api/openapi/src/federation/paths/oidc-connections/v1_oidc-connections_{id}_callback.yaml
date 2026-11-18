@@ -61,13 +61,13 @@ get:
         type: string
   security: []
   responses:
-    '302':
+    "302":
       description: Redirect to the console with a one-time login code in the fragment
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '402':
+    "402":
       description: >-
         The organization's plan no longer includes enterprise SSO
         (`billing.upgrade_required`).
@@ -75,9 +75,9 @@ get:
         application/json:
           schema:
             $ref: ../../../shared/schemas/Error.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

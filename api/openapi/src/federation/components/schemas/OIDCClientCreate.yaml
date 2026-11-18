@@ -76,7 +76,7 @@ properties:
   web_origins:
     type:
       - array
-      - 'null'
+      - "null"
     maxItems: 50
     items:
       type: string

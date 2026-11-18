@@ -11,7 +11,7 @@ get:
     Also accepts the hosted-login session cookie (qe_ls) in place of a bearer
     token, so the hosted login can show a signed-in user their passkeys.
   responses:
-    '200':
+    "200":
       description: OK
       content:
         application/json:
@@ -35,13 +35,13 @@ get:
                   which register begin and finish then refuse (403
                   passkey.disabled). Always true for a user without an
                   organization.
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

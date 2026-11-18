@@ -21,19 +21,19 @@ post:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '200':
+    "200":
       description: Verification result (verified_at set on success)
       content:
         application/json:
           schema:
             $ref: ../../../shared/schemas/Domain.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '409':
+    "409":
       $ref: ../../../shared/responses/Conflict.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml

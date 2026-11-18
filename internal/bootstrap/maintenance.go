@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/qeetgroup/qeet-id-server/internal/developer/webhook"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/gdpr"
@@ -169,7 +170,7 @@ func runSweeps(ctx context.Context, pool *pgxpool.Pool, msg string, sweeps []ret
 func RegisterMaintenanceMetrics(pool *pgxpool.Pool, box *envelope.Cipher) {
 	for _, c := range []prometheus.Collector{
 		worker.LastSuccessCollector(pool), audit.VerificationMetrics(pool),
-		outbox.LagCollector(pool), postgres.PoolCollector(pool),
+		outbox.LagCollector(pool), postgres.PoolCollector(pool), webhook.BacklogCollector(pool),
 		reseal.Collector(pool, box, EncryptedColumns()),
 	} {
 		var dup prometheus.AlreadyRegisteredError

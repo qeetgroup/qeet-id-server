@@ -13,9 +13,9 @@ get:
     (tokenvault.connect_other_browser) and nothing is exchanged or stored, so a
     connect link sent to someone else connects nothing.
   responses:
-    '200':
+    "200":
       description: HTML confirmation page
-    '400':
+    "400":
       description: >-
         HTML error page (invalid/expired state, or the provider returned an
         error)

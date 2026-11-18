@@ -34,7 +34,7 @@ get:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '200':
+    "200":
       description: The role's holders
       content:
         application/json:
@@ -92,11 +92,11 @@ get:
                       type: string
               next_cursor:
                 type: string
-    '400':
+    "400":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml

@@ -10,13 +10,13 @@ properties:
   created_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
     description: When the newest working token was issued.
   last_used_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
     description: The latest use of any working token, recorded at most once a minute.
   provisioned_count:
@@ -33,7 +33,7 @@ properties:
   last_request:
     type:
       - object
-      - 'null'
+      - "null"
     description: >-
       How the last change the identity provider sent was answered; null before
       the first. Reads are not recorded.

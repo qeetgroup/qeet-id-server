@@ -18,7 +18,7 @@ post:
           type: object
           additionalProperties: true
   responses:
-    '200':
+    "200":
       description: Signed callback accepted
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml

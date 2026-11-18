@@ -6,11 +6,11 @@ properties:
   status_code:
     type:
       - integer
-      - 'null'
+      - "null"
     description: Null when the endpoint gave no answer.
   duration_ms:
     type: integer
   error:
     type:
       - string
-      - 'null'
+      - "null"

@@ -22,7 +22,7 @@ properties:
   user_id:
     type:
       - string
-      - 'null'
+      - "null"
     format: uuid
   user_email:
     type: string
@@ -39,11 +39,11 @@ properties:
   last_polled_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
   consumed_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
     description: When the device redeemed the approval for tokens; null until then.

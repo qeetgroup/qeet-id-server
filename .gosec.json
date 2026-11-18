@@ -6,18 +6,12 @@
   "exclude-rules": [
     {
       "path": "/internal/(platform/http/errs/[^/]+|.+/(api)?errors)\\.go$",
-      "rules": [
-        "G101"
-      ],
+      "rules": ["G101"],
       "reason": "These files declare error codes: the shared ones in errs, and each package's own in its errors.go. Every constant is a public API error code such as \"oidc.refresh_token_invalid\"; G101 matches words like token, secret and cred in their names. No credentials live in them."
     },
     {
       "path": "/cmd/seed/",
-      "rules": [
-        "G101",
-        "G404",
-        "G115"
-      ],
+      "rules": ["G101", "G404", "G115"],
       "reason": "The development seed refuses to run outside SERVICE_ENV=dev. Its credentials are fictional demo fixtures it prints for testers (G101); it uses a fixed-seed math/rand generator on purpose, so every run produces the same demo data (G404); and its int conversions are on small values it chose itself (G115)."
     }
   ]

@@ -28,7 +28,7 @@ post:
             scope:
               type: string
   responses:
-    '200':
+    "200":
       description: Device authorization response
       headers:
         Cache-Control:
@@ -39,7 +39,7 @@ post:
         application/json:
           schema:
             $ref: ../../components/schemas/DeviceAuthorizationResponse.yaml
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml

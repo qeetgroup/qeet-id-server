@@ -13,7 +13,7 @@ properties:
   name:
     type:
       - string
-      - 'null'
+      - "null"
     maxLength: 64
     description: >-
       User-supplied text: show it as text, never as markup. Null for a passkey
@@ -21,13 +21,13 @@ properties:
   transports:
     type:
       - array
-      - 'null'
+      - "null"
     items:
       type: string
   last_used_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
   created_at:
     type: string

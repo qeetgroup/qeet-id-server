@@ -129,11 +129,11 @@ get:
   security:
     - ssoCookie: []
   responses:
-    '302':
+    "302":
       description: Redirect to the hosted-login UI or back to the client with a code
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
 post:
   operationId: authorizeWithPost
@@ -188,7 +188,7 @@ post:
               format: uri
   security: []
   responses:
-    '303':
+    "303":
       description: Redirect to the GET form of the same authorization request
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml

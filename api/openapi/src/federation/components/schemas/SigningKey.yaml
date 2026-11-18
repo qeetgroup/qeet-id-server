@@ -20,12 +20,12 @@ properties:
   retire_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
   created_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
     description: >-
       When the key registry first held the key; null for a key it doesn't hold
@@ -33,7 +33,7 @@ properties:
   activated_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
     description: >-
       When the key became the active signing key; null for a candidate that

@@ -12,7 +12,7 @@ get:
     Lists the organization's data-export requests and their state. Requires
     gdpr.write.
   responses:
-    '200':
+    "200":
       description: OK
       content:
         application/json:
@@ -27,13 +27,13 @@ get:
                 type: array
                 items:
                   $ref: ../../components/schemas/ExportRequest.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

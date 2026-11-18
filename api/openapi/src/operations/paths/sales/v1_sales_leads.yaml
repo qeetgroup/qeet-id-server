@@ -20,7 +20,7 @@ post:
           type: object
           additionalProperties: true
   responses:
-    '202':
+    "202":
       description: Lead accepted
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml

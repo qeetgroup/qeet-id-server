@@ -6,7 +6,7 @@
 authentication and authorization enforcement, organization row security, migrations, configuration,
 workers, OpenAPI coverage and test layout were checked against `c2454fec`. Focused bootstrap,
 HTTP-security, token and authorization tests passed. Live providers, deployed infrastructure and
-production state were not checked. Claims about the *product* are inherited from L1.
+production state were not checked. Claims about the _product_ are inherited from L1.
 
 ---
 
@@ -16,15 +16,15 @@ production state were not checked. Claims about the *product* are inherited from
 PostgreSQL database and five bounded contexts. The API is the primary deployable; worker and
 scheduler entry points can run its asynchronous work independently.
 
-| | |
-|---|---|
-| Module | `github.com/qeetgroup/qeet-id-server` |
-| Language | Go 1.27.0 (toolchain 1.27.4) |
-| Router | chi v5 |
-| Database | PostgreSQL, pgx v5, hand-written SQL via sqlc |
+|          |                                                 |
+| -------- | ----------------------------------------------- |
+| Module   | `github.com/qeetgroup/qeet-id-server`           |
+| Language | Go 1.27.0 (toolchain 1.27.4)                    |
+| Router   | chi v5                                          |
+| Database | PostgreSQL, pgx v5, hand-written SQL via sqlc   |
 | Binaries | `api`, `worker`, `scheduler`, `migrate`, `seed` |
-| Port | 4001 |
-| Status | active repository; the **product** is pre-1.0 |
+| Port     | 4001                                            |
+| Status   | active repository; the **product** is pre-1.0   |
 
 ## Relationship to the Qeet context layers
 
@@ -41,12 +41,12 @@ source                 L3/L4
 **This document does not restate L0 or L1.** It describes how this repository implements what they
 require.
 
-| Question | Level |
-|---|---|
-| What is Qeet's cookie policy? Domain model? API standard? | **L0** — `qeet-context` |
-| What is Qeet ID? Which repositories? How does the auth *flow* work? | **L1** — `qeet-id-context` |
-| Where is that flow implemented? Which package? How is it wired? | **L2** — here |
-| What exactly does this function do? | **L3/L4** — the source |
+| Question                                                            | Level                      |
+| ------------------------------------------------------------------- | -------------------------- |
+| What is Qeet's cookie policy? Domain model? API standard?           | **L0** — `qeet-context`    |
+| What is Qeet ID? Which repositories? How does the auth _flow_ work? | **L1** — `qeet-id-context` |
+| Where is that flow implemented? Which package? How is it wired?     | **L2** — here              |
+| What exactly does this function do?                                 | **L3/L4** — the source     |
 
 **Policy flows down and is not overridden here.** If this implementation does not meet an L0 or L1
 requirement, that is a product-level divergence to record in `qeet-id-context` and its
@@ -72,17 +72,17 @@ This repository owns:
 
 Owned elsewhere. Do not implement these here:
 
-| Not owned | Owner |
-|---|---|
-| Operator console UI | `qeet-id-console` |
-| Hosted login UI | `qeet-id-hosted` |
-| Marketing site | `qeet-id-website` |
-| Qeet ID on the phone | `qeet-id-ios`, `qeet-id-android` |
-| Client SDKs | `qeet-id-{go,node,react,nextjs,tanstack,java,python}` |
-| Product documentation | `qeet-id-docs` |
-| **Deployment manifests, Terraform, rollout** | `qeet-id-deploy` |
-| Requirements, PRD, TAD, product ADRs | `qeet-id-files` |
-| Design system | `qeetrix-ui` |
+| Not owned                                    | Owner                                                 |
+| -------------------------------------------- | ----------------------------------------------------- |
+| Operator console UI                          | `qeet-id-console`                                     |
+| Hosted login UI                              | `qeet-id-hosted`                                      |
+| Marketing site                               | `qeet-id-website`                                     |
+| Qeet ID on the phone                         | `qeet-id-ios`, `qeet-id-android`                      |
+| Client SDKs                                  | `qeet-id-{go,node,react,nextjs,tanstack,java,python}` |
+| Product documentation                        | `qeet-id-docs`                                        |
+| **Deployment manifests, Terraform, rollout** | `qeet-id-deploy`                                      |
+| Requirements, PRD, TAD, product ADRs         | `qeet-id-files`                                       |
+| Design system                                | `qeetrix-ui`                                          |
 
 ---
 
@@ -118,26 +118,26 @@ HTTP request
 
 **Status:** verified · **Evidence:** `internal/bootstrap/router.go`
 
-**Ordering is load-bearing.** CORS runs before CSRF. Organization scope is checked *before* permissions, so
+**Ordering is load-bearing.** CORS runs before CSRF. Organization scope is checked _before_ permissions, so
 a caller can never reach a permission check for another organization's resource.
 
 ## HTTP architecture
 
 **Status:** verified · **Evidence:** `internal/bootstrap/router.go`, `internal/platform/http/`
 
-| Concern | Where |
-|---|---|
-| Router | chi v5, built in `NewRouter()` — `internal/bootstrap/router.go` |
-| Global middleware | `RequestID` · `RealIP` · `Recoverer` · `InFlight` · `SecurityHeaders` · `AccessLog` · tracing · metrics · CORS · CSRF |
-| Root routes | `/healthz` · `/readyz` · `/metrics` |
-| Protocol mounts | `MountPublic` for OIDC, SCIM, SAML, LDAP — fixed spec locations at the root |
-| `/v1` public group | rate-limited, no session — invites, social, billing webhooks, passkey login, admin portal, OAuth authorize |
-| `/v1` token group | the one OAuth token endpoint, `POST /v1/oauth/token`, every grant by `grant_type`, in its own machine-traffic rate-limit bucket |
-| `/v1` authenticated group | API key → hosted-login session (only the few `LoginSessionRoutes()` the hosted login calls) → `RequireAuth` → `EnforceOrganizationScope` → rate limits → `rbac.Enforce` |
-| Errors | each package's `errors.go`: `errs.New(code, kind, message)`, the code stable; errors several packages return are in `internal/platform/http/errs/` |
-| Status mapping | `internal/platform/http/httpx/error_status.go`: one table from the 15 kinds of error to HTTP statuses |
-| Cursor pagination | `internal/platform/http/paging/` |
-| Request helpers, principal, guards | `internal/platform/http/httpx/` |
+| Concern                            | Where                                                                                                                                                                   |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Router                             | chi v5, built in `NewRouter()` — `internal/bootstrap/router.go`                                                                                                         |
+| Global middleware                  | `RequestID` · `RealIP` · `Recoverer` · `InFlight` · `SecurityHeaders` · `AccessLog` · tracing · metrics · CORS · CSRF                                                   |
+| Root routes                        | `/healthz` · `/readyz` · `/metrics`                                                                                                                                     |
+| Protocol mounts                    | `MountPublic` for OIDC, SCIM, SAML, LDAP — fixed spec locations at the root                                                                                             |
+| `/v1` public group                 | rate-limited, no session — invites, social, billing webhooks, passkey login, admin portal, OAuth authorize                                                              |
+| `/v1` token group                  | the one OAuth token endpoint, `POST /v1/oauth/token`, every grant by `grant_type`, in its own machine-traffic rate-limit bucket                                         |
+| `/v1` authenticated group          | API key → hosted-login session (only the few `LoginSessionRoutes()` the hosted login calls) → `RequireAuth` → `EnforceOrganizationScope` → rate limits → `rbac.Enforce` |
+| Errors                             | each package's `errors.go`: `errs.New(code, kind, message)`, the code stable; errors several packages return are in `internal/platform/http/errs/`                      |
+| Status mapping                     | `internal/platform/http/httpx/error_status.go`: one table from the 15 kinds of error to HTTP statuses                                                                   |
+| Cursor pagination                  | `internal/platform/http/paging/`                                                                                                                                        |
+| Request helpers, principal, guards | `internal/platform/http/httpx/`                                                                                                                                         |
 
 **Adding a route means choosing a group.** The public group opts out of authentication, organization scope,
 rate limiting and RBAC entirely. Use it only for genuinely unauthenticated endpoints.
@@ -158,15 +158,15 @@ internal/<context>     five bounded contexts — business logic
 internal/platform      shared kernel — pure infrastructure
 ```
 
-| Package | Responsibility |
-|---|---|
-| `internal/access` | Authentication, authorization (RBAC/ABAC/ReBAC/AuthZEN), MFA, passkeys, recovery, risk, threat |
-| `internal/identity` | Organizations, users, groups, invitations, verification, domain verification, branding |
-| `internal/federation` | OIDC provider, SAML (SP + IdP), SCIM, LDAP, social, admin portal |
-| `internal/developer` | API keys, service principals, agents, auth hooks, webhooks, secrets vault, token vault, VCs |
+| Package               | Responsibility                                                                                      |
+| --------------------- | --------------------------------------------------------------------------------------------------- |
+| `internal/access`     | Authentication, authorization (RBAC/ABAC/ReBAC/AuthZEN), MFA, passkeys, recovery, risk, threat      |
+| `internal/identity`   | Organizations, users, groups, invitations, verification, domain verification, branding              |
+| `internal/federation` | OIDC provider, SAML (SP + IdP), SCIM, LDAP, social, admin portal                                    |
+| `internal/developer`  | API keys, service principals, agents, auth hooks, webhooks, secrets vault, token vault, VCs         |
 | `internal/operations` | Audit, analytics, billing, GDPR, retention, SIEM, notifications, entitlements, search, AI assistant |
-| `internal/platform` | HTTP, database, crypto, cache, config, events, workers, messaging, observability |
-| `internal/bootstrap` | Composition root: dependencies, router, permission map, lifecycle, server |
+| `internal/platform`   | HTTP, database, crypto, cache, config, events, workers, messaging, observability                    |
+| `internal/bootstrap`  | Composition root: dependencies, router, permission map, lifecycle, server                           |
 
 113 packages under `internal/` and `cmd/` contain hand-written Go files, 176 with the
 sqlc-generated `dbgen` packages.
@@ -235,27 +235,27 @@ uses `pgxpool` directly rather than the `database` helpers · **`access` does no
 
 `internal/bootstrap` is the only package that wires anything.
 
-| File | Role |
-|---|---|
-| `app.go` | Application assembly |
-| `dependencies.go` | Builds the shared infrastructure, then each context's services in turn, and the workers |
+| File                                                                                                      | Role                                                                                                                                                                                                                                              |
+| --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `app.go`                                                                                                  | Application assembly                                                                                                                                                                                                                              |
+| `dependencies.go`                                                                                         | Builds the shared infrastructure, then each context's services in turn, and the workers                                                                                                                                                           |
 | `wire_access.go` · `wire_identity.go` · `wire_federation.go` · `wire_developer.go` · `wire_operations.go` | One per bounded context: its services (`new<Context>`), each built with every dependency it needs and refused at start without one, its handlers (checked at start), its route permissions, user-only routes and step-ups, and its scheduled jobs |
-| `keys.go` · `mail.go` · `infra.go` · `sso.go` · `adapters.go` | Building blocks: vault and signing keys; the message chain; outbound policy, NATS, rate limits and the validator; SAML and platform social sign-in; cross-context adapters |
-| `router.go` | Builds the chi router, registers middleware, mounts every route |
-| `permissions.go` · `stepup.go` | The route → policy and step-up tables `rbac.Enforce` and the step-up gate read, joined from the contexts' |
-| `server.go` | HTTP server |
-| `lifecycle.go` | Startup and graceful shutdown |
+| `keys.go` · `mail.go` · `infra.go` · `sso.go` · `adapters.go`                                             | Building blocks: vault and signing keys; the message chain; outbound policy, NATS, rate limits and the validator; SAML and platform social sign-in; cross-context adapters                                                                        |
+| `router.go`                                                                                               | Builds the chi router, registers middleware, mounts every route                                                                                                                                                                                   |
+| `permissions.go` · `stepup.go`                                                                            | The route → policy and step-up tables `rbac.Enforce` and the step-up gate read, joined from the contexts'                                                                                                                                         |
+| `server.go`                                                                                               | HTTP server                                                                                                                                                                                                                                       |
+| `lifecycle.go`                                                                                            | Startup and graceful shutdown                                                                                                                                                                                                                     |
 
 **A new service, route, middleware or worker is wired here.** A package that wires itself has
 violated the pattern and will usually break R1 or R2.
 
 ## Entrypoints
 
-| Binary | Purpose | Notes |
-|---|---|---|
-| `cmd/api` | HTTP API server | Body is `bootstrap.Run()`. It runs the continuous workers itself |
-| `cmd/scheduler` | Scheduled maintenance, standalone (the API also runs it embedded) | Each job claimed in `platform.scheduled_job_runs` — once per interval across instances |
-| `cmd/seed` | Demo data | **A workstation and the kit's DEV only** (`SERVICE_ENV=dev`, or `local` with profile `dev`). Writes only through the services and handlers (no SQL, nothing backdated), so hashes and audit chains are real |
+| Binary          | Purpose                                                           | Notes                                                                                                                                                                                                       |
+| --------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cmd/api`       | HTTP API server                                                   | Body is `bootstrap.Run()`. It runs the continuous workers itself                                                                                                                                            |
+| `cmd/scheduler` | Scheduled maintenance, standalone (the API also runs it embedded) | Each job claimed in `platform.scheduled_job_runs` — once per interval across instances                                                                                                                      |
+| `cmd/seed`      | Demo data                                                         | **A workstation and the kit's DEV only** (`SERVICE_ENV=dev`, or `local` with profile `dev`). Writes only through the services and handlers (no SQL, nothing backdated), so hashes and audit chains are real |
 
 ---
 
@@ -344,8 +344,8 @@ repository query               WHERE organization_id = $1
 
 The source states the rule directly:
 
-> *"RequireOrganization returns the principal's organization id — the only trustworthy source of organization scope.
-> Handlers must never take organization id from URL/body."*
+> _"RequireOrganization returns the principal's organization id — the only trustworthy source of organization scope.
+> Handlers must never take organization id from URL/body."_
 
 ### Membership
 
@@ -364,10 +364,10 @@ organization through the context, applied each time a connection leaves the pool
 applies it to the organization-administration routes — those whose policy needs a permission or a
 machine scope (`scopeOrganizationRoutes`); a person's own routes act across their organizations.
 
-| Where | A missing `organization_id` predicate causes |
-|---|---|
-| Organization-administration request, organization-owned table | nothing — the database hides the other organizations' rows |
-| A person's own route, background job, sign-in, public flow, account-level table | **cross-organization data exposure** |
+| Where                                                                           | A missing `organization_id` predicate causes               |
+| ------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Organization-administration request, organization-owned table                   | nothing — the database hides the other organizations' rows |
+| A person's own route, background job, sign-in, public flow, account-level table | **cross-organization data exposure**                       |
 
 The account-level tables (`accountLevelTables` in `migrations/runner_db_test.go`: a person's
 sessions, memberships, invitations inbox and such) have no policy. Requests that act across
@@ -419,14 +419,14 @@ For the product-level flow narrative, read `qeet-id-context/FLOWS/`.
 
 ## Authorization
 
-| Model | Package |
-|---|---|
-| RBAC + route enforcement | `internal/access/authorization/rbac/` |
-| ABAC — deny-overrides, fail-closed | `internal/access/authorization/abac/` |
-| ReBAC — Zanzibar relation tuples | `internal/access/authorization/rebac/` |
-| AuthZEN PDP/PEP | `internal/access/authorization/authzen/` |
-| Composed decision — every check and the route guard ask it | `internal/access/authorization/decide/` |
-| Organization policy / password rules | `internal/access/authpolicy/` |
+| Model                                                      | Package                                  |
+| ---------------------------------------------------------- | ---------------------------------------- |
+| RBAC + route enforcement                                   | `internal/access/authorization/rbac/`    |
+| ABAC — deny-overrides, fail-closed                         | `internal/access/authorization/abac/`    |
+| ReBAC — Zanzibar relation tuples                           | `internal/access/authorization/rebac/`   |
+| AuthZEN PDP/PEP                                            | `internal/access/authorization/authzen/` |
+| Composed decision — every check and the route guard ask it | `internal/access/authorization/decide/`  |
+| Organization policy / password rules                       | `internal/access/authpolicy/`            |
 
 The **route → permission map** is `RoutePolicies` in `internal/bootstrap/permissions.go`, joined
 from each context's table in `wire_<context>.go`, and is consumed by `rbac.Enforce` as router
@@ -440,16 +440,16 @@ OAuth scope. ABAC denies are evaluated by the composed checker and override a ro
 
 ## Tokens and cryptography
 
-| Concern | Implementation |
-|---|---|
-| Algorithm | **ES256 or RS256**, by the active key's type (EC P-256 or RSA of 2048 bits or more). `validMethods` allows only those two and `keyFunc` holds each key to its own, so `alg` confusion is impossible |
-| `kid` | RFC 7638 JWK thumbprint, computed at key load |
-| Verification | Missing or unknown `kid` → rejected |
-| Rotation | Shared encrypted registry: candidate staging, explicit activation, replica refresh, timed public-key retirement |
-| Password hash | Argon2id |
-| CSRF token | HMAC-keyed, constant-time comparison |
-| Vault | AES-256-GCM, per-organization HKDF-derived key, static or AWS KMS provider |
-| Randomness | `crypto/rand` only |
+| Concern       | Implementation                                                                                                                                                                                      |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Algorithm     | **ES256 or RS256**, by the active key's type (EC P-256 or RSA of 2048 bits or more). `validMethods` allows only those two and `keyFunc` holds each key to its own, so `alg` confusion is impossible |
+| `kid`         | RFC 7638 JWK thumbprint, computed at key load                                                                                                                                                       |
+| Verification  | Missing or unknown `kid` → rejected                                                                                                                                                                 |
+| Rotation      | Shared encrypted registry: candidate staging, explicit activation, replica refresh, timed public-key retirement                                                                                     |
+| Password hash | Argon2id                                                                                                                                                                                            |
+| CSRF token    | HMAC-keyed, constant-time comparison                                                                                                                                                                |
+| Vault         | AES-256-GCM, per-organization HKDF-derived key, static or AWS KMS provider                                                                                                                          |
+| Randomness    | `crypto/rand` only                                                                                                                                                                                  |
 
 **Evidence:** `internal/platform/crypto/tokens/{tokens,issue,verify,keys,registry}.go`, `internal/platform/crypto/envelope/`
 
@@ -532,14 +532,14 @@ caller needs the result or the operation must be atomic with the response.
 
 ## Observability
 
-| Signal | Implementation |
-|---|---|
-| Logs | Structured — `internal/platform/observability/logging/` |
-| Metrics | Prometheus at `/metrics` — `.../metrics/` |
-| Traces | OpenTelemetry — `.../tracing/`, `OTEL_EXPORTER_OTLP_ENDPOINT` |
-| Health | `/healthz` liveness, `/readyz` readiness — `.../health/` |
+| Signal      | Implementation                                                    |
+| ----------- | ----------------------------------------------------------------- |
+| Logs        | Structured — `internal/platform/observability/logging/`           |
+| Metrics     | Prometheus at `/metrics` — `.../metrics/`                         |
+| Traces      | OpenTelemetry — `.../tracing/`, `OTEL_EXPORTER_OTLP_ENDPOINT`     |
+| Health      | `/healthz` liveness, `/readyz` readiness — `.../health/`          |
 | Correlation | `X-Request-Id` via chi `RequestID` middleware, echoed into errors |
-| Audit | Hash-chained — `internal/operations/audit/` |
+| Audit       | Hash-chained — `internal/operations/audit/`                       |
 
 **Never log** credentials, tokens, personal data, or another organization's identifiers.
 
@@ -548,7 +548,8 @@ caller needs the result or the operation must be atomic with the response.
 `api/openapi/` — **five OpenAPI 3.1 documents**, split by bounded context, `info.version 0.2.0`.
 There is deliberately no monolithic spec. The documents are generated from `api/openapi/src/` (one
 file per path, shared definitions in `src/shared/`) by `make openapi` (Redocly CLI, pinned in
-`src/bun.lock`) and committed; `make openapi-check` fails when one is stale.
+`src/bun.lock`) and committed; `make openapi-check` fails when one is stale. The Postman collection in
+`api/postman/` is built from the documents by the same command (`src/postman.mjs`) and checked the same way.
 
 **The coverage gate is the important part:** `internal/bootstrap/openapi_coverage_test.go` fails the build if
 any mounted route is undocumented. A route cannot silently appear.
@@ -561,10 +562,10 @@ request host in production.
 
 ## Testing
 
-| Suite | Path | Runs |
-|---|---|---|
-| Unit | alongside source | `go test ./...` |
-| **OpenAPI coverage gate** | `internal/bootstrap/openapi_coverage_test.go` | with unit tests |
+| Suite                            | Path                                                                      | Runs            |
+| -------------------------------- | ------------------------------------------------------------------------- | --------------- |
+| Unit                             | alongside source                                                          | `go test ./...` |
+| **OpenAPI coverage gate**        | `internal/bootstrap/openapi_coverage_test.go`                             | with unit tests |
 | OpenAPI validity and consistency | `internal/bootstrap/openapi_valid_test.go`, `openapi_consistency_test.go` | with unit tests |
 
 Tests are **colocated** (`_test.go` beside the source). The current tree has 330 Go test files and
@@ -573,9 +574,9 @@ Counts are orientation only—package and behavior coverage matter more than tot
 
 **Coverage gaps worth knowing before you change these:**
 
-| Package | Unit tests |
-|---|---|
-| `operations/notification` | no direct package test; exercised through wider flows |
+| Package                      | Unit tests                                                                           |
+| ---------------------------- | ------------------------------------------------------------------------------------ |
+| `operations/notification`    | no direct package test; exercised through wider flows                                |
 | Protocol and lifecycle paths | several depend on integration-tagged database tests in addition to direct unit tests |
 
 `internal/bootstrap/permissions_test.go` walks the exact authenticated production mounts and
@@ -585,12 +586,12 @@ documents, including API-auth security classification.
 
 ## CI/CD
 
-| Job | What it runs |
-|---|---|
-| `verify` (`ci.yml`) | On pull requests into `develop` and `main`: `go build ./...` · `go vet ./...` · `golangci-lint` v2.15.0 · `govulncheck ./cmd/... ./internal/...` · API contract (`make openapi-check`, the OpenAPI tests) · gitleaks |
-| `image` (`candidate.yml`) | On push to `release/**` or `hotfix/**`: the test image `ghcr.io/qeetgroup/qeet-id-server:sha-<commit>` |
-| `deploy` (`deploy.yml`) | A merged release or hotfix into `main`: that tested image to ECR, roll the host via GitHub OIDC, then tag |
-| local (`make ci`) | `go test -race` with the database tests · `sqlc diff` · `gosec` (`#nosec` needs a rule and a reason) |
+| Job                       | What it runs                                                                                                                                                                                                         |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `verify` (`ci.yml`)       | On pull requests into `develop` and `main`: `go build ./...` · `go vet ./...` · `golangci-lint` v2.15.0 · `govulncheck ./cmd/... ./internal/...` · API contract (`make openapi-check`, the OpenAPI tests) · gitleaks |
+| `image` (`candidate.yml`) | On push to `release/**` or `hotfix/**`: the test image `ghcr.io/qeetgroup/qeet-id-server:sha-<commit>`                                                                                                               |
+| `deploy` (`deploy.yml`)   | A merged release or hotfix into `main`: that tested image to ECR, roll the host via GitHub OIDC, then tag                                                                                                            |
+| local (`make ci`)         | `go test -race` with the database tests · `sqlc diff` · `gosec` (`#nosec` needs a rule and a reason)                                                                                                                 |
 
 `.golangci.yml` enables `errcheck`, `govet`, `staticcheck`, `misspell`, `unused`, `ineffassign`,
 `errorlint`, `nilerr`, `bodyclose`, `sqlclosecheck`, `rowserrcheck`, `nolintlint`, `forbidigo` and
@@ -633,24 +634,24 @@ Then `make test`, `make lint`, `make build`.
 
 **Status:** verified · **Evidence:** each path below exists and was read
 
-| Area | Source path | Risk | Review expectation |
-|---|---|---|---|
-| **Organization isolation** | `internal/platform/http/httpx/auth.go` | **Critical** | Security review, mandatory |
-| **Route tree / middleware order** | `internal/bootstrap/router.go` | **Critical** | Security review — the organization guard depends on nesting |
-| **Route permissions** | `internal/bootstrap/permissions.go` | **Critical** | Security review · executable route-policy coverage |
-| **Authorization** | `internal/access/authorization/` | **Critical** | Security review |
-| **Authentication, sessions** | `internal/access/authentication/` | **Critical** | Security review |
-| **Tokens, signing, rotation** | `internal/platform/crypto/tokens/` (`issue.go`, `verify.go`, `keys.go`) | **Critical** | Security review · cross-repo |
-| **Hashing, vault crypto** | `internal/platform/crypto/{password,envelope}/` | **Critical** | Security review |
-| **CSRF** | `internal/platform/http/httpx/csrf.go` | **Critical** | Security review |
-| **Boot gate** | `internal/platform/config/validate.go` | **Critical** | Security review |
-| MFA, passkeys, recovery | `internal/access/{mfa,passkey,recovery}/` | High | Security review |
-| Federation parsers | `internal/federation/{saml,scim,ldap}/` | High | Security review — untrusted external input |
-| Machine & agent identity | `internal/developer/{apikey,principal,agent,credentials}/` | High | Security review |
-| Webhooks | `internal/developer/webhook/` | High | Security review — external consumers |
-| Audit hash chain | `internal/operations/audit/` | High | Security review |
-| Migrations | `internal/platform/database/migrations/` | High | Data review |
-| Risk & threat | `internal/access/{threat,ipallow}/` | Medium | Review |
+| Area                              | Source path                                                             | Risk         | Review expectation                                          |
+| --------------------------------- | ----------------------------------------------------------------------- | ------------ | ----------------------------------------------------------- |
+| **Organization isolation**        | `internal/platform/http/httpx/auth.go`                                  | **Critical** | Security review, mandatory                                  |
+| **Route tree / middleware order** | `internal/bootstrap/router.go`                                          | **Critical** | Security review — the organization guard depends on nesting |
+| **Route permissions**             | `internal/bootstrap/permissions.go`                                     | **Critical** | Security review · executable route-policy coverage          |
+| **Authorization**                 | `internal/access/authorization/`                                        | **Critical** | Security review                                             |
+| **Authentication, sessions**      | `internal/access/authentication/`                                       | **Critical** | Security review                                             |
+| **Tokens, signing, rotation**     | `internal/platform/crypto/tokens/` (`issue.go`, `verify.go`, `keys.go`) | **Critical** | Security review · cross-repo                                |
+| **Hashing, vault crypto**         | `internal/platform/crypto/{password,envelope}/`                         | **Critical** | Security review                                             |
+| **CSRF**                          | `internal/platform/http/httpx/csrf.go`                                  | **Critical** | Security review                                             |
+| **Boot gate**                     | `internal/platform/config/validate.go`                                  | **Critical** | Security review                                             |
+| MFA, passkeys, recovery           | `internal/access/{mfa,passkey,recovery}/`                               | High         | Security review                                             |
+| Federation parsers                | `internal/federation/{saml,scim,ldap}/`                                 | High         | Security review — untrusted external input                  |
+| Machine & agent identity          | `internal/developer/{apikey,principal,agent,credentials}/`              | High         | Security review                                             |
+| Webhooks                          | `internal/developer/webhook/`                                           | High         | Security review — external consumers                        |
+| Audit hash chain                  | `internal/operations/audit/`                                            | High         | Security review                                             |
+| Migrations                        | `internal/platform/database/migrations/`                                | High         | Data review                                                 |
+| Risk & threat                     | `internal/access/{threat,ipallow}/`                                     | Medium       | Review                                                      |
 
 ## Safe change matrix
 
@@ -658,23 +659,23 @@ What review a change needs. Cross-repository impact is expanded in
 [boundaries.md](boundaries.md#requires-cross-repository-coordination) and, at product level, in
 `qeet-id-context/CHANGE-MATRIX.md`.
 
-| Change | Security review | API review | DB / migration | Cross-repo review |
-|---|:--:|:--:|:--:|:--:|
-| Internal refactor | maybe | no | no | usually no |
-| Observability-only change | usually no | no | no | usually no |
-| Adding a test | no | no | no | no |
-| New endpoint | maybe | **yes** | maybe | **yes** |
-| New permission | **yes** | yes | no | **yes** |
-| Authentication change | **yes** | yes | maybe | **yes** |
-| Authorization change | **yes** | yes | maybe | **yes** |
-| **Organization isolation change** | **mandatory** | maybe | maybe | **yes** |
-| **Route tree restructure** | **mandatory** | no | no | no |
-| Schema change | yes | maybe | **yes** | **yes** |
-| **JWT claims / signing** | **mandatory** | yes | no | **yes — every Qeet product** |
-| Federation contract (SAML/SCIM) | **yes** | yes | maybe | **yes — external, unsurveyable** |
-| Webhook payload or signature | **yes** | yes | no | **yes — external** |
-| Config / env var | maybe | no | no | deploy repo |
-| Dependency bump | maybe | no | no | no |
+| Change                            | Security review | API review | DB / migration |        Cross-repo review         |
+| --------------------------------- | :-------------: | :--------: | :------------: | :------------------------------: |
+| Internal refactor                 |      maybe      |     no     |       no       |            usually no            |
+| Observability-only change         |   usually no    |     no     |       no       |            usually no            |
+| Adding a test                     |       no        |     no     |       no       |                no                |
+| New endpoint                      |      maybe      |  **yes**   |     maybe      |             **yes**              |
+| New permission                    |     **yes**     |    yes     |       no       |             **yes**              |
+| Authentication change             |     **yes**     |    yes     |     maybe      |             **yes**              |
+| Authorization change              |     **yes**     |    yes     |     maybe      |             **yes**              |
+| **Organization isolation change** |  **mandatory**  |   maybe    |     maybe      |             **yes**              |
+| **Route tree restructure**        |  **mandatory**  |     no     |       no       |                no                |
+| Schema change                     |       yes       |   maybe    |    **yes**     |             **yes**              |
+| **JWT claims / signing**          |  **mandatory**  |    yes     |       no       |   **yes — every Qeet product**   |
+| Federation contract (SAML/SCIM)   |     **yes**     |    yes     |     maybe      | **yes — external, unsurveyable** |
+| Webhook payload or signature      |     **yes**     |    yes     |       no       |        **yes — external**        |
+| Config / env var                  |      maybe      |     no     |       no       |           deploy repo            |
+| Dependency bump                   |      maybe      |     no     |       no       |                no                |
 
 ## Known constraints
 
@@ -702,14 +703,14 @@ an old audit as current state.
 
 ## Documentation authority
 
-| Question | Authority |
-|---|---|
-| What does the code do? | The source |
-| What is the API contract? | `api/openapi/` |
-| What is the security policy? | `SECURITY.md`, then L0 `qeet-context/SECURITY.md` |
-| How does the product work? | L1 `qeet-id-context` |
-| What are the organization rules? | L0 `qeet-context` |
-| **How is it implemented here?** | **This document** |
+| Question                         | Authority                                         |
+| -------------------------------- | ------------------------------------------------- |
+| What does the code do?           | The source                                        |
+| What is the API contract?        | `api/openapi/`                                    |
+| What is the security policy?     | `SECURITY.md`, then L0 `qeet-context/SECURITY.md` |
+| How does the product work?       | L1 `qeet-id-context`                              |
+| What are the organization rules? | L0 `qeet-context`                                 |
+| **How is it implemented here?**  | **This document**                                 |
 
 Where a document and the source disagree, **the source is what runs** — and the disagreement is
 recorded rather than silently resolved.

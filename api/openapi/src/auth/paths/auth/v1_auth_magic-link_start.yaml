@@ -59,7 +59,7 @@ post:
               type: string
               description: Hosted login only — where the sign-in journey continues.
   responses:
-    '200':
+    "200":
       description: >-
         Accepted (always, to avoid account enumeration); returns a neutral
         confirmation message
@@ -70,9 +70,9 @@ post:
             properties:
               message:
                 type: string
-    '403':
+    "403":
       $ref: ../../components/responses/SSORequired.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -3,12 +3,12 @@
 The Qeet ID REST contract: **five self-contained, bounded-context OpenAPI 3.1
 documents**. There is no monolithic `openapi.yaml`.
 
-| File | Context | Surface |
-|---|---|---|
-| [auth.yaml](auth.yaml) | access | Login/session, RBAC, ReBAC, MFA, passkeys, IP rules, auth/security policy, threats |
-| [management.yaml](management.yaml) | identity | Users, organizations, groups, invites, verification, branding, domain verification |
-| [federation.yaml](federation.yaml) | federation | OIDC, SAML, SCIM, LDAP, social login |
-| [developer.yaml](developer.yaml) | developer | API keys, webhooks, secrets vault, verifiable credentials, auth hooks, agents |
+| File                               | Context    | Surface                                                                                              |
+| ---------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------- |
+| [auth.yaml](auth.yaml)             | access     | Login/session, RBAC, ReBAC, MFA, passkeys, IP rules, auth/security policy, threats                   |
+| [management.yaml](management.yaml) | identity   | Users, organizations, groups, invites, verification, branding, domain verification                   |
+| [federation.yaml](federation.yaml) | federation | OIDC, SAML, SCIM, LDAP, social login                                                                 |
+| [developer.yaml](developer.yaml)   | developer  | API keys, webhooks, secrets vault, verifiable credentials, auth hooks, agents                        |
 | [operations.yaml](operations.yaml) | operations | Audit, analytics, billing, GDPR, email templates, retention, log sinks (SIEM), notifications, health |
 
 **These five files are generated — edit [`src/`](src/), then run `make openapi`.**
@@ -113,7 +113,7 @@ in `openapi_consistency_test.go`, since the linter reads one document at a time.
 
 Operations are grouped by `tag`, and the **order of paths in each `openapi.yaml` is
 intentional**. The api.qeet.in portal (Scalar) orders the tags within a product by
-the **first appearance of each tag in document order** — it does *not* read the
+the **first appearance of each tag in document order** — it does _not_ read the
 root `tags:` array order or any `x-*` ordering hint. Each document's paths are therefore
 laid out to follow an onboarding journey, and its top-level `tags:` array lists the
 tags in that same order (the consistency test enforces it):

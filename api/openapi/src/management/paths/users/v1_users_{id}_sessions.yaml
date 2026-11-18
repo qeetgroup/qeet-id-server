@@ -20,7 +20,7 @@ get:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '200':
+    "200":
       description: Active sessions
       content:
         application/json:
@@ -40,11 +40,11 @@ get:
                     ip:
                       type:
                         - string
-                        - 'null'
+                        - "null"
                     user_agent:
                       type:
                         - string
-                        - 'null'
+                        - "null"
                     created_at:
                       type: string
                       format: date-time
@@ -71,9 +71,9 @@ get:
                     city:
                       type: string
                       description: The city it was opened from, when the proxy names one.
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml

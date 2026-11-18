@@ -20,17 +20,17 @@ get:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '200':
+    "200":
       description: OIDC client
       content:
         application/json:
           schema:
             $ref: ../../components/schemas/OIDCClient.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
 patch:
   operationId: updateOidcClient
@@ -66,21 +66,21 @@ patch:
         schema:
           $ref: ../../components/schemas/OIDCClientUpdate.yaml
   responses:
-    '200':
+    "200":
       description: Updated OIDC client
       content:
         application/json:
           schema:
             $ref: ../../components/schemas/OIDCClient.yaml
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
 delete:
   operationId: deleteOidcClient
@@ -104,11 +104,11 @@ delete:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '204':
+    "204":
       description: Client deleted
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml

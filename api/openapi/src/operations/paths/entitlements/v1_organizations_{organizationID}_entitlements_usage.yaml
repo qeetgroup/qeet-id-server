@@ -21,7 +21,7 @@ get:
   parameters:
     - $ref: ../../../shared/parameters/OrganizationID.yaml
   responses:
-    '200':
+    "200":
       description: Resource usage by limit key
       content:
         application/json:
@@ -34,7 +34,7 @@ get:
                 type: object
                 additionalProperties:
                   type: integer
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml

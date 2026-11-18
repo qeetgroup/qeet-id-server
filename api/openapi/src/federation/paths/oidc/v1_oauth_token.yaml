@@ -99,7 +99,7 @@ post:
         schema:
           $ref: ../../components/schemas/OAuthTokenRequest.yaml
   responses:
-    '200':
+    "200":
       description: Token response
       headers:
         Cache-Control:
@@ -124,13 +124,13 @@ post:
                 access_token: eyJhbGciOiJFUzI1NiIsImtpZCI6ImsxIn0.eyJhY3Rvcl90eXBlIjoic2VydmljZSJ9.FAKE-signature
                 token_type: Bearer
                 expires_in: 600
-                expires_at: '2026-09-24T11:15:00Z'
+                expires_at: "2026-09-24T11:15:00Z"
                 scope: audit:read users:read
           schema:
             $ref: ../../components/schemas/OAuthTokenResponse.yaml
-    '400':
+    "400":
       $ref: ../../components/responses/OAuthBadRequest.yaml
-    '401':
+    "401":
       $ref: ../../components/responses/OAuthUnauthorized.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

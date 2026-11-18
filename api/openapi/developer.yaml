@@ -61,7 +61,7 @@ paths:
   /v1/api-keys:
     post:
       operationId: createApiKey
-      description: 'Creates a long-lived API key for machine access. The plaintext key is returned only once at creation and is never retrievable again, so store it securely. Its name is required (422 apikey.name_required) and at most 200 characters (422 validation_failed on name). Callers present it as `Authorization: ApiKey <key>` and resolve to actor_type `api_key`. A user_id, if sent, must be the caller''s own: a key can act only for the person who creates it (403 apikey.user_not_self otherwise). Such a personal key works only while that person''s account is active: it is refused while they are suspended and once they are deleted. It also does only what that person may do now: a route needs both one of the key''s scopes and the person''s permission for it (a vault read, their secret.read), so a key loses what its person loses. Creating and revoking keys is audited. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, one still being processed 409 idempotency.in_progress, and one whose first request stopped before answering 409 idempotency.outcome_unknown: check whether it took effect, then retry with a new key. A credential carries only authority its creator holds: every scope must be one the caller holds (a vault scope needs secret.read; a machine caller, a scope of its own), or the request is refused with 403 rbac.grant_exceeds_caller naming the scope.'
+      description: "Creates a long-lived API key for machine access. The plaintext key is returned only once at creation and is never retrievable again, so store it securely. Its name is required (422 apikey.name_required) and at most 200 characters (422 validation_failed on name). Callers present it as `Authorization: ApiKey <key>` and resolve to actor_type `api_key`. A user_id, if sent, must be the caller's own: a key can act only for the person who creates it (403 apikey.user_not_self otherwise). Such a personal key works only while that person's account is active: it is refused while they are suspended and once they are deleted. It also does only what that person may do now: a route needs both one of the key's scopes and the person's permission for it (a vault read, their secret.read), so a key loses what its person loses. Creating and revoking keys is audited. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, one still being processed 409 idempotency.in_progress, and one whose first request stopped before answering 409 idempotency.outcome_unknown: check whether it took effect, then retry with a new key. A credential carries only authority its creator holds: every scope must be one the caller holds (a vault scope needs secret.read; a machine caller, a scope of its own), or the request is refused with 403 rbac.grant_exceeds_caller naming the scope."
       summary: Create API key
       tags:
         - API Keys
@@ -78,21 +78,21 @@ paths:
               scopes:
                 - users:read
                 - audit:read
-              expires_at: '2027-01-01T00:00:00Z'
+              expires_at: "2027-01-01T00:00:00Z"
             schema:
-              $ref: '#/components/schemas/ApiKeyCreate'
+              $ref: "#/components/schemas/ApiKeyCreate"
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: "#/components/parameters/IdempotencyKey"
       responses:
-        '201':
+        "201":
           description: Created; secret shown once
           headers:
             Cache-Control:
-              $ref: '#/components/headers/NoStoreCacheControl'
+              $ref: "#/components/headers/NoStoreCacheControl"
             Pragma:
-              $ref: '#/components/headers/NoStorePragma'
+              $ref: "#/components/headers/NoStorePragma"
             Idempotent-Replayed:
-              $ref: '#/components/headers/IdempotentReplayed'
+              $ref: "#/components/headers/IdempotentReplayed"
           content:
             application/json:
               example:
@@ -104,29 +104,29 @@ paths:
                   scopes:
                     - users:read
                     - audit:read
-                  expires_at: '2027-01-01T00:00:00Z'
-                  created_at: '2026-09-24T10:15:00Z'
+                  expires_at: "2027-01-01T00:00:00Z"
+                  created_at: "2026-09-24T10:15:00Z"
                 secret: qk_7Qx8t3f0a1b2c3d4e5f6g7h8i9j0k1l2
                 warning: The secret is shown only once. Store it now; it cannot be retrieved again.
               schema:
                 type: object
                 properties:
                   api_key:
-                    $ref: '#/components/schemas/ApiKey'
+                    $ref: "#/components/schemas/ApiKey"
                   secret:
                     type: string
                   warning:
                     type: string
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '409':
-          description: 'A request with this Idempotency-Key is still being processed (idempotency.in_progress); retry shortly. Or the first request stopped before answering and may have taken effect (idempotency.outcome_unknown): check, then retry with a new key.'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: "A request with this Idempotency-Key is still being processed (idempotency.in_progress); retry shortly. Or the first request stopped before answering and may have taken effect (idempotency.outcome_unknown): check, then retry with a new key."
+        "422":
+          $ref: "#/components/responses/Unprocessable"
   /v1/api-keys/{id}:
     delete:
       operationId: revokeApiKey
@@ -145,14 +145,14 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '204':
+        "204":
           description: Revoked
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/organizations/{organizationID}/api-keys:
     get:
       operationId: listApiKeys
@@ -161,12 +161,12 @@ paths:
       tags:
         - API Keys
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: API keys
           content:
             application/json:
@@ -174,15 +174,15 @@ paths:
                 type: object
                 properties:
                   truncated:
-                    $ref: '#/components/schemas/Truncated'
+                    $ref: "#/components/schemas/Truncated"
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/ApiKey'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+                      $ref: "#/components/schemas/ApiKey"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/organizations/{organizationID}/api-keys/{id}/rotate:
     post:
       operationId: rotateApiKey
@@ -191,7 +191,7 @@ paths:
       tags:
         - API Keys
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: id
           in: path
           required: true
@@ -214,32 +214,32 @@ paths:
                   maximum: 168
                   description: How long the old key goes on working beside the new one. Defaults to 24; 0 stops it at once.
       responses:
-        '201':
+        "201":
           description: The new key; its secret shown once
           headers:
             Cache-Control:
-              $ref: '#/components/headers/NoStoreCacheControl'
+              $ref: "#/components/headers/NoStoreCacheControl"
             Pragma:
-              $ref: '#/components/headers/NoStorePragma'
+              $ref: "#/components/headers/NoStorePragma"
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   api_key:
-                    $ref: '#/components/schemas/ApiKey'
+                    $ref: "#/components/schemas/ApiKey"
                   secret:
                     type: string
                   warning:
                     type: string
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
   /v1/organizations/{organizationID}/agents:
     get:
       operationId: listAgents
@@ -248,12 +248,12 @@ paths:
       tags:
         - Agents
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: Agents (secrets are write-only, not returned)
           content:
             application/json:
@@ -261,24 +261,24 @@ paths:
                 type: object
                 properties:
                   truncated:
-                    $ref: '#/components/schemas/Truncated'
+                    $ref: "#/components/schemas/Truncated"
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/Agent'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+                      $ref: "#/components/schemas/Agent"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     post:
       operationId: createAgent
-      description: 'Registers a new AI agent identity. It gets short-lived access tokens at the token endpoint (POST /v1/oauth/token, grant_type client_credentials, its id as client_id and its secret as client_secret); agents resolve to actor_type `agent`. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, one still being processed 409 idempotency.in_progress, and one whose first request stopped before answering 409 idempotency.outcome_unknown: check whether it took effect, then retry with a new key. A credential carries only authority its creator holds: every scope must be one the caller holds (a vault scope needs secret.read; a machine caller, a scope of its own), or the request is refused with 403 rbac.grant_exceeds_caller naming the scope.'
+      description: "Registers a new AI agent identity. It gets short-lived access tokens at the token endpoint (POST /v1/oauth/token, grant_type client_credentials, its id as client_id and its secret as client_secret); agents resolve to actor_type `agent`. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, one still being processed 409 idempotency.in_progress, and one whose first request stopped before answering 409 idempotency.outcome_unknown: check whether it took effect, then retry with a new key. A credential carries only authority its creator holds: every scope must be one the caller holds (a vault scope needs secret.read; a machine caller, a scope of its own), or the request is refused with 403 rbac.grant_exceeds_caller naming the scope."
       summary: Create agent
       tags:
         - Agents
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: "#/components/parameters/OrganizationID"
+        - $ref: "#/components/parameters/IdempotencyKey"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -305,27 +305,27 @@ paths:
                   format: uuid
                   description: The named human owner accountable for this agent. Must be a member of this organization.
       responses:
-        '201':
+        "201":
           description: Agent created (secret returned once)
           headers:
             Cache-Control:
-              $ref: '#/components/headers/NoStoreCacheControl'
+              $ref: "#/components/headers/NoStoreCacheControl"
             Pragma:
-              $ref: '#/components/headers/NoStorePragma'
+              $ref: "#/components/headers/NoStorePragma"
             Idempotent-Replayed:
-              $ref: '#/components/headers/IdempotentReplayed'
+              $ref: "#/components/headers/IdempotentReplayed"
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Agent'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '409':
-          description: 'A request with this Idempotency-Key is still being processed (idempotency.in_progress); retry shortly. Or the first request stopped before answering and may have taken effect (idempotency.outcome_unknown): check, then retry with a new key.'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
+                $ref: "#/components/schemas/Agent"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: "A request with this Idempotency-Key is still being processed (idempotency.in_progress); retry shortly. Or the first request stopped before answering and may have taken effect (idempotency.outcome_unknown): check, then retry with a new key."
+        "422":
+          $ref: "#/components/responses/Unprocessable"
   /v1/organizations/{organizationID}/agents/{id}:
     delete:
       operationId: deleteAgent
@@ -334,7 +334,7 @@ paths:
       tags:
         - Agents
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: id
           in: path
           required: true
@@ -345,14 +345,14 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '204':
+        "204":
           description: Deleted
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
     patch:
       operationId: updateAgent
       summary: Update agent
@@ -360,7 +360,7 @@ paths:
       tags:
         - Agents
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: id
           in: path
           required: true
@@ -382,14 +382,14 @@ paths:
                 disabled:
                   type: boolean
       responses:
-        '204':
+        "204":
           description: Updated
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/organizations/{organizationID}/agents/{id}/suspend:
     post:
       operationId: suspendAgent
@@ -398,7 +398,7 @@ paths:
       tags:
         - Agents
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: id
           in: path
           required: true
@@ -409,20 +409,20 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: New lifecycle status
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AgentStatus'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          $ref: '#/components/responses/Conflict'
+                $ref: "#/components/schemas/AgentStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /v1/organizations/{organizationID}/agents/{id}/resume:
     post:
       operationId: resumeAgent
@@ -431,7 +431,7 @@ paths:
       tags:
         - Agents
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: id
           in: path
           required: true
@@ -442,20 +442,20 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: New lifecycle status
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AgentStatus'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          $ref: '#/components/responses/Conflict'
+                $ref: "#/components/schemas/AgentStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /v1/organizations/{organizationID}/agents/{id}/decommission:
     post:
       operationId: decommissionAgent
@@ -464,7 +464,7 @@ paths:
       tags:
         - Agents
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: id
           in: path
           required: true
@@ -475,20 +475,20 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: New lifecycle status
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AgentStatus'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          $ref: '#/components/responses/Conflict'
+                $ref: "#/components/schemas/AgentStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /v1/organizations/{organizationID}/agents/kill-all:
     post:
       operationId: suspendAllAgents
@@ -497,12 +497,12 @@ paths:
       tags:
         - Agents
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: Agents suspended
           content:
             application/json:
@@ -511,10 +511,10 @@ paths:
                 properties:
                   suspended:
                     type: integer
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/organizations/{organizationID}/agents/resume-all:
     post:
       operationId: resumeAllAgents
@@ -523,12 +523,12 @@ paths:
       tags:
         - Agents
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: Agents resumed
           content:
             application/json:
@@ -537,10 +537,10 @@ paths:
                 properties:
                   resumed:
                     type: integer
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/organizations/{organizationID}/agents/{id}/rotate-secret:
     post:
       operationId: rotateAgentSecret
@@ -549,7 +549,7 @@ paths:
       tags:
         - Agents
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: id
           in: path
           required: true
@@ -572,13 +572,13 @@ paths:
                   maximum: 168
                   description: How long the old secret goes on working beside the new one. Defaults to 24; 0 stops it at once.
       responses:
-        '200':
+        "200":
           description: The new secret, shown once
           headers:
             Cache-Control:
-              $ref: '#/components/headers/NoStoreCacheControl'
+              $ref: "#/components/headers/NoStoreCacheControl"
             Pragma:
-              $ref: '#/components/headers/NoStorePragma'
+              $ref: "#/components/headers/NoStorePragma"
           content:
             application/json:
               schema:
@@ -597,14 +597,14 @@ paths:
                     type: string
                     format: date-time
                     description: When the old secret stops working.
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
   /v1/organizations/{organizationID}/agents/sponsored-by/{userID}:
     get:
       operationId: listSponsoredAgents
@@ -613,7 +613,7 @@ paths:
       tags:
         - Agents
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: userID
           in: path
           required: true
@@ -624,7 +624,7 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: OK
           content:
             application/json:
@@ -634,15 +634,15 @@ paths:
                   - items
                 properties:
                   truncated:
-                    $ref: '#/components/schemas/Truncated'
+                    $ref: "#/components/schemas/Truncated"
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/Agent'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+                      $ref: "#/components/schemas/Agent"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/organizations/{organizationID}/agents/sponsored-by/{userID}/transfer:
     post:
       operationId: transferAgentSponsorship
@@ -651,7 +651,7 @@ paths:
       tags:
         - Agents
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: userID
           in: path
           required: true
@@ -675,7 +675,7 @@ paths:
                   format: uuid
                   description: Must be a member of this organization.
       responses:
-        '200':
+        "200":
           description: OK
           content:
             application/json:
@@ -684,12 +684,12 @@ paths:
                 properties:
                   transferred:
                     type: integer
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
   /v1/credentials/verify:
     post:
       operationId: verifyCredential
@@ -711,14 +711,14 @@ paths:
                   type: string
                   description: The JWT-VC string.
       responses:
-        '200':
-          description: '{ valid, subject, issuer, vc, ... }'
+        "200":
+          description: "{ valid, subject, issuer, vc, ... }"
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/VerifyResult'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
+                $ref: "#/components/schemas/VerifyResult"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
   /v1/organizations/{organizationID}/credentials:
     get:
       operationId: listCredentials
@@ -727,12 +727,12 @@ paths:
       tags:
         - Credentials
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: Issued credentials (registry view)
           content:
             application/json:
@@ -740,15 +740,15 @@ paths:
                 type: object
                 properties:
                   truncated:
-                    $ref: '#/components/schemas/Truncated'
+                    $ref: "#/components/schemas/Truncated"
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/VcCredential'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+                      $ref: "#/components/schemas/VcCredential"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     post:
       operationId: issueCredential
       description: Issues a verifiable credential (W3C VC / JWT-VC) to a subject. A presented credential can later be checked with the public verify endpoint.
@@ -756,7 +756,7 @@ paths:
       tags:
         - Credentials
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -782,27 +782,27 @@ paths:
                 user_id:
                   type:
                     - string
-                    - 'null'
+                    - "null"
                   format: uuid
                   description: The person the credential is for, a member of the organization (else 422 vc.user_not_member). Recorded with the credential, not in the signed JWT-VC.
       responses:
-        '201':
+        "201":
           description: Signed JWT-VC + credential id
           headers:
             Cache-Control:
-              $ref: '#/components/headers/NoStoreCacheControl'
+              $ref: "#/components/headers/NoStoreCacheControl"
             Pragma:
-              $ref: '#/components/headers/NoStorePragma'
+              $ref: "#/components/headers/NoStorePragma"
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/IssueResult'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
+                $ref: "#/components/schemas/IssueResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
   /v1/organizations/{organizationID}/credentials/{id}/revoke:
     post:
       operationId: revokeCredential
@@ -811,7 +811,7 @@ paths:
       tags:
         - Credentials
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: id
           in: path
           required: true
@@ -822,14 +822,14 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: Revoked
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/organizations/{organizationID}/auth-hooks:
     get:
       operationId: listAuthHooks
@@ -838,12 +838,12 @@ paths:
       tags:
         - Auth Hooks
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: Configured hooks (secrets are write-only, not returned)
           content:
             application/json:
@@ -851,23 +851,23 @@ paths:
                 type: object
                 properties:
                   truncated:
-                    $ref: '#/components/schemas/Truncated'
+                    $ref: "#/components/schemas/Truncated"
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/Hook'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+                      $ref: "#/components/schemas/Hook"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     post:
       operationId: createAuthHook
-      description: 'Registers an authentication hook, called on every sign-in to the organization once its first factor is proven, whatever the method: password, passkey, social, SAML, LDAP, magic link, invitation and organization switch. It may deny the sign-in (authhook.denied), and on a sign-in that returns tokens its claims are added to the access token. An organization may have several: every enabled hook is called, one after another, oldest first. The first to deny ends the sign-in and the rest are not called; otherwise the claims of all are added, a later hook''s replacing an earlier one''s of the same name. Each hook''s own fail_open decides what its silence does. A sign-in to no organization asks the account''s own. Hooks fail open by default: a hook error does not block authentication.'
+      description: "Registers an authentication hook, called on every sign-in to the organization once its first factor is proven, whatever the method: password, passkey, social, SAML, LDAP, magic link, invitation and organization switch. It may deny the sign-in (authhook.denied), and on a sign-in that returns tokens its claims are added to the access token. An organization may have several: every enabled hook is called, one after another, oldest first. The first to deny ends the sign-in and the rest are not called; otherwise the claims of all are added, a later hook's replacing an earlier one's of the same name. Each hook's own fail_open decides what its silence does. A sign-in to no organization asks the account's own. Hooks fail open by default: a hook error does not block authentication."
       summary: Create auth hook
       tags:
         - Auth Hooks
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -887,20 +887,20 @@ paths:
                   type: string
                 fail_open:
                   type: boolean
-                  description: 'What a sign-in does when the hook gives no answer: it can''t be read, its signing secret can''t be opened, the call fails or times out, or its answer can''t be read. True (the default on create) lets the sign-in proceed; false refuses it as temporarily unavailable. Where the hook can''t be read, the setting last read for the organization is followed. Every such skip is recorded (audit auth_hook.skipped with the reason and outcome; metric auth_hook_skipped_total).'
+                  description: "What a sign-in does when the hook gives no answer: it can't be read, its signing secret can't be opened, the call fails or times out, or its answer can't be read. True (the default on create) lets the sign-in proceed; false refuses it as temporarily unavailable. Where the hook can't be read, the setting last read for the organization is followed. Every such skip is recorded (audit auth_hook.skipped with the reason and outcome; metric auth_hook_skipped_total)."
       responses:
-        '201':
+        "201":
           description: Hook created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Hook'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
+                $ref: "#/components/schemas/Hook"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
   /v1/organizations/{organizationID}/auth-hooks/{id}/test:
     post:
       operationId: testAuthHook
@@ -909,7 +909,7 @@ paths:
       tags:
         - Auth Hooks
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: id
           in: path
           required: true
@@ -920,7 +920,7 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: How the hook answered
           content:
             application/json:
@@ -944,12 +944,12 @@ paths:
                     additionalProperties: true
                   error:
                     type: string
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/organizations/{organizationID}/auth-hooks/{id}:
     patch:
       operationId: updateAuthHook
@@ -958,7 +958,7 @@ paths:
       tags:
         - Auth Hooks
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: id
           in: path
           required: true
@@ -985,9 +985,9 @@ paths:
                   type: boolean
                 fail_open:
                   type: boolean
-                  description: 'What a sign-in does when the hook gives no answer: it can''t be read, its signing secret can''t be opened, the call fails or times out, or its answer can''t be read. True (the default on create) lets the sign-in proceed; false refuses it as temporarily unavailable. Where the hook can''t be read, the setting last read for the organization is followed. Every such skip is recorded (audit auth_hook.skipped with the reason and outcome; metric auth_hook_skipped_total).'
+                  description: "What a sign-in does when the hook gives no answer: it can't be read, its signing secret can't be opened, the call fails or times out, or its answer can't be read. True (the default on create) lets the sign-in proceed; false refuses it as temporarily unavailable. Where the hook can't be read, the setting last read for the organization is followed. Every such skip is recorded (audit auth_hook.skipped with the reason and outcome; metric auth_hook_skipped_total)."
       responses:
-        '200':
+        "200":
           description: The hook's settings as stored
           content:
             application/json:
@@ -1001,12 +1001,12 @@ paths:
                     type: boolean
                   fail_open:
                     type: boolean
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
     delete:
       operationId: deleteAuthHook
       description: Deletes an authentication hook so it no longer runs during auth flows.
@@ -1014,7 +1014,7 @@ paths:
       tags:
         - Auth Hooks
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: id
           in: path
           required: true
@@ -1025,14 +1025,14 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '204':
+        "204":
           description: Removed
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/organizations/{organizationID}/webhooks:
     get:
       operationId: listWebhooks
@@ -1040,13 +1040,13 @@ paths:
       tags:
         - Webhooks
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       description: Lists the organization's webhook subscriptions, without their signing secrets. Requires webhook.read.
       responses:
-        '200':
+        "200":
           description: OK
           content:
             application/json:
@@ -1056,21 +1056,21 @@ paths:
                   - items
                 properties:
                   truncated:
-                    $ref: '#/components/schemas/Truncated'
+                    $ref: "#/components/schemas/Truncated"
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/WebhookSubscription'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                      $ref: "#/components/schemas/WebhookSubscription"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/webhooks/events:
     get:
       operationId: listWebhookEvents
@@ -1078,13 +1078,13 @@ paths:
       tags:
         - Webhooks
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Lists the event catalogue: every event a webhook subscription can name, with what it reports. Requires webhook.read.'
+      description: "Lists the event catalogue: every event a webhook subscription can name, with what it reports. Requires webhook.read."
       responses:
-        '200':
+        "200":
           description: OK
           content:
             application/json:
@@ -1096,15 +1096,15 @@ paths:
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/WebhookEventType'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                      $ref: "#/components/schemas/WebhookEventType"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/webhooks/{id}/enable:
     post:
       operationId: enableWebhook
@@ -1112,7 +1112,7 @@ paths:
       tags:
         - Webhooks
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: id
           in: path
           required: true
@@ -1124,33 +1124,33 @@ paths:
         - apiKeyAuth: []
       description: Turns a disabled webhook subscription back on, whether an administrator or its failures disabled it, with its failures forgotten, and returns it. Deliveries queued while it was off are then sent. Enabling one already on changes nothing. The organization's plan must include webhooks (402 billing.upgrade_required). Requires webhook.write. Needs a recent step-up.
       responses:
-        '200':
+        "200":
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/WebhookSubscription'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '402':
+                $ref: "#/components/schemas/WebhookSubscription"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "402":
           description: The organization's plan does not include webhooks.
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/webhooks/{id}:
     patch:
       operationId: updateWebhook
       summary: Change a webhook
-      description: 'Changes a webhook''s URL, its events, or both, each checked as on creation: a URL that isn''t a public https address is refused with 400 webhook.url_not_allowed, events outside the catalogue with webhook.event_unknown. Audited as webhook.subscription_updated with what changed. Needs a recent step-up.'
+      description: "Changes a webhook's URL, its events, or both, each checked as on creation: a URL that isn't a public https address is refused with 400 webhook.url_not_allowed, events outside the catalogue with webhook.event_unknown. Audited as webhook.subscription_updated with what changed. Needs a recent step-up."
       tags:
         - Webhooks
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: id
           in: path
           required: true
@@ -1175,22 +1175,22 @@ paths:
                   items:
                     type: string
       responses:
-        '200':
+        "200":
           description: The changed webhook
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/WebhookSubscription'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
+                $ref: "#/components/schemas/WebhookSubscription"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
   /v1/organizations/{organizationID}/webhooks/{id}/deliveries/retry:
     post:
       operationId: retryFailedWebhookDeliveries
@@ -1199,7 +1199,7 @@ paths:
       tags:
         - Webhooks
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: id
           in: path
           required: true
@@ -1210,7 +1210,7 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: How many were re-queued
           content:
             application/json:
@@ -1219,21 +1219,21 @@ paths:
                 properties:
                   requeued:
                     type: integer
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/organizations/{organizationID}/webhooks/{id}/deliveries/{deliveryID}/attempts:
     get:
       operationId: listWebhookDeliveryAttempts
       summary: List a delivery's attempts
-      description: 'Every attempt to send one of the webhook''s deliveries, oldest first: when, the status answered, how long it took and what went wrong; recorded from this release.'
+      description: "Every attempt to send one of the webhook's deliveries, oldest first: when, the status answered, how long it took and what went wrong; recorded from this release."
       tags:
         - Webhooks
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: id
           in: path
           required: true
@@ -1250,7 +1250,7 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: Attempts
           content:
             application/json:
@@ -1258,17 +1258,17 @@ paths:
                 type: object
                 properties:
                   truncated:
-                    $ref: '#/components/schemas/Truncated'
+                    $ref: "#/components/schemas/Truncated"
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/WebhookAttempt'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+                      $ref: "#/components/schemas/WebhookAttempt"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/organizations/{organizationID}/webhooks/{id}/rotate-secret:
     post:
       operationId: rotateWebhookSecret
@@ -1276,7 +1276,7 @@ paths:
       tags:
         - Webhooks
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: id
           in: path
           required: true
@@ -1288,13 +1288,13 @@ paths:
         - apiKeyAuth: []
       description: Replaces the subscription's signing secret and returns the new one, shown only in this answer. The old secret goes on signing deliveries alongside the new one until previous_secret_expires_at (24 hours), so the receiver can switch without missing one; rotating again within that time ends the older secret's at once. Audited as webhook.secret_rotated. Requires webhook.write. Needs a recent step-up.
       responses:
-        '200':
+        "200":
           description: OK
           headers:
             Cache-Control:
-              $ref: '#/components/headers/NoStoreCacheControl'
+              $ref: "#/components/headers/NoStoreCacheControl"
             Pragma:
-              $ref: '#/components/headers/NoStorePragma'
+              $ref: "#/components/headers/NoStorePragma"
           content:
             application/json:
               schema:
@@ -1308,16 +1308,16 @@ paths:
                     format: date-time
                   secret:
                     type: string
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/webhooks:
     post:
       operationId: createWebhook
@@ -1337,20 +1337,20 @@ paths:
                 - user.created
                 - user.updated
             schema:
-              $ref: '#/components/schemas/WebhookCreateInput'
-      description: 'Subscribes an endpoint to the organization''s events it names. The endpoint must be an allowed outbound destination; the signing secret is shown only in this answer. events must name at least one event (422 webhook.events_required), each from the event catalogue (422 webhook.event_unknown); a repeated name counts once. Requires webhook.write. Needs a recent step-up. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, one still being processed 409 idempotency.in_progress, and one whose first request stopped before answering 409 idempotency.outcome_unknown: check whether it took effect, then retry with a new key.'
+              $ref: "#/components/schemas/WebhookCreateInput"
+      description: "Subscribes an endpoint to the organization's events it names. The endpoint must be an allowed outbound destination; the signing secret is shown only in this answer. events must name at least one event (422 webhook.events_required), each from the event catalogue (422 webhook.event_unknown); a repeated name counts once. Requires webhook.write. Needs a recent step-up. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, one still being processed 409 idempotency.in_progress, and one whose first request stopped before answering 409 idempotency.outcome_unknown: check whether it took effect, then retry with a new key."
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: "#/components/parameters/IdempotencyKey"
       responses:
-        '201':
+        "201":
           description: Created
           headers:
             Cache-Control:
-              $ref: '#/components/headers/NoStoreCacheControl'
+              $ref: "#/components/headers/NoStoreCacheControl"
             Pragma:
-              $ref: '#/components/headers/NoStorePragma'
+              $ref: "#/components/headers/NoStorePragma"
             Idempotent-Replayed:
-              $ref: '#/components/headers/IdempotentReplayed'
+              $ref: "#/components/headers/IdempotentReplayed"
           content:
             application/json:
               example:
@@ -1364,24 +1364,24 @@ paths:
                 disabled_reason: null
                 failing_since: null
                 previous_secret_expires_at: null
-                created_at: '2026-09-24T10:25:00Z'
+                created_at: "2026-09-24T10:25:00Z"
                 secret: Zr4nYbW8sLc0hQ2xK9mTpV7aE5uFi1oJd3gGt6yHw0q
                 last_delivered_at: null
                 last_status_code: null
               schema:
-                $ref: '#/components/schemas/WebhookSubscription'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          description: 'A request with this Idempotency-Key is still being processed (idempotency.in_progress); retry shortly. Or the first request stopped before answering and may have taken effect (idempotency.outcome_unknown): check, then retry with a new key.'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                $ref: "#/components/schemas/WebhookSubscription"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: "A request with this Idempotency-Key is still being processed (idempotency.in_progress); retry shortly. Or the first request stopped before answering and may have taken effect (idempotency.outcome_unknown): check, then retry with a new key."
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/webhooks/{id}:
     get:
       operationId: getWebhook
@@ -1400,18 +1400,18 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: Webhook subscription
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/WebhookSubscription'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+                $ref: "#/components/schemas/WebhookSubscription"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
     delete:
       operationId: disableWebhook
       summary: Disable webhook
@@ -1427,20 +1427,20 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Disables one of the organization''s webhook subscriptions: no further events are sent to it. Requires webhook.write. Needs a recent step-up.'
+      description: "Disables one of the organization's webhook subscriptions: no further events are sent to it. Requires webhook.write. Needs a recent step-up."
       responses:
-        '204':
+        "204":
           description: No Content
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/webhooks/{id}/deliveries:
     get:
       operationId: listWebhookDeliveries
@@ -1484,7 +1484,7 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: A page of deliveries, newest first
           content:
             application/json:
@@ -1494,20 +1494,20 @@ paths:
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/WebhookDelivery'
+                      $ref: "#/components/schemas/WebhookDelivery"
                   next_cursor:
                     type: string
                     description: Present when there is another page.
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/webhooks/{id}/deliveries/{deliveryID}/retry:
     post:
       operationId: retryWebhookDelivery
-      description: 'Sends one of the organization''s webhook deliveries again now. A delivery that had finished, delivered or given up after its 60 attempts, starts a fresh set of attempts; one still retrying keeps its count. The delivery must be one of the webhook''s in the path: any other, like one that doesn''t exist or is being sent at this moment, is refused with 404 webhook.delivery_not_found and left as it was. An ID that isn''t a UUID is refused with 400 webhook.invalid_id. Audited as webhook.delivery_retried.'
+      description: "Sends one of the organization's webhook deliveries again now. A delivery that had finished, delivered or given up after its 60 attempts, starts a fresh set of attempts; one still retrying keeps its count. The delivery must be one of the webhook's in the path: any other, like one that doesn't exist or is being sent at this moment, is refused with 404 webhook.delivery_not_found and left as it was. An ID that isn't a UUID is refused with 400 webhook.invalid_id. Audited as webhook.delivery_retried."
       summary: Retry delivery
       tags:
         - Webhooks
@@ -1528,16 +1528,16 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: Delivery re-queued
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/webhooks/{id}/test:
     post:
       operationId: testWebhook
@@ -1556,7 +1556,7 @@ paths:
         - apiKeyAuth: []
       description: Queues a test.ping event for this subscription alone, whichever events it names, and answers once it is queued. Its data is {subscription_id}. Audited as webhook.test_sent. Requires webhook.write.
       responses:
-        '202':
+        "202":
           description: Accepted
           content:
             application/json:
@@ -1571,16 +1571,16 @@ paths:
                   subscription:
                     type: string
                     format: uuid
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/vault/{name}:
     get:
       operationId: readVaultSecret
@@ -1598,8 +1598,8 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
-          description: '{ name, value }'
+        "200":
+          description: "{ name, value }"
           content:
             application/json:
               schema:
@@ -1609,12 +1609,12 @@ paths:
                     type: string
                   value:
                     type: string
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/organizations/{organizationID}/secrets:
     get:
       operationId: listSecrets
@@ -1622,13 +1622,13 @@ paths:
       tags:
         - Secrets
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Lists the organization''s secrets: names, scopes and the last four characters, never the values; who last revealed each, and when one with a rotation interval is due to be rotated. Requires secret.read.'
+      description: "Lists the organization's secrets: names, scopes and the last four characters, never the values; who last revealed each, and when one with a rotation interval is due to be rotated. Requires secret.read."
       responses:
-        '200':
+        "200":
           description: OK
           content:
             application/json:
@@ -1638,28 +1638,28 @@ paths:
                   - items
                 properties:
                   truncated:
-                    $ref: '#/components/schemas/Truncated'
+                    $ref: "#/components/schemas/Truncated"
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/Secret'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                      $ref: "#/components/schemas/Secret"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     post:
       operationId: createSecret
       summary: Create secret
       tags:
         - Secrets
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -1683,28 +1683,28 @@ paths:
                 rotation_interval_days:
                   type:
                     - integer
-                    - 'null'
+                    - "null"
                   minimum: 1
                   maximum: 3650
                   description: Days after the value last changed that the secret is due to be rotated; null or left out for no reminder.
       description: Stores a secret for the organization, encrypted at rest. A name the organization already uses is refused, and a rotation interval outside 1 to 3650 days with 422 secret.rotation_interval_out_of_range. Requires secret.write. Needs a recent step-up.
       responses:
-        '201':
+        "201":
           description: Created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Secret'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                $ref: "#/components/schemas/Secret"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/secrets/{id}:
     delete:
       operationId: deleteSecret
@@ -1712,7 +1712,7 @@ paths:
       tags:
         - Secrets
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: id
           in: path
           required: true
@@ -1724,25 +1724,25 @@ paths:
         - apiKeyAuth: []
       description: Deletes one of the organization's secrets. Requires secret.write. Needs a recent step-up.
       responses:
-        '204':
+        "204":
           description: No Content
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     patch:
       operationId: rotateSecret
       summary: Rotate secret
       tags:
         - Secrets
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: id
           in: path
           required: true
@@ -1757,25 +1757,25 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SecretUpdateInput'
+              $ref: "#/components/schemas/SecretUpdateInput"
       description: Replaces a secret's value, scope or rotation interval, keeping its name. A field left out is kept; a new value restarts the rotation interval, and a null interval removes the reminder. An interval outside 1 to 3650 days is refused with 422 secret.rotation_interval_out_of_range. Requires secret.write. Needs a recent step-up.
       responses:
-        '200':
+        "200":
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Secret'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                $ref: "#/components/schemas/Secret"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/secrets/{id}/reveal:
     post:
       operationId: revealSecret
@@ -1783,7 +1783,7 @@ paths:
       tags:
         - Secrets
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: id
           in: path
           required: true
@@ -1795,13 +1795,13 @@ paths:
         - apiKeyAuth: []
       description: Returns a secret's decrypted value. Each reveal is audited and noted on the secret as its last reveal. Requires secret.read. Needs a recent step-up.
       responses:
-        '200':
+        "200":
           description: OK
           headers:
             Cache-Control:
-              $ref: '#/components/headers/NoStoreCacheControl'
+              $ref: "#/components/headers/NoStoreCacheControl"
             Pragma:
-              $ref: '#/components/headers/NoStorePragma'
+              $ref: "#/components/headers/NoStorePragma"
           content:
             application/json:
               schema:
@@ -1811,16 +1811,16 @@ paths:
                 properties:
                   value:
                     type: string
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/vault/tokens/providers:
     post:
       operationId: registerTokenVaultProvider
@@ -1829,7 +1829,7 @@ paths:
       tags:
         - Token Vault
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -1863,35 +1863,35 @@ paths:
                   type: string
         description: Registers (or updates) the OAuth2 endpoints + client credentials for one third-party provider, organization-wide.
       responses:
-        '201':
+        "201":
           description: Created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TokenvaultProvider'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '409':
-          $ref: '#/components/responses/Conflict'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                $ref: "#/components/schemas/TokenvaultProvider"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     get:
       operationId: listTokenVaultProviders
       summary: List Token Vault providers
       tags:
         - Token Vault
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       description: Client secrets are never included in the response.
       responses:
-        '200':
+        "200":
           description: OK
           content:
             application/json:
@@ -1901,26 +1901,26 @@ paths:
                   - items
                 properties:
                   truncated:
-                    $ref: '#/components/schemas/Truncated'
+                    $ref: "#/components/schemas/Truncated"
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/TokenvaultProvider'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                      $ref: "#/components/schemas/TokenvaultProvider"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/vault/tokens/providers/{provider}:
     delete:
       operationId: deleteTokenVaultProvider
-      description: 'Removes a registered Token Vault provider and disconnects everyone connected through it: their vaulted tokens are deleted, so a provider registered again under the same name starts with no connected accounts.'
+      description: "Removes a registered Token Vault provider and disconnects everyone connected through it: their vaulted tokens are deleted, so a provider registered again under the same name starts with no connected accounts."
       summary: Delete a Token Vault provider
       tags:
         - Token Vault
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: provider
           in: path
           required: true
@@ -1930,16 +1930,16 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '204':
+        "204":
           description: No Content
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/vault/tokens:
     get:
       operationId: listMyConnectedAccounts
@@ -1950,7 +1950,7 @@ paths:
         - bearerAuth: []
       description: Non-secret metadata only (provider, external account id, scope, expiry) for the calling user's own connected accounts.
       responses:
-        '200':
+        "200":
           description: OK
           content:
             application/json:
@@ -1960,15 +1960,15 @@ paths:
                   - items
                 properties:
                   truncated:
-                    $ref: '#/components/schemas/Truncated'
+                    $ref: "#/components/schemas/Truncated"
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/GrantMeta'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                      $ref: "#/components/schemas/GrantMeta"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/vault/tokens/{provider}/connect:
     get:
       operationId: startAccountConnection
@@ -1983,9 +1983,9 @@ paths:
             type: string
       security:
         - bearerAuth: []
-      description: 'Returns the authorize_url to redirect the user''s browser to, starting a standard OAuth2 authorization-code ceremony (with PKCE, S256) against the organization''s registered provider config. The answer also sets an HttpOnly cookie binding the ceremony to this browser, so call it with credentials included (fetch credentials: ''include'') from the browser that will open the link: the callback connects the account only in that browser.'
+      description: "Returns the authorize_url to redirect the user's browser to, starting a standard OAuth2 authorization-code ceremony (with PKCE, S256) against the organization's registered provider config. The answer also sets an HttpOnly cookie binding the ceremony to this browser, so call it with credentials included (fetch credentials: 'include') from the browser that will open the link: the callback connects the account only in that browser."
       responses:
-        '200':
+        "200":
           description: OK
           content:
             application/json:
@@ -1994,12 +1994,12 @@ paths:
                 properties:
                   authorize_url:
                     type: string
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/vault/tokens/callback:
     get:
       operationId: completeAccountConnection
@@ -2007,11 +2007,11 @@ paths:
       tags:
         - Token Vault
       security: []
-      description: 'The fixed, non-caller-supplied redirect_uri registered with the third-party provider. Completes the code exchange, with the ceremony''s PKCE verifier, and renders a minimal HTML confirmation page — never redirects to a caller-supplied URL. Only the browser that began the ceremony (holding the cookie the connect call set) completes it: another browser gets 400 (tokenvault.connect_other_browser) and nothing is exchanged or stored, so a connect link sent to someone else connects nothing.'
+      description: "The fixed, non-caller-supplied redirect_uri registered with the third-party provider. Completes the code exchange, with the ceremony's PKCE verifier, and renders a minimal HTML confirmation page — never redirects to a caller-supplied URL. Only the browser that began the ceremony (holding the cookie the connect call set) completes it: another browser gets 400 (tokenvault.connect_other_browser) and nothing is exchanged or stored, so a connect link sent to someone else connects nothing."
       responses:
-        '200':
+        "200":
           description: HTML confirmation page
-        '400':
+        "400":
           description: HTML error page (invalid/expired state, or the provider returned an error)
   /v1/vault/tokens/{provider}/access-token:
     get:
@@ -2028,15 +2028,15 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Hands a connected account''s short-lived access token (never the refresh token) to the person who connected it, signed in to their own session, refreshing it first if it has expired. Requires a vault:<provider> or vault:read scope. API keys, service principals, agents and tokens issued to applications are refused with 403 tokenvault.people_only: they carry a user id they were given, not one they proved. Every access, and every refused attempt, is audited under the caller''s own credential.'
+      description: "Hands a connected account's short-lived access token (never the refresh token) to the person who connected it, signed in to their own session, refreshing it first if it has expired. Requires a vault:<provider> or vault:read scope. API keys, service principals, agents and tokens issued to applications are refused with 403 tokenvault.people_only: they carry a user id they were given, not one they proved. Every access, and every refused attempt, is audited under the caller's own credential."
       responses:
-        '200':
+        "200":
           description: OK
           headers:
             Cache-Control:
-              $ref: '#/components/headers/NoStoreCacheControl'
+              $ref: "#/components/headers/NoStoreCacheControl"
             Pragma:
-              $ref: '#/components/headers/NoStorePragma'
+              $ref: "#/components/headers/NoStorePragma"
           content:
             application/json:
               schema:
@@ -2044,14 +2044,14 @@ paths:
                 properties:
                   access_token:
                     type: string
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/vault/tokens/{provider}:
     delete:
       operationId: disconnectAccount
@@ -2068,30 +2068,30 @@ paths:
       security:
         - bearerAuth: []
       responses:
-        '204':
+        "204":
           description: No Content
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: 'User or service JWT: `Authorization: Bearer <token>`.'
+      description: "User or service JWT: `Authorization: Bearer <token>`."
     apiKeyAuth:
       type: apiKey
       in: header
       name: Authorization
-      description: 'API key credential. Send `Authorization: ApiKey <key>` (note the `ApiKey ` prefix). Accepted on the same authenticated routes as bearerAuth. A key works only while its organization is active, not while it is suspended or deleted.'
+      description: "API key credential. Send `Authorization: ApiKey <key>` (note the `ApiKey ` prefix). Accepted on the same authenticated routes as bearerAuth. A key works only while its organization is active, not while it is suspended or deleted."
     scimBearer:
       type: http
       scheme: bearer
-      description: 'An organization''s SCIM provisioning token, presented by its identity provider: `Authorization: Bearer <scim-token>`. Distinct from user JWTs. An organization can hold several, managed under /v1/organizations/{organizationID}/scim/tokens. A revoked or expired token, and every token of an organization that is suspended or due for deletion, is refused with 401.'
+      description: "An organization's SCIM provisioning token, presented by its identity provider: `Authorization: Bearer <scim-token>`. Distinct from user JWTs. An organization can hold several, managed under /v1/organizations/{organizationID}/scim/tokens. A revoked or expired token, and every token of an organization that is suspended or due for deletion, is refused with 401."
     clientCredentials:
       type: oauth2
       description: OAuth 2.0 client credentials. Clients authenticate at the token endpoint via form params (`client_id`/`client_secret`) or HTTP Basic. Revocation/introspection use the same client auth.
@@ -2118,7 +2118,7 @@ components:
       name: organizationID
       in: path
       required: true
-      description: 'The organization''s ID. On an authenticated route it must be the organization of the caller''s credential: another is refused with 403, and a value that is not a UUID with 400.'
+      description: "The organization's ID. On an authenticated route it must be the organization of the caller's credential: another is refused with 403, and a value that is not a UUID with 400."
       schema:
         type: string
         format: uuid
@@ -2135,7 +2135,7 @@ components:
         user_id:
           type:
             - string
-            - 'null'
+            - "null"
           format: uuid
         name:
           type: string
@@ -2148,7 +2148,7 @@ components:
         expires_at:
           type:
             - string
-            - 'null'
+            - "null"
           format: date-time
     ApiKey:
       type: object
@@ -2162,7 +2162,7 @@ components:
         user_id:
           type:
             - string
-            - 'null'
+            - "null"
           format: uuid
         name:
           type: string
@@ -2175,17 +2175,17 @@ components:
         expires_at:
           type:
             - string
-            - 'null'
+            - "null"
           format: date-time
         last_used_at:
           type:
             - string
-            - 'null'
+            - "null"
           format: date-time
         revoked_at:
           type:
             - string
-            - 'null'
+            - "null"
           format: date-time
         created_at:
           type: string
@@ -2193,13 +2193,13 @@ components:
         created_by:
           type:
             - string
-            - 'null'
+            - "null"
           format: uuid
           description: The person who created the key, or rotated it into being; null for a key made by a machine or before this was kept.
         rotated_from:
           type:
             - string
-            - 'null'
+            - "null"
           format: uuid
           description: The key this one replaced at a rotation.
     Error:
@@ -2229,7 +2229,7 @@ components:
               description: Optional i18n key the client can use to localize the message.
             retryable:
               type: boolean
-              description: 'Whether the person can try again, often by starting over (signing in again, asking for a new code, waiting). It is not a promise that resending the same request will succeed: auth.session_revoked is retryable and the session never comes back. Decide whether to resend a request from its status (429, 503 with Retry-After).'
+              description: "Whether the person can try again, often by starting over (signing in again, asking for a new code, waiting). It is not a promise that resending the same request will succeed: auth.session_revoked is retryable and the session never comes back. Decide whether to resend a request from its status (429, 503 with Retry-After)."
             fields:
               type: array
               description: Per-field validation errors (typically on 422 responses).
@@ -2251,7 +2251,7 @@ components:
               description: Correlates with the X-Request-Id header
     Truncated:
       type: boolean
-      description: 'Present, and true, when the list was cut at its limit (1,000 items unless the operation says otherwise): there are more than were answered.'
+      description: "Present, and true, when the list was cut at its limit (1,000 items unless the operation says otherwise): there are more than were answered."
     Agent:
       type: object
       required:
@@ -2289,7 +2289,7 @@ components:
         last_used_at:
           type:
             - string
-            - 'null'
+            - "null"
           format: date-time
           description: When the agent was last issued a token, to the minute.
         previous_secret_expires_at:
@@ -2324,7 +2324,7 @@ components:
             - vc.signature_invalid
             - vc.unknown
             - vc.revoked
-          description: 'Why an invalid credential is refused: not a JWT-VC, a bad signature or expired, not one this server issued, or revoked.'
+          description: "Why an invalid credential is refused: not a JWT-VC, a bad signature or expired, not one this server issued, or revoked."
         subject:
           type: string
         valid:
@@ -2360,7 +2360,7 @@ components:
         user:
           description: The person the credential was issued to; null when the issuer named no one, or the account was deleted.
           oneOf:
-            - type: 'null'
+            - type: "null"
             - type: object
               required:
                 - display_name
@@ -2415,13 +2415,13 @@ components:
         last_called_at:
           type:
             - string
-            - 'null'
+            - "null"
           format: date-time
           description: Its last call by a sign-in.
         last_outcome:
           type:
             - string
-            - 'null'
+            - "null"
           enum:
             - allowed
             - denied
@@ -2431,7 +2431,7 @@ components:
         last_status_code:
           type:
             - integer
-            - 'null'
+            - "null"
         calls:
           type: integer
           description: Sign-in calls since this release; test calls aren't counted.
@@ -2442,7 +2442,7 @@ components:
         previous_secret_expires_at:
           type:
             - string
-            - 'null'
+            - "null"
           format: date-time
           description: Until when the secret the last change of secret replaced also signs the hook's calls.
     WebhookSubscription:
@@ -2461,12 +2461,12 @@ components:
         disabled_at:
           type:
             - string
-            - 'null'
+            - "null"
           format: date-time
         disabled_reason:
           type:
             - string
-            - 'null'
+            - "null"
           enum:
             - disabled
             - failing
@@ -2479,7 +2479,7 @@ components:
         failing_since:
           type:
             - string
-            - 'null'
+            - "null"
           format: date-time
           description: When deliveries started failing, with no success since.
         id:
@@ -2488,7 +2488,7 @@ components:
         previous_secret_expires_at:
           type:
             - string
-            - 'null'
+            - "null"
           format: date-time
           description: Until when the secret replaced by the last rotation also signs deliveries.
         secret:
@@ -2505,13 +2505,13 @@ components:
         last_delivered_at:
           type:
             - string
-            - 'null'
+            - "null"
           format: date-time
           description: Its latest delivery.
         last_status_code:
           type:
             - integer
-            - 'null'
+            - "null"
           description: The status its endpoint answered last.
         counts:
           type: object
@@ -2542,14 +2542,14 @@ components:
         status_code:
           type:
             - integer
-            - 'null'
+            - "null"
           description: Null when the endpoint gave no answer.
         duration_ms:
           type: integer
         error:
           type:
             - string
-            - 'null'
+            - "null"
     WebhookCreateInput:
       type: object
       required:
@@ -2642,12 +2642,12 @@ components:
         last_revealed_at:
           type:
             - string
-            - 'null'
+            - "null"
           format: date-time
         last_revealed_by:
           description: The person who last revealed the secret; null when no one has or a machine credential did. Email is empty once the person no longer exists.
           oneOf:
-            - type: 'null'
+            - type: "null"
             - type: object
               required:
                 - display_name
@@ -2667,11 +2667,11 @@ components:
         rotation_interval_days:
           type:
             - integer
-            - 'null'
+            - "null"
         rotation_due_at:
           type:
             - string
-            - 'null'
+            - "null"
           format: date-time
           description: The rotation interval after the value last changed; null without an interval.
         rotation_overdue:
@@ -2682,15 +2682,15 @@ components:
         scope:
           type:
             - string
-            - 'null'
+            - "null"
         value:
           type:
             - string
-            - 'null'
+            - "null"
         rotation_interval_days:
           type:
             - integer
-            - 'null'
+            - "null"
           minimum: 1
           maximum: 3650
           description: Left out keeps the interval; null removes it.
@@ -2749,7 +2749,7 @@ components:
           format: date-time
   headers:
     NoStoreCacheControl:
-      description: 'no-store: the response carries a token, a secret or a sign-in session, so no cache may keep it.'
+      description: "no-store: the response carries a token, a secret or a sign-in session, so no cache may keep it."
       schema:
         type: string
         enum:
@@ -2765,7 +2765,7 @@ components:
       schema:
         type: string
         enum:
-          - 'true'
+          - "true"
     RequestId:
       description: The request's ID, sent on every response. Quote it when reporting a problem; an error body repeats it as error.request_id.
       schema:
@@ -2775,7 +2775,7 @@ components:
       description: Malformed request
       headers:
         X-Request-Id:
-          $ref: '#/components/headers/RequestId'
+          $ref: "#/components/headers/RequestId"
       content:
         application/json:
           example:
@@ -2785,7 +2785,7 @@ components:
               translation_key: bad_request
               request_id: api-1/Kx9fQ2mW7a-000131
           schema:
-            $ref: '#/components/schemas/Error'
+            $ref: "#/components/schemas/Error"
     Unauthorized:
       description: Missing or invalid credentials
       headers:
@@ -2794,7 +2794,7 @@ components:
           schema:
             type: string
         X-Request-Id:
-          $ref: '#/components/headers/RequestId'
+          $ref: "#/components/headers/RequestId"
       content:
         application/json:
           example:
@@ -2804,16 +2804,16 @@ components:
               translation_key: unauthorized
               request_id: api-1/Kx9fQ2mW7a-000131
           schema:
-            $ref: '#/components/schemas/Error'
+            $ref: "#/components/schemas/Error"
     Forbidden:
-      description: 'Authenticated but not permitted. auth.application_token: the access token was issued to an application (it carries client_id) and this route accepts only the user''s own tokens; applications may call GET /v1/oauth/userinfo. auth.insufficient_scope: an application''s token reached a route open to applications without the scope the route needs (named in the WWW-Authenticate challenge).'
+      description: "Authenticated but not permitted. auth.application_token: the access token was issued to an application (it carries client_id) and this route accepts only the user's own tokens; applications may call GET /v1/oauth/userinfo. auth.insufficient_scope: an application's token reached a route open to applications without the scope the route needs (named in the WWW-Authenticate challenge)."
       headers:
         WWW-Authenticate:
           description: 'With auth.insufficient_scope: `Bearer realm="qeet", error="insufficient_scope", scope="<the scope the route needs>"`.'
           schema:
             type: string
         X-Request-Id:
-          $ref: '#/components/headers/RequestId'
+          $ref: "#/components/headers/RequestId"
       content:
         application/json:
           example:
@@ -2823,12 +2823,12 @@ components:
               translation_key: forbidden
               request_id: api-1/Kx9fQ2mW7a-000131
           schema:
-            $ref: '#/components/schemas/Error'
+            $ref: "#/components/schemas/Error"
     Unprocessable:
       description: Validation failed
       headers:
         X-Request-Id:
-          $ref: '#/components/headers/RequestId'
+          $ref: "#/components/headers/RequestId"
       content:
         application/json:
           example:
@@ -2842,12 +2842,12 @@ components:
                   message: Must be a valid email address.
               request_id: api-1/Kx9fQ2mW7a-000131
           schema:
-            $ref: '#/components/schemas/Error'
+            $ref: "#/components/schemas/Error"
     NotFound:
       description: Resource not found
       headers:
         X-Request-Id:
-          $ref: '#/components/headers/RequestId'
+          $ref: "#/components/headers/RequestId"
       content:
         application/json:
           example:
@@ -2857,12 +2857,12 @@ components:
               translation_key: not_found
               request_id: api-1/Kx9fQ2mW7a-000131
           schema:
-            $ref: '#/components/schemas/Error'
+            $ref: "#/components/schemas/Error"
     Conflict:
       description: Conflicts with the resource's current state, such as a duplicate or an invalid lifecycle transition
       headers:
         X-Request-Id:
-          $ref: '#/components/headers/RequestId'
+          $ref: "#/components/headers/RequestId"
       content:
         application/json:
           example:
@@ -2872,7 +2872,7 @@ components:
               translation_key: conflict
               request_id: api-1/Kx9fQ2mW7a-000131
           schema:
-            $ref: '#/components/schemas/Error'
+            $ref: "#/components/schemas/Error"
     TooManyRequests:
       description: Rate limit exceeded
       headers:
@@ -2881,7 +2881,7 @@ components:
           schema:
             type: integer
         X-Request-Id:
-          $ref: '#/components/headers/RequestId'
+          $ref: "#/components/headers/RequestId"
       content:
         application/json:
           example:
@@ -2894,4 +2894,4 @@ components:
                 retry_after: 30
               request_id: api-1/Kx9fQ2mW7a-000131
           schema:
-            $ref: '#/components/schemas/Error'
+            $ref: "#/components/schemas/Error"

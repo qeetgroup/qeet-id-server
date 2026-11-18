@@ -40,12 +40,12 @@ get:
       schema:
         type: string
         enum:
-          - 'true'
+          - "true"
   security:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '200':
+    "200":
       description: >-
         Decision: {allowed, decided_by}. With explain=true also paths, reason
         (on denial) and trace.
@@ -90,7 +90,7 @@ get:
                 description: >-
                   With explain=true. Each step in order, prefixed with its model
                   (organization, abac, rbac, rebac, none).
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml

@@ -4,15 +4,15 @@ properties:
   description:
     type:
       - string
-      - 'null'
+      - "null"
   name:
     type:
       - string
-      - 'null'
+      - "null"
   parent_id:
     type:
       - string
-      - 'null'
+      - "null"
     format: uuid
     description: >-
       The new parent group's id, or null to make the group top-level. Omit it to

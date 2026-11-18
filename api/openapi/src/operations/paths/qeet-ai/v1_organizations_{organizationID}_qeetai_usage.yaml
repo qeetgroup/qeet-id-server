@@ -14,7 +14,7 @@ get:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '200':
+    "200":
       description: Usage
       content:
         application/json:
@@ -41,7 +41,7 @@ get:
               last_used_at:
                 type:
                   - string
-                  - 'null'
+                  - "null"
                 format: date-time
               months:
                 type: array
@@ -62,7 +62,7 @@ get:
                     last_used_at:
                       type: string
                       format: date-time
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml

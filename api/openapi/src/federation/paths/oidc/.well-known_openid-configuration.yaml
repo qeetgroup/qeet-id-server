@@ -16,11 +16,11 @@ get:
     - OIDC
   security: []
   responses:
-    '200':
+    "200":
       description: Discovery metadata
       content:
         application/json:
           schema:
             $ref: ../../components/schemas/OIDCDiscovery.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

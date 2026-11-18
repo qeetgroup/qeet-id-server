@@ -4,4 +4,4 @@ description: >-
 schema:
   type: string
   enum:
-    - 'true'
+    - "true"

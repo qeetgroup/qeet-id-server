@@ -31,19 +31,19 @@ source                 L3/L4                    actual behaviour
 ```
 
 **This repository does not restate L0 or L1.** When a task needs organization or product
-understanding, read those repositories. When it needs to know *how this backend implements
-something*, read the files below.
+understanding, read those repositories. When it needs to know _how this backend implements
+something_, read the files below.
 
 ## Read before changing code
 
-| File | For |
-|---|---|
-| [qeet-repo.yml](qeet-repo.yml) | Machine-readable identity — start here |
-| [docs/llm/architecture-map.md](docs/llm/architecture-map.md) | "Where is X?" — fastest path to a file |
-| [docs/llm/context.md](docs/llm/context.md) | How the backend actually works |
-| [docs/llm/subsystems.md](docs/llm/subsystems.md) | Subsystem map + **real filenames** per package |
-| [docs/llm/boundaries.md](docs/llm/boundaries.md) | What this repo owns, and what it must not touch |
-| [docs/llm/workflows.md](docs/llm/workflows.md) | Step-by-step for common changes |
+| File                                                         | For                                             |
+| ------------------------------------------------------------ | ----------------------------------------------- |
+| [qeet-repo.yml](qeet-repo.yml)                               | Machine-readable identity — start here          |
+| [docs/llm/architecture-map.md](docs/llm/architecture-map.md) | "Where is X?" — fastest path to a file          |
+| [docs/llm/context.md](docs/llm/context.md)                   | How the backend actually works                  |
+| [docs/llm/subsystems.md](docs/llm/subsystems.md)             | Subsystem map + **real filenames** per package  |
+| [docs/llm/boundaries.md](docs/llm/boundaries.md)             | What this repo owns, and what it must not touch |
+| [docs/llm/workflows.md](docs/llm/workflows.md)               | Step-by-step for common changes                 |
 
 Load the smallest set that answers your question. Most tasks need the architecture map plus one
 section of the context document.
@@ -147,8 +147,8 @@ something, mark it `deprecated: true` in the spec and answer with `Deprecation` 
   `organization_isolation` policy in its migration; the schema test fails otherwise.
 
 **Restructuring the chi route tree is a security change.** The guard depends on chi's nested-route
-matching; `internal/bootstrap/router.go` warns that flattening the routes makes it *silently fail
-open*.
+matching; `internal/bootstrap/router.go` warns that flattening the routes makes it _silently fail
+open_.
 
 ### 7. Never weaken a security control
 
@@ -212,26 +212,35 @@ never echo their contents, never add a real value to `.env.example` — placehol
 
 ## Commands
 
-Verified against the `Makefile`. **These are all of them — do not invent targets.**
+Every target runs in Go (`cmd/devtool`), so it behaves the same on Windows, macOS and Linux. Without
+`make`, run the same task as `go run ./cmd/devtool <task>`. **These are all of them — do not invent
+targets** (`make help` lists them).
 
 ```bash
 make install          # go mod download
 make dev              # run the API on :4001 (persistent JWT + SAML keys from .secrets/)
+make dev-observed     # make dev with JSON logs to bin/logs/api.log and traces to the local collector
 make dev-secrets      # generate local dev key material
 make build            # go build -o bin/qeet-id ./cmd/api
 make test             # go test ./...
 make test-db          # every test, database ones too, race detector on, one shared PostgreSQL (needs Docker)
-make ci               # the full local gate before a push: build, test-db, lint, sqlc-check, vuln, sast
+make ci               # the full local gate: build, test-db, lint, fmt-check, sqlc-check, openapi-check, vuln, sast, secrets
 make lint             # go vet + golangci-lint, as CI runs it
+make fmt / fmt-check  # format every file (gofmt+goimports, Prettier, shfmt) / fail if one isn't formatted
 make sqlc             # regenerate dbgen/ from queries.sql
 make sqlc-check       # fail if dbgen/ is stale or a queries.sql is missing from sqlc.yaml
+make openapi          # rebuild api/openapi/*.yaml from api/openapi/src, then api/postman from them (needs Bun)
+make openapi-check    # lint the API sources; fail if a built document or the Postman collection is stale
+make postman          # rebuild only the Postman collection and local environment in api/postman
+make vuln / sast      # govulncheck / gosec
+make secrets          # gitleaks over the history and the working tree (Docker)
+make scan-image       # build the image and scan it and the Dockerfile with Trivy (Docker)
 make db-up/db-down/db-reset      # docker compose: postgres :5001, nats :4222, mailpit :8025
+make obs-up/obs-down             # local observability: Grafana :3300, Prometheus :9090, Loki, Tempo (observability/README.md)
 make migrate-down                # roll one migration back; the server applies them at start
 make seed/seed-reset             # demo data into an empty database / recreate the database, then seed (development only)
 make kill                        # free a stuck :4001
 ```
-
-There is no `make help`, and no `dev-*` variants beyond `dev-secrets`.
 
 **`make lint` runs the same lint as CI:** `go vet` plus `golangci-lint` v2.15.0 over the whole tree,
 including the integration-tagged database tests, with the linters in `.golangci.yml`.
@@ -242,12 +251,12 @@ Single test: `go test ./internal/access/authentication/... -run TestName`
 
 ## Branches and releases
 
-| Branch | What it is |
-|---|---|
-| `develop` | Where every change lands |
-| `main` | Production. It changes only by a merged release or hotfix branch (or to be brought level with `develop`) |
+| Branch                 | What it is                                                                                                                         |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `develop`              | Where every change lands                                                                                                           |
+| `main`                 | Production. It changes only by a merged release or hotfix branch (or to be brought level with `develop`)                           |
 | `release/YEAR.MONTH.0` | The monthly release, cut from `develop` (e.g. `release/2027.1.0`). After the cut it takes fixes only, and is deleted once released |
-| `hotfix/YEAR.MONTH.N` | An urgent fix to that month's release, from `main`, counting from 1 (e.g. `hotfix/2027.1.1`) |
+| `hotfix/YEAR.MONTH.N`  | An urgent fix to that month's release, from `main`, counting from 1 (e.g. `hotfix/2027.1.1`)                                       |
 
 Versions have no leading zeros (`2027.1.0`, not `2027.01.0`); `scripts/release/version.sh` is the
 rule. A fix during testing is made on `develop` first, then copied to the release branch, so no fix
@@ -256,11 +265,11 @@ is lost from the next release. Test copies (`2027.1.0-rc.1`, `-rc.2` …) are nu
 
 ## What CI enforces
 
-| Workflow | Runs |
-|---|---|
+| Workflow          | Runs                                                                                                                                                                                                                                                                                                                                   |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ci.yml` · Verify | On pull requests into `develop` and `main` (a release reaches `main` by one): compile (`go build ./...`, `go vet ./...`), format and lint (`golangci-lint` v2.15.0 on the whole tree, gofmt and goimports included), dependency audit (`govulncheck ./cmd/... ./internal/...`), secret scan (gitleaks over the pull request's commits) |
-| `candidate.yml` | On push to `release/**` or `hotfix/**`: publish `ghcr.io/qeetgroup/qeet-id-server:sha-<commit>` (amd64+arm64) with an SBOM and SLSA provenance attached, for the Qeet ID Kit (`qeet-id-kit`). Base images are pinned by digest and every action by commit SHA. Never computes an RC number |
-| `deploy.yml` | On a merged `release/…` or `hotfix/…` pull request into `main`: copy that branch's tested candidate image to ECR as `vYEAR.MONTH.N` (never rebuilt), roll the host via OIDC and SSM, then tag. Any other push to `main` deploys nothing. A manual run with `rollback_to` rolls back |
+| `candidate.yml`   | On push to `release/**` or `hotfix/**`: publish `ghcr.io/qeetgroup/qeet-id-server:sha-<commit>` (amd64+arm64) with an SBOM and SLSA provenance attached, for the Qeet ID Kit (`qeet-id-kit`). Base images are pinned by digest and every action by commit SHA. Never computes an RC number                                             |
+| `deploy.yml`      | On a merged `release/…` or `hotfix/…` pull request into `main`: copy that branch's tested candidate image to ECR as `vYEAR.MONTH.N` (never rebuilt), roll the host via OIDC and SSM, then tag. Any other push to `main` deploys nothing. A manual run with `rollback_to` rolls back                                                    |
 
 The unit and database tests, the generated-SQL check and `gosec` are not in CI: they run locally
 before every push (`make ci`). On release day, once the deploy is live: delete the release (or hotfix) branch and merge `main` into `develop`.

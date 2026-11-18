@@ -7,5 +7,5 @@ properties:
   next_cursor:
     type:
       - string
-      - 'null'
+      - "null"
     description: Cursor for the next page; empty/absent at the end.

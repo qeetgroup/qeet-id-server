@@ -33,13 +33,13 @@ post:
                 ISO 4217 code of a currency the plan is priced in, such as INR;
                 USD when omitted or not a valid code.
   responses:
-    '200':
+    "200":
       description: Trial subscription
       content:
         application/json:
           schema:
             $ref: ../../components/schemas/Subscription.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml

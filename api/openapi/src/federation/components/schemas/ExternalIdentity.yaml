@@ -11,7 +11,7 @@ properties:
   email:
     type:
       - string
-      - 'null'
+      - "null"
   id:
     type: string
     format: uuid

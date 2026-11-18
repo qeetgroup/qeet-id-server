@@ -27,7 +27,7 @@ properties:
   metadata:
     type:
       - object
-      - 'null'
+      - "null"
     additionalProperties: true
   created_at:
     type: string
@@ -38,7 +38,7 @@ properties:
   deletion_due_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
     description: When a scheduled deletion takes effect; null when none is.
   member_count:

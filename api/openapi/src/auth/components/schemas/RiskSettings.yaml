@@ -34,7 +34,7 @@ properties:
   country_last_seen_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
     readOnly: true
     description: >-

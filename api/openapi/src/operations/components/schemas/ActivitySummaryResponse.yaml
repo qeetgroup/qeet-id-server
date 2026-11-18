@@ -61,7 +61,7 @@ properties:
     additionalProperties:
       type: integer
       format: int64
-    description: 'Event counts keyed by outcome: success, warning, failed, info.'
+    description: "Event counts keyed by outcome: success, warning, failed, info."
   series:
     type: array
     description: >-

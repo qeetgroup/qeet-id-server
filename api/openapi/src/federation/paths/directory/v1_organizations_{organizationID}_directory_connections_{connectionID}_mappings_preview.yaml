@@ -29,7 +29,7 @@ post:
               type: object
               additionalProperties: true
   responses:
-    '200':
+    "200":
       description: Transformed profile, per-rule preview values and validation issues
       content:
         application/json:
@@ -114,13 +114,13 @@ post:
                     message:
                       type: string
                       description: English text kept for compatibility; it may change.
-    '400':
+    "400":
       description: Invalid source JSON
-    '401':
+    "401":
       description: Authentication required
-    '403':
+    "403":
       description: Organization mismatch or missing connection.read
-    '404':
+    "404":
       description: Connection not found
-    '413':
+    "413":
       description: Source exceeds the supported size

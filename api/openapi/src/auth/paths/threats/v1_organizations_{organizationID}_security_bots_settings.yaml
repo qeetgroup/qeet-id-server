@@ -14,15 +14,15 @@ get:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '200':
+    "200":
       description: Bot-detection settings
       content:
         application/json:
           schema:
             $ref: ../../components/schemas/BotSettings.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
 put:
   operationId: setBotSettings
@@ -48,15 +48,15 @@ put:
         schema:
           $ref: ../../components/schemas/BotSettings.yaml
   responses:
-    '200':
+    "200":
       description: Updated settings
       content:
         application/json:
           schema:
             $ref: ../../components/schemas/BotSettings.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml

@@ -17,7 +17,7 @@ get:
       schema:
         type: string
   responses:
-    '302':
+    "302":
       description: Redirect to the validated post-logout address, or the signed-out page
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

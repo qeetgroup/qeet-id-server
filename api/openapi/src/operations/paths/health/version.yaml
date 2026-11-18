@@ -12,7 +12,7 @@ get:
     - Health
   security: []
   responses:
-    '200':
+    "200":
       description: The running build and its schema
       content:
         application/json:

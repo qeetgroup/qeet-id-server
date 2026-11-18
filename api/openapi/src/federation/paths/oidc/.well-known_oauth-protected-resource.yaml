@@ -13,7 +13,7 @@ get:
     - OIDC
   security: []
   responses:
-    '200':
+    "200":
       description: Protected-resource metadata
       content:
         application/json:
@@ -41,5 +41,5 @@ get:
                   type: string
               resource_documentation:
                 type: string
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

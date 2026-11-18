@@ -712,6 +712,27 @@ func (q *Queries) NoteSubscriptionFailure(ctx context.Context, arg NoteSubscript
 	return i, err
 }
 
+const pendingDeliveriesSummary = `-- name: PendingDeliveriesSummary :one
+SELECT count(*)::bigint AS pending,
+       COALESCE(EXTRACT(EPOCH FROM NOW() - MIN(created_at)), 0)::float8 AS oldest_age_seconds
+FROM organization.webhook_deliveries
+WHERE delivered_at IS NULL AND dead_at IS NULL
+`
+
+type PendingDeliveriesSummaryRow struct {
+	Pending          int64
+	OldestAgeSeconds float64
+}
+
+// PendingDeliveriesSummary counts the deliveries still to be made on the whole platform and how long
+// the oldest has waited, in seconds (0 when none), for the webhook backlog metrics.
+func (q *Queries) PendingDeliveriesSummary(ctx context.Context) (PendingDeliveriesSummaryRow, error) {
+	row := q.db.QueryRow(ctx, pendingDeliveriesSummary)
+	var i PendingDeliveriesSummaryRow
+	err := row.Scan(&i.Pending, &i.OldestAgeSeconds)
+	return i, err
+}
+
 const retryDeadDeliveries = `-- name: RetryDeadDeliveries :execrows
 UPDATE organization.webhook_deliveries d
 SET delivered_at = NULL, dead_at = NULL, error = NULL, next_attempt_at = NOW(), attempt = 0,

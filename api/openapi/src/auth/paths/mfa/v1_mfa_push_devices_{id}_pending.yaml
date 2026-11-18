@@ -37,7 +37,7 @@ post:
             device_token:
               type: string
   responses:
-    '200':
+    "200":
       description: The requests waiting for an answer, newest first
       content:
         application/json:
@@ -51,9 +51,9 @@ post:
                 maxItems: 10
                 items:
                   $ref: ../../components/schemas/PushChallenge.yaml
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

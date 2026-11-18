@@ -56,7 +56,7 @@ get:
         default: 25
     - $ref: ../../../shared/parameters/Cursor.yaml
   responses:
-    '200':
+    "200":
       description: >-
         Suspended users with scoped summary, reason/risk breakdowns and review
         queue
@@ -114,9 +114,9 @@ get:
                 type: array
                 items:
                   type: string
-    '400':
+    "400":
       description: Invalid filters
-    '401':
+    "401":
       description: Authentication and organization required
-    '403':
+    "403":
       description: Missing user.read

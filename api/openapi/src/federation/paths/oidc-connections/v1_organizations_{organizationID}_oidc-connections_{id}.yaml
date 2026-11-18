@@ -19,19 +19,19 @@ get:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '200':
+    "200":
       description: Connection
       content:
         application/json:
           schema:
             $ref: ../../components/schemas/OIDCConnection.yaml
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
 patch:
   operationId: updateOidcConnection
@@ -70,21 +70,21 @@ patch:
         schema:
           $ref: ../../components/schemas/OIDCConnectionUpdate.yaml
   responses:
-    '200':
+    "200":
       description: Updated
       content:
         application/json:
           schema:
             $ref: ../../components/schemas/OIDCConnection.yaml
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
 delete:
   operationId: deleteOidcConnection
@@ -108,13 +108,13 @@ delete:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '204':
+    "204":
       description: Deleted
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml

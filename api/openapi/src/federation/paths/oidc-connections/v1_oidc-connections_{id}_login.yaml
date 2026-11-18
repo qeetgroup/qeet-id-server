@@ -38,11 +38,11 @@ get:
         type: string
   security: []
   responses:
-    '302':
+    "302":
       description: Redirect to the provider's authorization endpoint
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '402':
+    "402":
       description: >-
         The organization's plan does not include enterprise SSO
         (`billing.upgrade_required`).
@@ -50,9 +50,9 @@ get:
         application/json:
           schema:
             $ref: ../../../shared/schemas/Error.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

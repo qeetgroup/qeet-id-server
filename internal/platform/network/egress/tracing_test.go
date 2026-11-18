@@ -56,7 +56,7 @@ func TestTracedTransportKeepsTheURLsSecretOut(t *testing.T) {
 		t.Fatalf("outbound span = %v, want HTTP POST hooks.example.com", span)
 	}
 	for _, a := range span.Attributes() {
-		if v := a.Value.Emit(); strings.Contains(v, "s3cr3t") || strings.Contains(v, "/in/abc") {
+		if v := a.Value.String(); strings.Contains(v, "s3cr3t") || strings.Contains(v, "/in/abc") {
 			t.Errorf("span records the URL's path or query: %s=%s", a.Key, v)
 		}
 	}

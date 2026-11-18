@@ -18,13 +18,13 @@ delete:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '204':
+    "204":
       description: Deleted
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
 patch:
   operationId: updateAgent
@@ -57,11 +57,11 @@ patch:
             disabled:
               type: boolean
   responses:
-    '204':
+    "204":
       description: Updated
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml

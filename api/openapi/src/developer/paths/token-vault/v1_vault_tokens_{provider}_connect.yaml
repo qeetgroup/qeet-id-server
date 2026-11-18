@@ -19,7 +19,7 @@ get:
     (fetch credentials: 'include') from the browser that will open the link: the
     callback connects the account only in that browser.
   responses:
-    '200':
+    "200":
       description: OK
       content:
         application/json:
@@ -28,9 +28,9 @@ get:
             properties:
               authorize_url:
                 type: string
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

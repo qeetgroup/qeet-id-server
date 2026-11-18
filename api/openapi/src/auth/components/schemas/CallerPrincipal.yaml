@@ -3,17 +3,17 @@ properties:
   user_id:
     type:
       - string
-      - 'null'
+      - "null"
     format: uuid
   organization_id:
     type:
       - string
-      - 'null'
+      - "null"
     format: uuid
   session_id:
     type:
       - string
-      - 'null'
+      - "null"
     format: uuid
   actor:
     type: string

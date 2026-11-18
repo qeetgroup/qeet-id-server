@@ -50,5 +50,5 @@ properties:
   last_login_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time

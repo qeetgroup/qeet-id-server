@@ -12,7 +12,7 @@ properties:
   matched_policy_id:
     type:
       - string
-      - 'null'
+      - "null"
     format: uuid
     description: ID of the policy that determined the outcome, if any.
   reason:

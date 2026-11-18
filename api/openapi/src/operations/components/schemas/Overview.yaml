@@ -103,7 +103,7 @@ properties:
           properties:
             date:
               type: string
-              example: '2026-10-29'
+              example: "2026-10-29"
             sign_ins:
               type: integer
             people:

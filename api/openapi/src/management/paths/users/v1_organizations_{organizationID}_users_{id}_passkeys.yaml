@@ -19,7 +19,7 @@ get:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '200':
+    "200":
       description: The user's passkeys
       content:
         application/json:
@@ -39,18 +39,18 @@ get:
                     name:
                       type:
                         - string
-                        - 'null'
+                        - "null"
                     created_at:
                       type: string
                       format: date-time
                     last_used_at:
                       type:
                         - string
-                        - 'null'
+                        - "null"
                       format: date-time
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml

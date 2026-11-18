@@ -13,7 +13,7 @@ properties:
   completed_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
   created_at:
     type: string
@@ -27,11 +27,11 @@ properties:
   reason:
     type:
       - string
-      - 'null'
+      - "null"
   requested_by:
     type:
       - string
-      - 'null'
+      - "null"
     format: uuid
   status:
     type: string
@@ -45,12 +45,12 @@ properties:
   subject_email:
     type:
       - string
-      - 'null'
+      - "null"
     description: The person's email as the request was filed; null once they are erased.
   subject_name:
     type:
       - string
-      - 'null'
+      - "null"
     description: Their display name as the request was filed; null once they are erased.
   subject_redacted:
     type: boolean

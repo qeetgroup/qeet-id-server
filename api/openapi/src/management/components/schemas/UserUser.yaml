@@ -16,20 +16,20 @@ properties:
   avatar_url:
     type:
       - string
-      - 'null'
+      - "null"
   created_at:
     type: string
     format: date-time
   display_name:
     type:
       - string
-      - 'null'
+      - "null"
   email:
     type: string
   email_verified_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
   groups_count:
     type: integer
@@ -49,11 +49,11 @@ properties:
   phone:
     type:
       - string
-      - 'null'
+      - "null"
   phone_verified_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
   roles:
     type: array

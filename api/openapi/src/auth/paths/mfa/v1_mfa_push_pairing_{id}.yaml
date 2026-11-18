@@ -18,7 +18,7 @@ get:
         type: string
         format: uuid
   responses:
-    '200':
+    "200":
       description: The pairing code's state
       content:
         application/json:
@@ -44,9 +44,9 @@ get:
               device_id:
                 type: string
                 format: uuid
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
 delete:
   operationId: withdrawPairingCode
@@ -67,9 +67,9 @@ delete:
         type: string
         format: uuid
   responses:
-    '204':
+    "204":
       description: The code no longer works
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml

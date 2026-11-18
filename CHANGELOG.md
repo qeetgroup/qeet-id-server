@@ -82,8 +82,7 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
 - The device and CIBA grants collect an approval through one step: both re-check the client's grant, spend
   the request and store the refresh token in one transaction.
 - A `limit` above a list's maximum is capped at the maximum, no longer answered with the default page
-  size: the SCIM console lists (`/v1/organizations/{organizationID}/scim/users` and `/scim/groups`, at most
-  200) and the OAuth grants (`/v1/organizations/{organizationID}/oauth/grants`, at most 500).
+  size: the SCIM console lists (`/v1/organizations/{organizationID}/scim/users` and `/scim/groups`, at most 200) and the OAuth grants (`/v1/organizations/{organizationID}/oauth/grants`, at most 500).
 - A SCIM token rotated through the admin portal is recorded as the console's rotation is: `scim.token_rotated`
   names the new token and `"replaced": "all"`. Resolving or retrying a directory error, and changing a
   directory mapping, record the caller's user agent with the rest of the request.

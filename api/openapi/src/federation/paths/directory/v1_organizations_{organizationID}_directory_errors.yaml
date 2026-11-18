@@ -59,7 +59,7 @@ get:
         default: 25
     - $ref: ../../../shared/parameters/Cursor.yaml
   responses:
-    '200':
+    "200":
       description: Error page, categories, affected connections, and latest remediations
       content:
         application/json:
@@ -90,7 +90,7 @@ get:
                   impacted_users:
                     type:
                       - integer
-                      - 'null'
+                      - "null"
               categories:
                 type: array
                 items:
@@ -113,9 +113,9 @@ get:
                 type: array
                 items:
                   $ref: ../../components/schemas/DirectoryEvent.yaml
-    '400':
+    "400":
       description: Invalid filters
-    '401':
+    "401":
       description: Authentication required
-    '403':
+    "403":
       description: Organization mismatch or missing connection.read

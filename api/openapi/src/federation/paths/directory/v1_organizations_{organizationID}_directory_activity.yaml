@@ -46,7 +46,7 @@ get:
         default: 25
     - $ref: ../../../shared/parameters/Cursor.yaml
   responses:
-    '200':
+    "200":
       description: Operation page, filtered summary, and daily UTC volumes
       content:
         application/json:
@@ -83,7 +83,7 @@ get:
                   average_duration_ms:
                     type:
                       - integer
-                      - 'null'
+                      - "null"
               volume:
                 type: array
                 items:
@@ -96,9 +96,9 @@ get:
                       type: integer
                     groups:
                       type: integer
-    '400':
+    "400":
       description: Invalid filters
-    '401':
+    "401":
       description: Authentication required
-    '403':
+    "403":
       description: Organization mismatch or missing connection.read

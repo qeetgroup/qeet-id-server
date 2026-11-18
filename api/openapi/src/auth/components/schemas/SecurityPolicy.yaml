@@ -35,7 +35,7 @@ properties:
   max_sessions:
     type:
       - integer
-      - 'null'
+      - "null"
     minimum: 1
     maximum: 1000
     description: >-
@@ -80,7 +80,7 @@ properties:
   mfa_enforced_since:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
     readOnly: true
     description: >-
@@ -97,7 +97,7 @@ properties:
   step_up_methods:
     type:
       - array
-      - 'null'
+      - "null"
     items:
       type: string
       enum:

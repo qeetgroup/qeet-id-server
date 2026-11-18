@@ -34,7 +34,7 @@ post:
               type: string
               description: The passkey's name; defaults to one from the device.
   responses:
-    '200':
+    "200":
       description: Token pair for the new session
       headers:
         Cache-Control:
@@ -45,13 +45,13 @@ post:
         application/json:
           schema:
             $ref: ../../../shared/schemas/TokenPair.yaml
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '409':
+    "409":
       $ref: ../../../shared/responses/Conflict.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

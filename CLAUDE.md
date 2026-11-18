@@ -10,15 +10,15 @@ CLAUDE.md  →  AGENTS.md  →  docs/llm/*
 
 ## Canonical context
 
-| File | For |
-|---|---|
-| [qeet-repo.yml](qeet-repo.yml) | Machine-readable repository identity |
-| [AGENTS.md](AGENTS.md) | **Rules, commands, what CI enforces** |
-| [docs/llm/architecture-map.md](docs/llm/architecture-map.md) | "Where is X?" |
-| [docs/llm/context.md](docs/llm/context.md) | How the backend works |
-| [docs/llm/subsystems.md](docs/llm/subsystems.md) | Subsystem map + real filenames |
-| [docs/llm/boundaries.md](docs/llm/boundaries.md) | Ownership and hard limits |
-| [docs/llm/workflows.md](docs/llm/workflows.md) | Step-by-step for common changes |
+| File                                                         | For                                   |
+| ------------------------------------------------------------ | ------------------------------------- |
+| [qeet-repo.yml](qeet-repo.yml)                               | Machine-readable repository identity  |
+| [AGENTS.md](AGENTS.md)                                       | **Rules, commands, what CI enforces** |
+| [docs/llm/architecture-map.md](docs/llm/architecture-map.md) | "Where is X?"                         |
+| [docs/llm/context.md](docs/llm/context.md)                   | How the backend works                 |
+| [docs/llm/subsystems.md](docs/llm/subsystems.md)             | Subsystem map + real filenames        |
+| [docs/llm/boundaries.md](docs/llm/boundaries.md)             | Ownership and hard limits             |
+| [docs/llm/workflows.md](docs/llm/workflows.md)               | Step-by-step for common changes       |
 
 Parent context: **L0** `qeetgroup/qeet-context` (organization standards) · **L1**
 `qeetgroup/qeet-id-context` (Qeet ID product architecture). Read them when a task needs
@@ -49,7 +49,8 @@ organization or product understanding; this repository does not restate them.
   (an entry in the root `sqlc.yaml`) + generated `dbgen/` + service + handler. NULL-able uuid and
   time columns are `*uuid.UUID` / `*time.Time`: no `pgtype` conversions.
 - **Never hand-edit `dbgen/`** — it is sqlc output.
-- **Never hand-edit `api/openapi/*.yaml`** — edit `api/openapi/src/` and run `make openapi`.
+- **Never hand-edit `api/openapi/*.yaml` or `api/postman/`** — edit `api/openapi/src/` and run
+  `make openapi`, which rebuilds both.
 - **Do not read `.env` or `.secrets/`** into anything you write. Both are gitignored and hold real
   local key material.
 

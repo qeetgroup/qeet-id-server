@@ -13,12 +13,12 @@ properties:
   disabled_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
   disabled_reason:
     type:
       - string
-      - 'null'
+      - "null"
     enum:
       - disabled
       - failing
@@ -31,7 +31,7 @@ properties:
   failing_since:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
     description: When deliveries started failing, with no success since.
   id:
@@ -40,7 +40,7 @@ properties:
   previous_secret_expires_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
     description: Until when the secret replaced by the last rotation also signs deliveries.
   secret:
@@ -57,13 +57,13 @@ properties:
   last_delivered_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
     description: Its latest delivery.
   last_status_code:
     type:
       - integer
-      - 'null'
+      - "null"
     description: The status its endpoint answered last.
   counts:
     type: object

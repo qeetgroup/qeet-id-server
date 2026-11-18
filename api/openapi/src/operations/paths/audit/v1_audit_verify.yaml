@@ -13,8 +13,8 @@ get:
     - Audit
   security: []
   responses:
-    '200':
-      description: '{ chain_valid: bool, rows_checked: int }'
+    "200":
+      description: "{ chain_valid: bool, rows_checked: int }"
       content:
         application/json:
           schema:
@@ -27,5 +27,5 @@ get:
             required:
               - chain_valid
               - rows_checked
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

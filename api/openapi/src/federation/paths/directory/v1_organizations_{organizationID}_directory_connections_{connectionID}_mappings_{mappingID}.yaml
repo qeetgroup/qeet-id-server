@@ -29,23 +29,23 @@ put:
         schema:
           $ref: ../../components/schemas/DirectoryMapping.yaml
   responses:
-    '200':
+    "200":
       description: Updated mapping and incremented version
       content:
         application/json:
           schema:
             $ref: ../../components/schemas/DirectoryMapping.yaml
-    '400':
+    "400":
       description: Invalid id, version or body
-    '401':
+    "401":
       description: Authentication required
-    '403':
+    "403":
       description: Organization mismatch or missing connection.write
-    '404':
+    "404":
       description: Connection not found
-    '409':
+    "409":
       description: Stale version, missing mapping or duplicate enabled target
-    '422':
+    "422":
       description: >-
         Mapping refused: validation_failed, with error.fields[0].field naming
         the property at fault (source_attribute, target_field, value_type,
@@ -84,11 +84,11 @@ delete:
         type: string
         format: uuid
   responses:
-    '204':
+    "204":
       description: Mapping removed and audited
-    '401':
+    "401":
       description: Authentication required
-    '403':
+    "403":
       description: Organization mismatch or missing connection.write
-    '404':
+    "404":
       description: Mapping not found in this organization and connection

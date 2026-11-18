@@ -24,13 +24,13 @@ properties:
   last_called_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
     description: Its last call by a sign-in.
   last_outcome:
     type:
       - string
-      - 'null'
+      - "null"
     enum:
       - allowed
       - denied
@@ -40,7 +40,7 @@ properties:
   last_status_code:
     type:
       - integer
-      - 'null'
+      - "null"
   calls:
     type: integer
     description: Sign-in calls since this release; test calls aren't counted.
@@ -51,6 +51,6 @@ properties:
   previous_secret_expires_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
     description: Until when the secret the last change of secret replaced also signs the hook's calls.

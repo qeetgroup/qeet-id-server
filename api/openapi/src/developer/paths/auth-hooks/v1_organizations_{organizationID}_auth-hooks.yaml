@@ -12,7 +12,7 @@ get:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '200':
+    "200":
       description: Configured hooks (secrets are write-only, not returned)
       content:
         application/json:
@@ -25,9 +25,9 @@ get:
                 type: array
                 items:
                   $ref: ../../components/schemas/Hook.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
 post:
   operationId: createAuthHook
@@ -77,15 +77,15 @@ post:
                 skip is recorded (audit auth_hook.skipped with the reason and
                 outcome; metric auth_hook_skipped_total).
   responses:
-    '201':
+    "201":
       description: Hook created
       content:
         application/json:
           schema:
             $ref: ../../components/schemas/Hook.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml

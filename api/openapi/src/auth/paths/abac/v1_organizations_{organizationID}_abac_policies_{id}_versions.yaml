@@ -21,7 +21,7 @@ get:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '200':
+    "200":
       description: The policy's versions
       content:
         application/json:
@@ -62,14 +62,14 @@ get:
                     saved_by:
                       type:
                         - string
-                        - 'null'
+                        - "null"
                       format: uuid
                     saved_at:
                       type: string
                       format: date-time
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml

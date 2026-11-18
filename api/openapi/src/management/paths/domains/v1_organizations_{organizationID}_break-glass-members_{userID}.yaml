@@ -24,15 +24,15 @@ put:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '204':
+    "204":
       description: The member is break-glass
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
 delete:
   operationId: removeBreakGlassMember
@@ -57,11 +57,11 @@ delete:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '204':
+    "204":
       description: The person is no longer break-glass
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml

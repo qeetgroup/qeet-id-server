@@ -10,7 +10,7 @@ post:
   security:
     - bearerAuth: []
   responses:
-    '204':
+    "204":
       description: All notifications marked read
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml

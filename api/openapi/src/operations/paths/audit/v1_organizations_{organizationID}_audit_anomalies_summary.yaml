@@ -15,13 +15,13 @@ get:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '200':
-      description: '{ open: int, resolved_7d: int, high_score_open: int }'
+    "200":
+      description: "{ open: int, resolved_7d: int, high_score_open: int }"
       content:
         application/json:
           schema:
             $ref: ../../components/schemas/Summary.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml

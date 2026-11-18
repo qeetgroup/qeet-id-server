@@ -12,12 +12,12 @@ properties:
   actor_user_id:
     type:
       - string
-      - 'null'
+      - "null"
     format: uuid
   actor_email:
     type:
       - string
-      - 'null'
+      - "null"
   score:
     type: number
     description: 0..1 weighted-novelty anomaly score.
@@ -37,12 +37,12 @@ properties:
   resolved_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
   resolved_by:
     type:
       - string
-      - 'null'
+      - "null"
     format: uuid
   created_at:
     type: string
@@ -54,7 +54,7 @@ properties:
   ip:
     type:
       - string
-      - 'null'
+      - "null"
   event_at:
     type: string
     format: date-time

@@ -28,7 +28,7 @@ post:
               type: string
               description: The oidc_code from the URL fragment.
   responses:
-    '200':
+    "200":
       description: >-
         Signed in to the hosted login; the hosted-login session cookie (qe_ls)
         is set.
@@ -48,9 +48,9 @@ post:
               user_id:
                 type: string
                 format: uuid
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml

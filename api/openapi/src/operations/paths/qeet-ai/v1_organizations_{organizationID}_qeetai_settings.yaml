@@ -12,7 +12,7 @@ get:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '200':
+    "200":
       description: Settings
       content:
         application/json:
@@ -22,7 +22,7 @@ get:
               conversation_retention_days:
                 type:
                   - integer
-                  - 'null'
+                  - "null"
                 minimum: 1
                 maximum: 3650
                 description: >-
@@ -36,9 +36,9 @@ get:
                 format: uuid
               updated_by_email:
                 type: string
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
 put:
   operationId: setQeetAiSettings
@@ -66,11 +66,11 @@ put:
             conversation_retention_days:
               type:
                 - integer
-                - 'null'
+                - "null"
               minimum: 1
               maximum: 3650
   responses:
-    '200':
+    "200":
       description: The settings
       content:
         application/json:
@@ -80,7 +80,7 @@ put:
               conversation_retention_days:
                 type:
                   - integer
-                  - 'null'
+                  - "null"
                 minimum: 1
                 maximum: 3650
                 description: >-
@@ -94,9 +94,9 @@ put:
                 format: uuid
               updated_by_email:
                 type: string
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml

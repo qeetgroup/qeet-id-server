@@ -24,15 +24,15 @@ get:
         type: string
         format: uuid
   responses:
-    '200':
+    "200":
       description: The test and its findings
       content:
         application/json:
           schema:
             $ref: ../../components/schemas/SAMLTestSignIn.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml

@@ -19,15 +19,15 @@ delete:
     when the account is an owner's and the caller isn't one, and 403
     rbac.target_outranks_caller when it holds a permission the caller doesn't.
   responses:
-    '204':
+    "204":
       description: No Content
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

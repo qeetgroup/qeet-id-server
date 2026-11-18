@@ -10,7 +10,7 @@ get:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '200':
+    "200":
       description: Agents (secrets are write-only, not returned)
       content:
         application/json:
@@ -23,9 +23,9 @@ get:
                 type: array
                 items:
                   $ref: ../../components/schemas/Agent.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
 post:
   operationId: createAgent
@@ -77,7 +77,7 @@ post:
                 The named human owner accountable for this agent. Must be a
                 member of this organization.
   responses:
-    '201':
+    "201":
       description: Agent created (secret returned once)
       headers:
         Cache-Control:
@@ -90,15 +90,15 @@ post:
         application/json:
           schema:
             $ref: ../../components/schemas/Agent.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '409':
+    "409":
       description: >-
         A request with this Idempotency-Key is still being processed
         (idempotency.in_progress); retry shortly. Or the first request stopped
         before answering and may have taken effect
         (idempotency.outcome_unknown): check, then retry with a new key.
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml

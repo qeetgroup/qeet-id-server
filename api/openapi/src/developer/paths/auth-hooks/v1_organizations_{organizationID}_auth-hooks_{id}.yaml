@@ -49,7 +49,7 @@ patch:
                 skip is recorded (audit auth_hook.skipped with the reason and
                 outcome; metric auth_hook_skipped_total).
   responses:
-    '200':
+    "200":
       description: The hook's settings as stored
       content:
         application/json:
@@ -63,11 +63,11 @@ patch:
                 type: boolean
               fail_open:
                 type: boolean
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
 delete:
   operationId: deleteAuthHook
@@ -87,11 +87,11 @@ delete:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '204':
+    "204":
       description: Removed
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml

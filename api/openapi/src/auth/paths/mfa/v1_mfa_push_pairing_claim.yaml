@@ -37,7 +37,7 @@ post:
                 - ios
                 - android
   responses:
-    '201':
+    "201":
       description: The phone is linked; device_token is returned once
       headers:
         Cache-Control:
@@ -71,9 +71,9 @@ post:
                   email:
                     type: string
                     format: email
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -17,21 +17,21 @@ delete:
     Deletes the organization's version of an email template, so the default is
     sent again. Requires branding.write.
   responses:
-    '200':
+    "200":
       description: Built-in default after removing the override and its options
       content:
         application/json:
           schema:
             $ref: ../../components/schemas/EmailResolvedTemplate.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml
 get:
   operationId: getEmailTemplate
@@ -52,21 +52,21 @@ get:
     Returns an email template as the organization sends it: its own version, or
     the default. Requires branding.write.
   responses:
-    '200':
+    "200":
       description: OK
       content:
         application/json:
           schema:
             $ref: ../../components/schemas/EmailResolvedTemplate.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml
 put:
   operationId: setEmailTemplate
@@ -98,19 +98,19 @@ put:
     invitations and magic links use saved overrides; platform-account recovery,
     verification and MFA remain platform-managed.
   responses:
-    '200':
+    "200":
       description: OK
       content:
         application/json:
           schema:
             $ref: ../../components/schemas/EmailResolvedTemplate.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

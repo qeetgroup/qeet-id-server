@@ -43,7 +43,7 @@ properties:
   certificate_details:
     type:
       - object
-      - 'null'
+      - "null"
     description: What the certificate says about itself; null without one.
     properties:
       subject:
@@ -79,5 +79,5 @@ properties:
   last_login_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time

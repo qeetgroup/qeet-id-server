@@ -5,7 +5,7 @@ delete:
     bearer token, with Qeet acting as the SCIM server. Mounted at the root under
     /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope rather
     than the standard Qeet error shape.
-  summary: '[scim] Delete group'
+  summary: "[scim] Delete group"
   tags:
     - SCIM
   parameters:
@@ -18,11 +18,11 @@ delete:
   security:
     - scimBearer: []
   responses:
-    '204':
+    "204":
       description: Deleted
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
 get:
   operationId: getScimGroup
@@ -31,7 +31,7 @@ get:
     SCIM bearer token, with Qeet acting as the SCIM server. Mounted at the root
     under /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope
     rather than the standard Qeet error shape.
-  summary: '[scim] Get group'
+  summary: "[scim] Get group"
   tags:
     - SCIM
   parameters:
@@ -44,15 +44,15 @@ get:
   security:
     - scimBearer: []
   responses:
-    '200':
+    "200":
       description: Group
       content:
         application/scim+json:
           schema:
             $ref: ../../components/schemas/SCIMGroup.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
 patch:
   operationId: patchScimGroup
@@ -64,7 +64,7 @@ patch:
     Qeet error shape. Adding someone holding no role to a group that carries one
     takes a seat; when the plan's seats are all taken the whole change is
     refused with 403 in that envelope and nothing changes.
-  summary: '[scim] Patch group'
+  summary: "[scim] Patch group"
   tags:
     - SCIM
   parameters:
@@ -83,19 +83,19 @@ patch:
         schema:
           $ref: ../../components/schemas/SCIMPatchOp.yaml
   responses:
-    '200':
+    "200":
       description: Patched
       content:
         application/scim+json:
           schema:
             $ref: ../../components/schemas/SCIMGroup.yaml
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '409':
+    "409":
       $ref: ../../components/responses/SCIMConflict.yaml
 put:
   operationId: replaceScimGroup
@@ -107,7 +107,7 @@ put:
     error envelope, not the standard Qeet error shape. A member set that gives
     someone a first role, through the group's, beyond the plan's seats is
     refused with 403 in that envelope and nothing changes.
-  summary: '[scim] Replace group'
+  summary: "[scim] Replace group"
   tags:
     - SCIM
   parameters:
@@ -126,17 +126,17 @@ put:
         schema:
           $ref: ../../components/schemas/SCIMGroup.yaml
   responses:
-    '200':
+    "200":
       description: Replaced
       content:
         application/scim+json:
           schema:
             $ref: ../../components/schemas/SCIMGroup.yaml
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '409':
+    "409":
       $ref: ../../components/responses/SCIMConflict.yaml

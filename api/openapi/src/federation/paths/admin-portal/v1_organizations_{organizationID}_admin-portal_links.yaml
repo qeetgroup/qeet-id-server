@@ -14,7 +14,7 @@ get:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '200':
+    "200":
       description: >-
         Links (metadata only — the raw token is never returned again after
         generation)
@@ -29,9 +29,9 @@ get:
                 type: array
                 items:
                   $ref: ../../components/schemas/AdminPortalLink.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
 post:
   operationId: createAdminPortalLink
@@ -76,7 +76,7 @@ post:
                 How long the link lasts, in seconds, from 900 to 86400. Omitted
                 or 0 means an hour.
   responses:
-    '201':
+    "201":
       description: Link generated
       headers:
         Cache-Control:
@@ -96,9 +96,9 @@ post:
               url:
                 type: string
                 format: uri
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml

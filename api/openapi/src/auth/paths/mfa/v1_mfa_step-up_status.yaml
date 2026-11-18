@@ -41,7 +41,7 @@ get:
     linked phone counts as a factor held, and steps a session up through the
     push step-up calls.
   responses:
-    '200':
+    "200":
       description: OK
       content:
         application/json:
@@ -54,7 +54,7 @@ get:
               verified_at:
                 type:
                   - string
-                  - 'null'
+                  - "null"
                 format: date-time
                 description: The session's latest step-up, whether or not it still counts.
               window_seconds:
@@ -63,19 +63,19 @@ get:
               allowed_methods:
                 type:
                   - array
-                  - 'null'
+                  - "null"
                 items:
                   type: string
                 description: >-
                   The factor types the organization counts; null when every one
                   does.
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

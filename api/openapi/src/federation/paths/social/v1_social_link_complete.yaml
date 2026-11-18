@@ -30,7 +30,7 @@ post:
               type: string
               description: The link_code from the callback's redirect.
   responses:
-    '200':
+    "200":
       description: Linked
       content:
         application/json:
@@ -41,11 +41,11 @@ post:
                 type: string
             required:
               - provider
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '409':
+    "409":
       $ref: ../../../shared/responses/Conflict.yaml

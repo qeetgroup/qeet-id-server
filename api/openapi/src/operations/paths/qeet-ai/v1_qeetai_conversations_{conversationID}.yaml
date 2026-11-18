@@ -16,7 +16,7 @@ get:
   security:
     - bearerAuth: []
   responses:
-    '200':
+    "200":
       description: Conversation with messages
       content:
         application/json:
@@ -29,9 +29,9 @@ get:
                 type: array
                 items:
                   $ref: ../../components/schemas/QeetAIMessage.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
 patch:
   operationId: updateConversation
@@ -60,15 +60,15 @@ patch:
             pinned:
               type: boolean
   responses:
-    '200':
+    "200":
       description: Updated conversation
       content:
         application/json:
           schema:
             $ref: ../../components/schemas/QeetAIConversation.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
 delete:
   operationId: deleteConversation
@@ -86,9 +86,9 @@ delete:
   security:
     - bearerAuth: []
   responses:
-    '204':
+    "204":
       description: Deleted
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml

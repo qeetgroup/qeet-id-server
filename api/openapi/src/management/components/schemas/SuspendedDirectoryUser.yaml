@@ -9,11 +9,11 @@ properties:
   display_name:
     type:
       - string
-      - 'null'
+      - "null"
   avatar_url:
     type:
       - string
-      - 'null'
+      - "null"
   team:
     type: string
   reason:
@@ -36,12 +36,12 @@ properties:
   suspended_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
   last_sign_in:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
   can_manage:
     type: boolean

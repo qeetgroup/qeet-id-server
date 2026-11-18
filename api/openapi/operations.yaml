@@ -79,7 +79,7 @@ paths:
         - Health
       security: []
       responses:
-        '200':
+        "200":
           description: Alive
           content:
             application/json:
@@ -92,20 +92,20 @@ paths:
   /metrics:
     get:
       operationId: getMetrics
-      description: 'Exposes process and request metrics in Prometheus exposition format for scraping by a metrics collector. The scraper presents METRICS_TOKEN as `Authorization: Bearer <token>`; without the right token the endpoint answers 404, as it does everywhere but development when no METRICS_TOKEN is set, since its counters (sign-in throttles among them) would tell an attacker how close they are to a limit. The payload reflects the instance''s current counters and gauges at the time of the call.'
+      description: "Exposes process and request metrics in Prometheus exposition format for scraping by a metrics collector. The scraper presents METRICS_TOKEN as `Authorization: Bearer <token>`; without the right token the endpoint answers 404, as it does everywhere but development when no METRICS_TOKEN is set, since its counters (sign-in throttles among them) would tell an attacker how close they are to a limit. The payload reflects the instance's current counters and gauges at the time of the call."
       summary: Metrics (Prometheus)
       tags:
         - Health
       security: []
       responses:
-        '200':
+        "200":
           description: Prometheus exposition format
           content:
             text/plain:
               schema:
                 type: string
-        '404':
-          description: 'Metrics are not served to this caller: no METRICS_TOKEN is configured outside development, or the request did not send it as `Authorization: Bearer <token>`. The same plain-text answer as an unknown path.'
+        "404":
+          description: "Metrics are not served to this caller: no METRICS_TOKEN is configured outside development, or the request did not send it as `Authorization: Bearer <token>`. The same plain-text answer as an unknown path."
           content:
             text/plain:
               schema:
@@ -119,7 +119,7 @@ paths:
         - Health
       security: []
       responses:
-        '200':
+        "200":
           description: Ready
           content:
             application/json:
@@ -128,18 +128,18 @@ paths:
                 properties:
                   status:
                     type: string
-        '503':
+        "503":
           description: Not ready (a dependency is down)
   /version:
     get:
       operationId: getVersion
-      description: 'Answers what is running on this instance: the release version, the commit it was built from and its build date, and the database migration the instance runs on next to the newest migration the build carries. Requires no authentication and reads nothing at request time (the migration is the one found at start). Operators compare it with the deploy record after a deploy or rollback.'
+      description: "Answers what is running on this instance: the release version, the commit it was built from and its build date, and the database migration the instance runs on next to the newest migration the build carries. Requires no authentication and reads nothing at request time (the migration is the one found at start). Operators compare it with the deploy record after a deploy or rollback."
       summary: Version
       tags:
         - Health
       security: []
       responses:
-        '200':
+        "200":
           description: The running build and its schema
           content:
             application/json:
@@ -277,18 +277,18 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: Paginated activity events
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ActivityResponse'
-        '400':
-          $ref: '#/components/responses/Unprocessable'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+                $ref: "#/components/schemas/ActivityResponse"
+        "400":
+          $ref: "#/components/responses/Unprocessable"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/activity/stream:
     get:
       operationId: streamActivity
@@ -341,16 +341,16 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: 'SSE stream of ActivityEvent frames. Event name: "activity". Periodic "`: keep-alive`" comments maintain the connection.'
           content:
             text/event-stream:
               schema:
                 type: string
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/activity/summary:
     get:
       operationId: getActivitySummary
@@ -450,16 +450,16 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: Aggregate activity summary
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ActivitySummaryResponse'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+                $ref: "#/components/schemas/ActivitySummaryResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/activity/{id}/related:
     get:
       operationId: listRelatedActivity
@@ -488,20 +488,20 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: Anchor event and correlated events
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ActivityRelatedResponse'
-        '400':
-          $ref: '#/components/responses/Unprocessable'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+                $ref: "#/components/schemas/ActivityRelatedResponse"
+        "400":
+          $ref: "#/components/responses/Unprocessable"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/organizations/{organizationID}/activity/{id}:
     get:
       operationId: getActivityEvent
@@ -510,7 +510,7 @@ paths:
       tags:
         - Activity
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: id
           in: path
           required: true
@@ -521,20 +521,20 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: The event
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ActivityEvent'
-        '400':
-          $ref: '#/components/responses/Unprocessable'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+                $ref: "#/components/schemas/ActivityEvent"
+        "400":
+          $ref: "#/components/responses/Unprocessable"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/organizations/{organizationID}/service-health:
     get:
       operationId: getServiceHealth
@@ -542,13 +542,13 @@ paths:
       tags:
         - Health
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       description: The state of each part of the service the organization uses, from its own recent figures, and the incidents operators posted that are open or were resolved in the last 14 days. A component is operational, degraded, outage, maintenance or not_configured (a part the organization doesn't use); an open incident makes it no better than the incident's impact (reason incident). api is an outage while the database is unreachable (api.database_unreachable); sign_in while tokens can't be signed (sign_in.keys_unavailable); email is degraded when the provider refused at least a quarter of the organization's emails of the last hour (email.failing); webhooks while a subscription's deliveries are failing or one was disabled for failing (webhooks.failing); directory while a directory operation of the last day failed and is still open (directory.failing). status is the worst state of the components. Requires organization.read.
       responses:
-        '200':
+        "200":
           description: OK
           content:
             application/json:
@@ -601,7 +601,7 @@ paths:
                           type: object
                           additionalProperties:
                             type: integer
-                          description: 'The counts its state was judged by: email sent_last_hour and failed_last_hour; webhooks active, failing and disabled_failing; directory ldap_connections, scim_tokens and open_failures.'
+                          description: "The counts its state was judged by: email sent_last_hour and failed_last_hour; webhooks active, failing and disabled_failing; directory ldap_connections, scim_tokens and open_failures."
                   incidents:
                     type: array
                     items:
@@ -641,12 +641,12 @@ paths:
                         resolved_at:
                           type:
                             - string
-                            - 'null'
+                            - "null"
                           format: date-time
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/organizations/{organizationID}/analytics/overview:
     get:
       operationId: getAnalyticsOverview
@@ -654,7 +654,7 @@ paths:
       tags:
         - Analytics
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: from
           in: query
           required: false
@@ -686,24 +686,24 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Returns the organization''s dashboard figures: sign-ins, failures, active users and their trends. Sign-ins and active users are counted from the sign-in log, which outlives the sessions: a person who switched to the organization, created it or accepted an invitation to it is active in it, but only a sign-in that proved a factor counts as one. Requires analytics.read.'
+      description: "Returns the organization's dashboard figures: sign-ins, failures, active users and their trends. Sign-ins and active users are counted from the sign-in log, which outlives the sessions: a person who switched to the organization, created it or accepted an invitation to it is active in it, but only a sign-in that proved a factor counts as one. Requires analytics.read."
       responses:
-        '200':
+        "200":
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Overview'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                $ref: "#/components/schemas/Overview"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/search:
     get:
       operationId: search
@@ -721,7 +721,7 @@ paths:
         - name: types
           in: query
           required: false
-          description: 'Comma-separated list of resource types to search. Allowed values: user, organization, group, role, oidc_client, audit_event. Omit to search all permitted types.'
+          description: "Comma-separated list of resource types to search. Allowed values: user, organization, group, role, oidc_client, audit_event. Omit to search all permitted types."
           schema:
             type: string
             example: user,group
@@ -743,18 +743,18 @@ paths:
       security:
         - bearerAuth: []
       responses:
-        '200':
+        "200":
           description: Search results
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SearchResponse'
-        '400':
-          $ref: '#/components/responses/Unprocessable'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+                $ref: "#/components/schemas/SearchResponse"
+        "400":
+          $ref: "#/components/responses/Unprocessable"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/organizations/{organizationID}/audit:
     get:
       operationId: listAuditEvents
@@ -763,7 +763,7 @@ paths:
       tags:
         - Audit
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: q
           in: query
           required: false
@@ -833,8 +833,8 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
-          description: '{ items: AuditEvent[], next_cursor?: string, total, total_capped }; next_cursor is absent on the last page.'
+        "200":
+          description: "{ items: AuditEvent[], next_cursor?: string, total, total_capped }; next_cursor is absent on the last page."
           content:
             application/json:
               example:
@@ -849,7 +849,7 @@ paths:
                     ip: 203.0.113.10
                     user_agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6)
                     request_id: api-1/Kx9fQ2mW7a-000124
-                    created_at: '2026-09-24T10:15:04Z'
+                    created_at: "2026-09-24T10:15:04Z"
                   - id: 018f2a90-0a1b-7c2d-8e3f-4a5b6c7d8e00
                     organization_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
                     action: organization.created
@@ -860,7 +860,7 @@ paths:
                     ip: 203.0.113.10
                     user_agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6)
                     request_id: api-1/Kx9fQ2mW7a-000123
-                    created_at: '2026-09-24T10:15:00Z'
+                    created_at: "2026-09-24T10:15:00Z"
                 next_cursor: 018f2a90-0a1b-7c2d-8e3f-4a5b6c7d8e00
                 total: 2
                 total_capped: false
@@ -874,23 +874,23 @@ paths:
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/Row'
+                      $ref: "#/components/schemas/Row"
                   next_cursor:
-                    $ref: '#/components/schemas/NextCursor'
+                    $ref: "#/components/schemas/NextCursor"
                   total:
                     type: integer
                     description: How many events match, up to 10,000.
                   total_capped:
                     type: boolean
                     description: More than 10,000 events match.
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
   /v1/audit/verify:
     get:
       operationId: verifyPlatformAuditChain
@@ -900,8 +900,8 @@ paths:
         - Audit
       security: []
       responses:
-        '200':
-          description: '{ chain_valid: bool, rows_checked: int }'
+        "200":
+          description: "{ chain_valid: bool, rows_checked: int }"
           content:
             application/json:
               schema:
@@ -914,22 +914,22 @@ paths:
                 required:
                   - chain_valid
                   - rows_checked
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/audit/verification:
     get:
       operationId: getAuditVerification
       summary: The audit chain's last verification
-      description: 'How the scheduled audit-chain verification (every six hours, going on from where it left each chain, with a full walk at least weekly) last left the organization''s chain, read rather than walked: whether it has reached it yet, when it last verified it and up to which event, whether a break was found and when, and when the latest run finished and its scope. GET /v1/organizations/{organizationID}/audit/verify still walks the whole chain on request. Needs audit.read.'
+      description: "How the scheduled audit-chain verification (every six hours, going on from where it left each chain, with a full walk at least weekly) last left the organization's chain, read rather than walked: whether it has reached it yet, when it last verified it and up to which event, whether a break was found and when, and when the latest run finished and its scope. GET /v1/organizations/{organizationID}/audit/verify still walks the whole chain on request. Needs audit.read."
       tags:
         - Audit
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: The last verification
           content:
             application/json:
@@ -953,32 +953,32 @@ paths:
                   last_verified_at:
                     type:
                       - string
-                      - 'null'
+                      - "null"
                     format: date-time
                   broken_at:
                     type:
                       - string
-                      - 'null'
+                      - "null"
                     format: date-time
                     description: When a break was found; it stays until resolved.
                   last_verified_event_id:
                     type:
                       - string
-                      - 'null'
+                      - "null"
                     format: uuid
                   last_run_at:
                     type:
                       - string
-                      - 'null'
+                      - "null"
                     format: date-time
                     description: When the latest scheduled run finished.
                   last_run_scope:
                     type: string
                     description: all (a full walk) or incremental; empty before any run.
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/organizations/{organizationID}/audit/verify:
     get:
       operationId: verifyAuditChain
@@ -987,21 +987,21 @@ paths:
       tags:
         - Audit
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
-          description: '{ ok: bool, rows_checked: int, last_verified_id?: uuid, broken_at_id?: uuid, broken_reason?: string, reason_code?: string }'
+        "200":
+          description: "{ ok: bool, rows_checked: int, last_verified_id?: uuid, broken_at_id?: uuid, broken_reason?: string, reason_code?: string }"
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AuditVerifyResult'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+                $ref: "#/components/schemas/AuditVerifyResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/organizations/{organizationID}/audit/anomalies:
     get:
       operationId: listAuditAnomalies
@@ -1010,7 +1010,7 @@ paths:
       tags:
         - Audit
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: status
           in: query
           required: false
@@ -1028,12 +1028,12 @@ paths:
             minimum: 1
             maximum: 200
             default: 50
-        - $ref: '#/components/parameters/Cursor'
+        - $ref: "#/components/parameters/Cursor"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: Anomalies
           content:
             application/json:
@@ -1041,15 +1041,15 @@ paths:
                 type: object
                 properties:
                   next_cursor:
-                    $ref: '#/components/schemas/NextCursor'
+                    $ref: "#/components/schemas/NextCursor"
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/AuditAnomaly'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+                      $ref: "#/components/schemas/AuditAnomaly"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/organizations/{organizationID}/audit/anomalies/summary:
     get:
       operationId: getAuditAnomalySummary
@@ -1058,21 +1058,21 @@ paths:
       tags:
         - Audit
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
-          description: '{ open: int, resolved_7d: int, high_score_open: int }'
+        "200":
+          description: "{ open: int, resolved_7d: int, high_score_open: int }"
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Summary'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+                $ref: "#/components/schemas/Summary"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/organizations/{organizationID}/audit/anomalies/{id}/resolve:
     post:
       operationId: resolveAuditAnomaly
@@ -1081,7 +1081,7 @@ paths:
       tags:
         - Audit
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: id
           in: path
           required: true
@@ -1092,14 +1092,14 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '204':
+        "204":
           description: Resolved
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/organizations/{organizationID}/audit/anomaly-settings:
     get:
       operationId: getAuditAnomalySettings
@@ -1108,21 +1108,21 @@ paths:
       tags:
         - Audit
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: Settings
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AuditAnomalySettings'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+                $ref: "#/components/schemas/AuditAnomalySettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     put:
       operationId: setAuditAnomalySettings
       description: Replaces the organization's anomaly-detection configuration. The score threshold must be between 0 and 1 and the minimum baseline count must be non-negative, otherwise the request is rejected as unprocessable. Changes take effect on the next background scoring pass, and the stored settings are returned.
@@ -1130,7 +1130,7 @@ paths:
       tags:
         - Audit
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -1139,20 +1139,20 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/AuditAnomalySettings'
+              $ref: "#/components/schemas/AuditAnomalySettings"
       responses:
-        '200':
+        "200":
           description: Updated
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AuditAnomalySettings'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
+                $ref: "#/components/schemas/AuditAnomalySettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
   /v1/organizations/{organizationID}/compliance/{framework}/evidence:
     post:
       operationId: generateComplianceEvidence
@@ -1161,7 +1161,7 @@ paths:
       tags:
         - Compliance
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: framework
           in: path
           required: true
@@ -1174,18 +1174,18 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '201':
+        "201":
           description: Evidence run generated; body contains the full control-by-control report.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/EvidenceRun'
-        '400':
-          $ref: '#/components/responses/Unprocessable'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+                $ref: "#/components/schemas/EvidenceRun"
+        "400":
+          $ref: "#/components/responses/Unprocessable"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     get:
       operationId: listComplianceEvidence
       summary: List compliance evidence runs
@@ -1193,7 +1193,7 @@ paths:
       tags:
         - Compliance
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: framework
           in: path
           required: true
@@ -1206,7 +1206,7 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: List of evidence runs (controls omitted).
           content:
             application/json:
@@ -1214,15 +1214,15 @@ paths:
                 type: object
                 properties:
                   truncated:
-                    $ref: '#/components/schemas/Truncated'
+                    $ref: "#/components/schemas/Truncated"
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/EvidenceRun'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+                      $ref: "#/components/schemas/EvidenceRun"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/organizations/{organizationID}/compliance/controls/owners:
     get:
       operationId: listControlOwners
@@ -1231,12 +1231,12 @@ paths:
       tags:
         - Compliance
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: Owners
           content:
             application/json:
@@ -1244,17 +1244,17 @@ paths:
                 type: object
                 properties:
                   truncated:
-                    $ref: '#/components/schemas/Truncated'
+                    $ref: "#/components/schemas/Truncated"
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/ControlOwner'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+                      $ref: "#/components/schemas/ControlOwner"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/organizations/{organizationID}/compliance/controls/{controlID}/owner:
     put:
       operationId: setControlOwner
@@ -1263,7 +1263,7 @@ paths:
       tags:
         - Compliance
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: controlID
           in: path
           required: true
@@ -1285,16 +1285,16 @@ paths:
                   type: string
                   format: uuid
       responses:
-        '204':
+        "204":
           description: Owner set
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
     delete:
       operationId: removeControlOwner
       summary: Remove a control's owner
@@ -1302,7 +1302,7 @@ paths:
       tags:
         - Compliance
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: controlID
           in: path
           required: true
@@ -1312,14 +1312,14 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '204':
+        "204":
           description: Owner removed
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/organizations/{organizationID}/compliance/audits:
     get:
       operationId: listExternalAudits
@@ -1328,7 +1328,7 @@ paths:
       tags:
         - Compliance
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: framework
           in: query
           required: false
@@ -1341,7 +1341,7 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: Audits
           content:
             application/json:
@@ -1349,25 +1349,25 @@ paths:
                 type: object
                 properties:
                   truncated:
-                    $ref: '#/components/schemas/Truncated'
+                    $ref: "#/components/schemas/Truncated"
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/ExternalAudit'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+                      $ref: "#/components/schemas/ExternalAudit"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
     post:
       operationId: recordExternalAudit
       summary: Record an external audit or certificate
-      description: 'Records an audit an external body carried out, or a certificate it issued: framework, kind (audit or certificate), body, scope, reference, issued_on and optional expires_on (YYYY-MM-DD, not before issued_on). Invalid fields are refused with 422 naming each. Audited as compliance.audit_recorded. Requires audit.write.'
+      description: "Records an audit an external body carried out, or a certificate it issued: framework, kind (audit or certificate), body, scope, reference, issued_on and optional expires_on (YYYY-MM-DD, not before issued_on). Invalid fields are refused with 422 naming each. Audited as compliance.audit_recorded. Requires audit.write."
       tags:
         - Compliance
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -1409,20 +1409,20 @@ paths:
                   type: string
                   format: date
       responses:
-        '201':
+        "201":
           description: Recorded
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ExternalAudit'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
+                $ref: "#/components/schemas/ExternalAudit"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
   /v1/organizations/{organizationID}/compliance/audits/{id}:
     delete:
       operationId: deleteExternalAudit
@@ -1431,7 +1431,7 @@ paths:
       tags:
         - Compliance
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: id
           in: path
           required: true
@@ -1442,14 +1442,14 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '204':
+        "204":
           description: Deleted
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/organizations/{organizationID}/compliance/evidence/{id}:
     get:
       operationId: getComplianceEvidence
@@ -1458,7 +1458,7 @@ paths:
       tags:
         - Compliance
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: id
           in: path
           required: true
@@ -1469,18 +1469,18 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: Full evidence run with per-control results.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/EvidenceRun'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+                $ref: "#/components/schemas/EvidenceRun"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/organizations/{organizationID}/retention:
     get:
       operationId: getRetentionPolicy
@@ -1488,35 +1488,35 @@ paths:
       tags:
         - Data Retention
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       description: Returns the organization's data-retention policy. Requires policy.read.
       responses:
-        '200':
+        "200":
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RetentionPolicy'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                $ref: "#/components/schemas/RetentionPolicy"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     put:
       operationId: setRetentionPolicy
       summary: Update retention policy
       tags:
         - Data Retention
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -1525,25 +1525,25 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/RetentionPolicy'
+              $ref: "#/components/schemas/RetentionPolicy"
       description: Replaces the organization's data-retention policy. Requires policy.write.
       responses:
-        '200':
+        "200":
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RetentionPolicy'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                $ref: "#/components/schemas/RetentionPolicy"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/retention/preview:
     post:
       operationId: previewRetention
@@ -1551,13 +1551,13 @@ paths:
       tags:
         - Data Retention
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       description: Reports how many deleted users the retention policy would purge now, without purging them. Requires policy.read.
       responses:
-        '201':
+        "201":
           description: Created
           content:
             application/json:
@@ -1571,16 +1571,16 @@ paths:
                     type: integer
                   ripe_deleted_users:
                     type: integer
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/retention/run:
     post:
       operationId: runRetention
@@ -1588,13 +1588,13 @@ paths:
       tags:
         - Data Retention
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Purges the deleted users the retention policy has made ripe, now rather than at the next scheduled run, one at a time: a user whose deletion fails is skipped, left for the next run, and not counted in purged. Requires policy.write.'
+      description: "Purges the deleted users the retention policy has made ripe, now rather than at the next scheduled run, one at a time: a user whose deletion fails is skipped, left for the next run, and not counted in purged. Requires policy.write."
       responses:
-        '201':
+        "201":
           description: Created
           content:
             application/json:
@@ -1605,16 +1605,16 @@ paths:
                 properties:
                   purged:
                     type: integer
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/gdpr/purge:
     post:
       operationId: createPurgeRequest
@@ -1629,25 +1629,25 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GdprCreateInput'
-      description: 'Requests erasure of a person''s account, carried out after the grace period unless cancelled. The erasure ends their sessions, redacts the account (email, phone, name, avatar, external ID and metadata) and deletes everything else it left: credentials and second factors, sign-in history, sessions and remembered devices, linked social and single sign-on accounts, application consents and grants, connected accounts and their tokens, personal API keys, role, group and break-glass memberships, application assignments and the persistent identifiers applications know them by, directory profiles, notifications, sign-in links and failed sign-in counters, and the payloads of the person''s data exports; verifiable credentials issued to them are revoked and their claims cleared. The audit trail and the request itself are kept; the request goes on naming the account by user_id after the account is deleted for good. Requires gdpr.write. Held to the rule for deleting the account: nobody erases someone who outranks them (403 rbac.target_is_owner for an owner, unless the caller is one, or 403 rbac.target_outranks_caller).'
+              $ref: "#/components/schemas/GdprCreateInput"
+      description: "Requests erasure of a person's account, carried out after the grace period unless cancelled. The erasure ends their sessions, redacts the account (email, phone, name, avatar, external ID and metadata) and deletes everything else it left: credentials and second factors, sign-in history, sessions and remembered devices, linked social and single sign-on accounts, application consents and grants, connected accounts and their tokens, personal API keys, role, group and break-glass memberships, application assignments and the persistent identifiers applications know them by, directory profiles, notifications, sign-in links and failed sign-in counters, and the payloads of the person's data exports; verifiable credentials issued to them are revoked and their claims cleared. The audit trail and the request itself are kept; the request goes on naming the account by user_id after the account is deleted for good. Requires gdpr.write. Held to the rule for deleting the account: nobody erases someone who outranks them (403 rbac.target_is_owner for an owner, unless the caller is one, or 403 rbac.target_outranks_caller)."
       responses:
-        '201':
+        "201":
           description: Created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Request'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                $ref: "#/components/schemas/Request"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/gdpr/purge/{id}:
     delete:
       operationId: cancelPurgeRequest
@@ -1666,18 +1666,18 @@ paths:
         - apiKeyAuth: []
       description: Cancels a scheduled erasure that has not run yet. Requires gdpr.write.
       responses:
-        '204':
+        "204":
           description: No Content
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/gdpr/purge:
     get:
       operationId: listPurgeRequests
@@ -1685,13 +1685,13 @@ paths:
       tags:
         - GDPR
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       description: Lists the organization's erasure requests and their state. Requires gdpr.write.
       responses:
-        '200':
+        "200":
           description: OK
           content:
             application/json:
@@ -1701,21 +1701,21 @@ paths:
                   - items
                 properties:
                   truncated:
-                    $ref: '#/components/schemas/Truncated'
+                    $ref: "#/components/schemas/Truncated"
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/Request'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                      $ref: "#/components/schemas/Request"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/gdpr/export:
     post:
       operationId: createExportRequest
@@ -1730,25 +1730,25 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ExportInput'
+              $ref: "#/components/schemas/ExportInput"
       description: Queues an async export job; poll GET .../gdpr/export/{id} for status and payload. Nobody exports someone who outranks them (403 rbac.target_is_owner for an owner, unless the caller is one, or 403 rbac.target_outranks_caller), as for deleting their account.
       responses:
-        '202':
+        "202":
           description: Accepted
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ExportRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                $ref: "#/components/schemas/ExportRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/gdpr/export:
     get:
       operationId: listExportRequests
@@ -1756,13 +1756,13 @@ paths:
       tags:
         - GDPR
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       description: Lists the organization's data-export requests and their state. Requires gdpr.write.
       responses:
-        '200':
+        "200":
           description: OK
           content:
             application/json:
@@ -1772,21 +1772,21 @@ paths:
                   - items
                 properties:
                   truncated:
-                    $ref: '#/components/schemas/Truncated'
+                    $ref: "#/components/schemas/Truncated"
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/ExportRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                      $ref: "#/components/schemas/ExportRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/gdpr/export/{id}:
     get:
       operationId: getExportRequest
@@ -1794,7 +1794,7 @@ paths:
       tags:
         - GDPR
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: id
           in: path
           required: true
@@ -1806,22 +1806,22 @@ paths:
         - apiKeyAuth: []
       description: 'Returns status plus the full data payload once status is "ready"; response carries a Content-Disposition download header in that case. The payload is deleted seven days after it was built, or when the person is erased, and the status becomes "expired". Reading an export is held to the rule for asking for one: an export of someone who outranks the caller answers 403 (rbac.target_is_owner or rbac.target_outranks_caller).'
       responses:
-        '200':
+        "200":
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ExportRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                $ref: "#/components/schemas/ExportRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/account/export:
     post:
       operationId: exportMyAccount
@@ -1832,7 +1832,7 @@ paths:
       security:
         - bearerAuth: []
       responses:
-        '200':
+        "200":
           description: The caller's personal data, as a downloadable JSON document.
           content:
             application/json:
@@ -1911,12 +1911,12 @@ paths:
                   generated_at:
                     type: string
                     format: date-time
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /v1/account/delete:
     post:
       operationId: deleteMyAccount
-      description: 'Immediately erases the authenticated user''s account and revokes all of their sessions, exercising the right to erasure: the account is redacted and everything else it left is deleted, as POST /v1/gdpr/purge describes. When the account has a password, the current password must be supplied in the body to re-prove identity before this irreversible action; password-less accounts are authorized by the session alone. Audit references are retained in redacted form so the hash-chained log stays verifiable, and the client should sign the user out afterward.'
+      description: "Immediately erases the authenticated user's account and revokes all of their sessions, exercising the right to erasure: the account is redacted and everything else it left is deleted, as POST /v1/gdpr/purge describes. When the account has a password, the current password must be supplied in the body to re-prove identity before this irreversible action; password-less accounts are authorized by the session alone. Audit references are retained in redacted form so the hash-chained log stays verifiable, and the client should sign the user out afterward."
       summary: Delete the authenticated user's account
       tags:
         - GDPR
@@ -1930,14 +1930,14 @@ paths:
               type: object
               additionalProperties: true
       responses:
-        '204':
+        "204":
           description: Account data erased and sessions revoked
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '503':
-          $ref: '#/components/responses/Overloaded'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/Overloaded"
   /v1/organizations/{organizationID}/log-sinks:
     get:
       operationId: listLogSinks
@@ -1946,12 +1946,12 @@ paths:
       tags:
         - Log Sinks
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: Configured sinks (tokens are write-only, not returned)
           content:
             application/json:
@@ -1959,15 +1959,15 @@ paths:
                 type: object
                 properties:
                   truncated:
-                    $ref: '#/components/schemas/Truncated'
+                    $ref: "#/components/schemas/Truncated"
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/Sink'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+                      $ref: "#/components/schemas/Sink"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     post:
       operationId: createLogSink
       description: Registers a destination that forwards the organization's audit events to an external SIEM (Splunk HEC, Datadog, or a generic HTTP endpoint). The endpoint must be valid and the sink type recognized, otherwise the request is rejected as unprocessable. Any supplied token is encrypted at rest; forwarding starts from creation time with no backfill of historical events, and delivery is at-least-once. Each event carries its actor, resource, address, user agent, request id and metadata. One instance at a time forwards a sink, in batches until it catches up; a sink that refuses or can't be reached waits longer after each failure (10 seconds, doubling, up to an hour) and shows last_error until a batch is delivered.
@@ -1975,7 +1975,7 @@ paths:
       tags:
         - Log Sinks
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -2001,18 +2001,18 @@ paths:
                 token:
                   type: string
       responses:
-        '201':
+        "201":
           description: Sink created (streams new audit events from now)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Sink'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
+                $ref: "#/components/schemas/Sink"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
   /v1/organizations/{organizationID}/log-sinks/test:
     post:
       operationId: testUnsavedLogSink
@@ -2021,7 +2021,7 @@ paths:
       tags:
         - Log Sinks
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -2048,7 +2048,7 @@ paths:
                   type: string
                   writeOnly: true
       responses:
-        '200':
+        "200":
           description: How the destination answered
           content:
             application/json:
@@ -2069,21 +2069,21 @@ paths:
                     description: Why it wasn't delivered.
                   duration_ms:
                     type: integer
-        '400':
-          $ref: '#/components/responses/Unprocessable'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+        "400":
+          $ref: "#/components/responses/Unprocessable"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/organizations/{organizationID}/log-sinks/{id}/test:
     post:
       operationId: testLogSink
       summary: Send a test event to a log stream
-      description: 'Sends one test audit event (action siem.test, metadata.test true; no organization data) to one of the organization''s saved destinations and reports how it answered. It changes nothing on the destination: its cursor, last_error and back-off are untouched. Audited as siem.sink_tested. Needs audit.write and a recent step-up.'
+      description: "Sends one test audit event (action siem.test, metadata.test true; no organization data) to one of the organization's saved destinations and reports how it answered. It changes nothing on the destination: its cursor, last_error and back-off are untouched. Audited as siem.sink_tested. Needs audit.write and a recent step-up."
       tags:
         - Log Sinks
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: id
           in: path
           required: true
@@ -2094,7 +2094,7 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: How the destination answered
           content:
             application/json:
@@ -2115,12 +2115,12 @@ paths:
                     description: Why it wasn't delivered.
                   duration_ms:
                     type: integer
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/organizations/{organizationID}/log-sinks/{id}:
     patch:
       operationId: updateLogSink
@@ -2129,7 +2129,7 @@ paths:
       tags:
         - Log Sinks
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: id
           in: path
           required: true
@@ -2149,14 +2149,14 @@ paths:
                 enabled:
                   type: boolean
       responses:
-        '200':
+        "200":
           description: Updated
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
     delete:
       operationId: deleteLogSink
       description: Permanently removes the identified log sink and stops any further forwarding to its destination. Returns 404 when the sink does not exist for the organization. Stored credentials for the destination are discarded; already-delivered events are unaffected.
@@ -2164,7 +2164,7 @@ paths:
       tags:
         - Log Sinks
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: id
           in: path
           required: true
@@ -2175,14 +2175,14 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '204':
+        "204":
           description: Removed
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/notifications:
     get:
       operationId: listNotifications
@@ -2193,7 +2193,7 @@ paths:
       security:
         - bearerAuth: []
       responses:
-        '200':
+        "200":
           description: Notification inbox
           content:
             application/json:
@@ -2201,15 +2201,15 @@ paths:
                 type: object
                 properties:
                   truncated:
-                    $ref: '#/components/schemas/Truncated'
+                    $ref: "#/components/schemas/Truncated"
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/Notification'
+                      $ref: "#/components/schemas/Notification"
                   unread_count:
                     type: integer
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /v1/notifications/mark-all-read:
     post:
       operationId: markAllNotificationsRead
@@ -2220,10 +2220,10 @@ paths:
       security:
         - bearerAuth: []
       responses:
-        '204':
+        "204":
           description: All notifications marked read
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /v1/organizations/{organizationID}/rate-limits:
     get:
       operationId: getRateLimits
@@ -2232,21 +2232,21 @@ paths:
       tags:
         - Rate Limits
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: Effective limits
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OrganizationRateLimits'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+                $ref: "#/components/schemas/OrganizationRateLimits"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     put:
       operationId: setRateLimits
       description: Stores per-organization overrides for the request rate limits applied to the organization, its users, and its API keys, replacing any previous override. Values are validated before being persisted. Overrides take precedence over the platform defaults; remove them with the reset operation to fall back to those defaults.
@@ -2254,7 +2254,7 @@ paths:
       tags:
         - Rate Limits
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -2263,20 +2263,20 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/OrganizationRateLimits'
+              $ref: "#/components/schemas/OrganizationRateLimits"
       responses:
-        '200':
+        "200":
           description: Updated effective limits
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OrganizationRateLimits'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
+                $ref: "#/components/schemas/OrganizationRateLimits"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
     delete:
       operationId: resetRateLimits
       description: Removes the organization's rate-limit overrides so the platform default limits apply again. Succeeds even when no override is currently set. The change is written to the audit log and propagated to the limiter.
@@ -2284,17 +2284,17 @@ paths:
       tags:
         - Rate Limits
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '204':
+        "204":
           description: Overrides cleared
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/organizations/{organizationID}/email/messages:
     get:
       operationId: listEmailMessages
@@ -2303,7 +2303,7 @@ paths:
       tags:
         - Email Templates
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: to
           in: query
           required: true
@@ -2318,12 +2318,12 @@ paths:
             minimum: 1
             maximum: 100
             default: 50
-        - $ref: '#/components/parameters/Cursor'
+        - $ref: "#/components/parameters/Cursor"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: The messages, newest first, and the address's suppression (null when none)
           content:
             application/json:
@@ -2331,15 +2331,15 @@ paths:
                 type: object
                 properties:
                   next_cursor:
-                    $ref: '#/components/schemas/NextCursor'
+                    $ref: "#/components/schemas/NextCursor"
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/EmailMessage'
+                      $ref: "#/components/schemas/EmailMessage"
                   suppression:
                     type:
                       - object
-                      - 'null'
+                      - "null"
                     properties:
                       own:
                         type: boolean
@@ -2357,21 +2357,21 @@ paths:
                       created_at:
                         type: string
                         format: date-time
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/organizations/{organizationID}/email/suppressions:
     get:
       operationId: listEmailSuppressions
       summary: Suppressed addresses
-      description: 'Lists the addresses no mail goes to because this organization''s mail to them hard-bounced or was reported as spam, newest first, each with a masked address. A suppression holds platform-wide: no organization''s mail reaches the address until it is cleared.'
+      description: "Lists the addresses no mail goes to because this organization's mail to them hard-bounced or was reported as spam, newest first, each with a masked address. A suppression holds platform-wide: no organization's mail reaches the address until it is cleared."
       tags:
         - Email Templates
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: limit
           in: query
           required: false
@@ -2380,12 +2380,12 @@ paths:
             minimum: 1
             maximum: 100
             default: 50
-        - $ref: '#/components/parameters/Cursor'
+        - $ref: "#/components/parameters/Cursor"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: The suppressions
           content:
             application/json:
@@ -2393,24 +2393,24 @@ paths:
                 type: object
                 properties:
                   next_cursor:
-                    $ref: '#/components/schemas/NextCursor'
+                    $ref: "#/components/schemas/NextCursor"
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/EmailSuppression'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+                      $ref: "#/components/schemas/EmailSuppression"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/organizations/{organizationID}/email/suppressions/{id}:
     delete:
       operationId: deleteEmailSuppression
       summary: Clear a suppression
-      description: 'Lifts a suppression this organization''s mail caused, so mail can reach the address again; audited as email.suppression_cleared. Check the address first: mailing a dead address again harms delivery for every organization. A suppression another organization''s mail caused is not found here.'
+      description: "Lifts a suppression this organization's mail caused, so mail can reach the address again; audited as email.suppression_cleared. Check the address first: mailing a dead address again harms delivery for every organization. A suppression another organization's mail caused is not found here."
       tags:
         - Email Templates
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: id
           in: path
           required: true
@@ -2421,14 +2421,14 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '204':
+        "204":
           description: Cleared
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/organizations/{organizationID}/email-templates:
     get:
       operationId: listEmailTemplates
@@ -2436,13 +2436,13 @@ paths:
       tags:
         - Email Templates
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       description: Lists the organization-scoped catalogue and overrides. Capabilities indicate rich-text/localization support and whether a mail transport is configured for test delivery. delivery_scope distinguishes organization invitations/magic links from platform-account security email.
       responses:
-        '200':
+        "200":
           description: OK
           content:
             application/json:
@@ -2452,7 +2452,7 @@ paths:
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/EmailResolvedTemplate'
+                      $ref: "#/components/schemas/EmailResolvedTemplate"
                   capabilities:
                     type: object
                     properties:
@@ -2462,16 +2462,16 @@ paths:
                         type: boolean
                       test_email:
                         type: boolean
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/email-templates/{key}:
     delete:
       operationId: resetEmailTemplate
@@ -2479,7 +2479,7 @@ paths:
       tags:
         - Email Templates
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: key
           in: path
           required: true
@@ -2490,29 +2490,29 @@ paths:
         - apiKeyAuth: []
       description: Deletes the organization's version of an email template, so the default is sent again. Requires branding.write.
       responses:
-        '200':
+        "200":
           description: Built-in default after removing the override and its options
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/EmailResolvedTemplate'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                $ref: "#/components/schemas/EmailResolvedTemplate"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     get:
       operationId: getEmailTemplate
       summary: Get template
       tags:
         - Email Templates
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: key
           in: path
           required: true
@@ -2521,31 +2521,31 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Returns an email template as the organization sends it: its own version, or the default. Requires branding.write.'
+      description: "Returns an email template as the organization sends it: its own version, or the default. Requires branding.write."
       responses:
-        '200':
+        "200":
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/EmailResolvedTemplate'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                $ref: "#/components/schemas/EmailResolvedTemplate"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     put:
       operationId: setEmailTemplate
       summary: Override template
       tags:
         - Email Templates
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: key
           in: path
           required: true
@@ -2559,26 +2559,26 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/EmailEditorInput'
+              $ref: "#/components/schemas/EmailEditorInput"
         description: Subject, plain-text alternative, and optional rich HTML, preheader, design and language variants. HTML is sanitized. Only catalogue variables are accepted.
       description: Saves the template and options atomically with its audit event. Organization invitations and magic links use saved overrides; platform-account recovery, verification and MFA remain platform-managed.
       responses:
-        '200':
+        "200":
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/EmailResolvedTemplate'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                $ref: "#/components/schemas/EmailResolvedTemplate"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/email-templates/{key}/preview:
     post:
       operationId: previewEmailTemplate
@@ -2586,7 +2586,7 @@ paths:
       tags:
         - Email Templates
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: key
           in: path
           required: true
@@ -2612,11 +2612,11 @@ paths:
                 locale:
                   type: string
                 draft:
-                  $ref: '#/components/schemas/EmailEditorInput'
+                  $ref: "#/components/schemas/EmailEditorInput"
         description: Omit draft to preview saved content; include it to preview unsaved edits.
       description: Renders subject, text and sanitized branded HTML without persisting or sending email. Each expanded content field is limited to 200000 UTF-8 bytes before the branded wrapper is added.
       responses:
-        '200':
+        "200":
           description: Rendered preview
           content:
             application/json:
@@ -2631,16 +2631,16 @@ paths:
                     type: string
                   locale:
                     type: string
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/email-templates/{key}/test:
     post:
       operationId: sendTestEmail
@@ -2651,7 +2651,7 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: key
           in: path
           required: true
@@ -2668,11 +2668,11 @@ paths:
                 - draft
               properties:
                 draft:
-                  $ref: '#/components/schemas/EmailEditorInput'
+                  $ref: "#/components/schemas/EmailEditorInput"
                 locale:
                   type: string
       responses:
-        '202':
+        "202":
           description: Mail transport accepted the test
           content:
             application/json:
@@ -2683,30 +2683,30 @@ paths:
                     type: string
                     enum:
                       - accepted
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/qeetai/usage:
     get:
       operationId: getQeetAiUsage
       summary: Qeet AI usage
-      description: 'What the organization''s Qeet AI used: this UTC month''s messages (turns answered) and tokens as its provider reported them, the last use, and the twelve most recent months. Requires secret.read, as the provider configuration does.'
+      description: "What the organization's Qeet AI used: this UTC month's messages (turns answered) and tokens as its provider reported them, the last use, and the twelve most recent months. Requires secret.read, as the provider configuration does."
       tags:
         - Qeet AI
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: Usage
           content:
             application/json:
@@ -2733,7 +2733,7 @@ paths:
                   last_used_at:
                     type:
                       - string
-                      - 'null'
+                      - "null"
                     format: date-time
                   months:
                     type: array
@@ -2754,10 +2754,10 @@ paths:
                         last_used_at:
                           type: string
                           format: date-time
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/organizations/{organizationID}/qeetai/settings:
     get:
       operationId: getQeetAiSettings
@@ -2766,12 +2766,12 @@ paths:
       tags:
         - Qeet AI
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: Settings
           content:
             application/json:
@@ -2781,7 +2781,7 @@ paths:
                   conversation_retention_days:
                     type:
                       - integer
-                      - 'null'
+                      - "null"
                     minimum: 1
                     maximum: 3650
                     description: Days an untouched conversation is kept, with its messages; null keeps them.
@@ -2793,10 +2793,10 @@ paths:
                     format: uuid
                   updated_by_email:
                     type: string
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     put:
       operationId: setQeetAiSettings
       summary: Set Qeet AI settings
@@ -2804,7 +2804,7 @@ paths:
       tags:
         - Qeet AI
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -2818,11 +2818,11 @@ paths:
                 conversation_retention_days:
                   type:
                     - integer
-                    - 'null'
+                    - "null"
                   minimum: 1
                   maximum: 3650
       responses:
-        '200':
+        "200":
           description: The settings
           content:
             application/json:
@@ -2832,7 +2832,7 @@ paths:
                   conversation_retention_days:
                     type:
                       - integer
-                      - 'null'
+                      - "null"
                     minimum: 1
                     maximum: 3650
                     description: Days an untouched conversation is kept, with its messages; null keeps them.
@@ -2844,12 +2844,12 @@ paths:
                     format: uuid
                   updated_by_email:
                     type: string
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
   /v1/qeetai/status:
     get:
       operationId: getQeetAiStatus
@@ -2860,14 +2860,14 @@ paths:
       security:
         - bearerAuth: []
       responses:
-        '200':
+        "200":
           description: Qeet AI status
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/QeetAIStatus'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+                $ref: "#/components/schemas/QeetAIStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /v1/qeetai/conversations:
     get:
       operationId: listConversations
@@ -2878,7 +2878,7 @@ paths:
       security:
         - bearerAuth: []
       responses:
-        '200':
+        "200":
           description: Conversation list
           content:
             application/json:
@@ -2886,13 +2886,13 @@ paths:
                 type: object
                 properties:
                   truncated:
-                    $ref: '#/components/schemas/Truncated'
+                    $ref: "#/components/schemas/Truncated"
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/QeetAIConversation'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+                      $ref: "#/components/schemas/QeetAIConversation"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
     post:
       operationId: createConversation
       summary: Create conversation
@@ -2912,14 +2912,14 @@ paths:
                   type: string
                   description: Optional title; defaults to "New conversation".
       responses:
-        '201':
+        "201":
           description: Created conversation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/QeetAIConversation'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+                $ref: "#/components/schemas/QeetAIConversation"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /v1/qeetai/conversations/{conversationID}:
     get:
       operationId: getConversation
@@ -2937,7 +2937,7 @@ paths:
       security:
         - bearerAuth: []
       responses:
-        '200':
+        "200":
           description: Conversation with messages
           content:
             application/json:
@@ -2945,15 +2945,15 @@ paths:
                 type: object
                 properties:
                   conversation:
-                    $ref: '#/components/schemas/QeetAIConversation'
+                    $ref: "#/components/schemas/QeetAIConversation"
                   messages:
                     type: array
                     items:
-                      $ref: '#/components/schemas/QeetAIMessage'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/NotFound'
+                      $ref: "#/components/schemas/QeetAIMessage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
     patch:
       operationId: updateConversation
       summary: Update conversation
@@ -2981,16 +2981,16 @@ paths:
                 pinned:
                   type: boolean
       responses:
-        '200':
+        "200":
           description: Updated conversation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/QeetAIConversation'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/NotFound'
+                $ref: "#/components/schemas/QeetAIConversation"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
     delete:
       operationId: deleteConversation
       summary: Delete conversation
@@ -3007,12 +3007,12 @@ paths:
       security:
         - bearerAuth: []
       responses:
-        '204':
+        "204":
           description: Deleted
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/NotFound'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/qeetai/conversations/{conversationID}/messages:
     post:
       operationId: sendConversationMessage
@@ -3071,22 +3071,22 @@ paths:
                   description: Console context for grounding (current route, selection). Treated as untrusted; never used for authorization.
                   additionalProperties: true
       responses:
-        '200':
-          description: 'SSE stream of StreamEvent frames. Event types: thinking, token, tool_call, tool_result, error, done.'
+        "200":
+          description: "SSE stream of StreamEvent frames. Event types: thinking, token, tool_call, tool_result, error, done."
           content:
             text/event-stream:
               schema:
                 type: string
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
           description: Qeet AI not configured (QEETAI_PROVIDER/QEETAI_API_KEY unset, `qeetai_unconfigured`), or the conversation's previous turn is still running (`qeetai.turn_in_progress`, retryable)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
   /v1/qeetai/provider-config:
     get:
       operationId: getAiProviderConfig
@@ -3098,7 +3098,7 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: The organization's effective provider configuration, its key masked.
           content:
             application/json:
@@ -3119,7 +3119,7 @@ paths:
                       - organization
                       - platform
                       - none
-                    description: 'Whose key answers: the organization''s own, the deployment''s, or none.'
+                    description: "Whose key answers: the organization's own, the deployment's, or none."
                   provider:
                     type: string
                   model:
@@ -3135,8 +3135,8 @@ paths:
                   platform_fallback:
                     type: boolean
                     description: Whether the deployment has a key to fall back on.
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
     put:
       operationId: setAiProviderConfig
       description: Stores the organization's own AI provider credentials so the assistant runs against the organization's key rather than the platform fallback, which unlocks it regardless of plan. Secrets are encrypted at rest and are never returned in full by the read endpoint. Restricted to organization administrators; validate the credentials with the test operation before saving.
@@ -3154,7 +3154,7 @@ paths:
               type: object
               additionalProperties: true
       responses:
-        '200':
+        "200":
           description: The organization's effective provider configuration, its key masked.
           content:
             application/json:
@@ -3175,7 +3175,7 @@ paths:
                       - organization
                       - platform
                       - none
-                    description: 'Whose key answers: the organization''s own, the deployment''s, or none.'
+                    description: "Whose key answers: the organization's own, the deployment's, or none."
                   provider:
                     type: string
                   model:
@@ -3191,8 +3191,8 @@ paths:
                   platform_fallback:
                     type: boolean
                     description: Whether the deployment has a key to fall back on.
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
     delete:
       operationId: deleteAiProviderConfig
       description: Removes the organization's bring-your-own-key AI provider configuration, reverting to the deployment's platform fallback where one is available. Restricted to organization administrators. Once removed, assistant availability again depends on the organization's plan.
@@ -3203,14 +3203,14 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '204':
+        "204":
           description: Provider configuration deleted
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /v1/qeetai/provider-config/test:
     post:
       operationId: testAiProviderConfig
-      description: 'Validates candidate AI provider credentials with a live call and reports whether they work, without persisting them. Use this before saving a new key to confirm the provider accepts it. A failed test answers 400 naming the reason: qeetai_provider_unreachable, qeetai_provider_key_invalid, qeetai_provider_model_invalid or qeetai_provider_error.'
+      description: "Validates candidate AI provider credentials with a live call and reports whether they work, without persisting them. Use this before saving a new key to confirm the provider accepts it. A failed test answers 400 naming the reason: qeetai_provider_unreachable, qeetai_provider_key_invalid, qeetai_provider_model_invalid or qeetai_provider_error."
       summary: Test organization AI provider credentials
       tags:
         - Qeet AI
@@ -3246,7 +3246,7 @@ paths:
                   type: integer
                   description: Defaults to 4096; at most 200000.
       responses:
-        '200':
+        "200":
           description: The provider accepted the credentials.
           content:
             application/json:
@@ -3257,10 +3257,10 @@ paths:
                 properties:
                   ok:
                     type: boolean
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /v1/organizations/{organizationID}/billing/checkout:
     post:
       operationId: startCheckout
@@ -3269,8 +3269,8 @@ paths:
       tags:
         - Billing
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: "#/components/parameters/OrganizationID"
+        - $ref: "#/components/parameters/IdempotencyKey"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -3300,25 +3300,25 @@ paths:
                   type: string
                   format: uri
       responses:
-        '200':
+        "200":
           description: Either a checkout URL ({status:"checkout"}) or {status:"active"}
           headers:
             Idempotent-Replayed:
-              $ref: '#/components/headers/IdempotentReplayed'
+              $ref: "#/components/headers/IdempotentReplayed"
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CheckoutResult'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          description: 'A request with this Idempotency-Key is still being processed (idempotency.in_progress); retry shortly. Or the first request stopped before answering and may have taken effect (idempotency.outcome_unknown): check, then retry with a new key.'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
+                $ref: "#/components/schemas/CheckoutResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: "A request with this Idempotency-Key is still being processed (idempotency.in_progress); retry shortly. Or the first request stopped before answering and may have taken effect (idempotency.outcome_unknown): check, then retry with a new key."
+        "422":
+          $ref: "#/components/responses/Unprocessable"
   /v1/webhooks/ses:
     post:
       operationId: receiveSesEvents
@@ -3338,14 +3338,14 @@ paths:
             schema:
               type: string
       responses:
-        '204':
+        "204":
           description: Accepted
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/NotFound'
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/billing/webhooks/{provider}:
     post:
       operationId: receivePaymentWebhook
@@ -3371,12 +3371,12 @@ paths:
               type: object
               additionalProperties: true
       responses:
-        '200':
+        "200":
           description: Event acknowledged
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/NotFound'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/billing/plans:
     get:
       operationId: listPlans
@@ -3387,7 +3387,7 @@ paths:
         - bearerAuth: []
       description: Lists the plans on sale, with their prices.
       responses:
-        '200':
+        "200":
           description: OK
           content:
             application/json:
@@ -3399,17 +3399,17 @@ paths:
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/Plan'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                      $ref: "#/components/schemas/Plan"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/billing/invoices:
     get:
       operationId: listInvoices
@@ -3417,13 +3417,13 @@ paths:
       tags:
         - Billing
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       description: Lists the organization's invoices, newest first. Each keeps the billing profile it was issued to (billed_to) and the supplier's GSTIN and SAC, and is emailed to that profile's billing email when issued. Requires billing.read.
       responses:
-        '200':
+        "200":
           description: OK
           content:
             application/json:
@@ -3433,21 +3433,21 @@ paths:
                   - items
                 properties:
                   truncated:
-                    $ref: '#/components/schemas/Truncated'
+                    $ref: "#/components/schemas/Truncated"
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/Invoice'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                      $ref: "#/components/schemas/Invoice"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/billing/invoices/{invoiceID}/pay:
     post:
       operationId: payInvoice
@@ -3456,14 +3456,14 @@ paths:
       tags:
         - Billing
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: invoiceID
           in: path
           required: true
           schema:
             type: string
             format: uuid
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: "#/components/parameters/IdempotencyKey"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -3484,47 +3484,47 @@ paths:
                   type: string
                   format: uri
       responses:
-        '200':
+        "200":
           description: The hosted checkout ({status:"checkout"})
           headers:
             Idempotent-Replayed:
-              $ref: '#/components/headers/IdempotentReplayed'
+              $ref: "#/components/headers/IdempotentReplayed"
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CheckoutResult'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
+                $ref: "#/components/schemas/CheckoutResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
           description: The invoice is paid or void (billing.invoice_not_open), or a request with this Idempotency-Key is still being processed.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/billing/payment-method:
     get:
       operationId: getPaymentMethod
       summary: Get the payment method
-      description: 'Returns what the organization''s most recent completed checkout was paid with, as its provider reported it, or null. No card is kept with the provider: each checkout collects its own, so there is nothing to manage between payments. Razorpay reports a card''s network and last four digits but not its expiry. Requires billing.read.'
+      description: "Returns what the organization's most recent completed checkout was paid with, as its provider reported it, or null. No card is kept with the provider: each checkout collects its own, so there is nothing to manage between payments. Razorpay reports a card's network and last four digits but not its expiry. Requires billing.read."
       tags:
         - Billing
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: OK
           content:
             application/json:
@@ -3535,16 +3535,16 @@ paths:
                 properties:
                   payment_method:
                     oneOf:
-                      - $ref: '#/components/schemas/PaymentMethod'
-                      - type: 'null'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                      - $ref: "#/components/schemas/PaymentMethod"
+                      - type: "null"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/billing/subscription:
     get:
       operationId: getSubscription
@@ -3552,35 +3552,35 @@ paths:
       tags:
         - Billing
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Returns the organization''s subscription. A trial grants its plan until trial_end, and a plan marked to cancel until current_period_end. Any other plan renews at current_period_end: a free one starts its next period, and a paid one is billed with an open renewal invoice and turns past_due, keeping its plan for the payment grace (7 days unless configured) while that invoice is paid, through POST /v1/organizations/{organizationID}/billing/invoices/{invoiceID}/pay or by bank transfer. Paid, it is active for the new period; still unpaid after the grace, or ended by a trial or a cancellation, it is canceled, with ended_at, and the organization is on the free plan. Each change is audited as billing.subscription_renewed, billing.subscription_past_due or billing.subscription_ended. Requires billing.read.'
+      description: "Returns the organization's subscription. A trial grants its plan until trial_end, and a plan marked to cancel until current_period_end. Any other plan renews at current_period_end: a free one starts its next period, and a paid one is billed with an open renewal invoice and turns past_due, keeping its plan for the payment grace (7 days unless configured) while that invoice is paid, through POST /v1/organizations/{organizationID}/billing/invoices/{invoiceID}/pay or by bank transfer. Paid, it is active for the new period; still unpaid after the grace, or ended by a trial or a cancellation, it is canceled, with ended_at, and the organization is on the free plan. Each change is audited as billing.subscription_renewed, billing.subscription_past_due or billing.subscription_ended. Requires billing.read."
       responses:
-        '200':
+        "200":
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Subscription'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                $ref: "#/components/schemas/Subscription"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     put:
       operationId: setSubscription
       summary: Subscribe / change plan
       tags:
         - Billing
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -3600,24 +3600,24 @@ paths:
                   type: string
       description: Puts the organization on plan_code, priced in currency; no payment is taken here. A free plan starts a new period with a zero invoice. A paid plan that costs no more than the organization's active subscription in the same currency and billing interval takes over the period already paid for, while it lasts, with no new invoice; the current plan itself changes nothing. Any other paid plan, such as one that costs more, must go through checkout (POST /v1/organizations/{organizationID}/billing/checkout) and is refused with 402 billing.checkout_required, unless invoice-only billing (BILLING_ALLOW_UNPAID_ACTIVATION) is on and no card provider serves the currency, which activates it with an open invoice.
       responses:
-        '200':
+        "200":
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Subscription'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '402':
-          $ref: '#/components/responses/PaymentRequired'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+                $ref: "#/components/schemas/Subscription"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "402":
+          $ref: "#/components/responses/PaymentRequired"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/billing/subscription/cancel:
     post:
       operationId: cancelSubscription
@@ -3625,13 +3625,13 @@ paths:
       tags:
         - Billing
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       description: Cancels the subscription at the end of the current period; it stays active until then. Requires billing.write.
       responses:
-        '201':
+        "201":
           description: Created
           content:
             application/json:
@@ -3642,16 +3642,16 @@ paths:
                 properties:
                   cancel_at_period_end:
                     type: boolean
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/signup/checkout:
     post:
       operationId: startSignUpCheckout
@@ -3669,16 +3669,16 @@ paths:
               type: object
               additionalProperties: true
       responses:
-        '200':
+        "200":
           description: Hosted checkout information
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CheckoutResult'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
+                $ref: "#/components/schemas/CheckoutResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
   /v1/billing/razorpay/verify:
     post:
       operationId: verifyRazorpayPayment
@@ -3695,10 +3695,10 @@ paths:
               type: object
               additionalProperties: true
       responses:
-        '200':
+        "200":
           description: Signed callback accepted
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /v1/billing/sandbox/checkout:
     get:
       operationId: getSandboxCheckout
@@ -3708,14 +3708,14 @@ paths:
         - Billing
       security: []
       responses:
-        '200':
+        "200":
           description: Sandbox checkout HTML
           content:
             text/html:
               schema:
                 type: string
-        '404':
-          $ref: '#/components/responses/NotFound'
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/billing/sandbox/pay:
     post:
       operationId: completeSandboxCheckout
@@ -3732,11 +3732,11 @@ paths:
               type: object
               additionalProperties: true
       responses:
-        '302':
+        "302":
           description: Redirect to checkout success URL
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '413':
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
           description: Form body too large
   /v1/organizations/{organizationID}/billing/profile:
     get:
@@ -3749,18 +3749,18 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       responses:
-        '200':
+        "200":
           description: Billing profile
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/BillingProfile'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+                $ref: "#/components/schemas/BillingProfile"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     put:
       operationId: setBillingProfile
       description: Creates or replaces the organization's billing profile and returns the stored result. Scoped to the organization named in the path. These details feed invoice generation, so keep them accurate for the organization's jurisdiction.
@@ -3771,24 +3771,24 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/BillingProfile'
+              $ref: "#/components/schemas/BillingProfile"
       responses:
-        '200':
+        "200":
           description: Updated billing profile
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/BillingProfile'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+                $ref: "#/components/schemas/BillingProfile"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/organizations/{organizationID}/billing/trial:
     post:
       operationId: startTrial
@@ -3800,7 +3800,7 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       requestBody:
         required: true
         content:
@@ -3817,30 +3817,30 @@ paths:
                   type: string
                   description: ISO 4217 code of a currency the plan is priced in, such as INR; USD when omitted or not a valid code.
       responses:
-        '200':
+        "200":
           description: Trial subscription
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Subscription'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+                $ref: "#/components/schemas/Subscription"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/organizations/{organizationID}/entitlements:
     get:
       operationId: getEntitlements
       summary: Get plan entitlements
       tags:
         - Entitlements
-      description: 'Returns the organization''s resolved entitlements: the effective plan code, the boolean feature flags, and the numeric limits (-1 = unlimited). Resolved from the active subscription (falling back to the organization''s plan label), so an in-app upgrade is reflected immediately. A subscription grants its plan only until current_period_end (a trial until trial_end): nothing renews it, so after that the organization has the free plan''s entitlements until it pays again. Readable by any authenticated member of the organization; scoped to the caller''s own organization. audit_retention_days is enforced: once a day, the organization''s audit events older than that are deleted (all but the newest, its chain kept verifiable) and the deletion is recorded as audit.events_purged; -1 keeps them all.'
+      description: "Returns the organization's resolved entitlements: the effective plan code, the boolean feature flags, and the numeric limits (-1 = unlimited). Resolved from the active subscription (falling back to the organization's plan label), so an in-app upgrade is reflected immediately. A subscription grants its plan only until current_period_end (a trial until trial_end): nothing renews it, so after that the organization has the free plan's entitlements until it pays again. Readable by any authenticated member of the organization; scoped to the caller's own organization. audit_retention_days is enforced: once a day, the organization's audit events older than that are deleted (all but the newest, its chain kept verifiable) and the deletion is recorded as audit.events_purged; -1 keeps them all."
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: OK
           content:
             application/json:
@@ -3896,18 +3896,18 @@ paths:
                       orgs: 1
                       mau: 10000
                       audit_retention_days: 7
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/organizations/{organizationID}/entitlements/usage:
     get:
       operationId: getEntitlementUsage
-      description: 'Returns the organization''s current consumption for each metered resource, such as seats, applications, and API keys, for display against the plan''s limits. seats counts the people holding a role in the organization, directly or through a group that carries one, each once, plus its pending invitations; an account holding no role, such as a customer signing in to the organization''s applications, holds no seat. mau counts the people active in the organization so far this calendar month (UTC): each person who signed in to it, or renewed a session in it, at least once, counted once. API keys, service principals and AI agents are not counted. It complements the entitlements endpoint, which resolves the plan''s capability set, by running the underlying count queries only when the usage view needs them. Scoped to the organization named in the path.'
+      description: "Returns the organization's current consumption for each metered resource, such as seats, applications, and API keys, for display against the plan's limits. seats counts the people holding a role in the organization, directly or through a group that carries one, each once, plus its pending invitations; an account holding no role, such as a customer signing in to the organization's applications, holds no seat. mau counts the people active in the organization so far this calendar month (UTC): each person who signed in to it, or renewed a session in it, at least once, counted once. API keys, service principals and AI agents are not counted. It complements the entitlements endpoint, which resolves the plan's capability set, by running the underlying count queries only when the usage view needs them. Scoped to the organization named in the path."
       summary: Get organization resource usage against plan limits
       tags:
         - Entitlements
@@ -3915,9 +3915,9 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
       responses:
-        '200':
+        "200":
           description: Resource usage by limit key
           content:
             application/json:
@@ -3930,10 +3930,10 @@ paths:
                     type: object
                     additionalProperties:
                       type: integer
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/sales/leads:
     post:
       operationId: submitSalesLead
@@ -3951,19 +3951,19 @@ paths:
               type: object
               additionalProperties: true
       responses:
-        '202':
+        "202":
           description: Lead accepted
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /v1/organizations/{organizationID}/critical-events:
     get:
       operationId: listCriticalEvents
       summary: List critical events
-      description: 'The short list an on-call administrator triages, from a phone or the console: the organization''s open anomaly alerts and its critical audit events (suspensions, lockouts, the AI agent kill switch, second factors reset or turned off, roles given, sign-in risk settings changed) of the last hours, newest first, at most 100 (truncated when there are more), with how many of those are high. Read only; the full trail is the audit log. Needs audit.read.'
+      description: "The short list an on-call administrator triages, from a phone or the console: the organization's open anomaly alerts and its critical audit events (suspensions, lockouts, the AI agent kill switch, second factors reset or turned off, roles given, sign-in risk settings changed) of the last hours, newest first, at most 100 (truncated when there are more), with how many of those are high. Read only; the full trail is the audit log. Needs audit.read."
       tags:
         - Audit
       parameters:
-        - $ref: '#/components/parameters/OrganizationID'
+        - $ref: "#/components/parameters/OrganizationID"
         - name: hours
           in: query
           required: false
@@ -3974,7 +3974,7 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
+        "200":
           description: OK
           content:
             application/json:
@@ -3986,37 +3986,37 @@ paths:
                   - hours
                 properties:
                   truncated:
-                    $ref: '#/components/schemas/Truncated'
+                    $ref: "#/components/schemas/Truncated"
                   events:
                     type: array
                     items:
-                      $ref: '#/components/schemas/CriticalEvent'
+                      $ref: "#/components/schemas/CriticalEvent"
                   high:
                     type: integer
                   hours:
                     type: integer
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: 'User or service JWT: `Authorization: Bearer <token>`.'
+      description: "User or service JWT: `Authorization: Bearer <token>`."
     apiKeyAuth:
       type: apiKey
       in: header
       name: Authorization
-      description: 'API key credential. Send `Authorization: ApiKey <key>` (note the `ApiKey ` prefix). Accepted on the same authenticated routes as bearerAuth. A key works only while its organization is active, not while it is suspended or deleted.'
+      description: "API key credential. Send `Authorization: ApiKey <key>` (note the `ApiKey ` prefix). Accepted on the same authenticated routes as bearerAuth. A key works only while its organization is active, not while it is suspended or deleted."
     scimBearer:
       type: http
       scheme: bearer
-      description: 'An organization''s SCIM provisioning token, presented by its identity provider: `Authorization: Bearer <scim-token>`. Distinct from user JWTs. An organization can hold several, managed under /v1/organizations/{organizationID}/scim/tokens. A revoked or expired token, and every token of an organization that is suspended or due for deletion, is refused with 401.'
+      description: "An organization's SCIM provisioning token, presented by its identity provider: `Authorization: Bearer <scim-token>`. Distinct from user JWTs. An organization can hold several, managed under /v1/organizations/{organizationID}/scim/tokens. A revoked or expired token, and every token of an organization that is suspended or due for deletion, is refused with 401."
     clientCredentials:
       type: oauth2
       description: OAuth 2.0 client credentials. Clients authenticate at the token endpoint via form params (`client_id`/`client_secret`) or HTTP Basic. Revocation/introspection use the same client auth.
@@ -4108,9 +4108,9 @@ components:
           type: string
           description: Optional extended description.
         actor:
-          $ref: '#/components/schemas/ActivityActor'
+          $ref: "#/components/schemas/ActivityActor"
         target:
-          $ref: '#/components/schemas/ActivityTarget'
+          $ref: "#/components/schemas/ActivityTarget"
         at:
           type: string
           format: date-time
@@ -4162,10 +4162,10 @@ components:
         events:
           type: array
           items:
-            $ref: '#/components/schemas/ActivityEvent'
+            $ref: "#/components/schemas/ActivityEvent"
         next_cursor:
           type: string
-          description: 'Opaque cursor for the next page: the time and ID of the last event returned. Present when more results exist; omitted on the last page.'
+          description: "Opaque cursor for the next page: the time and ID of the last event returned. Present when more results exist; omitted on the last page."
         total:
           type: integer
           description: How many events match, up to 10,000.
@@ -4199,7 +4199,7 @@ components:
               description: Optional i18n key the client can use to localize the message.
             retryable:
               type: boolean
-              description: 'Whether the person can try again, often by starting over (signing in again, asking for a new code, waiting). It is not a promise that resending the same request will succeed: auth.session_revoked is retryable and the session never comes back. Decide whether to resend a request from its status (429, 503 with Retry-After).'
+              description: "Whether the person can try again, often by starting over (signing in again, asking for a new code, waiting). It is not a promise that resending the same request will succeed: auth.session_revoked is retryable and the session never comes back. Decide whether to resend a request from its status (429, 503 with Retry-After)."
             fields:
               type: array
               description: Per-field validation errors (typically on 422 responses).
@@ -4278,7 +4278,7 @@ components:
           additionalProperties:
             type: integer
             format: int64
-          description: 'Event counts keyed by outcome: success, warning, failed, info.'
+          description: "Event counts keyed by outcome: success, warning, failed, info."
         series:
           type: array
           description: Time-bucketed counts for sparklines (empty buckets omitted). Each bucket carries the total plus per-outcome/severity breakdowns so the console can draw a distinct sparkline per metric card.
@@ -4341,7 +4341,7 @@ components:
         - related
       properties:
         event:
-          $ref: '#/components/schemas/ActivityEvent'
+          $ref: "#/components/schemas/ActivityEvent"
         related:
           type: object
           required:
@@ -4351,11 +4351,11 @@ components:
             by_request_id:
               type: array
               items:
-                $ref: '#/components/schemas/ActivityEvent'
+                $ref: "#/components/schemas/ActivityEvent"
             by_actor:
               type: array
               items:
-                $ref: '#/components/schemas/ActivityEvent'
+                $ref: "#/components/schemas/ActivityEvent"
     HourlyPoint:
       type: object
       required:
@@ -4466,11 +4466,11 @@ components:
         failed_logins_hourly_24h:
           type: array
           items:
-            $ref: '#/components/schemas/HourlyPoint'
+            $ref: "#/components/schemas/HourlyPoint"
         failed_trend_14d:
           type: array
           items:
-            $ref: '#/components/schemas/TrendPoint'
+            $ref: "#/components/schemas/TrendPoint"
         generated_at:
           type: string
           format: date-time
@@ -4487,49 +4487,49 @@ components:
             - total_users
           properties:
             avg_sessions_per_user:
-              $ref: '#/components/schemas/Metric'
+              $ref: "#/components/schemas/Metric"
             dau:
-              $ref: '#/components/schemas/Metric'
+              $ref: "#/components/schemas/Metric"
             failed_logins_24h:
-              $ref: '#/components/schemas/Metric'
+              $ref: "#/components/schemas/Metric"
             logins_today:
-              $ref: '#/components/schemas/Metric'
+              $ref: "#/components/schemas/Metric"
             mau:
-              $ref: '#/components/schemas/Metric'
+              $ref: "#/components/schemas/Metric"
             mfa_adoption_pct:
-              $ref: '#/components/schemas/Metric'
+              $ref: "#/components/schemas/Metric"
             stickiness_pct:
-              $ref: '#/components/schemas/Metric'
+              $ref: "#/components/schemas/Metric"
             total_users:
-              $ref: '#/components/schemas/Metric'
+              $ref: "#/components/schemas/Metric"
         login_activity_14d:
           type: array
           items:
-            $ref: '#/components/schemas/ActivityPoint'
+            $ref: "#/components/schemas/ActivityPoint"
         login_methods_mix:
           type: array
           items:
-            $ref: '#/components/schemas/MethodSlice'
+            $ref: "#/components/schemas/MethodSlice"
         login_trend_14d:
           type: array
           items:
-            $ref: '#/components/schemas/TrendPoint'
+            $ref: "#/components/schemas/TrendPoint"
         mfa_methods_adoption:
           type: array
           items:
-            $ref: '#/components/schemas/MethodCount'
+            $ref: "#/components/schemas/MethodCount"
         mfa_trend_14d:
           type: array
           items:
-            $ref: '#/components/schemas/TrendPoint'
+            $ref: "#/components/schemas/TrendPoint"
         user_trend_14d:
           type: array
           items:
-            $ref: '#/components/schemas/TrendPoint'
+            $ref: "#/components/schemas/TrendPoint"
         weekly_activity_8w:
           type: array
           items:
-            $ref: '#/components/schemas/WeeklyActivityPoint'
+            $ref: "#/components/schemas/WeeklyActivityPoint"
         range:
           type: object
           description: The sign-ins day by day (UTC) over the chosen range, without organization switches; present when from, to or days was given.
@@ -4549,7 +4549,7 @@ components:
                 properties:
                   date:
                     type: string
-                    example: '2026-10-29'
+                    example: "2026-10-29"
                   sign_ins:
                     type: integer
                   people:
@@ -4602,7 +4602,7 @@ components:
         score:
           type: number
           format: float
-          description: 'Relevance score in [0.5, 1.0]: 1.0 = exact match, 0.75 = prefix match, 0.5 = substring match. Results are sorted desc by score.'
+          description: "Relevance score in [0.5, 1.0]: 1.0 = exact match, 0.75 = prefix match, 0.5 = substring match. Results are sorted desc by score."
         metadata:
           type: object
           description: Type-specific supplementary fields (non-normative).
@@ -4616,7 +4616,7 @@ components:
         results:
           type: array
           items:
-            $ref: '#/components/schemas/SearchResult'
+            $ref: "#/components/schemas/SearchResult"
         next_cursor:
           type: string
           description: Opaque cursor for the next page. Present only when more results exist; omitted (not null) when this is the last page.
@@ -4642,7 +4642,7 @@ components:
         actor_user_id:
           type:
             - string
-            - 'null'
+            - "null"
           format: uuid
         created_at:
           type: string
@@ -4653,34 +4653,34 @@ components:
         ip:
           type:
             - string
-            - 'null'
+            - "null"
         request_id:
           type:
             - string
-            - 'null'
+            - "null"
         resource_id:
           type:
             - string
-            - 'null'
+            - "null"
           format: uuid
         resource_type:
           type: string
         organization_id:
           type:
             - string
-            - 'null'
+            - "null"
           format: uuid
         user_agent:
           type:
             - string
-            - 'null'
+            - "null"
         metadata:
           type: object
           additionalProperties: true
           description: What the event recorded beside its fields; geo is where the request came from.
     NextCursor:
       type: string
-      description: 'Present when there is another page: send it back as cursor to read that page. Absent on the last page.'
+      description: "Present when there is another page: send it back as cursor to read that page. Absent on the last page."
     AuditVerifyResult:
       type: object
       required:
@@ -4705,7 +4705,7 @@ components:
             - audit.chain_row_hash_mismatch
             - audit.chain_checkpoint_gone
             - audit.chain_checkpoint_unsigned
-          description: 'Set when the chain is broken: the row''s link to the one before it is wrong, or its contents no longer match its hash; the row the chain''s last verification checkpoint names is gone; or a checkpoint the chain relies on (its last verification''s, or where it starts after a purge) doesn''t carry the server''s signature, as when the chain and its checkpoint were rewritten together.'
+          description: "Set when the chain is broken: the row's link to the one before it is wrong, or its contents no longer match its hash; the row the chain's last verification checkpoint names is gone; or a checkpoint the chain relies on (its last verification's, or where it starts after a purge) doesn't carry the server's signature, as when the chain and its checkpoint were rewritten together."
         rows_checked:
           type: integer
     AuditAnomaly:
@@ -4723,12 +4723,12 @@ components:
         actor_user_id:
           type:
             - string
-            - 'null'
+            - "null"
           format: uuid
         actor_email:
           type:
             - string
-            - 'null'
+            - "null"
         score:
           type: number
           description: 0..1 weighted-novelty anomaly score.
@@ -4748,12 +4748,12 @@ components:
         resolved_at:
           type:
             - string
-            - 'null'
+            - "null"
           format: date-time
         resolved_by:
           type:
             - string
-            - 'null'
+            - "null"
           format: uuid
         created_at:
           type: string
@@ -4765,7 +4765,7 @@ components:
         ip:
           type:
             - string
-            - 'null'
+            - "null"
         event_at:
           type: string
           format: date-time
@@ -4798,7 +4798,7 @@ components:
           description: Cold-start guard — an actor needs this many historical events before anything is flagged for them.
     Truncated:
       type: boolean
-      description: 'Present, and true, when the list was cut at its limit (1,000 items unless the operation says otherwise): there are more than were answered.'
+      description: "Present, and true, when the list was cut at its limit (1,000 items unless the operation says otherwise): there are more than were answered."
     ControlOwner:
       type: object
       description: The person the organization has made answer for a control, as it is now.
@@ -4811,11 +4811,11 @@ components:
         email:
           type:
             - string
-            - 'null'
+            - "null"
         display_name:
           type:
             - string
-            - 'null'
+            - "null"
         updated_at:
           type: string
           format: date-time
@@ -4861,7 +4861,7 @@ components:
           format: date-time
           description: On a failing control, when it started failing, carried from run to run while it keeps failing.
         owner:
-          $ref: '#/components/schemas/ControlOwner'
+          $ref: "#/components/schemas/ControlOwner"
     EvidenceRun:
       type: object
       description: Immutable snapshot of one compliance evidence generation pass for a organization+framework pair. Controls are populated on GetRun; omitted on ListRuns.
@@ -4883,7 +4883,7 @@ components:
         generated_by:
           type:
             - string
-            - 'null'
+            - "null"
           format: uuid
           description: Actor user ID; null when generated by a system or API-key actor.
         pass_count:
@@ -4896,7 +4896,7 @@ components:
           type: array
           description: Per-control results; present on GetRun, omitted on ListRuns.
           items:
-            $ref: '#/components/schemas/EvidenceControlResult'
+            $ref: "#/components/schemas/EvidenceControlResult"
     ExternalAudit:
       type: object
       description: An audit an external body carried out on the organization, or a certificate it issued.
@@ -4927,12 +4927,12 @@ components:
         expires_on:
           type:
             - string
-            - 'null'
+            - "null"
           format: date
         created_by:
           type:
             - string
-            - 'null'
+            - "null"
           format: uuid
         created_at:
           type: string
@@ -4988,7 +4988,7 @@ components:
         completed_at:
           type:
             - string
-            - 'null'
+            - "null"
           format: date-time
         created_at:
           type: string
@@ -5002,11 +5002,11 @@ components:
         reason:
           type:
             - string
-            - 'null'
+            - "null"
         requested_by:
           type:
             - string
-            - 'null'
+            - "null"
           format: uuid
         status:
           type: string
@@ -5020,12 +5020,12 @@ components:
         subject_email:
           type:
             - string
-            - 'null'
+            - "null"
           description: The person's email as the request was filed; null once they are erased.
         subject_name:
           type:
             - string
-            - 'null'
+            - "null"
           description: Their display name as the request was filed; null once they are erased.
         subject_redacted:
           type: boolean
@@ -5059,7 +5059,7 @@ components:
         completed_at:
           type:
             - string
-            - 'null'
+            - "null"
           format: date-time
         created_at:
           type: string
@@ -5072,11 +5072,11 @@ components:
         payload:
           type: object
           additionalProperties: true
-          description: 'The person''s data in the organization, while status is ready: profile (with metadata), sessions, passkeys, roles, mfa_totp_enabled, identities (linked social and single sign-on accounts), otp_factors (destinations masked), app_consents, app_grants, groups, sign_ins (the latest 1000) and generated_at.'
+          description: "The person's data in the organization, while status is ready: profile (with metadata), sessions, passkeys, roles, mfa_totp_enabled, identities (linked social and single sign-on accounts), otp_factors (destinations masked), app_consents, app_grants, groups, sign_ins (the latest 1000) and generated_at."
         requested_by:
           type:
             - string
-            - 'null'
+            - "null"
           format: uuid
         status:
           type: string
@@ -5157,27 +5157,27 @@ components:
         - api_key
       properties:
         organization:
-          $ref: '#/components/schemas/RateLimitBucket'
+          $ref: "#/components/schemas/RateLimitBucket"
         user:
-          $ref: '#/components/schemas/RateLimitBucket'
+          $ref: "#/components/schemas/RateLimitBucket"
         api_key:
-          $ref: '#/components/schemas/RateLimitBucket'
+          $ref: "#/components/schemas/RateLimitBucket"
     OrganizationRateLimits:
       type: object
-      description: 'Per-bucket rate limits for an organization. On GET these are the effective values (defaults merged with overrides); on PUT, any bucket supplied is upserted as an override. The answer also carries the defaults, the ceiling an override may reach (the defaults themselves: an organization may tighten its limits, never lift them), the lowest rate an override may set, and the built-in limits every organization shares; those are read-only and ignored on PUT.'
+      description: "Per-bucket rate limits for an organization. On GET these are the effective values (defaults merged with overrides); on PUT, any bucket supplied is upserted as an override. The answer also carries the defaults, the ceiling an override may reach (the defaults themselves: an organization may tighten its limits, never lift them), the lowest rate an override may set, and the built-in limits every organization shares; those are read-only and ignored on PUT."
       properties:
         organization:
-          $ref: '#/components/schemas/RateLimitBucket'
+          $ref: "#/components/schemas/RateLimitBucket"
         user:
-          $ref: '#/components/schemas/RateLimitBucket'
+          $ref: "#/components/schemas/RateLimitBucket"
         api_key:
-          $ref: '#/components/schemas/RateLimitBucket'
+          $ref: "#/components/schemas/RateLimitBucket"
         defaults:
           readOnly: true
-          $ref: '#/components/schemas/RateLimitBuckets'
+          $ref: "#/components/schemas/RateLimitBuckets"
         ceiling:
           readOnly: true
-          $ref: '#/components/schemas/RateLimitBuckets'
+          $ref: "#/components/schemas/RateLimitBuckets"
         min_rate:
           type: number
           readOnly: true
@@ -5233,7 +5233,7 @@ components:
             - failed
         reason:
           type: string
-          description: 'The provider''s reason for a bounce, complaint or failure (for example Permanent/General: 550 no such user).'
+          description: "The provider's reason for a bounce, complaint or failure (for example Permanent/General: 550 no such user)."
         sent_at:
           type: string
           format: date-time
@@ -5306,7 +5306,7 @@ components:
           maxProperties: 20
           description: Non-English BCP-47 language variants; English remains the base content.
           additionalProperties:
-            $ref: '#/components/schemas/EmailLocalizedContent'
+            $ref: "#/components/schemas/EmailLocalizedContent"
     EmailEditorInput:
       type: object
       description: Subject and preheader limits count Unicode characters. Text and HTML limits count UTF-8 bytes. Action URL variables must remain in both text and HTML when provided. Variables in URLs are allowed only as standalone action-link href values, never in image sources or within external URLs. An action URL variable (reset_url, magic_url, invite_url) appears in the HTML only as a whole href and in the text only on a line of its own, never in the subject, the preheader or among other words (400 otherwise), so a template's wording can't disguise the one-time link.
@@ -5323,10 +5323,10 @@ components:
           minLength: 1
           maxLength: 150000
         options:
-          $ref: '#/components/schemas/EmailTemplateOptions'
+          $ref: "#/components/schemas/EmailTemplateOptions"
     EmailResolvedTemplate:
       allOf:
-        - $ref: '#/components/schemas/EmailEditorInput'
+        - $ref: "#/components/schemas/EmailEditorInput"
         - type: object
           properties:
             key:
@@ -5514,7 +5514,7 @@ components:
         invoice_number:
           type:
             - string
-            - 'null'
+            - "null"
           description: The GST invoice number, one series per Indian financial year (April to March), such as 2026-27/000042. Null on an invoice that charges nothing.
         issued_at:
           type: string
@@ -5545,19 +5545,19 @@ components:
         due_at:
           type:
             - string
-            - 'null'
+            - "null"
           format: date-time
           description: When an open invoice falls due; null once it is paid or when nothing was owed.
         paid_at:
           type:
             - string
-            - 'null'
+            - "null"
           format: date-time
         billed_to:
           description: The billing profile as it stood when the invoice was issued; null on invoices issued before it was kept.
           oneOf:
-            - $ref: '#/components/schemas/BillingProfile'
-            - type: 'null'
+            - $ref: "#/components/schemas/BillingProfile"
+            - type: "null"
         supplier_gstin:
           type: string
           description: The seller's GSTIN; empty when the operator has set none.
@@ -5567,7 +5567,7 @@ components:
         emailed_at:
           type:
             - string
-            - 'null'
+            - "null"
           format: date-time
           description: When the invoice was emailed to its billing email.
         tax_amount_minor:
@@ -5626,12 +5626,12 @@ components:
         current_period_end:
           type:
             - string
-            - 'null'
+            - "null"
           format: date-time
         current_period_start:
           type:
             - string
-            - 'null'
+            - "null"
           format: date-time
         interval:
           type: string
@@ -5650,12 +5650,12 @@ components:
         trial_end:
           type:
             - string
-            - 'null'
+            - "null"
           format: date-time
         ended_at:
           type:
             - string
-            - 'null'
+            - "null"
           format: date-time
           description: When a canceled subscription ended.
     CriticalEvent:
@@ -5719,13 +5719,13 @@ components:
       schema:
         type: string
         enum:
-          - 'true'
+          - "true"
   responses:
     Unprocessable:
       description: Validation failed
       headers:
         X-Request-Id:
-          $ref: '#/components/headers/RequestId'
+          $ref: "#/components/headers/RequestId"
       content:
         application/json:
           example:
@@ -5739,7 +5739,7 @@ components:
                   message: Must be a valid email address.
               request_id: api-1/Kx9fQ2mW7a-000131
           schema:
-            $ref: '#/components/schemas/Error'
+            $ref: "#/components/schemas/Error"
     Unauthorized:
       description: Missing or invalid credentials
       headers:
@@ -5748,7 +5748,7 @@ components:
           schema:
             type: string
         X-Request-Id:
-          $ref: '#/components/headers/RequestId'
+          $ref: "#/components/headers/RequestId"
       content:
         application/json:
           example:
@@ -5758,16 +5758,16 @@ components:
               translation_key: unauthorized
               request_id: api-1/Kx9fQ2mW7a-000131
           schema:
-            $ref: '#/components/schemas/Error'
+            $ref: "#/components/schemas/Error"
     Forbidden:
-      description: 'Authenticated but not permitted. auth.application_token: the access token was issued to an application (it carries client_id) and this route accepts only the user''s own tokens; applications may call GET /v1/oauth/userinfo. auth.insufficient_scope: an application''s token reached a route open to applications without the scope the route needs (named in the WWW-Authenticate challenge).'
+      description: "Authenticated but not permitted. auth.application_token: the access token was issued to an application (it carries client_id) and this route accepts only the user's own tokens; applications may call GET /v1/oauth/userinfo. auth.insufficient_scope: an application's token reached a route open to applications without the scope the route needs (named in the WWW-Authenticate challenge)."
       headers:
         WWW-Authenticate:
           description: 'With auth.insufficient_scope: `Bearer realm="qeet", error="insufficient_scope", scope="<the scope the route needs>"`.'
           schema:
             type: string
         X-Request-Id:
-          $ref: '#/components/headers/RequestId'
+          $ref: "#/components/headers/RequestId"
       content:
         application/json:
           example:
@@ -5777,12 +5777,12 @@ components:
               translation_key: forbidden
               request_id: api-1/Kx9fQ2mW7a-000131
           schema:
-            $ref: '#/components/schemas/Error'
+            $ref: "#/components/schemas/Error"
     NotFound:
       description: Resource not found
       headers:
         X-Request-Id:
-          $ref: '#/components/headers/RequestId'
+          $ref: "#/components/headers/RequestId"
       content:
         application/json:
           example:
@@ -5792,7 +5792,7 @@ components:
               translation_key: not_found
               request_id: api-1/Kx9fQ2mW7a-000131
           schema:
-            $ref: '#/components/schemas/Error'
+            $ref: "#/components/schemas/Error"
     TooManyRequests:
       description: Rate limit exceeded
       headers:
@@ -5801,7 +5801,7 @@ components:
           schema:
             type: integer
         X-Request-Id:
-          $ref: '#/components/headers/RequestId'
+          $ref: "#/components/headers/RequestId"
       content:
         application/json:
           example:
@@ -5814,12 +5814,12 @@ components:
                 retry_after: 30
               request_id: api-1/Kx9fQ2mW7a-000131
           schema:
-            $ref: '#/components/schemas/Error'
+            $ref: "#/components/schemas/Error"
     BadRequest:
       description: Malformed request
       headers:
         X-Request-Id:
-          $ref: '#/components/headers/RequestId'
+          $ref: "#/components/headers/RequestId"
       content:
         application/json:
           example:
@@ -5829,12 +5829,12 @@ components:
               translation_key: bad_request
               request_id: api-1/Kx9fQ2mW7a-000131
           schema:
-            $ref: '#/components/schemas/Error'
+            $ref: "#/components/schemas/Error"
     Overloaded:
       description: The server is too busy to check or set a password or code now, so the request was refused and changed nothing (`server.overloaded`, retryable). Try again after the seconds Retry-After gives, also sent as `metadata.retry_after`.
       headers:
         X-Request-Id:
-          $ref: '#/components/headers/RequestId'
+          $ref: "#/components/headers/RequestId"
         Retry-After:
           description: Seconds to wait before trying again (1 to 3).
           schema:
@@ -5851,22 +5851,22 @@ components:
                 retry_after: 2
               request_id: api-1/Kx9fQ2mW7a-000131
           schema:
-            $ref: '#/components/schemas/Error'
+            $ref: "#/components/schemas/Error"
     PaymentRequired:
       description: The change needs payment (`billing.checkout_required`); start a checkout to make it.
       headers:
         X-Request-Id:
-          $ref: '#/components/headers/RequestId'
+          $ref: "#/components/headers/RequestId"
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            $ref: "#/components/schemas/Error"
   parameters:
     OrganizationID:
       name: organizationID
       in: path
       required: true
-      description: 'The organization''s ID. On an authenticated route it must be the organization of the caller''s credential: another is refused with 403, and a value that is not a UUID with 400.'
+      description: "The organization's ID. On an authenticated route it must be the organization of the caller's credential: another is refused with 403, and a value that is not a UUID with 400."
       schema:
         type: string
         format: uuid

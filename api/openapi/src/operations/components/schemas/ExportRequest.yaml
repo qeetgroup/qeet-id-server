@@ -11,7 +11,7 @@ properties:
   completed_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
   created_at:
     type: string
@@ -33,7 +33,7 @@ properties:
   requested_by:
     type:
       - string
-      - 'null'
+      - "null"
     format: uuid
   status:
     type: string

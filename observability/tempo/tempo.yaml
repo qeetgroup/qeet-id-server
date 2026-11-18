@@ -16,4 +16,3 @@ storage:
       path: /var/tempo/traces
     wal:
       path: /var/tempo/wal
-

@@ -35,7 +35,7 @@ post:
       Starts a passwordless counterpart to POST /auth/signup — no password is
       created.
   responses:
-    '200':
+    "200":
       description: OK
       content:
         application/json:
@@ -50,9 +50,9 @@ post:
               session_id:
                 type: string
                 format: uuid
-    '403':
+    "403":
       $ref: ../../components/responses/SSORequired.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

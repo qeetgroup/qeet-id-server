@@ -37,7 +37,7 @@ post:
                 How long the old key goes on working beside the new one.
                 Defaults to 24; 0 stops it at once.
   responses:
-    '201':
+    "201":
       description: The new key; its secret shown once
       headers:
         Cache-Control:
@@ -55,11 +55,11 @@ post:
                 type: string
               warning:
                 type: string
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml

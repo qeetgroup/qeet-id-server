@@ -70,7 +70,7 @@ post:
             display_name:
               type: string
   responses:
-    '201':
+    "201":
       description: User created; SSO cookie set, or an enrolment challenge returned
       headers:
         Cache-Control:
@@ -93,13 +93,13 @@ post:
                       user_id:
                         type: string
                         format: uuid
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '415':
+    "415":
       $ref: ../../components/responses/UnsupportedMediaType.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml
-    '503':
+    "503":
       $ref: ../../../shared/responses/Overloaded.yaml

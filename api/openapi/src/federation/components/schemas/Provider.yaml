@@ -33,7 +33,7 @@ properties:
   discovery_url:
     type:
       - string
-      - 'null'
+      - "null"
   enabled:
     type: boolean
   id:

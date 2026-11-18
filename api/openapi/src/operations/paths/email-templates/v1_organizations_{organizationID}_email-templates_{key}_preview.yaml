@@ -37,7 +37,7 @@ post:
     sending email. Each expanded content field is limited to 200000 UTF-8 bytes
     before the branded wrapper is added.
   responses:
-    '200':
+    "200":
       description: Rendered preview
       content:
         application/json:
@@ -52,13 +52,13 @@ post:
                 type: string
               locale:
                 type: string
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

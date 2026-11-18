@@ -7,7 +7,7 @@ properties:
   display_name:
     type:
       - string
-      - 'null'
+      - "null"
   email:
     type: string
   user_id:

@@ -1,10 +1,7 @@
 {
   "uid": "qeet-id-operations",
   "title": "Qeet ID — Operations and data",
-  "tags": [
-    "qeet-id",
-    "operations"
-  ],
+  "tags": ["qeet-id", "operations"],
   "timezone": "browser",
   "schemaVersion": 39,
   "version": 1,
@@ -332,7 +329,7 @@
     },
     {
       "type": "row",
-      "title": "Database",
+      "title": "Webhooks",
       "collapsed": false,
       "gridPos": {
         "w": 24,
@@ -345,6 +342,90 @@
     },
     {
       "type": "timeseries",
+      "title": "Deliveries by outcome",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "w": 12,
+        "h": 8,
+        "x": 0,
+        "y": 35
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (outcome) (rate(webhook_deliveries_total{job=\"qeet-id\"}[5m])) * 300",
+          "legendFormat": "{{outcome}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {},
+      "id": 12
+    },
+    {
+      "type": "timeseries",
+      "title": "Backlog",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "w": 12,
+        "h": 8,
+        "x": 12,
+        "y": 35
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "webhook_pending_deliveries{job=\"qeet-id\"}",
+          "legendFormat": "pending",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "webhook_oldest_pending_age_seconds{job=\"qeet-id\"}",
+          "legendFormat": "oldest age (s)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {},
+      "id": 13
+    },
+    {
+      "type": "row",
+      "title": "Database",
+      "collapsed": false,
+      "gridPos": {
+        "w": 24,
+        "h": 1,
+        "x": 0,
+        "y": 43
+      },
+      "panels": [],
+      "id": 14
+    },
+    {
+      "type": "timeseries",
       "title": "Pool connections",
       "datasource": {
         "type": "prometheus",
@@ -354,7 +435,7 @@
         "w": 8,
         "h": 8,
         "x": 0,
-        "y": 35
+        "y": 44
       },
       "targets": [
         {
@@ -381,7 +462,7 @@
         "overrides": []
       },
       "options": {},
-      "id": 12
+      "id": 15
     },
     {
       "type": "timeseries",
@@ -394,7 +475,7 @@
         "w": 8,
         "h": 8,
         "x": 8,
-        "y": 35
+        "y": 44
       },
       "targets": [
         {
@@ -421,7 +502,7 @@
         "overrides": []
       },
       "options": {},
-      "id": 13
+      "id": 16
     },
     {
       "type": "timeseries",
@@ -434,7 +515,7 @@
         "w": 8,
         "h": 8,
         "x": 16,
-        "y": 35
+        "y": 44
       },
       "targets": [
         {
@@ -454,7 +535,7 @@
         "overrides": []
       },
       "options": {},
-      "id": 14
+      "id": 17
     },
     {
       "type": "timeseries",
@@ -467,7 +548,7 @@
         "w": 8,
         "h": 8,
         "x": 0,
-        "y": 43
+        "y": 52
       },
       "targets": [
         {
@@ -494,7 +575,7 @@
         "overrides": []
       },
       "options": {},
-      "id": 15
+      "id": 18
     },
     {
       "type": "timeseries",
@@ -507,7 +588,7 @@
         "w": 8,
         "h": 8,
         "x": 8,
-        "y": 43
+        "y": 52
       },
       "targets": [
         {
@@ -534,7 +615,7 @@
         "overrides": []
       },
       "options": {},
-      "id": 16
+      "id": 19
     },
     {
       "type": "timeseries",
@@ -547,7 +628,7 @@
         "w": 8,
         "h": 8,
         "x": 16,
-        "y": 43
+        "y": 52
       },
       "targets": [
         {
@@ -574,7 +655,7 @@
         "overrides": []
       },
       "options": {},
-      "id": 17
+      "id": 20
     }
   ],
   "templating": {

@@ -32,7 +32,7 @@ post:
         schema:
           $ref: ../../components/schemas/SignupRequest.yaml
   responses:
-    '201':
+    "201":
       description: Created; token pair + user
       headers:
         Cache-Control:
@@ -44,17 +44,17 @@ post:
           example:
             access_token: eyJhbGciOiJFUzI1NiIsImtpZCI6ImsxIn0.eyJzdWIiOiIwMThmMmE3MCJ9.FAKE-signature
             token_type: Bearer
-            expires_at: '2026-09-24T11:15:00Z'
+            expires_at: "2026-09-24T11:15:00Z"
             refresh_token: rt_2b9f4c7a1e6d8035b4c2a1908f7e6d5c
             session_id: 018f2a70-5b6c-7d8e-9f01-2a3b4c5d6e7f
             user_id: 018f2a70-1a2b-7c3d-9e4f-5a6b7c8d9e0f
           schema:
             $ref: ../../components/schemas/SignupResponse.yaml
-    '403':
+    "403":
       $ref: ../../components/responses/SSORequired.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml
-    '503':
+    "503":
       $ref: ../../../shared/responses/Overloaded.yaml

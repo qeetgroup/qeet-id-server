@@ -12,7 +12,7 @@ properties:
         - urn:ietf:params:scim:api:messages:2.0:Error
   status:
     type: string
-    example: '409'
+    example: "409"
   scimType:
     type: string
     example: uniqueness

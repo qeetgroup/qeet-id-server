@@ -1,10 +1,7 @@
 {
   "uid": "qeet-id-overview",
   "title": "Qeet ID — Service overview",
-  "tags": [
-    "qeet-id",
-    "service"
-  ],
+  "tags": ["qeet-id", "service"],
   "timezone": "browser",
   "schemaVersion": 39,
   "version": 1,
@@ -43,9 +40,7 @@
       },
       "options": {
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
+          "calcs": ["lastNotNull"]
         },
         "textMode": "name"
       },

@@ -27,8 +27,8 @@ post:
       schema:
         type: string
         enum:
-          - 'true'
-          - 'false'
+          - "true"
+          - "false"
   security:
     - bearerAuth: []
     - apiKeyAuth: []
@@ -50,7 +50,7 @@ post:
             user_id:
               type: string
   responses:
-    '200':
+    "200":
       description: >-
         { allowed, decided_by } by default; with explain=true also path, where
         each step is { object, relation, subject, depth }, and trace
@@ -80,9 +80,9 @@ post:
                       type: string
                     depth:
                       type: integer
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml

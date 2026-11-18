@@ -52,7 +52,7 @@ properties:
           replaces:
             type:
               - string
-              - 'null'
+              - "null"
             format: uuid
             description: >-
               The stored policy the draft stands in for; one the organization

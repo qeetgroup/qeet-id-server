@@ -22,21 +22,21 @@ get:
     billing.subscription_renewed, billing.subscription_past_due or
     billing.subscription_ended. Requires billing.read.
   responses:
-    '200':
+    "200":
       description: OK
       content:
         application/json:
           schema:
             $ref: ../../components/schemas/Subscription.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml
 put:
   operationId: setSubscription
@@ -74,21 +74,21 @@ put:
     (BILLING_ALLOW_UNPAID_ACTIVATION) is on and no card provider serves the
     currency, which activates it with an open invoice.
   responses:
-    '200':
+    "200":
       description: OK
       content:
         application/json:
           schema:
             $ref: ../../components/schemas/Subscription.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '402':
-      $ref: ../../components/responses/PaymentRequired.yaml
-    '403':
+    "402":
+      $ref: ../../../shared/responses/PaymentRequired.yaml
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

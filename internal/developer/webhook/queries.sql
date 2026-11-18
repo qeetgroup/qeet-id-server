@@ -234,3 +234,11 @@ SET failing_since = COALESCE(failing_since, NOW()),
     disabled_reason = CASE WHEN failing_since <= @disable_before::timestamptz THEN 'failing' END
 WHERE id = @id AND organization_id = @organization_id AND disabled_at IS NULL
 RETURNING url, failing_since, (disabled_at IS NOT NULL)::bool AS disabled;
+
+-- name: PendingDeliveriesSummary :one
+-- PendingDeliveriesSummary counts the deliveries still to be made on the whole platform and how long
+-- the oldest has waited, in seconds (0 when none), for the webhook backlog metrics.
+SELECT count(*)::bigint AS pending,
+       COALESCE(EXTRACT(EPOCH FROM NOW() - MIN(created_at)), 0)::float8 AS oldest_age_seconds
+FROM organization.webhook_deliveries
+WHERE delivered_at IS NULL AND dead_at IS NULL;

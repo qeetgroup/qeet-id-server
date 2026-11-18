@@ -13,11 +13,11 @@ properties:
   ip:
     type:
       - string
-      - 'null'
+      - "null"
   user_agent:
     type:
       - string
-      - 'null'
+      - "null"
   created_at:
     type: string
     format: date-time
@@ -28,7 +28,7 @@ properties:
   revoked_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
   expires_at:
     type: string

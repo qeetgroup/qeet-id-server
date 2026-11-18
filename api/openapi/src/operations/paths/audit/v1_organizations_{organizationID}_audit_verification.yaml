@@ -17,7 +17,7 @@ get:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '200':
+    "200":
       description: The last verification
       content:
         application/json:
@@ -41,29 +41,29 @@ get:
               last_verified_at:
                 type:
                   - string
-                  - 'null'
+                  - "null"
                 format: date-time
               broken_at:
                 type:
                   - string
-                  - 'null'
+                  - "null"
                 format: date-time
                 description: When a break was found; it stays until resolved.
               last_verified_event_id:
                 type:
                   - string
-                  - 'null'
+                  - "null"
                 format: uuid
               last_run_at:
                 type:
                   - string
-                  - 'null'
+                  - "null"
                 format: date-time
                 description: When the latest scheduled run finished.
               last_run_scope:
                 type: string
                 description: all (a full walk) or incremental; empty before any run.
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml

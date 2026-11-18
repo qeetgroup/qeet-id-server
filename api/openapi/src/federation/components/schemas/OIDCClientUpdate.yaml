@@ -39,7 +39,7 @@ properties:
   pkce_exempt_until:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
     description: >-
       Sets (a date-time, within 90 days) or clears (null) a confidential
@@ -73,7 +73,7 @@ properties:
   web_origins:
     type:
       - array
-      - 'null'
+      - "null"
     maxItems: 50
     items:
       type: string

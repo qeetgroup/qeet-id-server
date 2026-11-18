@@ -138,15 +138,15 @@ get:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '200':
+    "200":
       description: Paginated activity events
       content:
         application/json:
           schema:
             $ref: ../../components/schemas/ActivityResponse.yaml
-    '400':
+    "400":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml

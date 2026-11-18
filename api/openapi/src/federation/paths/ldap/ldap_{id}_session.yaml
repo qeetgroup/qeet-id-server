@@ -33,7 +33,7 @@ post:
               type: string
               format: password
   responses:
-    '200':
+    "200":
       description: >-
         Signed in to the hosted login (the qe_ls cookie is set and the user's id
         answered), or the challenge to complete at POST /v1/auth/session/mfa.
@@ -47,15 +47,15 @@ post:
           schema:
             type: object
             additionalProperties: true
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '402':
+    "402":
       description: >-
         The organization's plan does not include LDAP
         (billing.upgrade_required).
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

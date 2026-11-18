@@ -17,7 +17,7 @@ properties:
   connection_id:
     type:
       - string
-      - 'null'
+      - "null"
     description: The connection it watches; null for every connection.
   threshold:
     type: integer
@@ -35,5 +35,5 @@ properties:
   last_notified_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time

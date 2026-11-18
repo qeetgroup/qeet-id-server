@@ -4,8 +4,8 @@
 **Verification scope:** every command below was checked against the `Makefile` and
 `.github/workflows/ci.yml` at `c2454fec`. Every path was confirmed to exist.
 
-Step-by-step for the changes made most often here. For *where* things are, see
-[architecture-map.md](architecture-map.md). For *what must not change*, see
+Step-by-step for the changes made most often here. For _where_ things are, see
+[architecture-map.md](architecture-map.md). For _what must not change_, see
 [boundaries.md](boundaries.md).
 
 ---
@@ -193,7 +193,7 @@ organization explicitly through the job payload.
 
 ## Change OAuth / OIDC
 
-**Security *and* interoperability review. The widest blast radius in the repository.**
+**Security _and_ interoperability review. The widest blast radius in the repository.**
 
 ```text
 1  read                            qeet-id-context/FLOWS/oauth-oidc.md
@@ -215,7 +215,7 @@ There is **one token endpoint**, `POST /v1/oauth/token` (`http_token.go`), for e
 
 ## Change federation (SAML / SCIM / LDAP / social)
 
-**Security *and* protocol-compatibility review. External consumers cannot be surveyed.**
+**Security _and_ protocol-compatibility review. External consumers cannot be surveyed.**
 
 ```text
 1  find the subsystem              docs/llm/subsystems.md#federation
@@ -274,13 +274,13 @@ seed in the same change.
 
 1. **Find its step.** `main.go` runs five, each a package under `cmd/seed/internal/`:
 
-   | Step | What it seeds |
-   | :--- | :--- |
-   | `census` | Organizations, plans, people, roles, groups (`orgs.go` is the cast: who, where, which plan and features) |
-   | `accounts` | Branding, domains, policies, templates, invitations, suspensions, data requests, access requests, notifications |
-   | `connections` | Applications and their grants, single sign-on (SAML, OpenID Connect), group mappings, break-glass, LDAP, SCIM, social sign-in, enterprise-setup links |
-   | `integrations` | API keys, service principals, agents, secrets, token vault, credentials, ABAC and ReBAC, rate limits, auth hooks, log streaming, webhooks |
-   | `security` | Second factors, address rules, risk and bot settings, sign-ins, attacks, anomaly settings, compliance, status incidents, sales leads |
+   | Step           | What it seeds                                                                                                                                         |
+   | :------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | `census`       | Organizations, plans, people, roles, groups (`orgs.go` is the cast: who, where, which plan and features)                                              |
+   | `accounts`     | Branding, domains, policies, templates, invitations, suspensions, data requests, access requests, notifications                                       |
+   | `connections`  | Applications and their grants, single sign-on (SAML, OpenID Connect), group mappings, break-glass, LDAP, SCIM, social sign-in, enterprise-setup links |
+   | `integrations` | API keys, service principals, agents, secrets, token vault, credentials, ABAC and ReBAC, rate limits, auth hooks, log streaming, webhooks             |
+   | `security`     | Second factors, address rules, risk and bot settings, sign-ins, attacks, anomaly settings, compliance, status incidents, sales leads                  |
 
 2. **Write only through the server.** Call a service (`w.Deps.<Handler>.Service`) or, where the
    console's request does more than the service (an audit record, a check), the handler itself with

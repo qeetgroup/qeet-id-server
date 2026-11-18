@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
 	"time"
@@ -89,6 +90,11 @@ func (c *Config) Validate() error {
 	problems = append(problems, c.keyProblems()...)
 	problems = append(problems, c.emailProblems()...)
 	problems = append(problems, c.hostProblems()...)
+	if c.PprofAddr != "" {
+		if host, _, err := net.SplitHostPort(c.PprofAddr); err != nil || !isLoopbackName(host) && host != "127.0.0.1" && host != "::1" {
+			problems = append(problems, "PPROF_ADDR must be a loopback address (127.0.0.1:6060): profiles expose the process")
+		}
+	}
 	// Qeetai: if a provider is named, the API key must also be set.
 	if strings.TrimSpace(c.QeetaiProvider) != "" && strings.TrimSpace(c.QeetaiAPIKey) == "" {
 		problems = append(problems, "QEETAI_API_KEY is required when QEETAI_PROVIDER is set")

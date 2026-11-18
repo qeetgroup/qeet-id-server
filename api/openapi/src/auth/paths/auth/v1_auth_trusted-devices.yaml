@@ -13,7 +13,7 @@ get:
   security:
     - bearerAuth: []
   responses:
-    '200':
+    "200":
       description: OK
       content:
         application/json:
@@ -33,7 +33,7 @@ get:
                     organization_id:
                       type:
                         - string
-                        - 'null'
+                        - "null"
                       format: uuid
                       description: The organization the device was remembered in.
                     device:
@@ -56,7 +56,7 @@ get:
                     last_used_at:
                       type:
                         - string
-                        - 'null'
+                        - "null"
                       format: date-time
                       description: When the device last skipped the second factor.
                     expires_at:
@@ -65,13 +65,13 @@ get:
                     current:
                       type: boolean
                       description: The request came from this device.
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml
 delete:
   operationId: forgetAllMyTrustedDevices
@@ -85,7 +85,7 @@ delete:
   security:
     - bearerAuth: []
   responses:
-    '200':
+    "200":
       description: OK
       content:
         application/json:
@@ -95,11 +95,11 @@ delete:
               forgotten:
                 type: integer
                 description: How many devices were forgotten.
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

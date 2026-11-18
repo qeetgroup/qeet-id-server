@@ -10,11 +10,11 @@ get:
     - Billing
   security: []
   responses:
-    '200':
+    "200":
       description: Sandbox checkout HTML
       content:
         text/html:
           schema:
             type: string
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml

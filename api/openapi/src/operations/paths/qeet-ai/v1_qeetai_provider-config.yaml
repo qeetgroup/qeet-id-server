@@ -12,7 +12,7 @@ get:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '200':
+    "200":
       description: The organization's effective provider configuration, its key masked.
       content:
         application/json:
@@ -53,7 +53,7 @@ get:
               platform_fallback:
                 type: boolean
                 description: Whether the deployment has a key to fall back on.
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
 put:
   operationId: setAiProviderConfig
@@ -77,7 +77,7 @@ put:
           type: object
           additionalProperties: true
   responses:
-    '200':
+    "200":
       description: The organization's effective provider configuration, its key masked.
       content:
         application/json:
@@ -118,7 +118,7 @@ put:
               platform_fallback:
                 type: boolean
                 description: Whether the deployment has a key to fall back on.
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
 delete:
   operationId: deleteAiProviderConfig
@@ -134,7 +134,7 @@ delete:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '204':
+    "204":
       description: Provider configuration deleted
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml

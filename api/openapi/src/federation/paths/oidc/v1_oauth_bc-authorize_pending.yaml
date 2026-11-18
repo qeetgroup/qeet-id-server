@@ -9,7 +9,7 @@ get:
   security:
     - bearerAuth: []
   responses:
-    '200':
+    "200":
       description: OK
       content:
         application/json:
@@ -24,5 +24,5 @@ get:
                 type: array
                 items:
                   $ref: ../../components/schemas/CIBAPendingRequest.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml

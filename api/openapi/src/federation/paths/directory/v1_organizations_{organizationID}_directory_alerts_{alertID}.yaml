@@ -39,19 +39,19 @@ patch:
             enabled:
               type: boolean
   responses:
-    '200':
+    "200":
       description: The alert as changed
       content:
         application/json:
           schema:
             $ref: ../../components/schemas/DirectoryAlert.yaml
-    '400':
+    "400":
       description: Invalid alert settings
-    '401':
+    "401":
       description: Authentication required
-    '403':
+    "403":
       description: Organization mismatch or missing connection.write
-    '404':
+    "404":
       description: No such alert in the organization, or an unknown connection
 delete:
   operationId: deleteDirectoryAlert
@@ -73,11 +73,11 @@ delete:
         type: string
         format: uuid
   responses:
-    '204':
+    "204":
       description: Removed
-    '401':
+    "401":
       description: Authentication required
-    '403':
+    "403":
       description: Organization mismatch or missing connection.write
-    '404':
+    "404":
       description: No such alert in the organization

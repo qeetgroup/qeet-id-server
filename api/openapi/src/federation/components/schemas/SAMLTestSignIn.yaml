@@ -39,7 +39,7 @@ properties:
   completed_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
   error_code:
     type: string

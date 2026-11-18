@@ -28,7 +28,7 @@ post:
         type: string
         format: uuid
   responses:
-    '201':
+    "201":
       description: Test begun; send the browser to redirect_url
       headers:
         Set-Cookie:
@@ -39,11 +39,11 @@ post:
         application/json:
           schema:
             $ref: ../../components/schemas/SAMLTestSignIn.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml

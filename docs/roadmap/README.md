@@ -15,40 +15,40 @@ Both came out of a backend review and product research done in October 2026. The
 
 ## Index
 
-| ID | Name | Detail |
-| --- | --- | --- |
-| G-01 | Full CI on the 1.0 release candidate | [release-1.0.md](release-1.0.md#g-01-full-ci-on-the-10-release-candidate) |
-| G-02 | Customer sign-in journeys end to end | [release-1.0.md](release-1.0.md#g-02-customer-sign-in-journeys-end-to-end) |
-| G-03 | Backup restore and upgrade rehearsal | [release-1.0.md](release-1.0.md#g-03-backup-restore-and-upgrade-rehearsal) |
-| G-04 | Load and failure test | [release-1.0.md](release-1.0.md#g-04-load-and-failure-test) |
-| G-05 | Revoked access really stops | [release-1.0.md](release-1.0.md#g-05-revoked-access-really-stops) |
-| G-06 | Privacy and support readiness | [release-1.0.md](release-1.0.md#g-06-privacy-and-support-readiness) |
-| G-07 | Independent security review | [release-1.0.md](release-1.0.md#g-07-independent-security-review) |
-| F-01 | Preview a policy change before it goes live | [ideas.md](ideas.md#f-01-preview-a-policy-change-before-it-goes-live) |
-| F-02 | Access reviews and time-limited admin access | [ideas.md](ideas.md#f-02-access-reviews-and-time-limited-admin-access) |
-| F-03 | Offboarding receipt | [ideas.md](ideas.md#f-03-offboarding-receipt) |
-| F-04 | Rehearse a federation change before it affects people | [ideas.md](ideas.md#f-04-rehearse-a-federation-change-before-it-affects-people) |
-| F-05 | Agent actions through a credential broker, with approvals | [ideas.md](ideas.md#f-05-agent-actions-through-a-credential-broker-with-approvals) |
-| F-06 | Evidence pack for a release and an organization's controls | [ideas.md](ideas.md#f-06-evidence-pack-for-a-release-and-an-organizations-controls) |
-| N-01 | Sign in CI jobs and workloads without stored secrets | [ideas.md](ideas.md#n-01-sign-in-ci-jobs-and-workloads-without-stored-secrets) |
-| N-02 | Task-scoped agent identity with shared budgets | [ideas.md](ideas.md#n-02-task-scoped-agent-identity-with-shared-budgets) |
-| N-03 | Permission-aware AI retrieval with source records | [ideas.md](ideas.md#n-03-permission-aware-ai-retrieval-with-source-records) |
-| N-04 | Pin approved MCP tool servers to a reviewed revision | [ideas.md](ideas.md#n-04-pin-approved-mcp-tool-servers-to-a-reviewed-revision) |
-| N-05 | What could this account reach if it were compromised? | [ideas.md](ideas.md#n-05-what-could-this-account-reach-if-it-were-compromised) |
-| N-06 | Least-privilege suggestions from real usage | [ideas.md](ideas.md#n-06-least-privilege-suggestions-from-real-usage) |
-| N-07 | Two-way trust between partner organizations | [ideas.md](ideas.md#n-07-two-way-trust-between-partner-organizations) |
-| N-08 | Per-app disclosure rules and pairwise subject IDs | [ideas.md](ideas.md#n-08-per-app-disclosure-rules-and-pairwise-subject-ids) |
-| N-09 | Recovery readiness and quorum-approved recovery | [ideas.md](ideas.md#n-09-recovery-readiness-and-quorum-approved-recovery) |
-| N-10 | Authenticator and device assurance | [ideas.md](ideas.md#n-10-authenticator-and-device-assurance) |
-| N-11 | Authorisation decisions close to customer services | [ideas.md](ideas.md#n-11-authorisation-decisions-close-to-customer-services) |
-| N-12 | Customer-controlled encryption keys | [ideas.md](ideas.md#n-12-customer-controlled-encryption-keys) |
-| N-13 | Outbound-only connector for private directories | [ideas.md](ideas.md#n-13-outbound-only-connector-for-private-directories) |
-| N-14 | Promote configuration between environments | [ideas.md](ideas.md#n-14-promote-configuration-between-environments) |
-| N-15 | Integration diagnostics for customer apps | [ideas.md](ideas.md#n-15-integration-diagnostics-for-customer-apps) |
-| PQ-01 | Cryptographic inventory and post-quantum plan | [ideas.md](ideas.md#pq-01-cryptographic-inventory-and-post-quantum-plan) |
-| PQ-02 | Evidence of post-quantum TLS on real connections | [ideas.md](ideas.md#pq-02-evidence-of-post-quantum-tls-on-real-connections) |
-| PQ-03 | Post-quantum signatures on long-lived audit exports | [ideas.md](ideas.md#pq-03-post-quantum-signatures-on-long-lived-audit-exports) |
-| RESIDENCY | Data residency and dedicated deployments (discovery) | [ideas.md](ideas.md#residency-data-residency-and-dedicated-deployments-discovery) |
+| ID        | Name                                                       | Detail                                                                              |
+| --------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| G-01      | Full CI on the 1.0 release candidate                       | [release-1.0.md](release-1.0.md#g-01-full-ci-on-the-10-release-candidate)           |
+| G-02      | Customer sign-in journeys end to end                       | [release-1.0.md](release-1.0.md#g-02-customer-sign-in-journeys-end-to-end)          |
+| G-03      | Backup restore and upgrade rehearsal                       | [release-1.0.md](release-1.0.md#g-03-backup-restore-and-upgrade-rehearsal)          |
+| G-04      | Load and failure test                                      | [release-1.0.md](release-1.0.md#g-04-load-and-failure-test)                         |
+| G-05      | Revoked access really stops                                | [release-1.0.md](release-1.0.md#g-05-revoked-access-really-stops)                   |
+| G-06      | Privacy and support readiness                              | [release-1.0.md](release-1.0.md#g-06-privacy-and-support-readiness)                 |
+| G-07      | Independent security review                                | [release-1.0.md](release-1.0.md#g-07-independent-security-review)                   |
+| F-01      | Preview a policy change before it goes live                | [ideas.md](ideas.md#f-01-preview-a-policy-change-before-it-goes-live)               |
+| F-02      | Access reviews and time-limited admin access               | [ideas.md](ideas.md#f-02-access-reviews-and-time-limited-admin-access)              |
+| F-03      | Offboarding receipt                                        | [ideas.md](ideas.md#f-03-offboarding-receipt)                                       |
+| F-04      | Rehearse a federation change before it affects people      | [ideas.md](ideas.md#f-04-rehearse-a-federation-change-before-it-affects-people)     |
+| F-05      | Agent actions through a credential broker, with approvals  | [ideas.md](ideas.md#f-05-agent-actions-through-a-credential-broker-with-approvals)  |
+| F-06      | Evidence pack for a release and an organization's controls | [ideas.md](ideas.md#f-06-evidence-pack-for-a-release-and-an-organizations-controls) |
+| N-01      | Sign in CI jobs and workloads without stored secrets       | [ideas.md](ideas.md#n-01-sign-in-ci-jobs-and-workloads-without-stored-secrets)      |
+| N-02      | Task-scoped agent identity with shared budgets             | [ideas.md](ideas.md#n-02-task-scoped-agent-identity-with-shared-budgets)            |
+| N-03      | Permission-aware AI retrieval with source records          | [ideas.md](ideas.md#n-03-permission-aware-ai-retrieval-with-source-records)         |
+| N-04      | Pin approved MCP tool servers to a reviewed revision       | [ideas.md](ideas.md#n-04-pin-approved-mcp-tool-servers-to-a-reviewed-revision)      |
+| N-05      | What could this account reach if it were compromised?      | [ideas.md](ideas.md#n-05-what-could-this-account-reach-if-it-were-compromised)      |
+| N-06      | Least-privilege suggestions from real usage                | [ideas.md](ideas.md#n-06-least-privilege-suggestions-from-real-usage)               |
+| N-07      | Two-way trust between partner organizations                | [ideas.md](ideas.md#n-07-two-way-trust-between-partner-organizations)               |
+| N-08      | Per-app disclosure rules and pairwise subject IDs          | [ideas.md](ideas.md#n-08-per-app-disclosure-rules-and-pairwise-subject-ids)         |
+| N-09      | Recovery readiness and quorum-approved recovery            | [ideas.md](ideas.md#n-09-recovery-readiness-and-quorum-approved-recovery)           |
+| N-10      | Authenticator and device assurance                         | [ideas.md](ideas.md#n-10-authenticator-and-device-assurance)                        |
+| N-11      | Authorisation decisions close to customer services         | [ideas.md](ideas.md#n-11-authorisation-decisions-close-to-customer-services)        |
+| N-12      | Customer-controlled encryption keys                        | [ideas.md](ideas.md#n-12-customer-controlled-encryption-keys)                       |
+| N-13      | Outbound-only connector for private directories            | [ideas.md](ideas.md#n-13-outbound-only-connector-for-private-directories)           |
+| N-14      | Promote configuration between environments                 | [ideas.md](ideas.md#n-14-promote-configuration-between-environments)                |
+| N-15      | Integration diagnostics for customer apps                  | [ideas.md](ideas.md#n-15-integration-diagnostics-for-customer-apps)                 |
+| PQ-01     | Cryptographic inventory and post-quantum plan              | [ideas.md](ideas.md#pq-01-cryptographic-inventory-and-post-quantum-plan)            |
+| PQ-02     | Evidence of post-quantum TLS on real connections           | [ideas.md](ideas.md#pq-02-evidence-of-post-quantum-tls-on-real-connections)         |
+| PQ-03     | Post-quantum signatures on long-lived audit exports        | [ideas.md](ideas.md#pq-03-post-quantum-signatures-on-long-lived-audit-exports)      |
+| RESIDENCY | Data residency and dedicated deployments (discovery)       | [ideas.md](ideas.md#residency-data-residency-and-dedicated-deployments-discovery)   |
 
 ## How to choose an idea
 
@@ -60,15 +60,15 @@ Illustrative sequencing for one team; two-week slots are planning assumptions.
 Do not run every track simultaneously. Continue a slot if its security/acceptance
 gate is not met, and re-estimate after discovery rather than promising a date.
 
-| Slot | Bounded deliverable | Exit decision |
-| --- | --- | --- |
-| 0: discovery | Interview 3-5 design partners, choose one buyer/problem, establish baseline pain, data-flow threat model and success measures. Confirm 1.0 operational stability. | A partner commits to a controlled pilot; otherwise stop/reprioritize. |
-| 1: N-03 contract | One source identity/ACL mapping, proposed OpenAPI, isolated authorization fixtures and a fake retrieval adapter. | No organization or subject ambiguity; required permissions and integration owner agreed. |
-| 2: N-03 vertical slice | One real read-only connector, pre-model authorization and source-provenance recording with synthetic/non-sensitive data. | Unauthorized canaries never reach the fake model; lineage reconciles. |
-| 3: N-03 controlled pilot | ACL changes, deletion, cache reuse, quotas, SDK/docs, observability and rollback. Limited opt-in partner traffic after review. | Measured usefulness, latency and isolation meet agreed targets; no automatic broad rollout. |
-| 4: N-01 trust contract | One CI issuer's exact trust selectors, preview API and external-verifier threat model. Preserve existing token clients. | Consumer/contract approval and replay/key-rollover policy agreed. |
-| 5: N-01 pilot | One CI integration authenticates without a stored Qeet secret; exercise disabled trust and token lifecycle. | Adoption and failure handling demonstrated before adding Kubernetes/SPIFFE providers. |
-| 6: PQ-01 evidence | Read-only crypto inventory and dependency/exposure report, with unknowns and operator/organization separation. | Partners can act on the report; choose whether PQ-02 merits an authorized staging experiment. |
+| Slot                     | Bounded deliverable                                                                                                                                               | Exit decision                                                                                 |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| 0: discovery             | Interview 3-5 design partners, choose one buyer/problem, establish baseline pain, data-flow threat model and success measures. Confirm 1.0 operational stability. | A partner commits to a controlled pilot; otherwise stop/reprioritize.                         |
+| 1: N-03 contract         | One source identity/ACL mapping, proposed OpenAPI, isolated authorization fixtures and a fake retrieval adapter.                                                  | No organization or subject ambiguity; required permissions and integration owner agreed.      |
+| 2: N-03 vertical slice   | One real read-only connector, pre-model authorization and source-provenance recording with synthetic/non-sensitive data.                                          | Unauthorized canaries never reach the fake model; lineage reconciles.                         |
+| 3: N-03 controlled pilot | ACL changes, deletion, cache reuse, quotas, SDK/docs, observability and rollback. Limited opt-in partner traffic after review.                                    | Measured usefulness, latency and isolation meet agreed targets; no automatic broad rollout.   |
+| 4: N-01 trust contract   | One CI issuer's exact trust selectors, preview API and external-verifier threat model. Preserve existing token clients.                                           | Consumer/contract approval and replay/key-rollover policy agreed.                             |
+| 5: N-01 pilot            | One CI integration authenticates without a stored Qeet secret; exercise disabled trust and token lifecycle.                                                       | Adoption and failure handling demonstrated before adding Kubernetes/SPIFFE providers.         |
+| 6: PQ-01 evidence        | Read-only crypto inventory and dependency/exposure report, with unknowns and operator/organization separation.                                                    | Partners can act on the report; choose whether PQ-02 merits an authorized staging experiment. |
 
 If the selected buyer does not operate RAG, replace slots 1-3 with the N-05
 exposure-analysis pilot. N-02/N-04 follow a proven AI integration; N-06 follows
@@ -123,67 +123,67 @@ and support process. Keep a portable, documented exit/export path. Never make
 
 Numbers such as "4.4" or "5.3" in these pages are items of the October 2026 enterprise plan. All of them are built in 1.0.
 
-| Item | What it covers |
-| --- | --- |
-| 1.1 | Machine credentials (API keys, service principals, agents) may only carry scopes the creator holds |
-| 1.2 | Adding someone to a group checks the group's roles (no self-promotion to owner); add the route to step-up; SCIM can't add to admin groups |
-| 1.3 | Admins can act on (password, MFA reset, suspend, delete, purge, role removal) only people with fewer privileges; only owners act on owners; built-in owner role read-only |
-| 1.4 | Owners can always be offboarded: home org suspend/delete/SCIM deactivate never blocked by ownership elsewhere; policy for who may create orgs; enforce org limit |
-| 1.5 | Tokens can't cross organizations: resource identifiers unique platform-wide and on a verified domain; app tokens default aud = client_id |
-| 1.8 | Adding credentials / changing email needs recent sign-in even without a second factor; first-password set included |
-| 1.9 | Recovery: send to the stored address; expire outstanding reset/magic links on any credential change; per-address forgot-password limit |
-| 1.10 | Offboarding ends everything: SCIM suspend/delete end all sign-ins; personal API keys stop with the user; disabled service principals' tokens refused |
-| 1.15 | Token exchange can't widen scopes/resources; sign login_after |
-| 2.4 | Audit completeness: passkeys, bot/risk settings, anomaly resolve, billing profile/trial/webhook plan change, role-permission grants in the org log, organization edits, restore/purge/mfa-required in-tx, PATCH /v1/users, self-service delete/export, phone verification |
-| 2.7 | GDPR: erasure covers passkeys, OTP destinations, linked identities, directory profiles, vault grants, devices, notifications; export payload expires; erasure record kept; FKs don't block purges |
-| 2.9 | Migrations don't lock hot tables (CONCURRENTLY + lock timeout) |
-| 2.10 | Background throughput: SIEM (lease, loop, metadata, honest evidence), anomaly scorer, scheduler (parallel, checkpointed chain verify), outbox |
-| 2.11 | Retention jobs for every growing table (esp. login attempts with attacker-tried emails); batched deletes |
-| 2.12 | ABAC: missing attribute = unknown (no fail-open deny); AuthZEN properties |
-| 3.1 | Domain capture: "SSO required" per verified domain (wire sso_enabled/jit_enabled), break-glass admins, SSO-only orgs |
-| 3.3 | JIT roles/groups + attribute sync on every SSO sign-in (SAML attributes, LDAP memberOf) |
-| 3.4 | SAML SP robustness: certificate rollover (2 certs), clock skew, metadata URL import/refresh, encrypted assertions |
-| 3.5 | Enterprise OIDC connections (validated ID token, issuer/organization restriction, claim mapping) |
-| 3.6 | Admin portal completes a setup (SP/SCIM URLs, domain verification, test sign-in) |
-| 3.8 | SCIM tokens: several, expiring, overlap on rotation, refused for suspended orgs |
-| 4.1 | Organization-aware apps: one app for many customer orgs, `organization` parameter, org_id/roles/permissions claims, per-org custom permissions |
-| 4.2 | Finer permissions (user.delete/suspend/credentials, session.revoke, member.invite, organization.delete) + built-in Admin/Member/Viewer roles + rename/delete roles |
-| 4.4 | M2M for customers' APIs (client_credentials on machine apps with resource/scope), private_key_jwt, secret rotation with overlap |
-| 4.6 | Consent withdrawal + "connected apps" API; grants list filters/cursor |
-| 4.7 | Webhook events: user.created from every path, sign-in success/failure, MFA, invitations, roles, apps/keys |
-| 5.1 | Deleted organizations' data purged after a restore window (DPA) |
-| 5.2 | Region: relabel + read-only until real data residency exists |
-| 5.3 | Audit tamper evidence (no UPDATE/DELETE for the app role, signed chain anchor) + audit export with hashes |
-| 5.4 | Encryption key ids + rotation |
-| 5.7 | Admission control (overload shedding) + shard the platform audit chain lock |
-| 5.8 | Metrics (sign-ins by method, queue lags) + supply chain (scan/sign the prod image, SBOM) |
+| Item | What it covers                                                                                                                                                                                                                                                            |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.1  | Machine credentials (API keys, service principals, agents) may only carry scopes the creator holds                                                                                                                                                                        |
+| 1.2  | Adding someone to a group checks the group's roles (no self-promotion to owner); add the route to step-up; SCIM can't add to admin groups                                                                                                                                 |
+| 1.3  | Admins can act on (password, MFA reset, suspend, delete, purge, role removal) only people with fewer privileges; only owners act on owners; built-in owner role read-only                                                                                                 |
+| 1.4  | Owners can always be offboarded: home org suspend/delete/SCIM deactivate never blocked by ownership elsewhere; policy for who may create orgs; enforce org limit                                                                                                          |
+| 1.5  | Tokens can't cross organizations: resource identifiers unique platform-wide and on a verified domain; app tokens default aud = client_id                                                                                                                                  |
+| 1.8  | Adding credentials / changing email needs recent sign-in even without a second factor; first-password set included                                                                                                                                                        |
+| 1.9  | Recovery: send to the stored address; expire outstanding reset/magic links on any credential change; per-address forgot-password limit                                                                                                                                    |
+| 1.10 | Offboarding ends everything: SCIM suspend/delete end all sign-ins; personal API keys stop with the user; disabled service principals' tokens refused                                                                                                                      |
+| 1.15 | Token exchange can't widen scopes/resources; sign login_after                                                                                                                                                                                                             |
+| 2.4  | Audit completeness: passkeys, bot/risk settings, anomaly resolve, billing profile/trial/webhook plan change, role-permission grants in the org log, organization edits, restore/purge/mfa-required in-tx, PATCH /v1/users, self-service delete/export, phone verification |
+| 2.7  | GDPR: erasure covers passkeys, OTP destinations, linked identities, directory profiles, vault grants, devices, notifications; export payload expires; erasure record kept; FKs don't block purges                                                                         |
+| 2.9  | Migrations don't lock hot tables (CONCURRENTLY + lock timeout)                                                                                                                                                                                                            |
+| 2.10 | Background throughput: SIEM (lease, loop, metadata, honest evidence), anomaly scorer, scheduler (parallel, checkpointed chain verify), outbox                                                                                                                             |
+| 2.11 | Retention jobs for every growing table (esp. login attempts with attacker-tried emails); batched deletes                                                                                                                                                                  |
+| 2.12 | ABAC: missing attribute = unknown (no fail-open deny); AuthZEN properties                                                                                                                                                                                                 |
+| 3.1  | Domain capture: "SSO required" per verified domain (wire sso_enabled/jit_enabled), break-glass admins, SSO-only orgs                                                                                                                                                      |
+| 3.3  | JIT roles/groups + attribute sync on every SSO sign-in (SAML attributes, LDAP memberOf)                                                                                                                                                                                   |
+| 3.4  | SAML SP robustness: certificate rollover (2 certs), clock skew, metadata URL import/refresh, encrypted assertions                                                                                                                                                         |
+| 3.5  | Enterprise OIDC connections (validated ID token, issuer/organization restriction, claim mapping)                                                                                                                                                                          |
+| 3.6  | Admin portal completes a setup (SP/SCIM URLs, domain verification, test sign-in)                                                                                                                                                                                          |
+| 3.8  | SCIM tokens: several, expiring, overlap on rotation, refused for suspended orgs                                                                                                                                                                                           |
+| 4.1  | Organization-aware apps: one app for many customer orgs, `organization` parameter, org_id/roles/permissions claims, per-org custom permissions                                                                                                                            |
+| 4.2  | Finer permissions (user.delete/suspend/credentials, session.revoke, member.invite, organization.delete) + built-in Admin/Member/Viewer roles + rename/delete roles                                                                                                        |
+| 4.4  | M2M for customers' APIs (client_credentials on machine apps with resource/scope), private_key_jwt, secret rotation with overlap                                                                                                                                           |
+| 4.6  | Consent withdrawal + "connected apps" API; grants list filters/cursor                                                                                                                                                                                                     |
+| 4.7  | Webhook events: user.created from every path, sign-in success/failure, MFA, invitations, roles, apps/keys                                                                                                                                                                 |
+| 5.1  | Deleted organizations' data purged after a restore window (DPA)                                                                                                                                                                                                           |
+| 5.2  | Region: relabel + read-only until real data residency exists                                                                                                                                                                                                              |
+| 5.3  | Audit tamper evidence (no UPDATE/DELETE for the app role, signed chain anchor) + audit export with hashes                                                                                                                                                                 |
+| 5.4  | Encryption key ids + rotation                                                                                                                                                                                                                                             |
+| 5.7  | Admission control (overload shedding) + shard the platform audit chain lock                                                                                                                                                                                               |
+| 5.8  | Metrics (sign-ins by method, queue lags) + supply chain (scan/sign the prod image, SBOM)                                                                                                                                                                                  |
 
 ## Glossary
 
-| Term | Meaning |
-| --- | --- |
-| RBAC, ABAC, ReBAC | Three ways Qeet decides access: by role, by attributes of the person and the resource, and by relationships such as "Alice is a viewer of document 123". |
-| AuthZEN | An OpenID standard API for asking "may this subject do this action on this resource?". |
-| OIDC, OAuth | The standards apps use to sign people in with Qeet and to get access tokens. |
-| PKCE | A protection for the OAuth authorisation-code flow that stops a stolen code being used. |
-| SAML, SCIM, LDAP | Enterprise standards for single sign-on, for creating and removing accounts from a company directory, and for talking to a directory such as Active Directory. |
-| JIT provisioning | Creating or updating a person's account and roles at the moment they sign in through SSO. |
-| SSF, CAEP | OpenID Shared Signals: a standard way to tell apps that, for example, a session was revoked. |
-| RAG | Retrieval-augmented generation: an AI assistant searches documents and answers from them. |
-| MCP | Model Context Protocol: a standard for giving AI agents tools that live on other servers. |
-| KMS, BYOK | A cloud key management service; "bring your own key" means the customer holds the key. |
-| SPIFFE | An open standard for giving workloads (services, jobs) a verifiable identity. |
-| ML-KEM, ML-DSA, SLH-DSA | NIST's post-quantum standards (FIPS 203, 204 and 205) for key exchange and signatures. |
-| ASVS | OWASP's Application Security Verification Standard, a checklist of security requirements. |
-| AAL | NIST's authenticator assurance levels (AAL1 to AAL3) in SP 800-63B. |
-| RPO, RTO | How much data a recovery can lose, and how long it takes. |
-| p95, p99 | The latency that 95% or 99% of requests stay under. |
-| Step-up | Asking a signed-in person to authenticate again before a sensitive action. |
-| Break-glass | Emergency admin accounts that can still sign in when SSO is required or down. |
-| Egress policy | The server's rules for which outside addresses it may call. |
-| Row-level security (RLS) | Postgres rules that keep each organization's rows separate. |
-| Design partner | A customer who agrees to try an early version and give feedback. |
-| Shadow mode | Running a new check and recording its answer without enforcing it. |
+| Term                     | Meaning                                                                                                                                                        |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| RBAC, ABAC, ReBAC        | Three ways Qeet decides access: by role, by attributes of the person and the resource, and by relationships such as "Alice is a viewer of document 123".       |
+| AuthZEN                  | An OpenID standard API for asking "may this subject do this action on this resource?".                                                                         |
+| OIDC, OAuth              | The standards apps use to sign people in with Qeet and to get access tokens.                                                                                   |
+| PKCE                     | A protection for the OAuth authorisation-code flow that stops a stolen code being used.                                                                        |
+| SAML, SCIM, LDAP         | Enterprise standards for single sign-on, for creating and removing accounts from a company directory, and for talking to a directory such as Active Directory. |
+| JIT provisioning         | Creating or updating a person's account and roles at the moment they sign in through SSO.                                                                      |
+| SSF, CAEP                | OpenID Shared Signals: a standard way to tell apps that, for example, a session was revoked.                                                                   |
+| RAG                      | Retrieval-augmented generation: an AI assistant searches documents and answers from them.                                                                      |
+| MCP                      | Model Context Protocol: a standard for giving AI agents tools that live on other servers.                                                                      |
+| KMS, BYOK                | A cloud key management service; "bring your own key" means the customer holds the key.                                                                         |
+| SPIFFE                   | An open standard for giving workloads (services, jobs) a verifiable identity.                                                                                  |
+| ML-KEM, ML-DSA, SLH-DSA  | NIST's post-quantum standards (FIPS 203, 204 and 205) for key exchange and signatures.                                                                         |
+| ASVS                     | OWASP's Application Security Verification Standard, a checklist of security requirements.                                                                      |
+| AAL                      | NIST's authenticator assurance levels (AAL1 to AAL3) in SP 800-63B.                                                                                            |
+| RPO, RTO                 | How much data a recovery can lose, and how long it takes.                                                                                                      |
+| p95, p99                 | The latency that 95% or 99% of requests stay under.                                                                                                            |
+| Step-up                  | Asking a signed-in person to authenticate again before a sensitive action.                                                                                     |
+| Break-glass              | Emergency admin accounts that can still sign in when SSO is required or down.                                                                                  |
+| Egress policy            | The server's rules for which outside addresses it may call.                                                                                                    |
+| Row-level security (RLS) | Postgres rules that keep each organization's rows separate.                                                                                                    |
+| Design partner           | A customer who agrees to try an early version and give feedback.                                                                                               |
+| Shadow mode              | Running a new check and recording its answer without enforcing it.                                                                                             |
 
 ## What other products already offer
 
@@ -192,15 +192,15 @@ Official pages were fetched on 2026-10-28; pricing, contractual SLAs, latency an
 commercial feature availability were not benchmarked. Absence from a page is
 not evidence that a vendor lacks a capability.
 
-| Platform | Capability documented in official sources | Implication for Qeet ID |
-| --- | --- | --- |
-| WorkOS | [Pipes](https://workos.com/docs/pipes) offers token vending and relay without exposing provider tokens to caller environments; [FGA](https://workos.com/docs/fga) provides hierarchical resource-scoped authorization. | A token vault, relay, or fine-grained authorization alone is not unique. Build on existing primitives and emphasize usable policy/evidence workflows. |
-| Auth0 | [Token Vault](https://auth0.com/docs/secure/tokens/token-vault) documents user and privileged-worker exchanges; [log streams](https://auth0.com/docs/customize/log-streams) document SIEM destinations, health, retries and PII controls. | Do not claim competitors lack SIEM integration or brokerage. Existing 2.10/4.7/5.3 work addresses much of this baseline. |
-| Clerk | [Machine authentication](https://clerk.com/docs/guides/development/machine-auth/overview) includes OAuth access tokens, M2M tokens and API keys. The fetched page distinguishes its M2M tokens from OAuth client-credentials support. | Machine identity is not unique; differentiate governance and revocation evidence, not the mere existence of keys. |
-| Keycloak | [Authorization Services](https://www.keycloak.org/docs/latest/authorization_services/index.html#_policy_evaluation_tool) includes policy evaluation with identity/context inputs, configuration import/export and UMA permission workflows. | Basic simulation and approval-based resource sharing already have precedents. |
-| OpenFGA | [Immutable authorization models](https://openfga.dev/docs/getting-started/immutable-models) support explicit model IDs, shadow checks and gradual rollouts. It is an authorization engine, not a full identity-provider substitute. | Versioned models and shadow evaluation are established; combine them with Qeet's identity lifecycle and operator evidence. |
-| ZITADEL | [Actions](https://zitadel.com/docs/concepts/features/actions) extend identity flows with custom logic, timeouts and configurable error behavior. | Hooks alone are not differentiated; safe change/rehearsal workflows may add value. |
-| Microsoft Entra | [Access reviews](https://learn.microsoft.com/en-us/entra/id-governance/access-reviews-overview) and [PIM](https://learn.microsoft.com/en-us/entra/id-governance/privileged-identity-management/pim-configure) include recurring reviews and time-/approval-based privileged activation. | Access reviews and just-in-time privilege are competitive capabilities, not inventions. A simpler app-facing version needs customer validation. |
+| Platform        | Capability documented in official sources                                                                                                                                                                                                                                               | Implication for Qeet ID                                                                                                                               |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| WorkOS          | [Pipes](https://workos.com/docs/pipes) offers token vending and relay without exposing provider tokens to caller environments; [FGA](https://workos.com/docs/fga) provides hierarchical resource-scoped authorization.                                                                  | A token vault, relay, or fine-grained authorization alone is not unique. Build on existing primitives and emphasize usable policy/evidence workflows. |
+| Auth0           | [Token Vault](https://auth0.com/docs/secure/tokens/token-vault) documents user and privileged-worker exchanges; [log streams](https://auth0.com/docs/customize/log-streams) document SIEM destinations, health, retries and PII controls.                                               | Do not claim competitors lack SIEM integration or brokerage. Existing 2.10/4.7/5.3 work addresses much of this baseline.                              |
+| Clerk           | [Machine authentication](https://clerk.com/docs/guides/development/machine-auth/overview) includes OAuth access tokens, M2M tokens and API keys. The fetched page distinguishes its M2M tokens from OAuth client-credentials support.                                                   | Machine identity is not unique; differentiate governance and revocation evidence, not the mere existence of keys.                                     |
+| Keycloak        | [Authorization Services](https://www.keycloak.org/docs/latest/authorization_services/index.html#_policy_evaluation_tool) includes policy evaluation with identity/context inputs, configuration import/export and UMA permission workflows.                                             | Basic simulation and approval-based resource sharing already have precedents.                                                                         |
+| OpenFGA         | [Immutable authorization models](https://openfga.dev/docs/getting-started/immutable-models) support explicit model IDs, shadow checks and gradual rollouts. It is an authorization engine, not a full identity-provider substitute.                                                     | Versioned models and shadow evaluation are established; combine them with Qeet's identity lifecycle and operator evidence.                            |
+| ZITADEL         | [Actions](https://zitadel.com/docs/concepts/features/actions) extend identity flows with custom logic, timeouts and configurable error behavior.                                                                                                                                        | Hooks alone are not differentiated; safe change/rehearsal workflows may add value.                                                                    |
+| Microsoft Entra | [Access reviews](https://learn.microsoft.com/en-us/entra/id-governance/access-reviews-overview) and [PIM](https://learn.microsoft.com/en-us/entra/id-governance/privileged-identity-management/pim-configure) include recurring reviews and time-/approval-based privileged activation. | Access reviews and just-in-time privilege are competitive capabilities, not inventions. A simpler app-facing version needs customer validation.       |
 
 ## Standards notes
 
@@ -260,13 +260,13 @@ The review looked at these and decided against them. Don't reopen them without n
 
 The review found five defects. All are fixed, with tests, in the 1.0 code:
 
-| ID | What was wrong | Fix |
-| --- | --- | --- |
-| R-01 | Tool calls from OpenAI-compatible AI providers were not bounded, so a misbehaving provider could crash a conversation. | `2b722ccd`: tool calls are numbered by Qeet and capped in count and size. |
-| R-02 | A live activity stream kept sending events after its reader lost access. | `c40fbbc1`: the stream ends within 30 seconds of losing access, and at token expiry. |
-| R-03 | A retried request with the same idempotency key could run twice if the first was slow. | `0c8f64f2`: an unanswered claim is never taken over; the retry gets a 409. |
-| R-04 | The live activity stream could skip events when a reader reconnected or fell behind. | `c40fbbc1`: replay pages through the audit log, and a reader that falls behind is told to reconnect. |
-| AI-01 | Qeet AI conversations had no limits on history or reply size. | `f6084539`: history and replies are capped, one turn runs at a time, and production uses only the customer's own model key. |
+| ID    | What was wrong                                                                                                         | Fix                                                                                                                         |
+| ----- | ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| R-01  | Tool calls from OpenAI-compatible AI providers were not bounded, so a misbehaving provider could crash a conversation. | `2b722ccd`: tool calls are numbered by Qeet and capped in count and size.                                                   |
+| R-02  | A live activity stream kept sending events after its reader lost access.                                               | `c40fbbc1`: the stream ends within 30 seconds of losing access, and at token expiry.                                        |
+| R-03  | A retried request with the same idempotency key could run twice if the first was slow.                                 | `0c8f64f2`: an unanswered claim is never taken over; the retry gets a 409.                                                  |
+| R-04  | The live activity stream could skip events when a reader reconnected or fell behind.                                   | `c40fbbc1`: replay pages through the audit log, and a reader that falls behind is told to reconnect.                        |
+| AI-01 | Qeet AI conversations had no limits on history or reply size.                                                          | `f6084539`: history and replies are capped, one turn runs at a time, and production uses only the customer's own model key. |
 
 ## Sources
 

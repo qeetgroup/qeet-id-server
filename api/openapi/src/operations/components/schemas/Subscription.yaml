@@ -20,12 +20,12 @@ properties:
   current_period_end:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
   current_period_start:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
   interval:
     type: string
@@ -44,11 +44,11 @@ properties:
   trial_end:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
   ended_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
     description: When a canceled subscription ended.

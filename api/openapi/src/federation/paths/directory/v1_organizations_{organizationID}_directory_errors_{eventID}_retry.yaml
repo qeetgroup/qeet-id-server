@@ -21,7 +21,7 @@ post:
         type: string
         format: uuid
   responses:
-    '200':
+    "200":
       description: Check completed; succeeded reports the actual outcome
       content:
         application/json:
@@ -30,11 +30,11 @@ post:
             properties:
               succeeded:
                 type: boolean
-    '401':
+    "401":
       description: Authentication required
-    '403':
+    "403":
       description: Organization mismatch or missing connection.write
-    '404':
+    "404":
       description: Error not found in this organization
-    '409':
+    "409":
       description: Operation cannot be retried or is already closed

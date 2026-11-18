@@ -9,11 +9,11 @@ properties:
   email:
     type:
       - string
-      - 'null'
+      - "null"
   display_name:
     type:
       - string
-      - 'null'
+      - "null"
   updated_at:
     type: string
     format: date-time

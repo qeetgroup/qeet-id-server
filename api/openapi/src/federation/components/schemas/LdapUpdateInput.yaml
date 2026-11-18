@@ -15,44 +15,44 @@ properties:
   base_dn:
     type:
       - string
-      - 'null'
+      - "null"
   bind_dn:
     type:
       - string
-      - 'null'
+      - "null"
   bind_password:
     type:
       - string
-      - 'null'
+      - "null"
   email_attribute:
     type:
       - string
-      - 'null'
+      - "null"
   name:
     type:
       - string
-      - 'null'
+      - "null"
   name_attribute:
     type:
       - string
-      - 'null'
+      - "null"
   server_url:
     type:
       - string
-      - 'null'
+      - "null"
   skip_tls_verify:
     type:
       - boolean
-      - 'null'
+      - "null"
   start_tls:
     type:
       - boolean
-      - 'null'
+      - "null"
   status:
     type:
       - string
-      - 'null'
+      - "null"
   user_filter:
     type:
       - string
-      - 'null'
+      - "null"

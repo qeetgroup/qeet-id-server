@@ -12,7 +12,7 @@ get:
     Lists the organization's SCIM tokens, newest first, including revoked and
     expired ones, never the tokens themselves. Requires connection.read.
   responses:
-    '200':
+    "200":
       description: OK
       content:
         application/json:
@@ -27,13 +27,13 @@ get:
                 type: array
                 items:
                   $ref: ../../components/schemas/SCIMToken.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml
 post:
   operationId: createScimToken
@@ -68,11 +68,11 @@ post:
             expires_at:
               type:
                 - string
-                - 'null'
+                - "null"
               format: date-time
               description: When the token stops working; in the future. Omit for none.
   responses:
-    '201':
+    "201":
       description: Created
       headers:
         Cache-Control:
@@ -92,19 +92,19 @@ post:
               token:
                 type: string
                 description: The token to give the identity provider, shown only here.
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '402':
+    "402":
       description: The organization's plan does not include SCIM.
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '409':
+    "409":
       $ref: ../../../shared/responses/Conflict.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

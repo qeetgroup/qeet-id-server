@@ -2,14 +2,14 @@
 # make openapi-check lints the five documents with exactly the rules below;
 # every one fails the build. Exceptions, each one a reviewed operation, are in
 # .redocly.lint-ignore.yaml.
-telemetry: 'off'
+telemetry: "off"
 
 apis:
-  auth: {root: auth/openapi.yaml}
-  management: {root: management/openapi.yaml}
-  federation: {root: federation/openapi.yaml}
-  developer: {root: developer/openapi.yaml}
-  operations: {root: operations/openapi.yaml}
+  auth: { root: auth/openapi.yaml }
+  management: { root: management/openapi.yaml }
+  federation: { root: federation/openapi.yaml }
+  developer: { root: developer/openapi.yaml }
+  operations: { root: operations/openapi.yaml }
 
 # No preset: these are all the rules there are.
 extends: []
@@ -63,8 +63,25 @@ rules:
     subject:
       type: Responses
     assertions:
-      requireAny: ['200', '201', '202', '203', '204', '205', '206', '2XX',
-                   '300', '301', '302', '303', '304', '307', '308', '3XX']
+      requireAny:
+        [
+          "200",
+          "201",
+          "202",
+          "203",
+          "204",
+          "205",
+          "206",
+          "2XX",
+          "300",
+          "301",
+          "302",
+          "303",
+          "304",
+          "307",
+          "308",
+          "3XX",
+        ]
     message: Every operation needs a success (2XX) or redirect (3XX) response.
     severity: error
 

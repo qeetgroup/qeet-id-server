@@ -30,7 +30,7 @@ delete:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '202':
+    "202":
       description: Deletion scheduled
       content:
         application/json:
@@ -43,13 +43,13 @@ delete:
               deletion_due_at:
                 type: string
                 format: date-time
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '409':
+    "409":
       $ref: ../../../shared/responses/Conflict.yaml
 get:
   operationId: getOrganization
@@ -66,17 +66,17 @@ get:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '200':
+    "200":
       description: Organization
       content:
         application/json:
           schema:
             $ref: ../../components/schemas/Organization.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
 patch:
   operationId: updateOrganization
@@ -108,19 +108,19 @@ patch:
         schema:
           $ref: ../../components/schemas/OrganizationUpdate.yaml
   responses:
-    '200':
+    "200":
       description: Updated
       content:
         application/json:
           schema:
             $ref: ../../components/schemas/Organization.yaml
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml

@@ -13,7 +13,7 @@ get:
   parameters:
     - $ref: ../../../shared/parameters/OrganizationID.yaml
   responses:
-    '200':
+    "200":
       description: The alerts
       content:
         application/json:
@@ -28,9 +28,9 @@ get:
                 type: array
                 items:
                   $ref: ../../components/schemas/DirectoryAlert.yaml
-    '401':
+    "401":
       description: Authentication required
-    '403':
+    "403":
       description: Organization mismatch or missing connection.read
 post:
   operationId: createDirectoryAlert
@@ -64,23 +64,23 @@ post:
             connection_id:
               type:
                 - string
-                - 'null'
+                - "null"
             threshold:
               type: integer
               minimum: 1
               maximum: 100
   responses:
-    '201':
+    "201":
       description: Alert created
       content:
         application/json:
           schema:
             $ref: ../../components/schemas/DirectoryAlert.yaml
-    '400':
+    "400":
       description: Invalid alert settings
-    '401':
+    "401":
       description: Authenticated user required
-    '403':
+    "403":
       description: Organization mismatch or missing connection.write
-    '404':
+    "404":
       description: Connection not found in this organization

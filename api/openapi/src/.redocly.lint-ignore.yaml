@@ -3,10 +3,10 @@
 # The health probes have no rate limit or authentication, so they never answer 4XX.
 operations/paths/health/healthz.yaml:
   operation-4xx-response:
-    - '#/get/responses'
+    - "#/get/responses"
 operations/paths/health/readyz.yaml:
   operation-4xx-response:
-    - '#/get/responses'
+    - "#/get/responses"
 operations/paths/health/version.yaml:
   operation-4xx-response:
-    - '#/get/responses'
+    - "#/get/responses"

@@ -19,7 +19,7 @@ properties:
   actor_user_id:
     type:
       - string
-      - 'null'
+      - "null"
     format: uuid
   created_at:
     type: string
@@ -30,27 +30,27 @@ properties:
   ip:
     type:
       - string
-      - 'null'
+      - "null"
   request_id:
     type:
       - string
-      - 'null'
+      - "null"
   resource_id:
     type:
       - string
-      - 'null'
+      - "null"
     format: uuid
   resource_type:
     type: string
   organization_id:
     type:
       - string
-      - 'null'
+      - "null"
     format: uuid
   user_agent:
     type:
       - string
-      - 'null'
+      - "null"
   metadata:
     type: object
     additionalProperties: true

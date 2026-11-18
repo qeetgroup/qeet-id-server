@@ -25,7 +25,7 @@ post:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '200':
+    "200":
       description: Sessions revoked
       content:
         application/json:
@@ -69,9 +69,9 @@ post:
                   Unredeemed authorisation codes spent, and device or
                   back-channel sign-in requests (pending, or approved but not
                   collected) denied.
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml

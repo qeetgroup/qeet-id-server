@@ -78,7 +78,7 @@ properties:
   updated_by:
     type:
       - string
-      - 'null'
+      - "null"
     format: uuid
     description: >-
       The person who made the last save; null for a machine caller, or one from

@@ -39,7 +39,7 @@ properties:
   pkce_exempt_until:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
     description: >-
       When this confidential application's exemption from sending a PKCE

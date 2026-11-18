@@ -13,7 +13,7 @@ mappings against the current colocated and integration-tagged tests.
 
 This is a **navigation layer**. Its only job is to answer:
 
-> *"Where should I inspect next?"*
+> _"Where should I inspect next?"_
 
 It does **not** re-explain architecture already covered in [context.md](context.md), and it does
 **not** document individual functions or types. **Source code and tests are the deepest truth in
@@ -52,8 +52,8 @@ line count on this revision.
 
 ## access — authentication
 
-**Purpose** — *"handles login, refresh, logout, and session storage. Access & ID tokens are signed
-ES256 or RS256, by the signing key's type, and verifiable via the public JWKS."*
+**Purpose** — _"handles login, refresh, logout, and session storage. Access & ID tokens are signed
+ES256 or RS256, by the signing key's type, and verifiable via the public JWKS."_
 **Path** `internal/access/authentication/`
 **Key dependencies** `platform/http/{errs,httpx}` · `platform/crypto/{tokens,encryption,hibp}` ·
 `platform/events/outbox` · **`identity/user`** and **`operations/audit`** (cross-context)
@@ -83,8 +83,8 @@ lockout.go          per-account lockout
 
 ## access — authorization
 
-**Purpose** — RBAC *"models permissions, per-organization roles, role→permission bindings, and user
-assignments. The Check endpoint is the hot path callers use to authorize an action."*
+**Purpose** — RBAC _"models permissions, per-organization roles, role→permission bindings, and user
+assignments. The Check endpoint is the hot path callers use to authorize an action."_
 **Path** `internal/access/authorization/{rbac,abac,rebac,decide,decisionlog,authzen}/`, `internal/access/authpolicy/`
 **Key dependencies** `platform/http/{errs,httpx}` · **`operations/audit`** (cross-context)
 **Security** **Critical** — every access decision
@@ -120,9 +120,9 @@ authpolicy/securitypolicy.go   organization security policy: sessions, second fa
 
 ## access — mfa, passkeys, recovery
 
-**Purpose** — MFA: *"TOTP enrollment and verification plus a small set of recovery codes. Recovery
-codes are Argon2id-hashed."* Passkeys: *"implements WebAuthn passkey registration and login on top of
-go-webauthn."* Recovery: *"forgot-password and magic-link login. Both are stateless tokens."*
+**Purpose** — MFA: _"TOTP enrollment and verification plus a small set of recovery codes. Recovery
+codes are Argon2id-hashed."_ Passkeys: _"implements WebAuthn passkey registration and login on top of
+go-webauthn."_ Recovery: _"forgot-password and magic-link login. Both are stateless tokens."_
 **Path** `internal/access/{mfa,passkey,recovery}/`
 **Key dependencies** `platform/crypto/password` · `platform/crypto/totp` · `platform/messaging/{notifier,emailtmpl}` ·
 `platform/http/{errs,httpx}` · **`operations/audit`**
@@ -152,7 +152,7 @@ recovery/recovery.go forgot-password, magic link
 
 ## access — risk & threat
 
-**Purpose** — *"records and surfaces security anomalies … detection-agnostic."*
+**Purpose** — _"records and surfaces security anomalies … detection-agnostic."_
 **Path** `internal/access/{threat,threat/risk,threat/bot,ipallow}/`
 **Key dependencies** `platform/http/{errs,httpx}` · **`operations/audit`**
 **Security** **High** — adaptive MFA and access gating
@@ -177,9 +177,9 @@ ipallow/ipallow.go        CIDR allow/deny
 
 ## identity
 
-**Purpose** — organizations, users, groups, invitations, verification. Invitations: *"lets an organization admin
+**Purpose** — organizations, users, groups, invitations, verification. Invitations: _"lets an organization admin
 invite an email address into an organization with a pre-assigned role … the invite is consumed in the same
-transaction."*
+transaction."_
 **Path** `internal/identity/{organization,user,group,invite,verification,domainverify}/`
 **Key dependencies** `platform/http/{errs,httpx,paging}` — **the only `http/paging` consumer** ·
 `platform/database/postgres` · `platform/messaging/{notifier,emailtmpl}` ·
@@ -213,9 +213,9 @@ wider flow coverage.
 
 ## federation
 
-**Purpose** — *"implements Qeet's OpenID Connect provider role: the OAuth2/OIDC grants
+**Purpose** — _"implements Qeet's OpenID Connect provider role: the OAuth2/OIDC grants
 (authorization_code+PKCE, refresh, client_credentials, token-exchange, device, CIBA) plus discovery,
-JWKS, and userinfo endpoints."*
+JWKS, and userinfo endpoints."_
 **Path** `internal/federation/{oidc,saml,scim,ldap,social,adminportal,directory,oidcsso,ssosync,identitylink,provision,oidcrp,logincode,oauthstate}/`
 **Key dependencies** `platform/http/{errs,httpx}` · `platform/crypto/{codes,tokens}` ·
 **`access/authentication`**, **`identity/user`**, **`operations/audit`**
@@ -267,9 +267,9 @@ its audit row in it, with the `audit.Actor` the handler passes (`audit.ActorOf(r
 
 ## developer
 
-**Purpose** — service principals: *"non-human callers that authenticate via client_credentials grant
-and receive a short-lived service JWT scoped to a single organization."* Agents: *"non-human AI-agent
-identities … tokens (`actor_type="agent"`) that are re-minted rather than refreshed."*
+**Purpose** — service principals: _"non-human callers that authenticate via client_credentials grant
+and receive a short-lived service JWT scoped to a single organization."_ Agents: _"non-human AI-agent
+identities … tokens (`actor_type="agent"`) that are re-minted rather than refreshed."_
 **Path** `internal/developer/{agent,apikey,principal,authhook,webhook,credentials}/`
 **Key dependencies** `platform/http/{errs,httpx}` · `platform/crypto/{tokens,encryption}` ·
 **`operations/audit`**
@@ -300,10 +300,10 @@ credentials/vc/vc.go         W3C JWT-VC
 
 ## operations
 
-**Purpose** — audit: *"records actor-visible mutations to `audit.events`. Each write happens inside
+**Purpose** — audit: _"records actor-visible mutations to `audit.events`. Each write happens inside
 the caller's `pgx.Tx`, so the row commits atomically with the business write. Every row carries a
 SHA-256 hash chaining to the previous row in the same organization; tampering (delete, edit, reorder)
-breaks the chain and is caught by `Verifier.Verify`."* Rows with no organization go on one of 16
+breaks the chain and is caught by `Verifier.Verify`."_ Rows with no organization go on one of 16
 platform chains (`chain_shard`, the writer's database connection's), so their writers don't
 queue on one lock; each is a whole chain with its own tip, lock and checkpoint.
 **Path** `internal/operations/{audit,billing,gdpr,compliance,analytics,retention,siem,activity,notification,entitlements,ratelimits,search,sales,email,qeetai,servicehealth}/`
@@ -352,9 +352,9 @@ rolling 30 days of sign-ins from the audit log.
 
 ## platform — shared kernel
 
-**Purpose** — pure infrastructure. `errs`: *"defines the canonical, transport-agnostic error
+**Purpose** — pure infrastructure. `errs`: _"defines the canonical, transport-agnostic error
 vocabulary … Each error carries a stable machine code; the transport layer maps that code to an HTTP
-status, so these errors are reusable across HTTP, gRPC, CLI, jobs, and event consumers."*
+status, so these errors are reusable across HTTP, gRPC, CLI, jobs, and event consumers."_
 **Path** `internal/platform/`
 **Key dependencies** **none inside this repository** — R1 forbids importing any bounded context,
 `cmd/*` or `bootstrap`
@@ -423,10 +423,10 @@ lifecycle.go      196 lines — startup / graceful shutdown
 server.go          37 lines — HTTP server
 ```
 
-`permissions.go` documents its own contract: *"the authorization policy table consumed by
+`permissions.go` documents its own contract: _"the authorization policy table consumed by
 `rbac.Enforce` … Every authenticated route has a `RoutePolicy`; users, application-issued user
 tokens, API keys, service principals and agents are each checked according to that policy. Routes
-absent from the table are denied."*
+absent from the table are denied."_
 
 **Tests** `permissions_test.go` and `openapi_coverage_test.go` walk the production router: every
 authenticated route needs an explicit policy, and every route must be in the OpenAPI spec.
@@ -443,10 +443,10 @@ The map and the reasons are in [context.md](context.md) and [AGENTS.md](../../AG
 
 ## Where to go next
 
-| You need | Read |
-|---|---|
-| How the repository works | [context.md](context.md) |
-| A file path, fast | [architecture-map.md](architecture-map.md) |
-| What you may and may not change | [boundaries.md](boundaries.md) |
-| Steps for a specific change | [workflows.md](workflows.md) |
-| **Actual behaviour** | **the source and its tests** |
+| You need                        | Read                                       |
+| ------------------------------- | ------------------------------------------ |
+| How the repository works        | [context.md](context.md)                   |
+| A file path, fast               | [architecture-map.md](architecture-map.md) |
+| What you may and may not change | [boundaries.md](boundaries.md)             |
+| Steps for a specific change     | [workflows.md](workflows.md)               |
+| **Actual behaviour**            | **the source and its tests**               |

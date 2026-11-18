@@ -9,8 +9,8 @@ post:
   security:
     - adminPortalCookie: []
   responses:
-    '200':
-      description: '{ token: string, config: object }'
+    "200":
+      description: "{ token: string, config: object }"
       content:
         application/json:
           schema:
@@ -23,9 +23,9 @@ post:
                 $ref: ../../components/schemas/ConfigView.yaml
               token:
                 type: string
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
 delete:
   operationId: revokeAllPortalScimTokens
@@ -42,9 +42,9 @@ delete:
   security:
     - adminPortalCookie: []
   responses:
-    '204':
+    "204":
       description: Revoked
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml

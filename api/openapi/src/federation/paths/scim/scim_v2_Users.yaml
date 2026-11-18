@@ -8,7 +8,7 @@ get:
     SCIM 2.0 ListResponse, with Qeet acting as the SCIM server. Mounted at the
     root under /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error
     envelope rather than the standard Qeet error shape.
-  summary: '[scim] List users'
+  summary: "[scim] List users"
   tags:
     - SCIM
   parameters:
@@ -30,15 +30,15 @@ get:
   security:
     - scimBearer: []
   responses:
-    '200':
+    "200":
       description: ListResponse
       content:
         application/scim+json:
           schema:
             $ref: ../../components/schemas/SCIMListResponse.yaml
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
 post:
   operationId: createScimUser
@@ -57,7 +57,7 @@ post:
     organization's identity provider, or resets the password. The response is
     unchanged. A userName taken elsewhere, or on
     a domain another organization has verified, is refused with 409.
-  summary: '[scim] Create user'
+  summary: "[scim] Create user"
   tags:
     - SCIM
   security:
@@ -86,7 +86,7 @@ post:
         schema:
           $ref: ../../components/schemas/SCIMUser.yaml
   responses:
-    '201':
+    "201":
       description: User provisioned
       content:
         application/scim+json:
@@ -107,13 +107,13 @@ post:
             externalId: okta-00u1a2b3c4
             meta:
               resourceType: User
-              created: '2026-09-24T10:15:00Z'
-              lastModified: '2026-09-24T10:15:00Z'
+              created: "2026-09-24T10:15:00Z"
+              lastModified: "2026-09-24T10:15:00Z"
           schema:
             $ref: ../../components/schemas/SCIMUser.yaml
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '409':
+    "409":
       $ref: ../../../shared/responses/Conflict.yaml

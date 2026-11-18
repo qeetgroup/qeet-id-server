@@ -12,7 +12,7 @@ properties:
   accepted_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
   created_at:
     type: string
@@ -30,7 +30,7 @@ properties:
   role_id:
     type:
       - string
-      - 'null'
+      - "null"
     format: uuid
   status:
     type: string

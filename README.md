@@ -29,15 +29,15 @@ The backend is a Go modular monolith backed by PostgreSQL. Five bounded contexts
 
 ## ✨ Key Features
 
-| Area | Implemented capabilities |
-| :--- | :--- |
-| **Authentication** | WebAuthn/passkeys, passwords, email verification, magic links, MFA, session management |
-| **Authorization** | RBAC, ABAC, ReBAC, organization policies, explainable permission checks, AuthZEN evaluation API |
-| **Identity** | Organizations, users, groups, invitations, imports, branding, email templates, DNS domain verification |
-| **Federation** | OAuth 2.0/OpenID Connect, SAML 2.0, SCIM 2.0, LDAP/Active Directory, social login |
-| **Developer & machine identity** | API keys, service principals, agent identities, verifiable credentials, secrets and token vaults, auth hooks, signed webhooks |
-| **Operations** | Tamper-evident audit logs, analytics, GDPR workflows, retention jobs, SIEM sinks, notifications, rate limits, billing and entitlements |
-| **AI** | Admin-console copilot backed by Anthropic or any OpenAI-compatible provider, plus a tool manifest for agent integrations |
+| Area                             | Implemented capabilities                                                                                                               |
+| :------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------- |
+| **Authentication**               | WebAuthn/passkeys, passwords, email verification, magic links, MFA, session management                                                 |
+| **Authorization**                | RBAC, ABAC, ReBAC, organization policies, explainable permission checks, AuthZEN evaluation API                                        |
+| **Identity**                     | Organizations, users, groups, invitations, imports, branding, email templates, DNS domain verification                                 |
+| **Federation**                   | OAuth 2.0/OpenID Connect, SAML 2.0, SCIM 2.0, LDAP/Active Directory, social login                                                      |
+| **Developer & machine identity** | API keys, service principals, agent identities, verifiable credentials, secrets and token vaults, auth hooks, signed webhooks          |
+| **Operations**                   | Tamper-evident audit logs, analytics, GDPR workflows, retention jobs, SIEM sinks, notifications, rate limits, billing and entitlements |
+| **AI**                           | Admin-console copilot backed by Anthropic or any OpenAI-compatible provider, plus a tool manifest for agent integrations               |
 
 Some capabilities are entitlement-gated, and external services such as social providers, SMS, email, Redis, NATS, KMS, AI providers, and payment processors require their own configuration.
 
@@ -117,22 +117,28 @@ bounded context must not import `cmd/*` or `internal/bootstrap`.
 
 ## 🧰 Technology Stack
 
-| Layer | Technology |
-| :--- | :--- |
-| Language | Go 1.27 |
-| HTTP | chi v5, REST, OpenAPI 3.1 |
-| Database | PostgreSQL 16, pgx v5, SQL/sqlc |
-| Authentication | WebAuthn/FIDO2, OAuth 2.0, OpenID Connect, SAML 2.0, SCIM 2.0 |
-| Tokens & cryptography | ES256 or RS256 JWT, JWKS, Argon2id, AES-GCM, HMAC-SHA256 |
-| Events | PostgreSQL transactional outbox, optional NATS |
-| Rate limiting | In-process token buckets, optional Redis |
-| Observability | Prometheus metrics, OpenTelemetry tracing, structured logs |
-| Testing | Go test, Testcontainers, gosec, govulncheck |
-| Container | Multi-stage Docker build, distroless non-root runtime |
+| Layer                 | Technology                                                    |
+| :-------------------- | :------------------------------------------------------------ |
+| Language              | Go 1.27                                                       |
+| HTTP                  | chi v5, REST, OpenAPI 3.1                                     |
+| Database              | PostgreSQL 16, pgx v5, SQL/sqlc                               |
+| Authentication        | WebAuthn/FIDO2, OAuth 2.0, OpenID Connect, SAML 2.0, SCIM 2.0 |
+| Tokens & cryptography | ES256 or RS256 JWT, JWKS, Argon2id, AES-GCM, HMAC-SHA256      |
+| Events                | PostgreSQL transactional outbox, optional NATS                |
+| Rate limiting         | In-process token buckets, optional Redis                      |
+| Observability         | Prometheus metrics, OpenTelemetry tracing, structured logs    |
+| Testing               | Go test, Testcontainers, gosec, govulncheck                   |
+| Container             | Multi-stage Docker build, distroless non-root runtime         |
 
 ## 🚀 Quick start
 
-**You need:** Go 1.27 or newer (it fetches the pinned toolchain, go1.27.4, itself) &middot; Docker (with Compose) &middot; `make` &middot; `openssl`
+**You need:** Go 1.27 or newer (it fetches the pinned toolchain, go1.27.4, itself) &middot; Docker (with Compose).
+`make` is optional, and so is Bun (only for `make openapi`). Every task runs in Go (`cmd/devtool`), so it works
+the same on Windows, macOS and Linux: `make dev` and `go run ./cmd/devtool dev` do the same thing.
+
+**On Windows:** install Go and Docker Desktop, then use PowerShell, Command Prompt or Git Bash alike.
+For `make`, install GNU Make (`winget install ezwinports.make` or `choco install make`), or skip it and run
+`go run ./cmd/devtool <task>`. `copy .env.example .env` replaces the `cp` below.
 
 ```bash
 git clone https://github.com/qeetgroup/qeet-id-server.git
@@ -190,13 +196,13 @@ That is the whole setup. Everything else on this page is reference.
 
 ### Useful endpoints
 
-| URL | What |
-| :--- | :--- |
-| `http://localhost:4001/healthz` &middot; `/readyz` | Liveness and readiness |
-| `http://localhost:4001/metrics` | Prometheus scrape endpoint |
-| `http://localhost:4001/.well-known/openid-configuration` | OIDC discovery |
-| `http://localhost:4001/.well-known/jwks.json` | Public signing keys |
-| `http://localhost:8025` | Mailpit — read every message the app sends |
+| URL                                                      | What                                       |
+| :------------------------------------------------------- | :----------------------------------------- |
+| `http://localhost:4001/healthz` &middot; `/readyz`       | Liveness and readiness                     |
+| `http://localhost:4001/metrics`                          | Prometheus scrape endpoint                 |
+| `http://localhost:4001/.well-known/openid-configuration` | OIDC discovery                             |
+| `http://localhost:4001/.well-known/jwks.json`            | Public signing keys                        |
+| `http://localhost:8025`                                  | Mailpit — read every message the app sends |
 
 Mailpit only catches mail once you point the app at it. `.env.example` ships `SMTP_HOST` blank,
 which makes the app **log** emails instead of sending them. To capture them in Mailpit, set
@@ -204,35 +210,37 @@ which makes the app **log** emails instead of sending them. To capture them in M
 
 ### If something goes wrong
 
-| Symptom | Cause |
-| :--- | :--- |
-| Connection refused or password auth failure at startup | `<password>` is still literal in `.env` |
-| Your `.env` edits appear to be ignored | You ran `go run ./cmd/api` directly. **Only the `Makefile` loads `.env`** — nothing in the Go code does, so a direct `go run` silently uses built-in defaults. Use `make dev` |
-| `address already in use` on `:4001` | `make kill` frees the port |
-| A passkey ceremony fails with `passkey.attestation_invalid` | The browser origin is missing from `WEBAUTHN_RP_ORIGINS`. CORS being correct is not enough |
-| You want a clean slate | `make seed-reset` (drops the volume, then seeds), or `make db-reset`, then `make dev` |
+| Symptom                                                                                            | Cause                                                                                                                                                                                                                                     |
+| :------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Connection refused or password auth failure at startup                                             | `<password>` is still literal in `.env`                                                                                                                                                                                                   |
+| Your `.env` edits appear to be ignored                                                             | You ran `go run ./cmd/api` directly. **Only `make` / `go run ./cmd/devtool` load `.env`**: the server doesn't, so a direct `go run ./cmd/api` silently uses built-in defaults. Use `make dev`                                             |
+| `address already in use` on `:4001`                                                                | `make kill` frees the port                                                                                                                                                                                                                |
+| A passkey ceremony fails with `passkey.attestation_invalid`                                        | The browser origin is missing from `WEBAUTHN_RP_ORIGINS`. CORS being correct is not enough                                                                                                                                                |
+| You want a clean slate                                                                             | `make seed-reset` (drops the volume, then seeds), or `make db-reset`, then `make dev`                                                                                                                                                     |
 | `database schema … isn't recorded as built from the migration files this build carries` at startup | The database was migrated by an earlier build, from an earlier copy of the migrations, or by the `migrate` CLI. `make db-reset`, then `make dev`. For a migration of your own that isn't merged yet: `make migrate-down`, then `make dev` |
 
 ## 🛠️ Development
 
 Every target in the [Makefile](./Makefile) — there are no others.
 
-| Command | Purpose |
-| :--- | :--- |
-| `make install` | `go mod download` |
-| `make dev` | Run the API on `:4001` with persistent keys from `.secrets/` |
-| `make dev-secrets` | Generate the local JWT and SAML key material only |
-| `make build` | Compile the API to `bin/qeet-id` |
-| `make test` | Run the unit tests |
-| `make test-db` | Run the database tests against PostgreSQL; Docker required |
-| `make lint` | Run `go vet` and `golangci-lint` as CI does |
-| `make sqlc` / `sqlc-check` | Regenerate `dbgen/` from `queries.sql`, or check it is up to date |
-| `make openapi` / `openapi-check` | Build the five API documents from `api/openapi/src/`, or check they are up to date; Bun required |
-| `make db-up` / `db-down` | Start or stop PostgreSQL, NATS and Mailpit |
-| `make db-reset` | Recreate the local database volume |
-| `make migrate-down` | Roll one migration back, to try its down file; needs the `migrate` CLI. The server applies migrations at start |
-| `make seed` / `seed-reset` | Load development demo data into an empty database, or recreate the database and load it |
-| `make kill` | Free a stuck `:4001` |
+| Command                          | Purpose                                                                                                        |
+| :------------------------------- | :------------------------------------------------------------------------------------------------------------- |
+| `make install`                   | `go mod download`                                                                                              |
+| `make dev`                       | Run the API on `:4001` with persistent keys from `.secrets/`                                                   |
+| `make dev-secrets`               | Generate the local JWT and SAML key material only                                                              |
+| `make build`                     | Compile the API to `bin/qeet-id`                                                                               |
+| `make test`                      | Run the unit tests                                                                                             |
+| `make test-db`                   | Run the database tests against PostgreSQL; Docker required                                                     |
+| `make lint`                      | Run `go vet` and `golangci-lint` as CI does                                                                    |
+| `make fmt` / `fmt-check`         | Format every file (Go, JavaScript, JSON, YAML, Markdown, shell), or check it is formatted                      |
+| `make sqlc` / `sqlc-check`       | Regenerate `dbgen/` from `queries.sql`, or check it is up to date                                              |
+| `make openapi` / `openapi-check` | Build the five API documents from `api/openapi/src/` and the Postman collection, or check they are up to date  |
+| `make postman`                   | Rebuild only the Postman collection in `api/postman/`; import it as its README says                            |
+| `make db-up` / `db-down`         | Start or stop PostgreSQL, NATS and Mailpit                                                                     |
+| `make db-reset`                  | Recreate the local database volume                                                                             |
+| `make migrate-down`              | Roll one migration back, to try its down file; needs the `migrate` CLI. The server applies migrations at start |
+| `make seed` / `seed-reset`       | Load development demo data into an empty database, or recreate the database and load it                        |
+| `make kill`                      | Free a stuck `:4001`                                                                                           |
 
 Run a single test with `go test ./internal/access/authentication/... -run TestName`.
 
@@ -253,6 +261,8 @@ other Go test suites or sqlc/gosec gates.
   `auth.yaml` (access), `management.yaml` (identity), `federation.yaml`, `developer.yaml` and
   `operations.yaml`. There is no monolithic `openapi.yaml`. They are generated from the sources in
   `api/openapi/src/` (one file per path) by `make openapi`; edit the sources, not the documents.
+- [api/postman/](./api/postman/) holds the same API as one Postman collection, with a local
+  environment; `make openapi` rebuilds it with the documents. Its README says how to import it.
 - **A route added without a matching specification entry fails the local test gate** —
   `internal/bootstrap/openapi_coverage_test.go` asserts every mounted route is documented. Update the
   spec in the same change as the route and run `make ci` before pushing.
@@ -260,12 +270,12 @@ other Go test suites or sqlc/gosec gates.
 
 ## 🧠 Working in this repository
 
-| File | For |
-| :--- | :--- |
-| [AGENTS.md](./AGENTS.md) | The rules, the commands, and what CI enforces — start here |
-| [docs/llm/architecture-map.md](./docs/llm/architecture-map.md) | "Where is X?" answered in one hop |
-| [docs/llm/context.md](./docs/llm/context.md) | How the backend actually works |
-| [qeet-repo.yml](./qeet-repo.yml) | Machine-readable repository identity |
+| File                                                           | For                                                        |
+| :------------------------------------------------------------- | :--------------------------------------------------------- |
+| [AGENTS.md](./AGENTS.md)                                       | The rules, the commands, and what CI enforces — start here |
+| [docs/llm/architecture-map.md](./docs/llm/architecture-map.md) | "Where is X?" answered in one hop                          |
+| [docs/llm/context.md](./docs/llm/context.md)                   | How the backend actually works                             |
+| [qeet-repo.yml](./qeet-repo.yml)                               | Machine-readable repository identity                       |
 
 Three things reliably surprise newcomers:
 
@@ -276,7 +286,7 @@ Three things reliably surprise newcomers:
 2. **Migrations are immutable once applied.** Add a new `.up.sql`/`.down.sql` pair; never edit an
    existing one.
 3. **Two behaviours look like bugs and are deliberate**, each with an ADR: the rate limiter fails
-   *open* when its store errors, and auth hooks default to *fail-open*.
+   _open_ when its store errors, and auth hooks default to _fail-open_.
 
 ## 📦 Deployment
 

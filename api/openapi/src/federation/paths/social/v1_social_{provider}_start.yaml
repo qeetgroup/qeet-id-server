@@ -19,11 +19,11 @@ get:
     form_post callback carries it) naming the sign-in, which the callback
     requires.
   responses:
-    '302':
+    "302":
       description: OK
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -84,7 +84,7 @@ that a release image exists.
 - Owner: a GitHub organization admin for billing; the server team for any fixes.
 - Blocks G-02 to G-06, which all deploy this image.
 
-**From the review:** One immutable release candidate with full `make ci`, each accepted regression, resolved or explicitly accepted release risks, and a recorded feature/configuration matrix. Earlier partial green runs do not cover later commits. *Owner and dependencies:* Server team; existing programme
+**From the review:** One immutable release candidate with full `make ci`, each accepted regression, resolved or explicitly accepted release risks, and a recorded feature/configuration matrix. Earlier partial green runs do not cover later commits. _Owner and dependencies:_ Server team; existing programme
 
 ## G-02: Customer sign-in journeys end to end
 
@@ -119,7 +119,7 @@ Social sign-in (GitHub, Facebook, X, Discord and Apple) has only been tested aga
 - Needs G-01's release image and a staging environment.
 - Needs the console, hosted-login and SDK updates, a real app registered with each social provider, and a test organization at an identity provider.
 
-**From the review:** Two isolated customer orgs plus a home/guest account; passkey/password/recovery, OIDC code/refresh/logout, actual supported SAML/SCIM IdP fixtures, offboarding and key rotation. Exercise deployed browser/SDK paths, not only direct handlers. *Owner and dependencies:* Server + kit + client owners; phases 1-4
+**From the review:** Two isolated customer orgs plus a home/guest account; passkey/password/recovery, OIDC code/refresh/logout, actual supported SAML/SCIM IdP fixtures, offboarding and key rotation. Exercise deployed browser/SDK paths, not only direct handlers. _Owner and dependencies:_ Server + kit + client owners; phases 1-4
 
 ## G-03: Backup restore and upgrade rehearsal
 
@@ -159,7 +159,7 @@ build can leave an invalid index that has to be cleaned up before retrying.
 - Owners: deploy and kit (the backups live in the infrastructure), with the server team.
 - Needs G-01's image and the staging environment.
 
-**From the review:** Restore a backup into an isolated environment with the required encryption/signing key versions; verify sign-in, secrets, organization isolation and audit-chain verification. Record measured RPO/RTO. Rehearse interrupted concurrent-index migration and a supported rollback/roll-forward path; never fake schema version records to boot an incompatible binary. *Owner and dependencies:* Deploy/kit + server; 2.9, 5.4
+**From the review:** Restore a backup into an isolated environment with the required encryption/signing key versions; verify sign-in, secrets, organization isolation and audit-chain verification. Record measured RPO/RTO. Rehearse interrupted concurrent-index migration and a supported rollback/roll-forward path; never fake schema version records to boot an incompatible binary. _Owner and dependencies:_ Deploy/kit + server; 2.9, 5.4
 
 ## G-04: Load and failure test
 
@@ -195,7 +195,7 @@ We also need to know how many users one instance can serve, and what happens whe
 - Needs G-01's image and the staging environment.
 - Related: overload shedding and instance sizing.
 
-**From the review:** Two replicas, shared limiter store, noisy organization, slow SSE consumer, stalled AI provider, database contention and NATS/mail/SIEM outages. Measure p95/p99, bounded memory/pool use and recovery lag against chosen targets. Preserve deliberate failure policies. *Owner and dependencies:* Server + operations; 2.10, 5.7, R-01/R-02
+**From the review:** Two replicas, shared limiter store, noisy organization, slow SSE consumer, stalled AI provider, database contention and NATS/mail/SIEM outages. Measure p95/p99, bounded memory/pool use and recovery lag against chosen targets. Preserve deliberate failure policies. _Owner and dependencies:_ Server + operations; 2.10, 5.7, R-01/R-02
 
 ## G-05: Revoked access really stops
 
@@ -225,7 +225,7 @@ We also need to know how many users one instance can serve, and what happens whe
 
 - Needs G-01's image, the staging environment and a test app that receives webhooks.
 
-**From the review:** Prove effective revocation across session, grant, API key, service/agent token, introspection and open streams. Distinguish server revocation, queued delivery, delivered notification and relying-party acknowledgement. *Owner and dependencies:* Server + integrating applications; 1.10, R-02
+**From the review:** Prove effective revocation across session, grant, API key, service/agent token, introspection and open streams. Distinguish server revocation, queued delivery, delivered notification and relying-party acknowledgement. _Owner and dependencies:_ Server + integrating applications; 1.10, R-02
 
 ## G-06: Privacy and support readiness
 
@@ -256,7 +256,7 @@ Support work must not leak secrets or personal data, and someone has to own an i
 
 - Owners: product and operations; the staging environment for the rehearsal.
 
-**From the review:** Rehearse export/erasure/restore-window handling; document model subprocessors and data boundaries; redact support bundles; assign incident response and recovery ownership. Existing GDPR work is a dependency, not a new finding. *Owner and dependencies:* Server + product/operations; 2.7, 5.1
+**From the review:** Rehearse export/erasure/restore-window handling; document model subprocessors and data boundaries; redact support bundles; assign incident response and recovery ownership. Existing GDPR work is a dependency, not a new finding. _Owner and dependencies:_ Server + product/operations; 2.7, 5.1
 
 ## G-07: Independent security review
 
@@ -290,4 +290,4 @@ Claims such as "NIST AAL2" or "ASVS compliant" need test evidence behind them; w
 
 - Owner: security and product; a budget for an outside tester; the staging environment.
 
-**From the review:** Map scoped ASVS 5.0.0 requirements to actual tests/manual evidence; run protocol conformance and an independent auth/organization security review. Define the intended authentication assurance before making NIST claims. Email OTP is not NIST out-of-band authentication; syncable passkeys do not establish AAL3. *Owner and dependencies:* Security/product; standards below
+**From the review:** Map scoped ASVS 5.0.0 requirements to actual tests/manual evidence; run protocol conformance and an independent auth/organization security review. Define the intended authentication assurance before making NIST claims. Email OTP is not NIST out-of-band authentication; syncable passkeys do not establish AAL3. _Owner and dependencies:_ Security/product; standards below

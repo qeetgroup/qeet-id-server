@@ -1,10 +1,7 @@
 {
   "uid": "qeet-id-security",
   "title": "Qeet ID — Security and identity",
-  "tags": [
-    "qeet-id",
-    "security"
-  ],
+  "tags": ["qeet-id", "security"],
   "timezone": "browser",
   "schemaVersion": 39,
   "version": 1,
@@ -17,7 +14,7 @@
   "panels": [
     {
       "type": "row",
-      "title": "Sign-in protection",
+      "title": "Sign-ins and tokens",
       "collapsed": false,
       "gridPos": {
         "w": 24,
@@ -30,6 +27,175 @@
     },
     {
       "type": "timeseries",
+      "title": "Sign-ins by outcome",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "w": 12,
+        "h": 8,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (outcome) (rate(sign_ins_total{job=\"qeet-id\"}[5m])) * 300",
+          "legendFormat": "{{outcome}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {},
+      "description": "succeeded, or the reason a sign-in was refused (a wrong credential is an expected answer, not a server error). MFA codes count under method *_mfa / mfa.",
+      "id": 2
+    },
+    {
+      "type": "timeseries",
+      "title": "Successful sign-ins by method",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "w": 12,
+        "h": 8,
+        "x": 12,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (method) (rate(sign_ins_total{job=\"qeet-id\",outcome=\"succeeded\"}[5m])) * 300",
+          "legendFormat": "{{method}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {},
+      "id": 3
+    },
+    {
+      "type": "timeseries",
+      "title": "Token requests by grant",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "w": 8,
+        "h": 8,
+        "x": 0,
+        "y": 9
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (grant) (rate(oauth_token_requests_total{job=\"qeet-id\"}[5m])) * 300",
+          "legendFormat": "{{grant}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {},
+      "id": 4
+    },
+    {
+      "type": "timeseries",
+      "title": "Token requests by outcome",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "w": 8,
+        "h": 8,
+        "x": 8,
+        "y": 9
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (outcome) (rate(oauth_token_requests_total{job=\"qeet-id\"}[5m])) * 300",
+          "legendFormat": "{{outcome}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {},
+      "id": 5
+    },
+    {
+      "type": "timeseries",
+      "title": "Rate-limit rejections by scope",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "w": 8,
+        "h": 8,
+        "x": 16,
+        "y": 9
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (scope) (rate(rate_limit_rejections_total{job=\"qeet-id\"}[5m])) * 300",
+          "legendFormat": "{{scope}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {},
+      "id": 6
+    },
+    {
+      "type": "row",
+      "title": "Sign-in protection",
+      "collapsed": false,
+      "gridPos": {
+        "w": 24,
+        "h": 1,
+        "x": 0,
+        "y": 17
+      },
+      "panels": [],
+      "id": 7
+    },
+    {
+      "type": "timeseries",
       "title": "Lockouts by counter",
       "datasource": {
         "type": "prometheus",
@@ -39,7 +205,7 @@
         "w": 8,
         "h": 8,
         "x": 0,
-        "y": 1
+        "y": 18
       },
       "targets": [
         {
@@ -58,7 +224,7 @@
       },
       "options": {},
       "description": "Lockouts per 5m: a spike is a spraying or stuffing run.",
-      "id": 2
+      "id": 8
     },
     {
       "type": "timeseries",
@@ -71,7 +237,7 @@
         "w": 8,
         "h": 8,
         "x": 8,
-        "y": 1
+        "y": 18
       },
       "targets": [
         {
@@ -89,7 +255,7 @@
         "overrides": []
       },
       "options": {},
-      "id": 3
+      "id": 9
     },
     {
       "type": "timeseries",
@@ -102,7 +268,7 @@
         "w": 8,
         "h": 8,
         "x": 16,
-        "y": 1
+        "y": 18
       },
       "targets": [
         {
@@ -130,7 +296,7 @@
       },
       "options": {},
       "description": "Sign-in fails closed when the lockout counters are unavailable.",
-      "id": 4
+      "id": 10
     },
     {
       "type": "timeseries",
@@ -143,7 +309,7 @@
         "w": 12,
         "h": 8,
         "x": 0,
-        "y": 9
+        "y": 26
       },
       "targets": [
         {
@@ -161,7 +327,7 @@
         "overrides": []
       },
       "options": {},
-      "id": 5
+      "id": 11
     },
     {
       "type": "timeseries",
@@ -174,7 +340,7 @@
         "w": 12,
         "h": 8,
         "x": 12,
-        "y": 9
+        "y": 26
       },
       "targets": [
         {
@@ -192,7 +358,7 @@
         "overrides": []
       },
       "options": {},
-      "id": 6
+      "id": 12
     },
     {
       "type": "row",
@@ -202,10 +368,10 @@
         "w": 24,
         "h": 1,
         "x": 0,
-        "y": 17
+        "y": 34
       },
       "panels": [],
-      "id": 7
+      "id": 13
     },
     {
       "type": "timeseries",
@@ -218,7 +384,7 @@
         "w": 12,
         "h": 8,
         "x": 0,
-        "y": 18
+        "y": 35
       },
       "targets": [
         {
@@ -245,7 +411,7 @@
         "overrides": []
       },
       "options": {},
-      "id": 8
+      "id": 14
     },
     {
       "type": "timeseries",
@@ -258,7 +424,7 @@
         "w": 12,
         "h": 8,
         "x": 12,
-        "y": 18
+        "y": 35
       },
       "targets": [
         {
@@ -276,7 +442,7 @@
         "overrides": []
       },
       "options": {},
-      "id": 9
+      "id": 15
     },
     {
       "type": "row",
@@ -286,10 +452,10 @@
         "w": 24,
         "h": 1,
         "x": 0,
-        "y": 26
+        "y": 43
       },
       "panels": [],
-      "id": 10
+      "id": 16
     },
     {
       "type": "timeseries",
@@ -302,7 +468,7 @@
         "w": 8,
         "h": 8,
         "x": 0,
-        "y": 27
+        "y": 44
       },
       "targets": [
         {
@@ -320,7 +486,7 @@
         "overrides": []
       },
       "options": {},
-      "id": 11
+      "id": 17
     },
     {
       "type": "stat",
@@ -333,7 +499,7 @@
         "w": 8,
         "h": 8,
         "x": 8,
-        "y": 27
+        "y": 44
       },
       "targets": [
         {
@@ -353,7 +519,7 @@
         "overrides": []
       },
       "options": {},
-      "id": 12
+      "id": 18
     },
     {
       "type": "timeseries",
@@ -366,7 +532,7 @@
         "w": 8,
         "h": 8,
         "x": 16,
-        "y": 27
+        "y": 44
       },
       "targets": [
         {
@@ -384,7 +550,7 @@
         "overrides": []
       },
       "options": {},
-      "id": 13
+      "id": 19
     }
   ],
   "templating": {

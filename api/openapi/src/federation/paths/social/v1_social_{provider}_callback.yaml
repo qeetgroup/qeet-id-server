@@ -59,13 +59,13 @@ get:
         type: string
   security: []
   responses:
-    '302':
+    "302":
       description: OK
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml
 post:
   operationId: completeSocialSignInWithFormPost
@@ -98,9 +98,9 @@ post:
             code:
               type: string
   responses:
-    '302':
+    "302":
       description: Redirect to the hosted login or account application
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '413':
+    "413":
       description: Form body too large

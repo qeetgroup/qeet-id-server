@@ -33,7 +33,7 @@ post:
               type: string
               format: email
   responses:
-    '200':
+    "200":
       description: Where the address signs in
       content:
         application/json:
@@ -86,9 +86,9 @@ post:
                       description: >-
                         For a credentials connection, where the hosted login
                         posts the same user name and password for its session.
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

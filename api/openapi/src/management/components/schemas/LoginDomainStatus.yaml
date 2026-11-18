@@ -12,7 +12,7 @@ properties:
   checked_at:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
     description: When this result was found; null without a hostname.
   dns_checked_at:

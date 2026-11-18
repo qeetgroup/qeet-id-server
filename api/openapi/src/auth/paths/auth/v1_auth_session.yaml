@@ -17,14 +17,14 @@ delete:
     - Auth
   security: []
   responses:
-    '204':
+    "204":
       description: Signed out (or there was no session to end), cookie cleared
       headers:
         Cache-Control:
           $ref: ../../../shared/headers/NoStoreCacheControl.yaml
         Pragma:
           $ref: ../../../shared/headers/NoStorePragma.yaml
-    '403':
+    "403":
       description: >-
         The request failed the CSRF check (`csrf_failed`): it came from an origin
         that is not allowed, or did not echo the qe_csrf cookie in the
@@ -33,7 +33,7 @@ delete:
         application/json:
           schema:
             $ref: ../../../shared/schemas/Error.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml
 post:
   operationId: createSsoSession
@@ -88,7 +88,7 @@ post:
         schema:
           $ref: ../../components/schemas/SessionRequest.yaml
   responses:
-    '200':
+    "200":
       description: |
         Either the SSO cookie was set (`{user_id}`) or an MFA challenge to
         complete at POST /v1/auth/session/mfa — when the user holds a second
@@ -109,15 +109,15 @@ post:
                     type: string
                     format: uuid
               - $ref: ../../../shared/schemas/MFAChallenge.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '415':
+    "415":
       $ref: ../../components/responses/UnsupportedMediaType.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '429':
+    "429":
       description: >-
         The account is locked for this network or everywhere
         (`auth.account_locked`), or the source network is throttled for spraying
@@ -127,5 +127,5 @@ post:
         application/json:
           schema:
             $ref: ../../../shared/schemas/Error.yaml
-    '503':
+    "503":
       $ref: ../../components/responses/SignInUnavailable.yaml

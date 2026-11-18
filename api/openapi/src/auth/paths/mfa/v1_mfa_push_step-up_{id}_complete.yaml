@@ -20,7 +20,7 @@ post:
     another session; 410 mfa.push_challenge_expired for one left unanswered past
     its expiry.
   responses:
-    '200':
+    "200":
       description: Stepped up
       content:
         application/json:
@@ -31,9 +31,9 @@ post:
                 type: string
                 enum:
                   - approved
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '409':
+    "409":
       $ref: ../../../shared/responses/Conflict.yaml
-    '410':
+    "410":
       description: The request expired unanswered (mfa.push_challenge_expired)

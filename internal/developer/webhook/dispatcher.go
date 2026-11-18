@@ -99,6 +99,7 @@ func (s *Service) tick(ctx context.Context) error {
 			}); err != nil {
 				return err
 			}
+			deliveries.WithLabelValues("delivered").Inc()
 			if err := s.q.ClearSubscriptionFailing(ctx, dbgen.ClearSubscriptionFailingParams{ID: it.SubscriptionID, OrganizationID: it.OrganizationID}); err != nil {
 				return err
 			}
@@ -120,6 +121,7 @@ func (s *Service) tick(ctx context.Context) error {
 			}); err != nil {
 				return err
 			}
+			deliveries.WithLabelValues("dead").Inc()
 			continue
 		}
 		backoff := time.Duration(1<<min(int(it.Attempt), 8)) * 30 * time.Second
@@ -133,6 +135,7 @@ func (s *Service) tick(ctx context.Context) error {
 		}); err != nil {
 			return err
 		}
+		deliveries.WithLabelValues("retry").Inc()
 	}
 	return nil
 }

@@ -14,15 +14,15 @@ get:
   parameters:
     - $ref: ../../../shared/parameters/OrganizationID.yaml
   responses:
-    '200':
+    "200":
       description: Billing profile
       content:
         application/json:
           schema:
             $ref: ../../components/schemas/BillingProfile.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
 put:
   operationId: setBillingProfile
@@ -45,13 +45,13 @@ put:
         schema:
           $ref: ../../components/schemas/BillingProfile.yaml
   responses:
-    '200':
+    "200":
       description: Updated billing profile
       content:
         application/json:
           schema:
             $ref: ../../components/schemas/BillingProfile.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml

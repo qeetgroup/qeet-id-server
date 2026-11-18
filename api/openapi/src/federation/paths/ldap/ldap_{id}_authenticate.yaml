@@ -74,7 +74,7 @@ post:
     links sent to the old address then stop working); and its groups, as GET
     /v1/organizations/{organizationID}/ldap/{id}/group-mappings describes.
   responses:
-    '200':
+    "200":
       description: >-
         Signed in with a token pair, or a challenge to complete at POST
         /v1/auth/mfa (the MFAChallenge of the authentication API).
@@ -124,9 +124,9 @@ post:
                       On an enrolment challenge in the organization's grace
                       period, when it ends.
                 additionalProperties: true
-    '400':
+    "400":
       $ref: ../../../shared/responses/BadRequest.yaml
-    '401':
+    "401":
       description: >-
         The directory refused the username or password
         (`ldap.invalid_credentials`).
@@ -134,7 +134,7 @@ post:
         application/json:
           schema:
             $ref: ../../../shared/schemas/Error.yaml
-    '402':
+    "402":
       description: >-
         The organization's plan does not include LDAP
         (`billing.upgrade_required`).
@@ -142,7 +142,7 @@ post:
         application/json:
           schema:
             $ref: ../../../shared/schemas/Error.yaml
-    '403':
+    "403":
       description: >-
         The organization does not allow sign-in from this network
         (`auth.address_not_allowed`), the connection is disabled or still a
@@ -155,11 +155,11 @@ post:
         application/json:
           schema:
             $ref: ../../../shared/schemas/Error.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '429':
+    "429":
       description: >-
         The account is locked (`auth.account_locked`), the source network is
         throttled, or the rate limit is exceeded (`too_many_requests`). A locked
@@ -168,7 +168,7 @@ post:
         application/json:
           schema:
             $ref: ../../../shared/schemas/Error.yaml
-    '503':
+    "503":
       description: >-
         The sign-in lockout could not be evaluated, so the attempt was refused
         (`auth.sign_in_unavailable`, retryable).

@@ -25,7 +25,7 @@ post:
             token:
               type: string
   responses:
-    '200':
+    "200":
       description: A neutral confirmation message
       content:
         application/json:
@@ -34,7 +34,7 @@ post:
             properties:
               message:
                 type: string
-    '403':
+    "403":
       $ref: ../../components/responses/SSORequired.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

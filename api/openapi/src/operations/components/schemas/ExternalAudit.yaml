@@ -29,12 +29,12 @@ properties:
   expires_on:
     type:
       - string
-      - 'null'
+      - "null"
     format: date
   created_by:
     type:
       - string
-      - 'null'
+      - "null"
     format: uuid
   created_at:
     type: string

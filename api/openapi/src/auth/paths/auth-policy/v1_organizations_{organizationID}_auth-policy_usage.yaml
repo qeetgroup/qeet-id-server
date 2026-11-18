@@ -16,7 +16,7 @@ get:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '200':
+    "200":
       description: The counts
       content:
         application/json:
@@ -68,7 +68,7 @@ get:
                       type: integer
               magic_link_enabled:
                 type: boolean
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml

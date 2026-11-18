@@ -80,7 +80,7 @@ post:
                 Treated as untrusted; never used for authorization.
               additionalProperties: true
   responses:
-    '200':
+    "200":
       description: >-
         SSE stream of StreamEvent frames. Event types: thinking, token,
         tool_call, tool_result, error, done.
@@ -88,11 +88,11 @@ post:
         text/event-stream:
           schema:
             type: string
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml
-    '409':
+    "409":
       description: >-
         Qeet AI not configured (QEETAI_PROVIDER/QEETAI_API_KEY unset,
         `qeetai_unconfigured`), or the conversation's previous turn is still

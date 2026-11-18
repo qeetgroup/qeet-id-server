@@ -24,10 +24,10 @@ properties:
   x:
     type: string
     description: EC keys only.
-  'y':
+  "y":
     type: string
     description: EC keys only.
-  'n':
+  "n":
     type: string
     description: RSA keys only. The modulus.
   e:

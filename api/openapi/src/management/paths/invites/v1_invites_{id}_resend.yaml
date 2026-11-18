@@ -25,7 +25,7 @@ post:
     - bearerAuth: []
     - apiKeyAuth: []
   responses:
-    '200':
+    "200":
       description: Invitation resent
       content:
         application/json:
@@ -36,9 +36,9 @@ post:
             properties:
               invite:
                 $ref: ../../components/schemas/Invite.yaml
-    '401':
+    "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
-    '403':
+    "403":
       $ref: ../../../shared/responses/Forbidden.yaml
-    '404':
+    "404":
       $ref: ../../../shared/responses/NotFound.yaml

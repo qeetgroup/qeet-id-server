@@ -26,7 +26,7 @@ post:
     auth.sso_required before the address is looked up (see the SSORequired
     response).
   responses:
-    '200':
+    "200":
       description: >-
         The ceremony's session_id and the WebAuthn request options (publicKey),
         without allowCredentials
@@ -37,7 +37,7 @@ post:
               challenge: q8V3m9pT1xRwz0LkYb2NcHs4dFgJ6uEo7iAa5tSvWyQ
               rpId: id.qeet.in
               userVerification: required
-            session_id: '018f2a72-3d4e-7f5a-9b6c-7d8e9f0a1b2c'
+            session_id: "018f2a72-3d4e-7f5a-9b6c-7d8e9f0a1b2c"
           schema:
             type: object
             required:
@@ -49,11 +49,11 @@ post:
               session_id:
                 type: string
                 format: uuid
-    '403':
+    "403":
       $ref: ../../components/responses/SSORequired.yaml
-    '415':
+    "415":
       $ref: ../../components/responses/UnsupportedMediaType.yaml
-    '422':
+    "422":
       $ref: ../../../shared/responses/Unprocessable.yaml
-    '429':
+    "429":
       $ref: ../../../shared/responses/TooManyRequests.yaml

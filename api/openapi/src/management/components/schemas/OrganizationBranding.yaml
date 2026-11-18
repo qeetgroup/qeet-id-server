@@ -6,28 +6,28 @@ properties:
   logo_url:
     type:
       - string
-      - 'null'
+      - "null"
   primary_color:
     type:
       - string
-      - 'null'
+      - "null"
   secondary_color:
     type:
       - string
-      - 'null'
+      - "null"
     description: Brand-panel accent, independent of page background.
   custom_domain:
     type:
       - string
-      - 'null'
+      - "null"
   email_from_name:
     type:
       - string
-      - 'null'
+      - "null"
   email_from_address:
     type:
       - string
-      - 'null'
+      - "null"
     deprecated: true
     writeOnly: true
     description: >-
