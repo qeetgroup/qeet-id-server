@@ -2,28 +2,30 @@
 
 This folder holds two things for Qeet ID:
 
-- **[release-1.0.md](release-1.0.md):** the seven checks Qeet ID 1.0 has to pass before real customers use it.
-- **[ideas.md](ideas.md):** 25 product ideas for after 1.0. None is approved.
+- **[release-checks.md](release-checks.md):** the seven checks the first release, 2027.1.0, has to pass before real customers use it.
+- **[ideas.md](ideas.md):** 25 product ideas for after the first release. None is approved.
 
 Both came out of a backend review and product research done in October 2026. These pages keep the full reasoning, the proposed APIs and the sources behind each item.
 
-## Status (2 November 2026)
+## Status (19 November 2026)
 
+- **First release:** `2027.1.0`, planned for Tuesday 19 January 2027. Its branch, `release/2027.1.0`, is cut by
+  1 December 2026 (see Branches and releases in [AGENTS.md](../../AGENTS.md)).
 - **Release checks:** open. CI has to run on the release candidate first (G-01), and the other checks need a staging copy of production, which waits for the AWS production freeze to lift.
-- **Ideas:** none started. The product owner picks one, with a design partner, after 1.0 is stable.
-- **Review findings:** the review's five defects are fixed in 1.0 (see the table below).
+- **Ideas:** none started. The product owner picks one, with a design partner, after the first release is stable.
+- **Review findings:** the review's five defects are fixed in the first release (see the table below).
 
 ## Index
 
 | ID        | Name                                                       | Detail                                                                              |
 | --------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| G-01      | Full CI on the 1.0 release candidate                       | [release-1.0.md](release-1.0.md#g-01-full-ci-on-the-10-release-candidate)           |
-| G-02      | Customer sign-in journeys end to end                       | [release-1.0.md](release-1.0.md#g-02-customer-sign-in-journeys-end-to-end)          |
-| G-03      | Backup restore and upgrade rehearsal                       | [release-1.0.md](release-1.0.md#g-03-backup-restore-and-upgrade-rehearsal)          |
-| G-04      | Load and failure test                                      | [release-1.0.md](release-1.0.md#g-04-load-and-failure-test)                         |
-| G-05      | Revoked access really stops                                | [release-1.0.md](release-1.0.md#g-05-revoked-access-really-stops)                   |
-| G-06      | Privacy and support readiness                              | [release-1.0.md](release-1.0.md#g-06-privacy-and-support-readiness)                 |
-| G-07      | Independent security review                                | [release-1.0.md](release-1.0.md#g-07-independent-security-review)                   |
+| G-01      | Full CI on the release candidate                           | [release-checks.md](release-checks.md#g-01-full-ci-on-the-release-candidate)        |
+| G-02      | Customer sign-in journeys end to end                       | [release-checks.md](release-checks.md#g-02-customer-sign-in-journeys-end-to-end)    |
+| G-03      | Backup restore and upgrade rehearsal                       | [release-checks.md](release-checks.md#g-03-backup-restore-and-upgrade-rehearsal)    |
+| G-04      | Load and failure test                                      | [release-checks.md](release-checks.md#g-04-load-and-failure-test)                   |
+| G-05      | Revoked access really stops                                | [release-checks.md](release-checks.md#g-05-revoked-access-really-stops)             |
+| G-06      | Privacy and support readiness                              | [release-checks.md](release-checks.md#g-06-privacy-and-support-readiness)           |
+| G-07      | Independent security review                                | [release-checks.md](release-checks.md#g-07-independent-security-review)             |
 | F-01      | Preview a policy change before it goes live                | [ideas.md](ideas.md#f-01-preview-a-policy-change-before-it-goes-live)               |
 | F-02      | Access reviews and time-limited admin access               | [ideas.md](ideas.md#f-02-access-reviews-and-time-limited-admin-access)              |
 | F-03      | Offboarding receipt                                        | [ideas.md](ideas.md#f-03-offboarding-receipt)                                       |
@@ -54,21 +56,21 @@ Both came out of a backend review and product research done in October 2026. The
 
 Pick one problem that a named customer has, then one idea. The research recommends N-03 (permission-aware AI retrieval) for a customer that runs AI retrieval, otherwise N-05 (exposure analysis); N-01 (workloads without stored secrets) as the strongest adoption feature; and PQ-01 as the practical first post-quantum step. Among N-10 to N-15, test demand for N-15 or N-14 first.
 
-### Suggested sprint sequence after 1.0 stabilises
+### Suggested sprint sequence after the first release stabilises
 
 Illustrative sequencing for one team; two-week slots are planning assumptions.
 Do not run every track simultaneously. Continue a slot if its security/acceptance
 gate is not met, and re-estimate after discovery rather than promising a date.
 
-| Slot                     | Bounded deliverable                                                                                                                                               | Exit decision                                                                                 |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| 0: discovery             | Interview 3-5 design partners, choose one buyer/problem, establish baseline pain, data-flow threat model and success measures. Confirm 1.0 operational stability. | A partner commits to a controlled pilot; otherwise stop/reprioritize.                         |
-| 1: N-03 contract         | One source identity/ACL mapping, proposed OpenAPI, isolated authorization fixtures and a fake retrieval adapter.                                                  | No organization or subject ambiguity; required permissions and integration owner agreed.      |
-| 2: N-03 vertical slice   | One real read-only connector, pre-model authorization and source-provenance recording with synthetic/non-sensitive data.                                          | Unauthorized canaries never reach the fake model; lineage reconciles.                         |
-| 3: N-03 controlled pilot | ACL changes, deletion, cache reuse, quotas, SDK/docs, observability and rollback. Limited opt-in partner traffic after review.                                    | Measured usefulness, latency and isolation meet agreed targets; no automatic broad rollout.   |
-| 4: N-01 trust contract   | One CI issuer's exact trust selectors, preview API and external-verifier threat model. Preserve existing token clients.                                           | Consumer/contract approval and replay/key-rollover policy agreed.                             |
-| 5: N-01 pilot            | One CI integration authenticates without a stored Qeet secret; exercise disabled trust and token lifecycle.                                                       | Adoption and failure handling demonstrated before adding Kubernetes/SPIFFE providers.         |
-| 6: PQ-01 evidence        | Read-only crypto inventory and dependency/exposure report, with unknowns and operator/organization separation.                                                    | Partners can act on the report; choose whether PQ-02 merits an authorized staging experiment. |
+| Slot                     | Bounded deliverable                                                                                                                                                               | Exit decision                                                                                 |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| 0: discovery             | Interview 3-5 design partners, choose one buyer/problem, establish baseline pain, data-flow threat model and success measures. Confirm the first release's operational stability. | A partner commits to a controlled pilot; otherwise stop/reprioritize.                         |
+| 1: N-03 contract         | One source identity/ACL mapping, proposed OpenAPI, isolated authorization fixtures and a fake retrieval adapter.                                                                  | No organization or subject ambiguity; required permissions and integration owner agreed.      |
+| 2: N-03 vertical slice   | One real read-only connector, pre-model authorization and source-provenance recording with synthetic/non-sensitive data.                                                          | Unauthorized canaries never reach the fake model; lineage reconciles.                         |
+| 3: N-03 controlled pilot | ACL changes, deletion, cache reuse, quotas, SDK/docs, observability and rollback. Limited opt-in partner traffic after review.                                                    | Measured usefulness, latency and isolation meet agreed targets; no automatic broad rollout.   |
+| 4: N-01 trust contract   | One CI issuer's exact trust selectors, preview API and external-verifier threat model. Preserve existing token clients.                                                           | Consumer/contract approval and replay/key-rollover policy agreed.                             |
+| 5: N-01 pilot            | One CI integration authenticates without a stored Qeet secret; exercise disabled trust and token lifecycle.                                                                       | Adoption and failure handling demonstrated before adding Kubernetes/SPIFFE providers.         |
+| 6: PQ-01 evidence        | Read-only crypto inventory and dependency/exposure report, with unknowns and operator/organization separation.                                                                    | Partners can act on the report; choose whether PQ-02 merits an authorized staging experiment. |
 
 If the selected buyer does not operate RAG, replace slots 1-3 with the N-05
 exposure-analysis pilot. N-02/N-04 follow a proven AI integration; N-06 follows
@@ -121,7 +123,7 @@ and support process. Keep a portable, documented exit/export path. Never make
 
 ## Plan items referred to
 
-Numbers such as "4.4" or "5.3" in these pages are items of the October 2026 enterprise plan. All of them are built in 1.0.
+Numbers such as "4.4" or "5.3" in these pages are items of the October 2026 enterprise plan. All of them are built in the first release.
 
 | Item | What it covers                                                                                                                                                                                                                                                            |
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -256,9 +258,9 @@ The review looked at these and decided against them. Don't reopen them without n
   audit completeness, admission control and image provenance, remain owned by
   the original programme rather than becoming duplicate findings here.
 
-## Review findings fixed in 1.0
+## Review findings fixed in the first release
 
-The review found five defects. All are fixed, with tests, in the 1.0 code:
+The review found five defects. All are fixed, with tests, in the first release's code:
 
 | ID    | What was wrong                                                                                                         | Fix                                                                                                                         |
 | ----- | ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |

@@ -1,12 +1,12 @@
 # Changelog
 
 All notable changes to this project are documented in this file. The format is based on
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
-[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are named after the month they
+ship, `YEAR.MONTH.N` (see Branches and releases in [AGENTS.md](AGENTS.md)).
 
 ## [Unreleased]
 
-The first release, 1.0.0, is in preparation. No version has been published yet.
+The first release, 2027.1.0, is in preparation. No version has been published yet.
 
 ### Added
 
@@ -64,6 +64,11 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
 
 ### Changed
 
+- Releases follow a fixed monthly rhythm: the branch is cut on the first working day of the month, tested for
+  about two weeks and released on the third Tuesday; urgent fixes still ship as hotfixes. The first release
+  is `2027.1.0`, planned for Tuesday 19 January 2027, and the documents name it that way throughout. Its
+  release checks are in `docs/roadmap/release-checks.md`. From the first release the API documents'
+  `info.version` is the release's version too, instead of a version of their own.
 - `make sonar` measures coverage with every test, the database ones too, across packages (so it needs Docker
   and takes about eight minutes), and leaves the development tools, the demo seed, the test harness and the
   build scripts out of the figure. It counted unit tests only, which read 18% where the tests cover 72%.

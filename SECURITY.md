@@ -10,7 +10,7 @@ Qeet ID is identity infrastructure. We take security reports seriously and triag
 | Released versions    | ✅ latest minor only |
 | Pre-release / forks  | ❌                   |
 
-The platform is pre-1.0; until v1.0 ships we support only the `main` branch.
+The platform has not had its first release; until `2027.1.0` ships we support only the `main` branch.
 
 ## Reporting a vulnerability
 
@@ -70,7 +70,7 @@ Once a fix is released, we publish a security advisory on this repository descri
 
 ## Bug bounty
 
-A formal bug bounty program will launch alongside v1.0. Until then, we handle reports through this policy and offer thanks + advisory credit.
+A formal bug bounty program will launch alongside the first release, `2027.1.0`. Until then, we handle reports through this policy and offer thanks + advisory credit.
 
 ## Hardening expectations for deployments
 

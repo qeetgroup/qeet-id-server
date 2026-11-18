@@ -1,10 +1,10 @@
-# Qeet ID roadmap ideas after 1.0
+# Qeet ID roadmap ideas after the first release
 
 **None of these ideas is approved.** Each is a hypothesis to test with a customer who has the problem before anything is built. The [README](README.md) explains how to choose one, the rules every idea must follow, the plan items and terms used below, and the sources (S1 to S16, T1 to T6).
 
 Each idea starts with a plain explanation (in short, why, what exists today), followed by the detail from the October 2026 research: the first version to build, the proposed API routes, the controls, how to measure success and the dependencies. The routes are illustrative; none exists yet.
 
-## Part 1: Building on what 1.0 already has (F-01 to F-06)
+## Part 1: Building on what the first release already has (F-01 to F-06)
 
 These are hypotheses about useful combinations, not claims that no competitor
 offers them. Validate demand with design partners before choosing one. All new
@@ -216,7 +216,7 @@ not a unique invention. **PQ-01, cryptographic exposure planning**, is the most
 practical quantum-related starting point. For customers without AI retrieval,
 choose **N-05, exposure analysis**, instead of manufacturing an AI use case.
 
-The December 1.0 fixes and G-01-G-07 still come first. None of the following
+The December fixes for the first release and G-01-G-07 still come first. None of the following
 automatically becomes a release blocker, a current bug, an implementation task,
 or a replacement for F-01-F-06. Each is a hypothesis to validate with a buyer.
 
@@ -1276,7 +1276,7 @@ broken. Do not turn them into parallel implementation without a specific buyer.
 
 **Why we need it.** Large Indian and international enterprises, and regulated sectors, often ask where their data is stored, and may require India-only or EU-only storage, a private link (such as AWS PrivateLink) or a single-organization deployment.
 
-Qeet ID runs one shared deployment. Offering residency is deploy and data-architecture work (separate databases, backups and disaster recovery per region), not a setting. The organization's region field was relabelled in 1.0 so it doesn't suggest residency we don't have.
+Qeet ID runs one shared deployment. Offering residency is deploy and data-architecture work (separate databases, backups and disaster recovery per region), not a setting. The organization's region field was relabelled in the first release so it doesn't suggest residency we don't have.
 
 **What Qeet ID has today:**
 

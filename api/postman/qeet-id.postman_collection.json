@@ -41221,7 +41221,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"version\": \"v1.0.0\",\n  \"commit\": \"string\",\n  \"date\": \"string\",\n  \"go_version\": \"string\",\n  \"schema\": {\n    \"migration\": 3233,\n    \"latest\": 2492\n  }\n}",
+                  "body": "{\n  \"version\": \"v2027.1.0\",\n  \"commit\": \"string\",\n  \"date\": \"string\",\n  \"go_version\": \"string\",\n  \"schema\": {\n    \"migration\": 3233,\n    \"latest\": 2492\n  }\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }

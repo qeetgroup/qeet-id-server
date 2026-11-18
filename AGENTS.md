@@ -269,6 +269,16 @@ rule. A fix during testing is made on `develop` first, then copied to the releas
 is lost from the next release. Test copies (`2027.1.0-rc.1`, `-rc.2` …) are numbered by
 `qeet-id-kit`, never here.
 
+**The monthly rhythm.** The release branch is cut on the first working day of the month, testers run
+it in the kit's TEST and then STAGING for about two weeks, and it is released on the third Tuesday:
+mid-month, away from the month's start, when organizations add people and run payroll and invoices.
+An urgent fix doesn't wait for it: a hotfix ships as soon as it is tested. A month with nothing to
+release is skipped, and the next release takes the next month's name.
+
+The first release is `2027.1.0`. Its branch is cut early, by 1 December 2026, to leave time for the
+one-time [release checks](docs/roadmap/release-checks.md), and it is planned for Tuesday
+19 January 2027. If the checks haven't passed by then it ships the next month, as `2027.2.0`.
+
 ## What CI enforces
 
 | Workflow          | Runs                                                                                                                                                                                                                                                                                                                                   |

@@ -23,7 +23,7 @@ repository:
   product: qeet-id
   type: backend
   role: primary
-  status: active # the product is pre-1.0; this repository is actively developed
+  status: active # the product has not had its first release (2027.1.0); this repository is actively developed
   visibility: private
   default_branch: main
   working_branch: develop
@@ -70,7 +70,7 @@ contracts:
     path: api/openapi/
     format: openapi-3.1
     documents: 5 # access, identity, federation, developer, operations: one per bounded context
-    version: "0.2.0" # info.version of all five; 1.0.0 at the 1.0.0 release, then its own semver
+    version: "0.2.0" # info.version of all five; from the first release, the version of the release they describe (2027.1.0)
     coverage_gate: internal/bootstrap/openapi_coverage_test.go
     source: api/openapi/src/ # the documents are generated from here: make openapi
     bundler: redocly-cli # pinned in api/openapi/src/bun.lock
@@ -120,7 +120,7 @@ ci:
     [.github/workflows/ci.yml, .github/workflows/candidate.yml, .github/workflows/deploy.yml]
   jobs: [verify, image, version, deploy, rollback]
   verify: "ci.yml — on PRs into develop and main: compile (build, vet), golangci-lint, govulncheck, gitleaks; tests, database tests, sqlc diff and gosec run locally (make ci)"
-  branches: "develop · main (production) · release/YEAR.MONTH.0 (monthly) · hotfix/YEAR.MONTH.N — scripts/release/version.sh"
+  branches: "develop · main (production) · release/YEAR.MONTH.0 (monthly: cut on the first working day, released the third Tuesday) · hotfix/YEAR.MONTH.N — scripts/release/version.sh"
   deploy_trigger: merged release/… or hotfix/… pull request into main
   release_image: "candidate.yml — push to release/** or hotfix/**: ghcr.io/qeetgroup/qeet-id-server:sha-<commit>, linux/amd64+arm64, OCI + in.qeet.* labels (consumed by the Qeet ID Kit, qeet-id-kit); deploy.yml promotes it to ECR unchanged"
 

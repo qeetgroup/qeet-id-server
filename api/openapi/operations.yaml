@@ -148,7 +148,7 @@ paths:
                 properties:
                   version:
                     type: string
-                    example: v1.0.0
+                    example: v2027.1.0
                   commit:
                     type: string
                   date:

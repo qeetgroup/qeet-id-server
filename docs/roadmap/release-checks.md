@@ -1,13 +1,13 @@
-# Qeet ID 1.0 release checks
+# Release checks for the first release, 2027.1.0
 
-The ideas for after 1.0 are in [ideas.md](ideas.md); how they fit together is in the [README](README.md).
+The ideas for after the first release are in [ideas.md](ideas.md); how they fit together is in the [README](README.md).
 
 > **Status note (verified 15 Nov 2026):** this is the October 2026 release-readiness review and its
 > seven evidence gates, not a live deployment-status page. The code, migration range and branch
 > model have moved since it was written. Re-read the current Jira issues, workflow runs, release
 > branch and deploy/kit state before using a “where things stand” statement below operationally.
 
-This review defines seven checks Qeet ID 1.0 has to pass before real customers use it. The checks
+This review defines seven checks the first release, 2027.1.0, has to pass before real customers use it. The checks
 prove that the selected release candidate works once deployed together with the console, hosted
 login pages and SDKs; a merge or a large unit-test suite is not that evidence.
 
@@ -47,13 +47,13 @@ supported-feature list and a limited customer pilot, then widen rollout only
 after these gates pass. Release readiness cannot be inferred from code-review
 completion or from a large feature count.
 
-## G-01: Full CI on the 1.0 release candidate
+## G-01: Full CI on the release candidate
 
 **In short.** Run the complete CI pipeline once on the exact commit we will release, and publish the release image from that run.
 
 **Why we need it.** CI is our proof that the released code builds and passes every test and security scan, and that the image we deploy is the one that was tested.
 
-On PR #533 and the October `release/1.0.0` merges, GitHub refused to start any CI job because the
+On PR #533 and the October release-branch merges, GitHub refused to start any CI job because the
 qeetgroup organization's Actions billing failed. Later workflow attempts exist, but the latest
 server Verify run checked on 15 Nov 2026 failed before recording a step. Neither that attempt nor an
 earlier green run on a laptop proves the current candidate, and this repository does not establish
@@ -68,7 +68,7 @@ that a release image exists.
 **Steps:**
 
 - Fix GitHub Actions billing or the spending limit for the qeetgroup organization (Settings, Billing & plans).
-- Set `info.version` to `1.0.0` in the five `api/openapi/src/*/openapi.yaml` files and in qeet-repo.yml, then run `make openapi` (see Versioning in `api/openapi/README.md`).
+- Set `info.version` to the release's version, `2027.1.0`, in the five `api/openapi/src/*/openapi.yaml` files and in qeet-repo.yml, then run `make openapi` (see Versioning in `api/openapi/README.md`).
 - Run CI on the exact current release-candidate commit.
 - Fix anything that fails on a branch from develop and merge it the normal way.
 - Record the release-candidate commit, the image digest and the configuration it is meant to run with (supported features and environment variables).
@@ -97,7 +97,7 @@ Social sign-in (GitHub, Facebook, X, Discord and Apple) has only been tested aga
 **What Qeet ID has today:**
 
 - The server supports passkeys, passwords, magic links, MFA, account recovery, OIDC for apps, SAML and LDAP sign-in, SCIM provisioning and social sign-in per organization.
-- The console, hosted login and SDKs need their updates for the 1.0 server before this can run.
+- The console, hosted login and SDKs need their updates for the first release's server before this can run.
 
 **Steps:**
 
@@ -123,7 +123,7 @@ Social sign-in (GitHub, Facebook, X, Discord and Apple) has only been tested aga
 
 ## G-03: Backup restore and upgrade rehearsal
 
-**In short.** Prove that we can restore Qeet ID from a backup, and that the upgrade to 1.0 runs safely on production-sized data.
+**In short.** Prove that we can restore Qeet ID from a backup, and that the upgrade to the first release runs safely on production-sized data.
 
 **Why we need it.** A backup that has never been restored is not one we can rely on. Part of Qeet ID's data is encrypted with keys that rotate, so a restore also needs the right key versions; otherwise stored secrets can't be read.
 
@@ -239,7 +239,7 @@ Support work must not leak secrets or personal data, and someone has to own an i
 
 - Data export and erasure exist; erasure covers passkeys, OTP destinations, linked identities, directory profiles, vault grants, devices and notifications.
 - A deleted organization's data is purged after a restore window.
-- Qeet AI runs only with the customer's own model key in production for 1.0.
+- Qeet AI runs only with the customer's own model key in production for the first release.
 
 **Steps:**
 

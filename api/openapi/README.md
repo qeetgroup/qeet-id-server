@@ -49,7 +49,7 @@ src/
   `update…` (PATCH) and `set…` (PUT), `delete…` — or the summary's own verb where it
   says more (`revoke`, `remove`, `disable`, `rotate`, `verify`…). Acronyms are words
   (`getOidcClient`); `My` marks the caller's own resource where an administrator's
-  version exists (`listMySessions`, `listUserSessions`). Once 1.0.0 is out an
+  version exists (`listMySessions`, `listUserSessions`). Once the first release is out an
   operationId never changes: generated SDKs use it as the method name.
 - **Lists.** A list answers `{items, …}` in one of two ways. Either it pages by cursor:
   a `limit` parameter, `$ref: …/shared/parameters/Cursor.yaml`, and a `next_cursor`
@@ -131,11 +131,11 @@ top-level `tags:` array.
 
 ## Versioning
 
-The five documents share one `info.version`, the version of the API contract, which
-moves on its own, not with the server's releases: a minor step for anything added
-(routes, optional fields, response fields, error codes), a patch step for corrections to
-the documentation alone, and a major step only with a new `/v2`. It is `1.0.0` from the
-1.0.0 release; until then it stays `0.2.0` while the contract can still change.
+The five documents share one `info.version`. Until the first release it stays `0.2.0`, while the
+contract can still change. From then on it is the version of the release the documents describe
+(`2027.1.0`, then each later release's), so a document always says which release it belongs to. The
+path carries the promise to callers: within `/v1` a release only adds (routes, optional fields,
+response fields, error codes), and a change that would break a caller needs a new `/v2`.
 
 ## Consumers
 

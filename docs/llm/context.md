@@ -16,15 +16,15 @@ production state were not checked. Claims about the _product_ are inherited from
 PostgreSQL database and five bounded contexts. The API is the primary deployable; worker and
 scheduler entry points can run its asynchronous work independently.
 
-|          |                                                 |
-| -------- | ----------------------------------------------- |
-| Module   | `github.com/qeetgroup/qeet-id-server`           |
-| Language | Go 1.27.0 (toolchain 1.27.4)                    |
-| Router   | chi v5                                          |
-| Database | PostgreSQL, pgx v5, hand-written SQL via sqlc   |
-| Binaries | `api`, `worker`, `scheduler`, `migrate`, `seed` |
-| Port     | 4001                                            |
-| Status   | active repository; the **product** is pre-1.0   |
+|          |                                                                               |
+| -------- | ----------------------------------------------------------------------------- |
+| Module   | `github.com/qeetgroup/qeet-id-server`                                         |
+| Language | Go 1.27.0 (toolchain 1.27.4)                                                  |
+| Router   | chi v5                                                                        |
+| Database | PostgreSQL, pgx v5, hand-written SQL via sqlc                                 |
+| Binaries | `api`, `worker`, `scheduler`, `migrate`, `seed`                               |
+| Port     | 4001                                                                          |
+| Status   | active repository; the **product** has not had its first release (`2027.1.0`) |
 
 ## Relationship to the Qeet context layers
 
@@ -610,6 +610,8 @@ targets.**
 - `.github/workflows/candidate.yml` builds the image testers run, on push to `release/YEAR.MONTH.0`
   or `hotfix/YEAR.MONTH.N`; `.github/workflows/deploy.yml` promotes that same image to AWS when the
   branch merges into `main`.
+- A release branch is cut on the first working day of the month and released on the third Tuesday;
+  a hotfix ships as soon as it is tested (AGENTS.md, "Branches and releases").
 
 The workflow files encode triggers and credentials, not the human authority to cut or approve a
 release. Read the current Jira release issue, environment protection and repository settings for
@@ -679,7 +681,7 @@ What review a change needs. Cross-repository impact is expanded in
 
 ## Known constraints
 
-- **Product is pre-1.0.** The API contract is not frozen.
+- **The product has not had its first release.** The API contract is not frozen.
 - **Organization isolation is layered.** Principal/path checks and explicit query predicates are the first
   layer; PostgreSQL row-level security protects organization-owned tables on organization-admin
   requests. Account-level flows and workers still depend on correct predicates.
