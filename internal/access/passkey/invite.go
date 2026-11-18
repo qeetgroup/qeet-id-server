@@ -7,11 +7,13 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
+
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -30,8 +32,8 @@ type InvitationAcceptor interface {
 	InvitationForNewAccount(ctx context.Context, token string) (id, organizationID uuid.UUID, email string, err error)
 	// AcceptForNewAccountTx accepts invitation id for userID, the account just created in tx for email in
 	// organizationID: the invitation, read under lock, must still be pending, unexpired and for that
-	// email and organization. It grants the role and records the acceptance, from ip with user agent ua.
-	AcceptForNewAccountTx(ctx context.Context, tx pgx.Tx, id, organizationID, userID uuid.UUID, email, ip, ua string) error
+	// email and organization. It grants the role and records the acceptance from actor's request.
+	AcceptForNewAccountTx(ctx context.Context, tx pgx.Tx, id, organizationID, userID uuid.UUID, email string, actor audit.Actor) error
 	// CheckInvitationSender refuses invitation id once whoever sent it may no
 	// longer give it. It reads the pool, so it runs before the transaction.
 	CheckInvitationSender(ctx context.Context, id uuid.UUID) error
@@ -57,8 +59,8 @@ func (s *Service) BeginInviteSignup(ctx context.Context, token, displayName stri
 // FinishInviteSignup verifies the passkey, creates the account in the inviting
 // organization with it, accepts the invitation, and signs the person in. The
 // passkey is named as in FinishRegister.
-func (s *Service) FinishInviteSignup(ctx context.Context, sessionID uuid.UUID, credential json.RawMessage, name, ip, ua string) (*auth.TokenPair, error) {
-	name, err := enrolmentName(name, ua)
+func (s *Service) FinishInviteSignup(ctx context.Context, sessionID uuid.UUID, credential json.RawMessage, name string, actor audit.Actor) (*authentication.TokenPair, error) {
+	name, err := enrolmentName(name, actor.UserAgent)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +80,7 @@ func (s *Service) FinishInviteSignup(ctx context.Context, sessionID uuid.UUID, c
 		return nil, err
 	}
 	userID, err := s.createUserFromSignup(ctx, sess, cred, name, func(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
-		return s.invitations.AcceptForNewAccountTx(ctx, tx, sess.inviteID, sess.organizationID, userID, sess.email, ip, ua)
+		return s.invitations.AcceptForNewAccountTx(ctx, tx, sess.inviteID, sess.organizationID, userID, sess.email, actor)
 	})
 	if errors.Is(err, errs.ErrAuthEmailExists) {
 		// An account took the address after the ceremony began.
@@ -87,7 +89,7 @@ func (s *Service) FinishInviteSignup(ctx context.Context, sessionID uuid.UUID, c
 	if err != nil {
 		return nil, err
 	}
-	return s.auth.IssuePair(ctx, userID, sess.organizationID, ip, ua, "invite_accept")
+	return s.auth.IssuePair(ctx, userID, sess.organizationID, actor.IP, actor.UserAgent, "invite_accept")
 }
 
 type inviteSignupBeginInput struct {
@@ -136,7 +138,7 @@ func (h *Handler) inviteSignupFinish(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	pair, err := h.Service.FinishInviteSignup(r.Context(), in.SessionID, in.Credential, in.Name, httpx.ClientIP(r), r.UserAgent())
+	pair, err := h.Service.FinishInviteSignup(r.Context(), in.SessionID, in.Credential, in.Name, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

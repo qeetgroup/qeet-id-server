@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
@@ -432,7 +432,7 @@ func (s *Service) deprovision(ctx context.Context, actor audit.Actor, organizati
 	if err := s.users.SoftDeleteTx(ctx, tx, userID); err != nil {
 		return err
 	}
-	if _, err := auth.EndSignIns(ctx, tx, s.signals, userID, sessionsignal.ReasonDeprovisioned); err != nil {
+	if _, err := authentication.EndSignIns(ctx, tx, s.signals, userID, sessionsignal.ReasonDeprovisioned); err != nil {
 		return err
 	}
 	if err := recordUserEvidence(ctx, tx, actor, organizationID, userID, "user.deleted", nil); err != nil {

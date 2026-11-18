@@ -14,8 +14,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth/authtest"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/authtest"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authpolicy"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
@@ -83,9 +83,9 @@ func newSocialFixture(t *testing.T, with ...fixtureChange) *socialFixture {
 
 // newAuthService is the sign-in service social sign-in goes through,
 // following registration when it isn't nil (else nobody registers).
-func newAuthService(t *testing.T, registration auth.RegistrationPolicy) *auth.Service {
+func newAuthService(t *testing.T, registration authentication.RegistrationPolicy) *authentication.Service {
 	t.Helper()
-	return authtest.New(t, dbtest.Pool(t), func(d *auth.Deps) {
+	return authtest.New(t, dbtest.Pool(t), func(d *authentication.Deps) {
 		if registration != nil {
 			d.Registration = registration
 		}

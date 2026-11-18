@@ -12,7 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
@@ -47,7 +47,7 @@ func TestLockoutsCountAsOpenIncidents(t *testing.T) {
 	victim := dbtest.User(t, organization, organization)
 	dbtest.User(t, other, other)
 
-	lock := auth.AccountLock{Email: victim.Email, Network: "203.0.113.0/24", Counter: auth.CounterAccount,
+	lock := authentication.AccountLock{Email: victim.Email, Network: "203.0.113.0/24", Counter: authentication.CounterAccount,
 		Reason: "10 failed sign-ins", Failures: 10, Threshold: 10, Window: 15 * time.Minute, LockedUntil: time.Now().Add(15 * time.Minute)}
 	svc.OnAccountLocked(ctx, lock)
 	svc.OnAccountLocked(ctx, lock)
@@ -94,13 +94,13 @@ func TestSprayCountsTheAccountsItTargeted(t *testing.T) {
 	organization, other := dbtest.Organization(t), dbtest.Organization(t)
 	a, b, c := dbtest.User(t, organization, organization), dbtest.User(t, organization, organization), dbtest.User(t, organization, organization)
 	elsewhere := dbtest.User(t, other, other)
-	svc.OnAccountLocked(ctx, auth.AccountLock{Email: a.Email, Network: "203.0.113.0/24", Counter: auth.CounterAccount,
+	svc.OnAccountLocked(ctx, authentication.AccountLock{Email: a.Email, Network: "203.0.113.0/24", Counter: authentication.CounterAccount,
 		Reason: "10 failed sign-ins", Failures: 10, Threshold: 10, Window: 15 * time.Minute, LockedUntil: time.Now().Add(15 * time.Minute)})
 	accounts := []string{a.Email, b.Email, c.Email, elsewhere.Email, "nobody@example.test"}
 	for i := range accounts {
 		accounts[i] = strings.ToLower(accounts[i])
 	}
-	svc.OnSourceThrottled(ctx, auth.SourceThrottle{Network: "198.51.100.0/24", Reason: "spray", Accounts: accounts,
+	svc.OnSourceThrottled(ctx, authentication.SourceThrottle{Network: "198.51.100.0/24", Reason: "spray", Accounts: accounts,
 		Window: 15 * time.Minute, ThrottledUntil: time.Now().Add(15 * time.Minute)})
 
 	if sum, err := svc.Summary(ctx, organization); err != nil || sum.AffectedAccounts != 3 {

@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ldap/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/provision"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
@@ -56,7 +56,7 @@ type connFull struct {
 type Service struct {
 	pool     *pgxpool.Pool
 	q        *dbgen.Queries
-	auth     *auth.Service
+	auth     *authentication.Service
 	egress   *egress.Policy
 	box      *envelope.Cipher
 	gate     entitlements.PlanGate
@@ -71,7 +71,7 @@ type Service struct {
 // are required.
 type Deps struct {
 	Pool     *pgxpool.Pool
-	Auth     *auth.Service
+	Auth     *authentication.Service
 	Cipher   *envelope.Cipher      // seals the connections' bind passwords
 	Gate     entitlements.PlanGate // whether the plan includes LDAP
 	Mapper   ProfileMapper         // the attribute mappings signed-in accounts get

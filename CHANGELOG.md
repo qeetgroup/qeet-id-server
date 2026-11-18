@@ -184,6 +184,11 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
 
 ### Fixed
 
+- Retrying one webhook delivery (`POST /v1/webhooks/{id}/deliveries/{deliveryID}/retry`) and sending a test
+  event (`POST /v1/webhooks/{id}/test`) are audited, as `webhook.delivery_retried` and `webhook.test_sent`, in
+  the same transaction as the change; they left no audit row.
+- An invitation accepted by signing up with a passkey records the request ID with the acceptance, and an
+  administrator unlinking a social identity records the caller's actor type, as other audit rows do.
 - The audit rows of an administrator's suspension, reactivation, suspension review, deletion and member
   removal record the caller's browser (user agent) too, and those of a second-factor reset, a passkey removal,
   an ended session and signing someone out everywhere record the caller's actor type (an API key's or a

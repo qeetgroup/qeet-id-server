@@ -16,6 +16,7 @@ post:
   description: >-
     Queues a test.ping event for this subscription alone, whichever events it
     names, and answers once it is queued. Its data is {subscription_id}.
+    Audited as webhook.test_sent.
     Requires webhook.write.
   responses:
     '202':

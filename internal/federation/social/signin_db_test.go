@@ -14,7 +14,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidcrp/oidcrptest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -89,7 +89,7 @@ func TestOrganizationSocialSignIn(t *testing.T) {
 		t.Fatalf("callback went to %s %v; want the console with a one-time code", target, q)
 	}
 	rec = browse(t, f.public, http.MethodPost, "/social/exchange", nil, map[string]string{"code": q.Get("code")})
-	var pair auth.TokenPair
+	var pair authentication.TokenPair
 	dbtest.Decode(t, rec, &pair)
 	if rec.Code != http.StatusOK || pair.AccessToken == "" {
 		t.Fatalf("exchange: %d %s", rec.Code, rec.Body.String())
@@ -116,7 +116,7 @@ func TestOrganizationSocialSignIn(t *testing.T) {
 	rec = f.signIn(t, "okta", start+"&return_to="+url.QueryEscape(returnTo), person)
 	signedIn := false
 	for _, c := range rec.Result().Cookies() {
-		signedIn = signedIn || (c.Name == auth.LoginSessionCookie && c.Value != "")
+		signedIn = signedIn || (c.Name == authentication.LoginSessionCookie && c.Value != "")
 	}
 	if rec.Header().Get("Location") != returnTo || !signedIn {
 		t.Errorf("hosted sign-in went to %q, signed in %v; want the application, signed in", rec.Header().Get("Location"), signedIn)

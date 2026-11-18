@@ -16,14 +16,14 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth/authtest"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/authtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/protocol/webauthncbor"
 	"github.com/go-webauthn/webauthn/protocol/webauthncose"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
@@ -108,7 +108,7 @@ func TestPasskeySecondFactorWithOneConnection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authSvc := authtest.New(t, pool, func(d *auth.Deps) { d.MFA = factors })
+	authSvc := authtest.New(t, pool, func(d *authentication.Deps) { d.MFA = factors })
 	organization := dbtest.Organization(t)
 	a := dbtest.User(t, organization, organization)
 	dbtest.SetPassword(t, a.ID, "Kx7mQ2vLp9Wz")
@@ -117,7 +117,7 @@ func TestPasskeySecondFactorWithOneConnection(t *testing.T) {
 		a.ID, passkey.id, passkey.publicKey(t)); err != nil {
 		t.Fatalf("passkey: %v", err)
 	}
-	res, err := authSvc.Login(ctx, auth.LoginInput{Email: a.Email, Password: "Kx7mQ2vLp9Wz"})
+	res, err := authSvc.Login(ctx, authentication.LoginInput{Email: a.Email, Password: "Kx7mQ2vLp9Wz"})
 	if err != nil || !slices.Contains(res.Methods, "passkey") {
 		t.Fatalf("sign in: %+v, %v; want a challenge a passkey meets", res, err)
 	}
@@ -129,7 +129,7 @@ func TestPasskeySecondFactorWithOneConnection(t *testing.T) {
 	if !ok {
 		t.Fatalf("assertion options %T", options)
 	}
-	proof := auth.MFAProof{Passkey: &auth.PasskeyProof{SessionID: sessionID, Credential: passkey.assert(t, request.Challenge.String(), 1)}}
+	proof := authentication.MFAProof{Passkey: &authentication.PasskeyProof{SessionID: sessionID, Credential: passkey.assert(t, request.Challenge.String(), 1)}}
 
 	dbtest.LeaveOneConnection(t)
 	pair, _, err := authSvc.CompleteMFALoginWith(ctx, res.MFAToken, proof, "", "")

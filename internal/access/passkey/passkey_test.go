@@ -5,7 +5,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
@@ -15,7 +15,7 @@ import (
 // WebAuthn configuration.
 func TestNewServiceNeedsItsDependencies(t *testing.T) {
 	full := Deps{
-		RelyingParty: &RelyingParty{}, Auth: &auth.Service{}, Policy: stubPolicy{}, Invitations: stubInvitations{},
+		RelyingParty: &RelyingParty{}, Auth: &authentication.Service{}, Policy: stubPolicy{}, Invitations: stubInvitations{},
 		Sender: stubSender{}, Capture: stubCapture{},
 	}
 	for name, drop := range map[string]func(*Deps){
@@ -44,5 +44,5 @@ type (
 	stubPolicy      struct{ MethodPolicy }
 	stubInvitations struct{ InvitationAcceptor }
 	stubSender      struct{ notifier.Sender }
-	stubCapture     struct{ auth.DomainCapture }
+	stubCapture     struct{ authentication.DomainCapture }
 )

@@ -6,7 +6,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -64,7 +64,7 @@ func TestDisablingTheApp(t *testing.T) {
 	if err := mfaSvc.Disable(ctx, a.ID, self(a.ID)); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
-	res, err := authSvc.Login(ctx, auth.LoginInput{Email: a.Email, Password: testPassword})
+	res, err := authSvc.Login(ctx, authentication.LoginInput{Email: a.Email, Password: testPassword})
 	if err != nil || res.MFARequired || res.Pair == nil {
 		t.Fatalf("sign in: %+v, %v; want tokens without a challenge", res, err)
 	}
@@ -142,7 +142,7 @@ func TestTOTPSignIn(t *testing.T) {
 	a, _ := member(t)
 	secret, _ := enrolTOTP(t, mfaSvc, a)
 
-	res, err := authSvc.Login(ctx, auth.LoginInput{Email: a.Email, Password: testPassword})
+	res, err := authSvc.Login(ctx, authentication.LoginInput{Email: a.Email, Password: testPassword})
 	if err != nil || !res.MFARequired || res.MFAToken == "" || res.Pair != nil {
 		t.Fatalf("sign in: %+v, %v; want a challenge and no tokens", res, err)
 	}

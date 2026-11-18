@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
+
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/requestsig"
@@ -44,8 +46,12 @@ func TestOutboxEventsReachWebhooksOnce(t *testing.T) {
 	if n, m := deliveries(sub), deliveries(otherSub); n != 1 || m != 0 {
 		t.Fatalf("deliveries: %d to the organization's subscription, %d to another's; want 1 and 0", n, m)
 	}
-	if err := svc.SendTest(ctx, sub); err != nil || deliveries(sub) != 2 {
+	actor := audit.Actor{Type: "user", RequestID: "req-webhook-test"}
+	if err := svc.SendTest(ctx, sub, actor); err != nil || deliveries(sub) != 2 {
 		t.Fatalf("test event: %v, %d deliveries; want one more though it names only group.created", err, deliveries(sub))
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'webhook.test_sent' AND resource_id = $1 AND request_id = $2`, sub.ID, actor.RequestID); n != 1 {
+		t.Fatalf("test events recorded: %d, want 1, as the caller's", n)
 	}
 
 	dispatch(t, svc)
@@ -85,14 +91,23 @@ func TestOutboxEventsReachWebhooksOnce(t *testing.T) {
 	}
 	// Named under another of the organization's webhooks, it isn't found and is left as it was.
 	sibling := subscribe(t, svc, organization, ep.URL, "user.created")
-	if err := svc.RetryDelivery(ctx, sibling.ID, gaveUp, organization); !errors.Is(err, ErrDeliveryNotFound) {
+	if err := svc.RetryDelivery(ctx, sibling.ID, gaveUp, organization, actor); !errors.Is(err, ErrDeliveryNotFound) {
 		t.Fatalf("retry under another webhook: %v, want ErrWebhookDeliveryNotFound", err)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM organization.webhook_deliveries WHERE id = $1 AND dead_at IS NOT NULL`, gaveUp); n != 1 {
 		t.Fatal("a retry under another webhook re-queued the delivery")
 	}
-	if err := svc.RetryDelivery(ctx, owner, gaveUp, organization); err != nil {
+	retried := func() int {
+		return dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'webhook.delivery_retried' AND resource_id = $1 AND request_id = $2`, gaveUp, actor.RequestID)
+	}
+	if n := retried(); n != 0 {
+		t.Fatalf("a refused retry was recorded %d times", n)
+	}
+	if err := svc.RetryDelivery(ctx, owner, gaveUp, organization, actor); err != nil {
 		t.Fatalf("retry: %v", err)
+	}
+	if n := retried(); n != 1 {
+		t.Fatalf("retries recorded: %d, want 1, as the caller's", n)
 	}
 	ep.answer(http.StatusServiceUnavailable)
 	dispatch(t, svc)

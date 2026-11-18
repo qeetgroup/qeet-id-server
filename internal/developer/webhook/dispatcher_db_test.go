@@ -7,6 +7,8 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
+
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
@@ -117,7 +119,7 @@ func TestLapsedPlanStopsDeliveries(t *testing.T) {
 	}
 
 	plans[organization] = true // paid again
-	if err := svc.RetryDelivery(ctx, owner, id, organization); err != nil {
+	if err := svc.RetryDelivery(ctx, owner, id, organization, audit.Actor{Type: "system"}); err != nil {
 		t.Fatal(err)
 	}
 	dispatch(t, svc)

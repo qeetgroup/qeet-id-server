@@ -17,7 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/abac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/accessrequest"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authzen"
@@ -49,7 +49,7 @@ type accessServices struct {
 	rbacService          *rbac.Service
 	policyRepo           *authpolicy.SecurityPolicies
 	recoveryService      *recovery.Service
-	authService          *auth.Service
+	authService          *authentication.Service
 	authPolicyService    *authpolicy.Service
 	mfaService           *mfa.Service
 	threatService        *threat.Service
@@ -195,7 +195,7 @@ func (w *wiring) newSignIn() error {
 	if err != nil {
 		return fmt.Errorf("sign-out notices: %w", err)
 	}
-	svc, err := auth.New(auth.Deps{
+	svc, err := authentication.New(authentication.Deps{
 		Pool: w.pool, Users: w.userRepo, Tokens: w.issuer, Cipher: w.sharedCipher,
 		MFA:  w.mfaService,  // a second factor where the account holds one or must
 		Risk: w.riskService, // every sign-in assessed; a risky one skips no factor
@@ -203,9 +203,9 @@ func (w *wiring) newSignIn() error {
 		// allows, its remembered devices (adaptive MFA) and its sign-in lockout,
 		// which may only be stricter than the platform's.
 		Registration: policies, Methods: policies, Devices: policies,
-		Lockout: func(ctx context.Context, organizationID uuid.UUID) (auth.Lockout, error) {
+		Lockout: func(ctx context.Context, organizationID uuid.UUID) (authentication.Lockout, error) {
 			l, err := policies.SignInLockout(ctx, organizationID)
-			return auth.Lockout(l), err
+			return authentication.Lockout(l), err
 		},
 		Capture:   w.domainVerifyService, // password sign-in, sign-up, hosted registration
 		Addresses: w.ipAllowService,      // every sign-in to an organization, and every renewal
@@ -265,7 +265,7 @@ func breachChecker(cfg *config.Config) authpolicy.BreachChecker {
 func (w *wiring) accessHandlers(d *Deps) error {
 	cfg := w.cfg
 	d.AuthPolicy = &authpolicy.Handler{Service: w.authPolicyService}
-	d.Auth = &auth.Handler{Service: w.authService, Validate: w.validate, CookieSecure: !cfg.IsDev(), Bot: w.botService, GeoCountryHeader: cfg.GeoCountryHeader, ActOnCheck: w.rbacRepo.CheckActOn,
+	d.Auth = &authentication.Handler{Service: w.authService, Validate: w.validate, CookieSecure: !cfg.IsDev(), Bot: w.botService, GeoCountryHeader: cfg.GeoCountryHeader, ActOnCheck: w.rbacRepo.CheckActOn,
 		Throttle: w.sensitiveThrottle}
 	d.RBAC = &rbac.Handler{Repo: w.rbacRepo, Service: w.rbacService, Validate: w.validate, Decider: w.decider, Decisions: w.decisionLog}
 	d.AccessRequest = &accessrequest.Handler{Service: w.accessRequestService, GrantCheck: w.rbacRepo.CheckGrantRole}
@@ -313,7 +313,7 @@ func sessionExpiryCleanupJob(pool *pgxpool.Pool, signals *sessionsignal.Signalle
 		Name:     "session-expiry-cleanup",
 		Interval: 15 * time.Minute,
 		Run: func(ctx context.Context) error {
-			purged, err := auth.PurgeEndedSessions(ctx, pool, auth.SessionRetention, signals)
+			purged, err := authentication.PurgeEndedSessions(ctx, pool, authentication.SessionRetention, signals)
 			if err != nil {
 				return err
 			}
@@ -331,7 +331,7 @@ func refreshRetryCleanupJob(pool *pgxpool.Pool) worker.Scheduled {
 		Name:     "refresh-retry-cleanup",
 		Interval: 5 * time.Minute,
 		Run: func(ctx context.Context) error {
-			n, err := auth.ClearRefreshRetries(ctx, pool)
+			n, err := authentication.ClearRefreshRetries(ctx, pool)
 			if err != nil {
 				return err
 			}

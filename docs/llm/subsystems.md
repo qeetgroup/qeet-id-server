@@ -54,7 +54,7 @@ line count on this revision.
 
 **Purpose** — *"handles login, refresh, logout, and session storage. Access & ID tokens are signed
 ES256 or RS256, by the signing key's type, and verifiable via the public JWKS."*
-**Path** `internal/access/auth/`
+**Path** `internal/access/authentication/`
 **Key dependencies** `platform/http/{errs,httpx}` · `platform/crypto/{tokens,encryption,hibp}` ·
 `platform/events/outbox` · **`identity/user`** and **`operations/audit`** (cross-context)
 **Security** **Critical** — sessions, lockout, trusted device
@@ -183,7 +183,7 @@ transaction."*
 **Path** `internal/identity/{organization,user,group,invite,verification,domainverify}/`
 **Key dependencies** `platform/http/{errs,httpx,paging}` — **the only `http/paging` consumer** ·
 `platform/database/postgres` · `platform/messaging/{notifier,emailtmpl}` ·
-`platform/events/outbox` · **`access/auth`**, **`operations/audit`**
+`platform/events/outbox` · **`access/authentication`**, **`operations/audit`**
 **Security** **High** — organization and user lifecycle
 
 **L4 pointers**
@@ -218,7 +218,7 @@ wider flow coverage.
 JWKS, and userinfo endpoints."*
 **Path** `internal/federation/{oidc,saml,scim,ldap,social,adminportal,directory,oidcsso,ssosync,identitylink,provision,oidcrp,logincode,oauthstate}/`
 **Key dependencies** `platform/http/{errs,httpx}` · `platform/crypto/{codes,tokens}` ·
-**`access/auth`**, **`identity/user`**, **`operations/audit`**
+**`access/authentication`**, **`identity/user`**, **`operations/audit`**
 **Security** **Critical** — parses untrusted external input (SAML XML, SCIM, LDAP)
 
 **L4 pointers**
@@ -334,7 +334,7 @@ entitlements/ · ratelimits/ · search/ · notifications/ · sales/ · email/
 
 **Monthly active users** (the plans' `mau` allowance): `organization.monthly_active_users`, one row per
 organization, calendar month (UTC) and person, written by `identity/user/active.go`'s
-`RecordActive` in the same transaction as each sign-in (`access/auth/issue.go`), session
+`RecordActive` in the same transaction as each sign-in (`access/authentication/issue.go`), session
 renewal (`refresh.go`) and application code exchange or refresh-token grant
 (`federation/oidc/authorization_code.go`, `refresh.go`). API keys, service principals and agents are never recorded. Reported
 as `mau` by `GET /v1/organizations/{organizationID}/entitlements/usage`; nothing is refused above the allowance.

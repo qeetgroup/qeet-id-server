@@ -6,7 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -67,7 +67,7 @@ func (h *Handler) sessionHTTP(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, res.Body())
 		return
 	}
-	auth.SetLoginSessionCookie(w, res.RawCookie, h.CookieSecure)
+	authentication.SetLoginSessionCookie(w, res.RawCookie, h.CookieSecure)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"user_id": res.UserID})
 }
 

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
+
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
@@ -248,7 +250,7 @@ func TestSignInMethodsCountWhatTheOrganizationAllows(t *testing.T) {
 	}
 
 	methodID := uuid.New()
-	err = RefuseLastMethodRemoval(ctx, pool, u.ID, &organization, "passkey", methodID, Remover{UserID: &u.ID})
+	err = RefuseLastMethodRemoval(ctx, pool, u.ID, &organization, "passkey", methodID, audit.Actor{UserID: &u.ID})
 	if !errors.Is(err, errs.ErrAuthLastSignInMethod) {
 		t.Errorf("refuse removing the last method: %v, want %v", err, errs.ErrAuthLastSignInMethod)
 	}

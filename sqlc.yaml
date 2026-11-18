@@ -10,11 +10,11 @@ sql:
   - &package
     engine: postgresql
     schema: internal/platform/database/migrations
-    queries: internal/access/auth/queries.sql
+    queries: internal/access/authentication/queries.sql
     gen:
       go: &go
         package: dbgen
-        out: internal/access/auth/dbgen
+        out: internal/access/authentication/dbgen
         sql_package: pgx/v5
         emit_json_tags: false
         emit_interface: false

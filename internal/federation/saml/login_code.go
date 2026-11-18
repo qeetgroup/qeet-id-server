@@ -6,14 +6,14 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/logincode"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 // ExchangeLogin trades a one-time SAML login code for a Qeet token pair, while
 // the connection that issued it is still active.
-func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*auth.TokenPair, error) {
+func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*authentication.TokenPair, error) {
 	code, err := s.consumeLoginCode(ctx, rawCode)
 	if err != nil {
 		return nil, err
@@ -65,7 +65,7 @@ func (h *Handler) session(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	auth.SetLoginSessionCookie(w, raw, h.CookieSecure)
+	authentication.SetLoginSessionCookie(w, raw, h.CookieSecure)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"user_id": code.UserID})
 }
 

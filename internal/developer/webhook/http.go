@@ -93,7 +93,7 @@ func (h *Handler) retryDelivery(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.RetryDelivery(r.Context(), subscriptionID, deliveryID, organizationID); err != nil {
+	if err := h.Service.RetryDelivery(r.Context(), subscriptionID, deliveryID, organizationID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -168,7 +168,7 @@ func (h *Handler) test(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.SendTest(r.Context(), sub); err != nil {
+	if err := h.Service.SendTest(r.Context(), sub, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

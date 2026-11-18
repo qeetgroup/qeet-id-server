@@ -17,7 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -173,7 +173,7 @@ func (h *Handler) meetsSignInRules(w http.ResponseWriter, r *http.Request, sp *S
 		writeSSOError(w, r, err)
 		return false
 	}
-	c, err := r.Cookie(auth.LoginSessionCookie)
+	c, err := r.Cookie(authentication.LoginSessionCookie)
 	if err != nil {
 		writeSSOError(w, r, errs.ErrUnauthorized)
 		return false
@@ -221,7 +221,7 @@ func (h *Handler) refuse(w http.ResponseWriter, r *http.Request, sp *ServiceProv
 }
 
 func (h *Handler) idpSessionUser(r *http.Request) (uuid.UUID, bool) {
-	c, err := r.Cookie(auth.LoginSessionCookie)
+	c, err := r.Cookie(authentication.LoginSessionCookie)
 	if err != nil {
 		return uuid.Nil, false
 	}

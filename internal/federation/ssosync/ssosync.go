@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ssosync/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
@@ -111,7 +111,7 @@ func refreshEmail(ctx context.Context, tx pgx.Tx, in SignIn, current string) (bo
 	}
 	defer func() { _ = savepoint.Rollback(ctx) }()
 	// Before the change: the links are found by the address they went to.
-	if err := auth.ExpireRecoveryLinks(ctx, savepoint, in.UserID); err != nil {
+	if err := authentication.ExpireRecoveryLinks(ctx, savepoint, in.UserID); err != nil {
 		return false, err
 	}
 	if err := dbgen.New(savepoint).SetEmail(ctx, dbgen.SetEmailParams{Email: email, ID: in.UserID, OrganizationID: in.OrganizationID}); err != nil {

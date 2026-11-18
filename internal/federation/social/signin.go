@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/logincode"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oauthstate"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidcrp"
@@ -339,8 +339,8 @@ func (s *Service) EnabledProviderNames(ctx context.Context, organizationID uuid.
 // BeginLoginSession signs a social-authenticated user in to the hosted login
 // for organizationID, so social login can drive the OAuth authorize/consent flow: the
 // SSO session cookie value, or the second-factor challenge to complete first
-// (see auth.Service.BeginSocialLoginSession).
-func (s *Service) BeginLoginSession(ctx context.Context, userID, organizationID uuid.UUID, ip, ua, trustedToken, country string) (*auth.LoginSessionResult, error) {
+// (see authentication.Service.BeginSocialLoginSession).
+func (s *Service) BeginLoginSession(ctx context.Context, userID, organizationID uuid.UUID, ip, ua, trustedToken, country string) (*authentication.LoginSessionResult, error) {
 	return s.auth.BeginSocialLoginSession(ctx, userID, organizationID, ip, ua, trustedToken, country)
 }
 
@@ -532,7 +532,7 @@ func (h *Handler) finishHostedSignIn(w http.ResponseWriter, r *http.Request, res
 	// the hosted login. It travels in the fragment, which the
 	// browser never sends to a server or in a Referer.
 	trusted := ""
-	if c, cerr := r.Cookie(auth.TrustedDeviceCookie); cerr == nil {
+	if c, cerr := r.Cookie(authentication.TrustedDeviceCookie); cerr == nil {
 		trusted = c.Value
 	}
 	ls, serr := h.Service.BeginLoginSession(r.Context(), res.UserID, res.OrganizationID, httpx.ClientIP(r), r.UserAgent(),
@@ -549,6 +549,6 @@ func (h *Handler) finishHostedSignIn(w http.ResponseWriter, r *http.Request, res
 		http.Redirect(w, r, h.LoginBaseURL+"/sign-in?"+url.Values{"return_to": {res.ReturnTo}}.Encode()+"#"+challengeFragment(ls.MFAChallenge), http.StatusFound)
 		return
 	}
-	auth.SetLoginSessionCookie(w, ls.RawCookie, h.CookieSecure)
+	authentication.SetLoginSessionCookie(w, ls.RawCookie, h.CookieSecure)
 	http.Redirect(w, r, res.ReturnTo, http.StatusFound) // #nosec G710 -- checked against the allowed origins before it was stored with the sign-in state
 }

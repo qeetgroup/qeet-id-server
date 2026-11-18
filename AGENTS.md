@@ -236,7 +236,7 @@ There is no `make help`, and no `dev-*` variants beyond `dev-secrets`.
 **`make lint` runs the same lint as CI:** `go vet` plus `golangci-lint` v2.15.0 over the whole tree,
 including the integration-tagged database tests, with the linters in `.golangci.yml`.
 
-Single test: `go test ./internal/access/auth/... -run TestName`
+Single test: `go test ./internal/access/authentication/... -run TestName`
 
 ---
 

@@ -8,7 +8,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -16,13 +16,13 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
-// tokenIssuer is the part of auth.Service this handler needs. Both methods honour
+// tokenIssuer is the part of authentication.Service this handler needs. Both methods honour
 // the joined organization's second-factor requirement: a new account may get the
 // enrolment challenge, and a signed-in one is refused if its session lacks a
 // required factor.
 type tokenIssuer interface {
-	SignInInvitedAccount(ctx context.Context, userID, organizationID uuid.UUID, ip, ua string) (*auth.LoginResult, error)
-	EnterInvitedOrganization(ctx context.Context, userID, organizationID, fromSessionID uuid.UUID, ip, ua string) (*auth.TokenPair, error)
+	SignInInvitedAccount(ctx context.Context, userID, organizationID uuid.UUID, ip, ua string) (*authentication.LoginResult, error)
+	EnterInvitedOrganization(ctx context.Context, userID, organizationID, fromSessionID uuid.UUID, ip, ua string) (*authentication.TokenPair, error)
 }
 
 // enterAsSignedIn answers an accept by a signed-in account with the token

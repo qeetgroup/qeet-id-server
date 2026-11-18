@@ -83,8 +83,8 @@ func (s *Service) pendingForNewAccount(ctx context.Context, token string) (uuid.
 // AcceptForNewAccountTx accepts invitation id for userID, the account just
 // created in tx for email in organizationID. The invitation, read under lock, must be
 // pending, unexpired and for that email and organization; then the invited role is
-// granted, the account activated and the acceptance recorded from ip and ua.
-func (s *Service) AcceptForNewAccountTx(ctx context.Context, tx pgx.Tx, id, organizationID, userID uuid.UUID, email, ip, ua string) error {
+// granted, the account activated and the acceptance recorded from actor's request.
+func (s *Service) AcceptForNewAccountTx(ctx context.Context, tx pgx.Tx, id, organizationID, userID uuid.UUID, email string, actor audit.Actor) error {
 	qtx := s.q.WithTx(tx)
 	inv, err := qtx.GetInviteByIDForAccept(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -115,7 +115,7 @@ func (s *Service) AcceptForNewAccountTx(ctx context.Context, tx pgx.Tx, id, orga
 	if err := qtx.MarkInviteAccepted(ctx, inv.ID); err != nil {
 		return err
 	}
-	return recordAccepted(ctx, tx, audit.Actor{IP: ip, UserAgent: ua}, userID, pendingInvite(inv), "passkey")
+	return recordAccepted(ctx, tx, actor, userID, pendingInvite(inv), "passkey")
 }
 
 // InvitationPreview is what the acceptance screen shows before the invitee

@@ -18,8 +18,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth/authtest"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/authtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -194,7 +194,7 @@ func (p *upstreamIdP) respond(t *testing.T, connID uuid.UUID, a answer) string {
 // spSide is the SAML service provider, its auth service and public routes,
 // and the cookies of the one browser signing in.
 type spSide struct {
-	auth    *auth.Service
+	auth    *authentication.Service
 	handler *Handler
 	public  chi.Router
 	browser []*http.Cookie
@@ -240,7 +240,7 @@ func newSPSide(t *testing.T, with ...func(*Deps)) *spSide {
 }
 
 // newAuthService is the sign-in service connection sign-ins go through.
-func newAuthService(t *testing.T) *auth.Service {
+func newAuthService(t *testing.T) *authentication.Service {
 	t.Helper()
 	return authtest.New(t, dbtest.Pool(t))
 }
@@ -303,12 +303,12 @@ func (s *spSide) exchange(t *testing.T, code string) *httptest.ResponseRecorder 
 
 // signIn runs a whole SP-initiated sign-in through connID, the IdP asserting
 // a, and returns the token pair it buys.
-func (s *spSide) signIn(t *testing.T, idp *upstreamIdP, connID uuid.UUID, a answer) auth.TokenPair {
+func (s *spSide) signIn(t *testing.T, idp *upstreamIdP, connID uuid.UUID, a answer) authentication.TokenPair {
 	t.Helper()
 	a.inResponseTo = s.begin(t, connID)
 	code := loginCode(t, s.post(t, connID, idp.respond(t, connID, a)))
 	rec := s.exchange(t, code)
-	var pair auth.TokenPair
+	var pair authentication.TokenPair
 	dbtest.Decode(t, rec, &pair)
 	if rec.Code != http.StatusOK || pair.AccessToken == "" {
 		t.Fatalf("exchange: %d %s", rec.Code, rec.Body.String())

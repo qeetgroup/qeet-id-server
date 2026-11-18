@@ -15,7 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/provision"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
@@ -63,7 +63,7 @@ type Connection struct {
 type Service struct {
 	pool             *pgxpool.Pool
 	q                *dbgen.Queries
-	auth             *auth.Service
+	auth             *authentication.Service
 	appBaseURL       string
 	gate             entitlements.PlanGate
 	nextRequestSweep atomic.Int64
@@ -82,7 +82,7 @@ type Service struct {
 // LoginBaseURL and ReturnOrigins.
 type Deps struct {
 	Pool       *pgxpool.Pool
-	Auth       *auth.Service
+	Auth       *authentication.Service
 	Cipher     *envelope.Cipher      // seals the connections' SP keys
 	Gate       entitlements.PlanGate // whether the plan includes single sign-on
 	Egress     *egress.Policy        // the outbound policy metadata URLs are fetched under

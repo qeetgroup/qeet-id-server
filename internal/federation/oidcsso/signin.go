@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/logincode"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oauthstate"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidcrp"
@@ -201,7 +201,7 @@ func (s *Service) recordFailure(ctx context.Context, c *signInConnection, cb Cal
 	if code := oidcrp.SafeErrorCode(cb.ProviderError); code != "" {
 		meta["provider_error"] = code
 	}
-	s.auth.RecordSignInFailure(ctx, auth.SignInFailure{
+	s.auth.RecordSignInFailure(ctx, authentication.SignInFailure{
 		OrganizationID: c.OrganizationID,
 		Method:         provider,
 		Reason:         reason,
@@ -244,7 +244,7 @@ func (s *Service) findOrCreateUser(ctx context.Context, c *signInConnection, p p
 
 // ExchangeLogin trades a one-time login code for a token pair, while the
 // connection that issued it is still active.
-func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*auth.TokenPair, error) {
+func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*authentication.TokenPair, error) {
 	code, err := s.consumeLoginCode(ctx, rawCode)
 	if err != nil {
 		return nil, err

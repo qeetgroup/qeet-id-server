@@ -151,7 +151,7 @@ type ServiceProvider struct {
 }
 
 // SessionResolver resolves the hosted-login SSO cookie to a user id. Satisfied
-// by *auth.Service (the same dependency the OIDC provider uses).
+// by *authentication.Service (the same dependency the OIDC provider uses).
 type SessionResolver interface {
 	ResolveLoginSession(ctx context.Context, raw string) (uuid.UUID, error)
 }
@@ -169,7 +169,7 @@ type IdP struct {
 }
 
 // FactorPolicy reads a hosted-login session's sign-in and what second factor
-// an organization still requires of it. Satisfied by *auth.Service.
+// an organization still requires of it. Satisfied by *authentication.Service.
 type FactorPolicy interface {
 	ResolveLoginSessionAt(ctx context.Context, raw string) (sessionID, userID uuid.UUID, signedInAt time.Time, err error)
 	LoginSessionFactorShortfall(ctx context.Context, loginSessionID, userID, organizationID uuid.UUID) error

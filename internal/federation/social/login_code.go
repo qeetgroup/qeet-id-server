@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/logincode"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -28,7 +28,7 @@ var loginCodeRefusals = logincode.Refusals{
 // ExchangeLogin trades a one-time social login code for a Qeet token pair, or
 // the second-factor challenge to complete first, while the provider that
 // issued it is still on: a code of one since switched off or deleted is refused.
-func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*auth.LoginResult, error) {
+func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*authentication.LoginResult, error) {
 	code, err := logincode.Consume(ctx, s.pool, logincode.KindSocial, rawCode, loginCodeRefusals)
 	if err != nil {
 		return nil, err
@@ -44,7 +44,7 @@ type exchangeInput struct {
 // for the hosted login's URL fragment: mfa_token, methods, factors (JSON, as a
 // password sign-in lists them) and, for an enrolment, enrollment_required and
 // enrollment_due_at.
-func challengeFragment(c auth.MFAChallenge) string {
+func challengeFragment(c authentication.MFAChallenge) string {
 	v := url.Values{"mfa_token": {c.MFAToken}, "methods": {strings.Join(c.Methods, ",")}}
 	if len(c.Factors) > 0 {
 		if factors, err := json.Marshal(c.Factors); err == nil {
@@ -62,7 +62,7 @@ func challengeFragment(c auth.MFAChallenge) string {
 
 // writeSignIn answers a social code exchange: the token pair, or the
 // second-factor challenge shaped as a password sign-in's, met at /v1/auth/mfa.
-func writeSignIn(w http.ResponseWriter, res *auth.LoginResult) {
+func writeSignIn(w http.ResponseWriter, res *authentication.LoginResult) {
 	if res.MFARequired {
 		httpx.WriteJSON(w, http.StatusOK, res.Body())
 		return

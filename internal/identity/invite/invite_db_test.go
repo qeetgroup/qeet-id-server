@@ -15,8 +15,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth/authtest"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/authtest"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authpolicy"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
@@ -68,7 +68,7 @@ func (passwordOnly) AllowedSignInMethods(context.Context, uuid.UUID) (bool, bool
 }
 
 // newHandler wires the invitation handler as bootstrap does.
-func newHandler(t *testing.T) (*Handler, *auth.Service) {
+func newHandler(t *testing.T) (*Handler, *authentication.Service) {
 	t.Helper()
 	pool := dbtest.Pool(t)
 	svc := newService(t)
@@ -244,7 +244,7 @@ func TestInvitationsAreAudited(t *testing.T) {
 	if err := tx.QueryRow(ctx, `INSERT INTO account.users (organization_id, email) VALUES ($1, $2) RETURNING id`, organization, email).Scan(&newUser); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.Service.AcceptForNewAccountTx(ctx, tx, inv.ID, organization, newUser, email, "203.0.113.8", "test-agent"); err != nil {
+	if err := h.Service.AcceptForNewAccountTx(ctx, tx, inv.ID, organization, newUser, email, audit.Actor{IP: "203.0.113.8", UserAgent: "test-agent", RequestID: "req-invite-passkey"}); err != nil {
 		t.Fatalf("accept with a passkey: %v", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -252,6 +252,10 @@ func TestInvitationsAreAudited(t *testing.T) {
 	}
 	if meta := wantInviteEvent(t, organization, inv.ID, "invite.accepted", newUser, email); meta["method"] != "passkey" {
 		t.Errorf("accepted with a passkey: %v", meta)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'invite.accepted' AND resource_id = $1
+		AND ip = '203.0.113.8' AND user_agent = 'test-agent' AND request_id = 'req-invite-passkey'`, inv.ID); n != 1 {
+		t.Errorf("the passkey acceptance was recorded without the request's address, browser and id (%d rows)", n)
 	}
 
 	home := dbtest.Organization(t)

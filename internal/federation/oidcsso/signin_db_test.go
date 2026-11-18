@@ -17,7 +17,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -57,7 +57,7 @@ func TestOIDCSignIn(t *testing.T) {
 		t.Errorf("%d replays recorded as failed sign-ins, want 1", n)
 	}
 	rec := s.exchange(t, code)
-	var pair auth.TokenPair
+	var pair authentication.TokenPair
 	dbtest.Decode(t, rec, &pair)
 	if rec.Code != http.StatusOK || pair.UserID != member.ID || sessionOrganization(t, pair.SessionID) != organization {
 		t.Fatalf("exchange: %d %s; want a session for the member in the organization", rec.Code, rec.Body.String())

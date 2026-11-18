@@ -10,17 +10,17 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// tokenIssuer is the part of auth.Service this handler needs. A consumed magic
+// tokenIssuer is the part of authentication.Service this handler needs. A consumed magic
 // link signs in through the same second-factor decision as a password.
 type tokenIssuer interface {
-	BeginMagicLinkSignIn(ctx context.Context, userID, organizationID uuid.UUID, ip, ua string) (*auth.LoginResult, error)
-	BeginMagicLinkSession(ctx context.Context, userID, organizationID uuid.UUID, ip, ua, trustedToken, country string) (*auth.LoginSessionResult, error)
+	BeginMagicLinkSignIn(ctx context.Context, userID, organizationID uuid.UUID, ip, ua string) (*authentication.LoginResult, error)
+	BeginMagicLinkSession(ctx context.Context, userID, organizationID uuid.UUID, ip, ua, trustedToken, country string) (*authentication.LoginSessionResult, error)
 }
 
 // Handler serves the password-reset and magic-link routes. DevMode, for local
@@ -204,7 +204,7 @@ func (h *Handler) magicSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	trusted := ""
-	if c, cerr := r.Cookie(auth.TrustedDeviceCookie); cerr == nil {
+	if c, cerr := r.Cookie(authentication.TrustedDeviceCookie); cerr == nil {
 		trusted = c.Value
 	}
 	session, err := h.AuthService.BeginMagicLinkSession(r.Context(), res.UserID, res.OrganizationID, httpx.ClientIP(r), r.UserAgent(),
@@ -219,7 +219,7 @@ func (h *Handler) magicSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, body)
 		return
 	}
-	auth.SetLoginSessionCookie(w, session.RawCookie, h.CookieSecure)
+	authentication.SetLoginSessionCookie(w, session.RawCookie, h.CookieSecure)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"user_id": res.UserID, "return_to": res.ReturnTo})
 }
 

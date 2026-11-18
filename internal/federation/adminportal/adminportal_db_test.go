@@ -20,8 +20,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth/authtest"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/authtest"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/directory"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
@@ -130,7 +130,7 @@ func newSCIM(t *testing.T) *scim.Service {
 }
 
 // newAuthService is the sign-in service SAML sign-ins go through.
-func newAuthService(t *testing.T) *auth.Service {
+func newAuthService(t *testing.T) *authentication.Service {
 	t.Helper()
 	return authtest.New(t, dbtest.Pool(t))
 }

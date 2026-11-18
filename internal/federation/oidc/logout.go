@@ -14,7 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
@@ -363,9 +363,9 @@ func (h *Handler) endSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var frontchannel []string
-	if c, err := r.Cookie(auth.LoginSessionCookie); err == nil {
-		in := auth.EndLoginSessionInput{
-			Cookie: c.Value, InitiatedBy: auth.SignOutByApplication,
+	if c, err := r.Cookie(authentication.LoginSessionCookie); err == nil {
+		in := authentication.EndLoginSessionInput{
+			Cookie: c.Value, InitiatedBy: authentication.SignOutByApplication,
 			IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
 		}
 		if clientID != "" && h.Service.RegisteredClient(r.Context(), clientID) {
@@ -378,7 +378,7 @@ func (h *Handler) endSession(w http.ResponseWriter, r *http.Request) {
 		}
 		frontchannel = ended.FrontChannelLogoutURIs
 	}
-	auth.ClearLoginSessionCookie(w, h.CookieSecure)
+	authentication.ClearLoginSessionCookie(w, h.CookieSecure)
 
 	next := ""
 	if redirect != "" && clientID != "" {

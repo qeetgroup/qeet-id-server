@@ -8,7 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -243,7 +243,7 @@ func (h *Handler) loginSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.binding().Remove(w, r, ceremony)
-	auth.SetLoginSessionCookie(w, raw, h.CookieSecure)
+	authentication.SetLoginSessionCookie(w, raw, h.CookieSecure)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"user_id": userID})
 }
 
@@ -347,13 +347,13 @@ func (h *Handler) organizationSignupFinish(w http.ResponseWriter, r *http.Reques
 		writeSignupError(w, r, err)
 		return
 	}
-	auth.SetLoginSessionCookie(w, raw, h.CookieSecure)
+	authentication.SetLoginSessionCookie(w, raw, h.CookieSecure)
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"user_id": userID})
 }
 
 // writeSignupError answers an email that already has an account with the
-// neutral 422 the password sign-up endpoints use (auth.NeutralSignupError), so
+// neutral 422 the password sign-up endpoints use (authentication.NeutralSignupError), so
 // the answer can't reveal whether an email is registered.
 func writeSignupError(w http.ResponseWriter, r *http.Request, err error) {
-	httpx.WriteError(w, r, auth.NeutralSignupError(err))
+	httpx.WriteError(w, r, authentication.NeutralSignupError(err))
 }

@@ -12,8 +12,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth/authtest"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/authtest"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
@@ -41,7 +41,7 @@ func (a *announced) enqueue(_ context.Context, _ pgx.Tx, _ uuid.UUID, _ string, 
 
 // newHandler returns the organization handler, issuing real token pairs, and
 // what it announces.
-func newHandler(t *testing.T) (*Handler, *auth.Service, *announced) {
+func newHandler(t *testing.T) (*Handler, *authentication.Service, *announced) {
 	t.Helper()
 	pool := dbtest.Pool(t)
 	signals := &announced{}

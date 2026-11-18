@@ -729,7 +729,7 @@ POST /v1/organizations/{organizationID}/device-assurance/providers
 GET  /v1/organizations/{organizationID}/device-assurance/assessments/{assessmentID}
 ```
 The [passkey implementation](../../internal/access/passkey/passkey.go) already retains
-credential/AAGUID and backup information; [trusted devices](../../internal/access/auth/trusteddevice.go)
+credential/AAGUID and backup information; [trusted devices](../../internal/access/authentication/trusteddevice.go)
 and [risk signals](../../internal/access/threat/risk/risk.go) serve other purposes.
 Add trusted attestation assessment and separately authenticated posture-provider
 observations, not an administrator-writable `compliant: true` field.

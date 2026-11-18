@@ -15,7 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
@@ -25,9 +25,9 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
-// tokenIssuer is the part of auth.Service this handler needs.
+// tokenIssuer is the part of authentication.Service this handler needs.
 type tokenIssuer interface {
-	EnterCreatedOrganization(ctx context.Context, userID, organizationID, fromSessionID uuid.UUID, ip, ua string) (*auth.TokenPair, error)
+	EnterCreatedOrganization(ctx context.Context, userID, organizationID, fromSessionID uuid.UUID, ip, ua string) (*authentication.TokenPair, error)
 }
 
 // Handler serves the /organizations routes and /me/organizations. AuthService, if

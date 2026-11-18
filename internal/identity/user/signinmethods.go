@@ -62,10 +62,6 @@ func LockSignInMethods(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (SignIn
 	return countSignInMethods(ctx, tx, userID)
 }
 
-// Remover is who asks to remove a way to sign in — the person themselves or an
-// administrator — for the audit record of a refusal. An empty Type is a user.
-type Remover = audit.Actor
-
 // RefuseLastMethodRemoval records on its own (the removal was rolled back) that by was refused
 // removing method methodID ("passkey" or "linked_identity") as userID's last way to sign in, and
 // returns ErrAuthLastSignInMethod. A nil organizationID records it on a platform chain.

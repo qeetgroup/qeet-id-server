@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/provision/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ssosync"
@@ -68,9 +68,9 @@ type Errors struct {
 }
 
 // Recorder records refused sign-ins in the organization's audit trail.
-// Satisfied by *auth.Service.
+// Satisfied by *authentication.Service.
 type Recorder interface {
-	RecordSignInFailure(ctx context.Context, f auth.SignInFailure)
+	RecordSignInFailure(ctx context.Context, f authentication.SignInFailure)
 }
 
 // Flow provisions the accounts one protocol's sign-ins name. Method ("saml", "ldap", "oidc",
@@ -269,7 +269,7 @@ func (f *Flow) record(ctx context.Context, src Source, account uuid.UUID, actor 
 	if src.ConnectionID != uuid.Nil {
 		meta = map[string]any{"connection_id": src.ConnectionID.String()}
 	}
-	f.Recorder.RecordSignInFailure(ctx, auth.SignInFailure{
+	f.Recorder.RecordSignInFailure(ctx, authentication.SignInFailure{
 		OrganizationID: src.OrganizationID, UserID: account, Method: f.Method, Reason: reason,
 		IP: actor.IP, UserAgent: actor.UserAgent, Metadata: meta,
 	})

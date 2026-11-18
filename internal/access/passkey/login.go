@@ -13,7 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/passkey/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -52,7 +52,7 @@ func (s *Service) BeginLogin(ctx context.Context, email string) (uuid.UUID, *pro
 
 // FinishLogin verifies the assertion, updates the sign counter, and issues a
 // Qeet session token pair for the authenticated user.
-func (s *Service) FinishLogin(ctx context.Context, sessionID uuid.UUID, credential json.RawMessage, ip, ua string) (*auth.TokenPair, error) {
+func (s *Service) FinishLogin(ctx context.Context, sessionID uuid.UUID, credential json.RawMessage, ip, ua string) (*authentication.TokenPair, error) {
 	userID, organizationID, err := s.verifyLogin(ctx, sessionID, credential)
 	if err != nil {
 		s.recordFailure(ctx, userID, organizationID, ip, ua, err)
@@ -69,7 +69,7 @@ func (s *Service) recordFailure(ctx context.Context, userID, organizationID uuid
 	if refusal == nil {
 		return
 	}
-	s.auth.RecordSignInFailure(ctx, auth.SignInFailure{
+	s.auth.RecordSignInFailure(ctx, authentication.SignInFailure{
 		OrganizationID: organizationID, UserID: userID, Method: "passkey", Reason: refusal.Code, IP: ip, UserAgent: ua,
 	})
 }

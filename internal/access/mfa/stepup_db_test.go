@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
@@ -26,7 +26,7 @@ func TestStepUpGate(t *testing.T) {
 	ctx := dbtest.Context(t)
 	mfaSvc, authSvc := services(t, notifier.LogSender{})
 	a, organization := member(t)
-	signIn := func() *auth.TokenPair {
+	signIn := func() *authentication.TokenPair {
 		t.Helper()
 		pair, err := authSvc.IssuePair(ctx, a.ID, organization, "192.0.2.1", "test", "password")
 		if err != nil {

@@ -13,7 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/passkey/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
@@ -97,13 +97,13 @@ func (s *Service) takeSignupSession(ctx context.Context, id uuid.UUID) (*signupS
 }
 
 // BeginSignup starts a passkey-founded registration ceremony for a brand-new,
-// organization-less account — the passwordless counterpart to auth.Service.Signup.
+// organization-less account — the passwordless counterpart to authentication.Service.Signup.
 func (s *Service) BeginSignup(ctx context.Context, email, displayName string) (uuid.UUID, *protocol.CredentialCreation, error) {
 	return s.beginSignup(ctx, uuid.Nil, email, displayName)
 }
 
 // BeginOrganizationSignup starts the same ceremony for an organization's hosted signup, the
-// passwordless auth.Service.RegisterInOrganization. It is refused unless the organization
+// passwordless authentication.Service.RegisterInOrganization. It is refused unless the organization
 // allows self-registration and passkeys.
 func (s *Service) BeginOrganizationSignup(ctx context.Context, organizationID uuid.UUID, email, displayName string) (uuid.UUID, *protocol.CredentialCreation, error) {
 	enabled, err := s.auth.SelfRegistrationEnabled(ctx, organizationID)
@@ -168,7 +168,7 @@ func (s *Service) beginSignupFor(ctx context.Context, organizationID, inviteID u
 // FinishSignup verifies the attestation, creates the organization-less user with the
 // passkey as its founding credential (no password), and signs them in. The
 // passkey is named as in FinishRegister.
-func (s *Service) FinishSignup(ctx context.Context, sessionID uuid.UUID, credential json.RawMessage, name, ip, ua string) (*auth.TokenPair, uuid.UUID, error) {
+func (s *Service) FinishSignup(ctx context.Context, sessionID uuid.UUID, credential json.RawMessage, name, ip, ua string) (*authentication.TokenPair, uuid.UUID, error) {
 	name, err := enrolmentName(name, ua)
 	if err != nil {
 		return nil, uuid.Nil, err
@@ -198,7 +198,7 @@ func (s *Service) FinishSignup(ctx context.Context, sessionID uuid.UUID, credent
 
 // FinishOrganizationSignup is FinishSignup for an organization's hosted signup: it creates
 // the user in sess's organization and returns a hosted-login SSO cookie value instead
-// of a token pair, as auth.Service.RegisterInOrganization does.
+// of a token pair, as authentication.Service.RegisterInOrganization does.
 func (s *Service) FinishOrganizationSignup(ctx context.Context, sessionID uuid.UUID, credential json.RawMessage, name, ip, ua string) (uuid.UUID, string, error) {
 	name, err := enrolmentName(name, ua)
 	if err != nil {

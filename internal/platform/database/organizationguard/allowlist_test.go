@@ -27,57 +27,57 @@ const allowlist = `
 #   pending-review     not shown to be safe; needs an organization condition or removal
 
 internal/access/accountnotice/queries.sql#NoticeAddress  session-scoped: the account the change was made to, by its owner or on their account, read for its own address
-internal/access/auth/queries.sql#AccountStanding  pre-organization: sign-in checks the account it just verified
-internal/access/auth/queries.sql#HomeOrganization  pre-organization: files a failed sign-in under the account's home organization
-internal/access/auth/queries.sql#AccountEmail  pre-organization: emails the account whose second-factor sign-in just locked
-internal/access/auth/queries.sql#AccountEmailVerified  pre-organization: sign-in reads the account it just verified
-internal/access/auth/queries.sql#VerifiedAccountEmail  pre-organization: sign-in reads the account it just verified
-internal/access/auth/queries.sql#ForgetPushPairings  parent-scoped: the account whose address was just proved, everywhere it set up a credential
-internal/access/auth/queries.sql#ForgetLinkedAccounts  parent-scoped: the account whose address was just proved, everywhere it set up a credential
-internal/access/auth/queries.sql#ForgetSignInCodes  parent-scoped: the account whose address was just proved, everywhere it set up a credential
-internal/access/auth/queries.sql#ForgetAPIKeys  parent-scoped: the account whose address was just proved, everywhere it set up a credential
-internal/access/auth/queries.sql#EvictSessions  parent-scoped: session IDs from the organization-scoped LiveSessionsByUse
-internal/access/auth/queries.sql#ContinueSession  session-scoped: the session issued in the same transaction, from one of the same person's
-internal/access/auth/queries.sql#SessionCursorTime  session-scoped: the caller's own sessions
-internal/access/auth/queries.sql#ListUserSessions  session-scoped: the caller's own sessions
-internal/access/auth/queries.sql#CountUserSessions  session-scoped: the caller's own sessions
-internal/access/auth/queries.sql#LockAccount  session-scoped: locks the caller's own account
-internal/access/auth/queries.sql#DeleteMFALoginChallenge  secret-lookup: challenge found by its random MFA token
-internal/access/auth/queries.sql#LockMFAChallenge  secret-lookup: challenge found by its random MFA token
-internal/access/auth/queries.sql#LockMFAChallengeForProof  secret-lookup: challenge found by its random MFA token
-internal/access/auth/queries.sql#CountMFAChallengeFailure  secret-lookup: challenge found by its random MFA token
-internal/access/auth/queries.sql#CountMFACodeSent  secret-lookup: challenge found by its random MFA token
-internal/access/auth/queries.sql#UncountMFACodeSent  secret-lookup: challenge found by its random MFA token
-internal/access/auth/queries.sql#SetMFAChallengePasskeySession  secret-lookup: challenge found by its random MFA token
-internal/access/auth/queries.sql#SetMFAChallengePush  secret-lookup: challenge found by its random MFA token
-internal/access/auth/queries.sql#StartMFAChallengeEnrollment  secret-lookup: challenge found by its random MFA token
-internal/access/auth/queries.sql#IssueRiskEmailCode  secret-lookup: challenge found by its random MFA token
-internal/access/auth/queries.sql#WithdrawRiskEmailCode  secret-lookup: challenge found by its random MFA token
-internal/access/auth/queries.sql#SignInClientName  global-client: the name of the application a hosted sign-in is for, recorded on that sign-in
-internal/access/auth/queries.sql#DeleteTrustedDevicesForUser  parent-scoped: EndAllSignIns callers check the user first
-internal/access/auth/queries.sql#DenyBackchannelRequestsForUser  parent-scoped: EndAllSignIns callers check the user first
-internal/access/auth/queries.sql#DenyDeviceAuthorizationsForUser  parent-scoped: EndAllSignIns callers check the user first
-internal/access/auth/queries.sql#EndLoginSession  secret-lookup: login session found by its cookie hash
-internal/access/auth/queries.sql#ExpireAuthorizationCodesForLoginSession  session-scoped: the login session being ended
-internal/access/auth/queries.sql#GetClientOrganization  global-client: client_id is unique platform-wide
-internal/access/auth/queries.sql#GetLoginSession  secret-lookup: session found by its cookie token hash; reads its own account's status
-internal/access/auth/queries.sql#IsSessionLiveForUser  session-scoped: the caller's own session and user
-internal/access/auth/queries.sql#IsSessionOfUser  session-scoped: the caller's own session and user
-internal/access/auth/queries.sql#LockUserForSessionRevocation  parent-scoped: locks an account its callers already checked
-internal/access/auth/queries.sql#PurgeEndedSessions  background-sweep: session cleanup job
-internal/access/auth/queries.sql#PurgeExpiredTrustedDevices  background-sweep: session cleanup job
-internal/access/auth/queries.sql#RevokeAllSessionsForUser  parent-scoped: EndAllSignIns callers check the user first
-internal/access/auth/queries.sql#RevokeAppGrantsForLoginSession  session-scoped: the login session being ended
-internal/access/auth/queries.sql#RevokeAppGrantsForUser  parent-scoped: EndAllSignIns callers check the user first
-internal/access/auth/queries.sql#RevokeOtherSessionsForUser  session-scoped: the caller's own other sessions
-internal/access/auth/queries.sql#RevokeSessionById  session-scoped: the session of the refresh token in use
-internal/access/auth/queries.sql#RevokeSessionForUser  session-scoped: only a session of the caller's own user
-internal/access/auth/queries.sql#SessionEnd  session-scoped: the caller's own session and user
-internal/access/auth/queries.sql#ExpireRecoveryLinksForUser  parent-scoped: EndAllSignIns callers check the user first; an account's links are its own in every organization
-internal/access/auth/queries.sql#SpendAuthorizationCodesForUser  parent-scoped: EndAllSignIns callers check the user first
-internal/access/auth/queries.sql#SupersedeSession  session-scoped: the caller's own session, replaced on organization switch
-internal/access/auth/queries.sql#TouchSession  session-scoped: the session of the verified access token
-internal/access/auth/queries.sql#UpdateSessionLastSeen  session-scoped: the session of the refresh token in use
+internal/access/authentication/queries.sql#AccountStanding  pre-organization: sign-in checks the account it just verified
+internal/access/authentication/queries.sql#HomeOrganization  pre-organization: files a failed sign-in under the account's home organization
+internal/access/authentication/queries.sql#AccountEmail  pre-organization: emails the account whose second-factor sign-in just locked
+internal/access/authentication/queries.sql#AccountEmailVerified  pre-organization: sign-in reads the account it just verified
+internal/access/authentication/queries.sql#VerifiedAccountEmail  pre-organization: sign-in reads the account it just verified
+internal/access/authentication/queries.sql#ForgetPushPairings  parent-scoped: the account whose address was just proved, everywhere it set up a credential
+internal/access/authentication/queries.sql#ForgetLinkedAccounts  parent-scoped: the account whose address was just proved, everywhere it set up a credential
+internal/access/authentication/queries.sql#ForgetSignInCodes  parent-scoped: the account whose address was just proved, everywhere it set up a credential
+internal/access/authentication/queries.sql#ForgetAPIKeys  parent-scoped: the account whose address was just proved, everywhere it set up a credential
+internal/access/authentication/queries.sql#EvictSessions  parent-scoped: session IDs from the organization-scoped LiveSessionsByUse
+internal/access/authentication/queries.sql#ContinueSession  session-scoped: the session issued in the same transaction, from one of the same person's
+internal/access/authentication/queries.sql#SessionCursorTime  session-scoped: the caller's own sessions
+internal/access/authentication/queries.sql#ListUserSessions  session-scoped: the caller's own sessions
+internal/access/authentication/queries.sql#CountUserSessions  session-scoped: the caller's own sessions
+internal/access/authentication/queries.sql#LockAccount  session-scoped: locks the caller's own account
+internal/access/authentication/queries.sql#DeleteMFALoginChallenge  secret-lookup: challenge found by its random MFA token
+internal/access/authentication/queries.sql#LockMFAChallenge  secret-lookup: challenge found by its random MFA token
+internal/access/authentication/queries.sql#LockMFAChallengeForProof  secret-lookup: challenge found by its random MFA token
+internal/access/authentication/queries.sql#CountMFAChallengeFailure  secret-lookup: challenge found by its random MFA token
+internal/access/authentication/queries.sql#CountMFACodeSent  secret-lookup: challenge found by its random MFA token
+internal/access/authentication/queries.sql#UncountMFACodeSent  secret-lookup: challenge found by its random MFA token
+internal/access/authentication/queries.sql#SetMFAChallengePasskeySession  secret-lookup: challenge found by its random MFA token
+internal/access/authentication/queries.sql#SetMFAChallengePush  secret-lookup: challenge found by its random MFA token
+internal/access/authentication/queries.sql#StartMFAChallengeEnrollment  secret-lookup: challenge found by its random MFA token
+internal/access/authentication/queries.sql#IssueRiskEmailCode  secret-lookup: challenge found by its random MFA token
+internal/access/authentication/queries.sql#WithdrawRiskEmailCode  secret-lookup: challenge found by its random MFA token
+internal/access/authentication/queries.sql#SignInClientName  global-client: the name of the application a hosted sign-in is for, recorded on that sign-in
+internal/access/authentication/queries.sql#DeleteTrustedDevicesForUser  parent-scoped: EndAllSignIns callers check the user first
+internal/access/authentication/queries.sql#DenyBackchannelRequestsForUser  parent-scoped: EndAllSignIns callers check the user first
+internal/access/authentication/queries.sql#DenyDeviceAuthorizationsForUser  parent-scoped: EndAllSignIns callers check the user first
+internal/access/authentication/queries.sql#EndLoginSession  secret-lookup: login session found by its cookie hash
+internal/access/authentication/queries.sql#ExpireAuthorizationCodesForLoginSession  session-scoped: the login session being ended
+internal/access/authentication/queries.sql#GetClientOrganization  global-client: client_id is unique platform-wide
+internal/access/authentication/queries.sql#GetLoginSession  secret-lookup: session found by its cookie token hash; reads its own account's status
+internal/access/authentication/queries.sql#IsSessionLiveForUser  session-scoped: the caller's own session and user
+internal/access/authentication/queries.sql#IsSessionOfUser  session-scoped: the caller's own session and user
+internal/access/authentication/queries.sql#LockUserForSessionRevocation  parent-scoped: locks an account its callers already checked
+internal/access/authentication/queries.sql#PurgeEndedSessions  background-sweep: session cleanup job
+internal/access/authentication/queries.sql#PurgeExpiredTrustedDevices  background-sweep: session cleanup job
+internal/access/authentication/queries.sql#RevokeAllSessionsForUser  parent-scoped: EndAllSignIns callers check the user first
+internal/access/authentication/queries.sql#RevokeAppGrantsForLoginSession  session-scoped: the login session being ended
+internal/access/authentication/queries.sql#RevokeAppGrantsForUser  parent-scoped: EndAllSignIns callers check the user first
+internal/access/authentication/queries.sql#RevokeOtherSessionsForUser  session-scoped: the caller's own other sessions
+internal/access/authentication/queries.sql#RevokeSessionById  session-scoped: the session of the refresh token in use
+internal/access/authentication/queries.sql#RevokeSessionForUser  session-scoped: only a session of the caller's own user
+internal/access/authentication/queries.sql#SessionEnd  session-scoped: the caller's own session and user
+internal/access/authentication/queries.sql#ExpireRecoveryLinksForUser  parent-scoped: EndAllSignIns callers check the user first; an account's links are its own in every organization
+internal/access/authentication/queries.sql#SpendAuthorizationCodesForUser  parent-scoped: EndAllSignIns callers check the user first
+internal/access/authentication/queries.sql#SupersedeSession  session-scoped: the caller's own session, replaced on organization switch
+internal/access/authentication/queries.sql#TouchSession  session-scoped: the session of the verified access token
+internal/access/authentication/queries.sql#UpdateSessionLastSeen  session-scoped: the session of the refresh token in use
 internal/access/authorization/accessrequest/queries.sql#EndingAccess  background-sweep: the access-request sweep takes back ended grants in every organization
 internal/access/authorization/accessrequest/queries.sql#LapsePendingAccessRequests  background-sweep: the access-request sweep lapses unanswered requests in every organization
 internal/access/authorization/rbac/queries.sql#GrantBuiltinRolePermissions  background-sweep: at boot, gives every organization's built-in roles the permissions their definitions cover

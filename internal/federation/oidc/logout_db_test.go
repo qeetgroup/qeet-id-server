@@ -14,7 +14,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
@@ -48,7 +48,7 @@ func signInThrough(t *testing.T, p *provider, client *Client, secret string, use
 // token, from no session, names none and stays active.
 func TestIntrospectionReportsInactiveAfterSignOut(t *testing.T) {
 	ctx := dbtest.Context(t)
-	p := newProvider(t, func(d *Deps, sessions *auth.Service) { d.SessionLive = sessions.SessionLive })
+	p := newProvider(t, func(d *Deps, sessions *authentication.Service) { d.SessionLive = sessions.SessionLive })
 	organization := dbtest.Organization(t)
 	person := dbtest.User(t, organization, organization)
 	client, secret := registerClientWith(t, p.svc, CreateClientInput{
@@ -122,7 +122,7 @@ func TestIntrospectionReportsInactiveAfterSignOut(t *testing.T) {
 // a signed back-channel notice and continues only to a registered address.
 func TestRPInitiatedLogout(t *testing.T) {
 	ctx := dbtest.Context(t)
-	p := newProvider(t, func(d *Deps, _ *auth.Service) { d.Egress = egress.DevelopmentPolicy() })
+	p := newProvider(t, func(d *Deps, _ *authentication.Service) { d.Egress = egress.DevelopmentPolicy() })
 	notices := make(chan url.Values, 4)
 	rp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
@@ -168,7 +168,7 @@ func TestRPInitiatedLogout(t *testing.T) {
 	if to != loginBase+"/sign-out/done" || !slices.Equal(q["frontchannel_logout"], []string{frontchannel}) || q.Get("continue") == "" {
 		t.Fatalf("confirmed sign-out: sent to %s %v, want the signed-out page with the front-channel page and a continuation", to, q)
 	}
-	if !slices.ContainsFunc(rec.Result().Cookies(), func(c *http.Cookie) bool { return c.Name == auth.LoginSessionCookie && c.MaxAge < 0 }) {
+	if !slices.ContainsFunc(rec.Result().Cookies(), func(c *http.Cookie) bool { return c.Name == authentication.LoginSessionCookie && c.MaxAge < 0 }) {
 		t.Error("the sign-out didn't clear the session cookie")
 	}
 	if live(cookie) {
@@ -301,7 +301,7 @@ func TestSignOutNoticesStayInTheirOrganization(t *testing.T) {
 	cookie, sessionID := p.signIn(t, person.ID)
 	signInThrough(t, p, appA, secretA, person.ID, sessionID)
 	signInThrough(t, p, appB, secretB, person.ID, sessionID)
-	if _, err := p.sessions.EndLoginSession(ctx, auth.EndLoginSessionInput{Cookie: cookie.Value, InitiatedBy: auth.SignOutByHostedLogin}); err != nil {
+	if _, err := p.sessions.EndLoginSession(ctx, authentication.EndLoginSessionInput{Cookie: cookie.Value, InitiatedBy: authentication.SignOutByHostedLogin}); err != nil {
 		t.Fatalf("sign out: %v", err)
 	}
 

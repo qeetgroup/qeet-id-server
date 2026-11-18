@@ -9,7 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/abac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/accessrequest"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authzen"
@@ -81,7 +81,7 @@ import (
 type Deps struct {
 	Organization *organization.Handler
 	User         *user.Handler
-	Auth         *auth.Handler
+	Auth         *authentication.Handler
 	AuthPolicy   *authpolicy.Handler
 	RBAC         *rbac.Handler
 	// AccessRequest serves people asking for a role and administrators answering.
@@ -179,9 +179,9 @@ func NewRouter(d Deps) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(chimw.RequestID)
-	r.Use(httpx.RequestIDHeader)    // every response names its request, for support and tracing
-	r.Use(httpx.ClientIPContext)    // the client address, for audit records written below a handler
-	r.Use(auth.SignInClientContext) // the application a hosted sign-in is for, for its audit record
+	r.Use(httpx.RequestIDHeader)              // every response names its request, for support and tracing
+	r.Use(httpx.ClientIPContext)              // the client address, for audit records written below a handler
+	r.Use(authentication.SignInClientContext) // the application a hosted sign-in is for, for its audit record
 	// No encoded slash or backslash in a path, so the router and every check
 	// that matches a path see the same segments.
 	r.Use(httpx.RefuseEncodedSeparators)

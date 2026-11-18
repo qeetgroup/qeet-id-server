@@ -67,6 +67,12 @@ func TestEachPlatformChainKeepsItsCheckpoint(t *testing.T) {
 	if err := audit.OpenPlatformChains(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
+	// Other tests here verify with keys of their own, which sign every chain's checkpoint; chains 10
+	// and 11 start afresh, so this test reads only the checkpoints its own runs write.
+	if _, err := pool.Exec(ctx, `DELETE FROM platform.audit_chain_checkpoints
+		WHERE organization_id IS NULL AND chain_shard IN (10, 11)`); err != nil {
+		t.Fatal(err)
+	}
 	last10 := recordPlatform(t, 10, "auth.signed_up")
 	last11 := recordPlatform(t, 11, "auth.signed_up")
 	verifyAllOf(t, false)

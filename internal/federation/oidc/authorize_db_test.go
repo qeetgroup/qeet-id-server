@@ -14,7 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
@@ -199,7 +199,7 @@ func (p *provider) authorizeInBrowser(t *testing.T, cookie *http.Cookie, clientI
 func TestOrganizationsOwnAccountsSignInWithoutARole(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
-	p := newProviderOver(t, func(d *auth.Deps) { d.Registration = openRegistration{} })
+	p := newProviderOver(t, func(d *authentication.Deps) { d.Registration = openRegistration{} })
 	organization, elsewhere := dbtest.Organization(t), dbtest.Organization(t)
 	client, secret := registerClient(t, p.svc, organization)
 
@@ -216,7 +216,7 @@ func TestOrganizationsOwnAccountsSignInWithoutARole(t *testing.T) {
 		t.Fatalf("the organization's accounts hold %d roles, want none", n)
 	}
 	for name, cookie := range map[string]*http.Cookie{
-		"a self-registered account":           {Name: auth.LoginSessionCookie, Value: registered.RawCookie},
+		"a self-registered account":           {Name: authentication.LoginSessionCookie, Value: registered.RawCookie},
 		"an account an administrator created": createdCookie,
 	} {
 		to, q, verifier := p.authorizeInBrowser(t, cookie, client.ClientID)

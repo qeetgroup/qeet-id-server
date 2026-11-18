@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
@@ -42,7 +42,7 @@ func (unrecorded) RecordLDAPOperation(context.Context, Operation) error { return
 
 // testDeps are the service's dependencies on pool, signing people in through
 // authSvc and sealing with box, allowed to reach loopback directories.
-func testDeps(pool *pgxpool.Pool, authSvc *auth.Service, box *envelope.Cipher) Deps {
+func testDeps(pool *pgxpool.Pool, authSvc *authentication.Service, box *envelope.Cipher) Deps {
 	return Deps{
 		Pool: pool, Auth: authSvc, Cipher: box, Gate: allPlans{}, Mapper: noMappings{},
 		Observer: unrecorded{}, Egress: egress.DevelopmentPolicy(),
@@ -53,7 +53,7 @@ func testDeps(pool *pgxpool.Pool, authSvc *auth.Service, box *envelope.Cipher) D
 // before one is reached.
 func unitService(t *testing.T, with ...func(*Deps)) *Service {
 	t.Helper()
-	d := testDeps(new(pgxpool.Pool), new(auth.Service), new(envelope.Cipher))
+	d := testDeps(new(pgxpool.Pool), new(authentication.Service), new(envelope.Cipher))
 	for _, change := range with {
 		change(&d)
 	}
@@ -69,7 +69,7 @@ func unitService(t *testing.T, with ...func(*Deps)) *Service {
 // names it.
 func TestNewServiceRefusesMissingDependencies(t *testing.T) {
 	for _, name := range []string{"Pool", "Auth", "Cipher", "Gate", "Mapper", "Observer", "Egress"} {
-		d := testDeps(new(pgxpool.Pool), new(auth.Service), new(envelope.Cipher))
+		d := testDeps(new(pgxpool.Pool), new(authentication.Service), new(envelope.Cipher))
 		reflect.ValueOf(&d).Elem().FieldByName(name).SetZero()
 		if _, err := NewService(d); err == nil || !strings.Contains(err.Error(), name) {
 			t.Errorf("built without %s: %v", name, err)

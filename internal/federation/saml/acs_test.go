@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	samltypes "github.com/russellhaering/gosaml2/types"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 )
 
 func TestTrustedCorrelationIgnoresUnsignedResponseEnvelope(t *testing.T) {
@@ -44,7 +44,7 @@ func TestTrustedCorrelationIgnoresUnsignedResponseEnvelope(t *testing.T) {
 func TestAFailedHostedSignInGoesBackToTheHostedLogin(t *testing.T) {
 	const accounts = "https://accounts.example.test"
 	back := "https://api.example.test/oauth/authorize?client_id=portal&state=s1"
-	configured := newTestService(t, new(pgxpool.Pool), new(auth.Service), func(d *Deps) {
+	configured := newTestService(t, new(pgxpool.Pool), new(authentication.Service), func(d *Deps) {
 		d.LoginBaseURL, d.ReturnOrigins = accounts, []string{"https://api.example.test"}
 	})
 	for _, tc := range []struct {
@@ -55,7 +55,7 @@ func TestAFailedHostedSignInGoesBackToTheHostedLogin(t *testing.T) {
 	}{
 		{"a hosted sign-in", configured, back, http.StatusFound},
 		{"a console sign-in", configured, "", http.StatusBadRequest},
-		{"no hosted login configured", newTestService(t, new(pgxpool.Pool), new(auth.Service)), back, http.StatusBadRequest},
+		{"no hosted login configured", newTestService(t, new(pgxpool.Pool), new(authentication.Service)), back, http.StatusBadRequest},
 	} {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/saml/acs/x", nil)

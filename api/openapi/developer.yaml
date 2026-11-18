@@ -1507,7 +1507,7 @@ paths:
   /v1/webhooks/{id}/deliveries/{deliveryID}/retry:
     post:
       operationId: retryWebhookDelivery
-      description: 'Sends one of the organization''s webhook deliveries again now. A delivery that had finished, delivered or given up after its 60 attempts, starts a fresh set of attempts; one still retrying keeps its count. The delivery must be one of the webhook''s in the path: any other, like one that doesn''t exist or is being sent at this moment, is refused with 404 webhook.delivery_not_found and left as it was. An ID that isn''t a UUID is refused with 400 webhook.invalid_id.'
+      description: 'Sends one of the organization''s webhook deliveries again now. A delivery that had finished, delivered or given up after its 60 attempts, starts a fresh set of attempts; one still retrying keeps its count. The delivery must be one of the webhook''s in the path: any other, like one that doesn''t exist or is being sent at this moment, is refused with 404 webhook.delivery_not_found and left as it was. An ID that isn''t a UUID is refused with 400 webhook.invalid_id. Audited as webhook.delivery_retried.'
       summary: Retry delivery
       tags:
         - Webhooks
@@ -1554,7 +1554,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Queues a test.ping event for this subscription alone, whichever events it names, and answers once it is queued. Its data is {subscription_id}. Requires webhook.write.
+      description: Queues a test.ping event for this subscription alone, whichever events it names, and answers once it is queued. Its data is {subscription_id}. Audited as webhook.test_sent. Requires webhook.write.
       responses:
         '202':
           description: Accepted

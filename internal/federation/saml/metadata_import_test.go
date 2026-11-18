@@ -10,7 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
@@ -106,14 +106,14 @@ func TestFetchMetadata(t *testing.T) {
 	t.Cleanup(server.Close)
 	ctx := context.Background()
 
-	public := newTestService(t, new(pgxpool.Pool), new(auth.Service))
+	public := newTestService(t, new(pgxpool.Pool), new(authentication.Service))
 	for _, raw := range []string{server.URL + "/metadata", "https://127.0.0.1/metadata", "https://user:pass@idp.example.test/m", "ftp://idp.example.test/m"} {
 		if _, err := public.fetchMetadata(ctx, raw); !errors.Is(err, ErrMetadataURLInvalid) {
 			t.Errorf("fetch %s under the public policy: %v, want %s", raw, err, CodeMetadataURLInvalid)
 		}
 	}
 
-	local := newTestService(t, new(pgxpool.Pool), new(auth.Service), func(d *Deps) { d.Egress = egress.DevelopmentPolicy() })
+	local := newTestService(t, new(pgxpool.Pool), new(authentication.Service), func(d *Deps) { d.Egress = egress.DevelopmentPolicy() })
 	md, err := local.LoadMetadata(ctx, server.URL+"/metadata", "", "")
 	if err != nil || md.EntityID != "https://idp.example.test" {
 		t.Fatalf("load from the URL: %+v, %v", md, err)

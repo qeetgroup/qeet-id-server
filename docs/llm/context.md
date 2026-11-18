@@ -211,7 +211,7 @@ carries its reason.
 ```text
 federation  → access, identity             (never the other way round)
 access      → identity/{domainverify,user}
-identity    → access/{auth,authpolicy}
+identity    → access/{authentication,authpolicy}
 developer   → access/authorization/rbac, operations/{entitlements,notification}
 operations  → no other context
 any context → operations/{entitlements,notification}; the audit writer is internal/platform/audit
@@ -384,7 +384,7 @@ self-scope in-handler; other organization-scoped resources rely entirely on the 
 ## Authentication
 
 **Status:** verified
-**Evidence:** `internal/platform/crypto/password/hasher.go`, `internal/access/auth/`
+**Evidence:** `internal/platform/crypto/password/hasher.go`, `internal/access/authentication/`
 
 Password hashing is **Argon2id** (`m=19456,t=2,p=1`), re-hashed on a successful login when made
 with weaker parameters; MFA recovery codes use it too. Machine secrets — API keys and
@@ -401,7 +401,7 @@ Password sign-in lockout (`authentication/lockout.go`) counts failures per accou
 authentication policy within the platform's bounds (`authpolicy.DefaultLockoutLimits`) — plus a looser per-account cap and a
 per-source counter across accounts (spraying). Unknown addresses are counted and timed like real
 ones. Whose settings apply: the organization of the OAuth client a hosted sign-in names
-(`auth.Service.SignInOrganization`), else the platform defaults — never the account's own organization before the
+(`authentication.Service.SignInOrganization`), else the platform defaults — never the account's own organization before the
 password is verified. If its counters cannot be read or written the sign-in **fails closed** (503
 `auth.sign_in_unavailable`, counted in `sign_in_lockout_unavailable_total`). Locks and throttled
 sources reach the Threats → Anomalies store (`credential_stuffing`, `password_spraying`).
@@ -639,7 +639,7 @@ Then `make test`, `make lint`, `make build`.
 | **Route tree / middleware order** | `internal/bootstrap/router.go` | **Critical** | Security review — the organization guard depends on nesting |
 | **Route permissions** | `internal/bootstrap/permissions.go` | **Critical** | Security review · executable route-policy coverage |
 | **Authorization** | `internal/access/authorization/` | **Critical** | Security review |
-| **Authentication, sessions** | `internal/access/auth/` | **Critical** | Security review |
+| **Authentication, sessions** | `internal/access/authentication/` | **Critical** | Security review |
 | **Tokens, signing, rotation** | `internal/platform/crypto/tokens/` (`issue.go`, `verify.go`, `keys.go`) | **Critical** | Security review · cross-repo |
 | **Hashing, vault crypto** | `internal/platform/crypto/{password,envelope}/` | **Critical** | Security review |
 | **CSRF** | `internal/platform/http/httpx/csrf.go` | **Critical** | Security review |

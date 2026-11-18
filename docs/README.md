@@ -15,7 +15,7 @@ One binary (`cmd/api`) holds five bounded contexts, built on a shared platform a
 
 | Folder | What it does | For example |
 |---|---|---|
-| `internal/access` | How someone proves who they are, and what they may do | `auth` (sign-in, sessions), `passkey`, `mfa`, `recovery`, `authpolicy`, `ipallow`, `threat`, `authorization/{rbac,abac,rebac,authzen}` |
+| `internal/access` | How someone proves who they are, and what they may do | `authentication` (sign-in, sessions), `passkey`, `mfa`, `recovery`, `authpolicy`, `ipallow`, `threat`, `authorization/{rbac,abac,rebac,authzen}` |
 | `internal/identity` | Who exists: organizations, their people and groups | `organization`, `user`, `group`, `invite`, `verification`, `domainverify` |
 | `internal/federation` | Signing in through someone else, and others signing in through us | `oidc` (our OAuth/OIDC provider), `saml` (both roles), `oidcsso`, `ldap`, `scim`, `social`, `provision` |
 | `internal/developer` | Machine identities and integrations | `apikey`, `principal`, `agent`, `webhook`, `authhook`, `credentials/{secret,tokenvault,vc}` |

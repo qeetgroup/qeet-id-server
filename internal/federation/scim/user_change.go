@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
@@ -267,7 +267,7 @@ func (s *Service) applyUserChange(ctx context.Context, actor audit.Actor, organi
 		}
 		// Every way in ends, as an administrator's suspension ends them, so a
 		// later reactivation revives none.
-		if _, err := auth.EndSignIns(ctx, tx, s.signals, userID, sessionsignal.ReasonDeprovisioned); err != nil {
+		if _, err := authentication.EndSignIns(ctx, tx, s.signals, userID, sessionsignal.ReasonDeprovisioned); err != nil {
 			return failed
 		}
 	}
@@ -341,7 +341,7 @@ func (s *Service) applyDirectoryVouching(ctx context.Context, tx pgx.Tx, q *dbge
 		}
 	}
 	if c.email != "" {
-		if err := auth.ExpireRecoveryLinks(ctx, tx, userID); err != nil {
+		if err := authentication.ExpireRecoveryLinks(ctx, tx, userID); err != nil {
 			return failed
 		}
 		if err := q.SetProvisionedUserEmail(ctx, dbgen.SetProvisionedUserEmailParams{ID: userID, OrganizationID: &organizationID, Email: c.email}); err != nil {
@@ -380,11 +380,11 @@ func (s *Service) forgetUnvouched(ctx context.Context, tx pgx.Tx, actor audit.Ac
 	if err != nil || vouched {
 		return err
 	}
-	removed, err := auth.ForgetCredentials(ctx, tx, userID, false)
+	removed, err := authentication.ForgetCredentials(ctx, tx, userID, false)
 	if err != nil {
 		return err
 	}
-	if _, err := auth.EndSignIns(ctx, tx, s.signals, userID, sessionsignal.ReasonAdminRevokedAll); err != nil {
+	if _, err := authentication.EndSignIns(ctx, tx, s.signals, userID, sessionsignal.ReasonAdminRevokedAll); err != nil {
 		return err
 	}
 	// Audited only, as the other first proofs are: no event leaves for webhooks.

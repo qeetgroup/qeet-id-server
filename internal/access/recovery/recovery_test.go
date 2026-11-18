@@ -10,7 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authpolicy"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
@@ -49,7 +49,7 @@ type (
 	stubSender     struct{ notifier.Sender }
 	stubRules      struct{ authpolicy.PasswordRules }
 	stubMagicLinks struct{}
-	stubCapture    struct{ auth.DomainCapture }
+	stubCapture    struct{ authentication.DomainCapture }
 	stubLimit      struct{}
 )
 

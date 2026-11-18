@@ -16,8 +16,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth/authtest"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/authtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
@@ -121,21 +121,21 @@ const (
 type provider struct {
 	svc      *Service
 	notices  *LogoutNotices
-	sessions *auth.Service
+	sessions *authentication.Service
 	public   http.Handler
 	mount    func(chi.Router)
 }
 
 // newProvider returns the provider wired as production wires it, sign-out
 // notices included, its dependencies changed by each of with.
-func newProvider(t *testing.T, with ...func(d *Deps, sessions *auth.Service)) *provider {
+func newProvider(t *testing.T, with ...func(d *Deps, sessions *authentication.Service)) *provider {
 	t.Helper()
-	return newProviderOver(t, func(*auth.Deps) {}, with...)
+	return newProviderOver(t, func(*authentication.Deps) {}, with...)
 }
 
 // newProviderOver is newProvider with its hosted-login session service's
 // dependencies changed by sessionsChange.
-func newProviderOver(t *testing.T, sessionsChange func(*auth.Deps), with ...func(d *Deps, sessions *auth.Service)) *provider {
+func newProviderOver(t *testing.T, sessionsChange func(*authentication.Deps), with ...func(d *Deps, sessions *authentication.Service)) *provider {
 	t.Helper()
 	pool := dbtest.Pool(t)
 	issuer := dbtest.Issuer(t)
@@ -160,9 +160,9 @@ func newProviderOver(t *testing.T, sessionsChange func(*auth.Deps), with ...func
 // newSessions is the hosted-login session service signing with issuer, which
 // tells applications through notices when someone signs out, its
 // dependencies then changed by change.
-func newSessions(t *testing.T, issuer *tokens.Issuer, notices *LogoutNotices, change func(*auth.Deps)) *auth.Service {
+func newSessions(t *testing.T, issuer *tokens.Issuer, notices *LogoutNotices, change func(*authentication.Deps)) *authentication.Service {
 	t.Helper()
-	return authtest.New(t, dbtest.Pool(t), func(d *auth.Deps) { d.Tokens, d.SignOut = issuer, notices }, change)
+	return authtest.New(t, dbtest.Pool(t), func(d *authentication.Deps) { d.Tokens, d.SignOut = issuer, notices }, change)
 }
 
 // signIn opens a hosted-login session for userID and returns the browser's
@@ -178,7 +178,7 @@ func (p *provider) signIn(t *testing.T, userID uuid.UUID) (*http.Cookie, uuid.UU
 	if err != nil {
 		t.Fatalf("resolve the session: %v", err)
 	}
-	return &http.Cookie{Name: auth.LoginSessionCookie, Value: raw}, sessionID
+	return &http.Cookie{Name: authentication.LoginSessionCookie, Value: raw}, sessionID
 }
 
 // asApplication serves the authenticated routes to the bearer of an access

@@ -136,12 +136,17 @@ func (s *Service) Attempts(ctx context.Context, subscriptionID, deliveryID, orga
 	return out, nil
 }
 
-// RetryDelivery re-queues a delivery for immediate redelivery, clearing delivered_at, dead_at and
-// error; a finished one (delivered or given up) gets a fresh attempt budget, a retrying one keeps its
-// count. ErrWebhookDeliveryNotFound when it isn't that subscription's, the subscription isn't the
-// organization's, or a dispatcher holds its lease.
-func (s *Service) RetryDelivery(ctx context.Context, subscriptionID, deliveryID, organizationID uuid.UUID) error {
-	n, err := s.q.RetryWebhookDelivery(ctx, dbgen.RetryWebhookDeliveryParams{
+// RetryDelivery re-queues a delivery for immediate redelivery, recorded as actor's, clearing
+// delivered_at, dead_at and error; a finished one (delivered or given up) gets a fresh attempt budget, a
+// retrying one keeps its count. ErrWebhookDeliveryNotFound when it isn't that subscription's, the
+// subscription isn't the organization's, or a dispatcher holds its lease.
+func (s *Service) RetryDelivery(ctx context.Context, subscriptionID, deliveryID, organizationID uuid.UUID, actor audit.Actor) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	n, err := s.q.WithTx(tx).RetryWebhookDelivery(ctx, dbgen.RetryWebhookDeliveryParams{
 		DeliveryID: deliveryID, SubscriptionID: subscriptionID, OrganizationID: organizationID,
 	})
 	if err != nil {
@@ -150,5 +155,9 @@ func (s *Service) RetryDelivery(ctx context.Context, subscriptionID, deliveryID,
 	if n == 0 {
 		return ErrDeliveryNotFound
 	}
-	return nil
+	if err := audit.Record(ctx, tx, actor.Event(organizationID, "webhook.delivery_retried", "webhook_delivery", deliveryID,
+		map[string]any{"subscription_id": subscriptionID})); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }

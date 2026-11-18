@@ -10,7 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authpolicy"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/organization/branding"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
@@ -18,12 +18,12 @@ import (
 )
 
 // SessionManager resolves and ends the hosted-login SSO cookie. Satisfied by
-// *auth.Service; an interface keeps the dependency one-way.
+// *authentication.Service; an interface keeps the dependency one-way.
 type SessionManager interface {
 	ResolveLoginSession(ctx context.Context, raw string) (uuid.UUID, error)
 	ResolveLoginSessionWithID(ctx context.Context, raw string) (sessionID, userID uuid.UUID, err error)
 	ResolveLoginSessionAt(ctx context.Context, raw string) (sessionID, userID uuid.UUID, signedInAt time.Time, err error)
-	EndLoginSession(ctx context.Context, in auth.EndLoginSessionInput) (auth.LoginSessionEnded, error)
+	EndLoginSession(ctx context.Context, in authentication.EndLoginSessionInput) (authentication.LoginSessionEnded, error)
 	// LoginSessionFactorShortfall says what stops a code or token being
 	// issued for organizationID through the session: nil, or ErrStepUpRequired /
 	// ErrMFAEnrollmentRequired while the organization requires a second
@@ -298,7 +298,7 @@ func (h *Handler) sessionUser(r *http.Request) (uuid.UUID, bool) {
 // loginSession resolves the hosted-login SSO cookie to the session's id and its
 // user.
 func (h *Handler) loginSession(r *http.Request) (sessionID, userID uuid.UUID, ok bool) {
-	c, err := r.Cookie(auth.LoginSessionCookie)
+	c, err := r.Cookie(authentication.LoginSessionCookie)
 	if err != nil {
 		return uuid.Nil, uuid.Nil, false
 	}
@@ -311,7 +311,7 @@ func (h *Handler) loginSession(r *http.Request) (sessionID, userID uuid.UUID, ok
 
 // loginSessionAt is loginSession plus when the person signed in.
 func (h *Handler) loginSessionAt(r *http.Request) (sessionID, userID uuid.UUID, signedInAt time.Time, ok bool) {
-	c, err := r.Cookie(auth.LoginSessionCookie)
+	c, err := r.Cookie(authentication.LoginSessionCookie)
 	if err != nil {
 		return uuid.Nil, uuid.Nil, time.Time{}, false
 	}

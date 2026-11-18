@@ -10,7 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
@@ -136,4 +136,4 @@ func TestResolveFailsClosed(t *testing.T) {
 // unrecorded records no refused sign-in.
 type unrecorded struct{}
 
-func (unrecorded) RecordSignInFailure(context.Context, auth.SignInFailure) {}
+func (unrecorded) RecordSignInFailure(context.Context, authentication.SignInFailure) {}

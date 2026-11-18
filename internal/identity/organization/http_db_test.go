@@ -14,7 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
@@ -109,7 +109,7 @@ func TestOrganizationLifecycleIsTheOwners(t *testing.T) {
 	asOwner := dbtest.Serve(dbtest.Principal(owner.ID, org.ID), h.Mount)
 	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, org.ID), h.Mount)
 	path := "/organizations/" + org.ID.String()
-	signIn := func() *auth.TokenPair {
+	signIn := func() *authentication.TokenPair {
 		t.Helper()
 		pair, err := authSvc.IssuePair(ctx, owner.ID, org.ID, "192.0.2.1", "test", "password")
 		if err != nil {
@@ -117,7 +117,7 @@ func TestOrganizationLifecycleIsTheOwners(t *testing.T) {
 		}
 		return pair
 	}
-	ended := func(pair *auth.TokenPair) bool {
+	ended := func(pair *authentication.TokenPair) bool {
 		return dbtest.Count(t, `SELECT count(*) FROM auth.sessions WHERE id = $1 AND revoked_at IS NOT NULL`, pair.SessionID) == 1
 	}
 	audited := func(action string) int {
@@ -144,7 +144,7 @@ func TestOrganizationLifecycleIsTheOwners(t *testing.T) {
 	if !ended(before) {
 		t.Error("suspending the organization left its session live")
 	}
-	if _, err := authSvc.Refresh(ctx, auth.RefreshInput{RefreshToken: before.RefreshToken}); err == nil {
+	if _, err := authSvc.Refresh(ctx, authentication.RefreshInput{RefreshToken: before.RefreshToken}); err == nil {
 		t.Error("a session of the suspended organization was renewed")
 	}
 	if !slices.Equal(signals.reasons, []string{sessionsignal.ReasonOrganizationSuspended}) {

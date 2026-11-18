@@ -18,7 +18,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -59,7 +59,7 @@ func idpGet(t *testing.T, router http.Handler, path, cookie string) *httptest.Re
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "https://other.example"+path, nil)
 	if cookie != "" {
-		req.AddCookie(&http.Cookie{Name: auth.LoginSessionCookie, Value: cookie})
+		req.AddCookie(&http.Cookie{Name: authentication.LoginSessionCookie, Value: cookie})
 	}
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)

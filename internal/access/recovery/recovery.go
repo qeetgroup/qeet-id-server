@@ -22,7 +22,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/accountnotice"
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authpolicy"
 	"github.com/qeetgroup/qeet-id-server/internal/access/recovery/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
@@ -46,7 +46,7 @@ type Service struct {
 	loginBaseURL    string
 	rules           authpolicy.PasswordRules
 	magicLinks      MagicLinkPolicy
-	capture         auth.DomainCapture
+	capture         authentication.DomainCapture
 	magicPerAddress Limiter
 	magicPerCaller  Limiter
 	resetPerAddress Limiter
@@ -99,8 +99,8 @@ type Deps struct {
 	BaseAppURL   string        // the console, where links land
 	LoginBaseURL string        // the hosted login, where a reset requested there lands
 	Rules        authpolicy.PasswordRules
-	MagicLinks   MagicLinkPolicy    // whether an organization allows magic links, and their lifetime
-	Capture      auth.DomainCapture // refuses resets and magic links on a captured domain
+	MagicLinks   MagicLinkPolicy              // whether an organization allows magic links, and their lifetime
+	Capture      authentication.DomainCapture // refuses resets and magic links on a captured domain
 	Signals      *sessionsignal.Signaller
 	// MagicPerAddress, MagicPerCaller and ResetPerAddress bound magic-link
 	// requests per address and per caller, and reset requests per address.
@@ -308,7 +308,7 @@ func proveAddress(ctx context.Context, tx pgx.Tx, userID uuid.UUID, org *uuid.UU
 	if err != nil {
 		return false, err
 	}
-	removed, err := auth.ForgetCredentials(ctx, tx, userID, keepPassword)
+	removed, err := authentication.ForgetCredentials(ctx, tx, userID, keepPassword)
 	if err != nil {
 		return false, err
 	}
@@ -345,7 +345,7 @@ func auditOrgs(orgs []uuid.UUID) []*uuid.UUID {
 // ConfirmPasswordReset sets a new password with a reset link, checked against the account's
 // organization's rules once the link is known good. A refused password, or an address that must now
 // use SSO, leaves the credential and link untouched. On success the address counts as verified and
-// every sign-in ends (see auth.EndSignIns).
+// every sign-in ends (see authentication.EndSignIns).
 func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPassword string, from audit.Actor) error {
 	hash := codes.Hash(rawToken)
 	// The password is checked before the transaction, as the check reads the
@@ -404,7 +404,7 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPasswor
 	// End every sign-in the old password could have opened, and announce the
 	// ended sessions: sessions, hosted sessions, remembered devices,
 	// application grants and pending authorisations.
-	ended, err := auth.EndSignIns(ctx, tx, s.signals, row.UserID, sessionsignal.ReasonPasswordReset)
+	ended, err := authentication.EndSignIns(ctx, tx, s.signals, row.UserID, sessionsignal.ReasonPasswordReset)
 	if err != nil {
 		return err
 	}

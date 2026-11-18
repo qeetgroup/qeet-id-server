@@ -10,7 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidcrp"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/provision"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/social/dbgen"
@@ -27,7 +27,7 @@ import (
 type Service struct {
 	pool       *pgxpool.Pool
 	q          *dbgen.Queries
-	auth       *auth.Service
+	auth       *authentication.Service
 	appBaseURL string
 	oauth      *oauthClient
 	oidc       *oidcrp.Client
@@ -35,7 +35,7 @@ type Service struct {
 	link       *provision.Flow
 	egress     *egress.Policy
 	box        *envelope.Cipher
-	capture    auth.DomainCapture
+	capture    authentication.DomainCapture
 	platform   map[string]providerConfig
 	returnTo   returnto.Allowed
 }
@@ -44,11 +44,11 @@ type Service struct {
 // but ReturnOrigins and Platform.
 type Deps struct {
 	Pool   *pgxpool.Pool
-	Auth   *auth.Service
+	Auth   *authentication.Service
 	Cipher *envelope.Cipher // seals the providers' client secrets
 	// Capture keeps a provider from creating or signing in an account on a
 	// domain whose organization requires single sign-on.
-	Capture    auth.DomainCapture
+	Capture    authentication.DomainCapture
 	Egress     *egress.Policy // the outbound policy providers are reached under
 	AppBaseURL string         // where the console's callback is served
 	// ReturnOrigins are the origins a return_to may point at. With none, only

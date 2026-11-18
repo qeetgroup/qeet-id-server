@@ -72,10 +72,10 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 
 | Flow | Path |
 |---|---|
-| Password login, sessions, refresh | `internal/access/auth/` — `password.go`, `issue.go`, `refresh.go`, `sessions.go` |
-| Hosted SSO login session (`qe_ls`) | `internal/access/auth/loginsession.go` |
-| Trusted device (`qe_td`) | `internal/access/auth/trusteddevice.go` |
-| Account lockout | `internal/access/auth/lockout.go` |
+| Password login, sessions, refresh | `internal/access/authentication/` — `password.go`, `issue.go`, `refresh.go`, `sessions.go` |
+| Hosted SSO login session (`qe_ls`) | `internal/access/authentication/loginsession.go` |
+| Trusted device (`qe_td`) | `internal/access/authentication/trusteddevice.go` |
+| Account lockout | `internal/access/authentication/lockout.go` |
 | Passkeys / WebAuthn | `internal/access/passkey/` |
 | MFA — TOTP, OTP, recovery codes | `internal/access/mfa/` — `totp.go`, `otp.go`, `stepup.go` |
 | MFA — push approval | `internal/access/mfa/push.go`, `pushdevices.go`, `pushchallenge.go`, `pushadmin.go` |

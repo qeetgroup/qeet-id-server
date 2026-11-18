@@ -234,7 +234,7 @@ Every target in the [Makefile](./Makefile) — there are no others.
 | `make seed` / `seed-reset` | Load development demo data into an empty database, or recreate the database and load it |
 | `make kill` | Free a stuck `:4001` |
 
-Run a single test with `go test ./internal/access/auth/... -run TestName`.
+Run a single test with `go test ./internal/access/authentication/... -run TestName`.
 
 Before opening a pull request:
 

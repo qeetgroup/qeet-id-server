@@ -30,7 +30,7 @@ import (
 	"github.com/google/uuid"
 	dsig "github.com/russellhaering/goxmldsig"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -200,7 +200,7 @@ func idpPost(t *testing.T, router http.Handler, path, samlRequest, cookie string
 	form := url.Values{"SAMLRequest": {samlRequest}}
 	req := httptest.NewRequest(http.MethodPost, "https://other.example"+path, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.AddCookie(&http.Cookie{Name: auth.LoginSessionCookie, Value: cookie})
+	req.AddCookie(&http.Cookie{Name: authentication.LoginSessionCookie, Value: cookie})
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	return rec

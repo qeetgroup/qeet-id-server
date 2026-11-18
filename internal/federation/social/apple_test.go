@@ -12,7 +12,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidcrp/oidcrptest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
@@ -26,7 +26,7 @@ func appleSide(t *testing.T) (*Service, *oidcrptest.Provider) {
 	t.Helper()
 	p := oidcrptest.New(t, testAppleClientID, "apple-client-secret")
 	p.SetIssuer(appleIssuer)
-	s := newTestService(t, new(pgxpool.Pool), new(auth.Service), func(d *Deps) {
+	s := newTestService(t, new(pgxpool.Pool), new(authentication.Service), func(d *Deps) {
 		d.AppBaseURL, d.Egress = "https://console.example.test", egress.DevelopmentPolicy()
 	})
 	s.apple.TokenEndpoint, s.apple.JWKSURI = p.URL+"/token", p.JWKSURL()

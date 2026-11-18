@@ -14,8 +14,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth/authtest"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/authtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
@@ -56,7 +56,7 @@ func newRP(t *testing.T, with ...func(*Deps)) *rp {
 }
 
 // newAuthService is the sign-in service connection sign-ins go through.
-func newAuthService(t *testing.T) *auth.Service {
+func newAuthService(t *testing.T) *authentication.Service {
 	t.Helper()
 	return authtest.New(t, dbtest.Pool(t))
 }
@@ -154,10 +154,10 @@ func (s *rp) exchange(t *testing.T, code string) *httptest.ResponseRecorder {
 }
 
 // signIn runs a whole sign-in and returns the token pair it buys.
-func (s *rp) signIn(t *testing.T, idp *fakeIdP, connID uuid.UUID, claims func(nonce string) jwt.MapClaims) auth.TokenPair {
+func (s *rp) signIn(t *testing.T, idp *fakeIdP, connID uuid.UUID, claims func(nonce string) jwt.MapClaims) authentication.TokenPair {
 	t.Helper()
 	rec := s.exchange(t, loginCode(t, s.answer(t, idp, connID, claims)))
-	var pair auth.TokenPair
+	var pair authentication.TokenPair
 	dbtest.Decode(t, rec, &pair)
 	if rec.Code != http.StatusOK || pair.AccessToken == "" {
 		t.Fatalf("exchange: %d %s", rec.Code, rec.Body.String())

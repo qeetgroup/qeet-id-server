@@ -15,8 +15,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth/authtest"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/authtest"
 	"github.com/qeetgroup/qeet-id-server/internal/access/ipallow"
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
@@ -32,7 +32,7 @@ import (
 // refusal recorded), and a session that met the second factor it requires.
 func TestBackchannelApprovalMeetsTheOrganizationsRules(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
-	authSvc := authtest.New(t, pool, func(d *auth.Deps) { d.MFA = secondFactors(t, pool) })
+	authSvc := authtest.New(t, pool, func(d *authentication.Deps) { d.MFA = secondFactors(t, pool) })
 	svc := newTestService(t, pool, dbtest.Issuer(t), func(d *Deps) {
 		d.Addresses = ipallow.NewService(pool)
 		d.SessionFactors = authSvc.SessionFactorShortfall
@@ -187,7 +187,7 @@ func TestBackchannelFlow(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	prompts := &promptBox{}
-	p := newProvider(t, func(d *Deps, _ *auth.Service) { d.Notifier = prompts })
+	p := newProvider(t, func(d *Deps, _ *authentication.Service) { d.Notifier = prompts })
 	organization, otherOrganization := dbtest.Organization(t), dbtest.Organization(t)
 	person := dbtest.User(t, organization, organization)
 	colleague := dbtest.User(t, organization, organization)

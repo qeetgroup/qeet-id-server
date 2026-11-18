@@ -5,13 +5,13 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 )
 
 func TestNewService_TrimsTrailingSlash(t *testing.T) {
 	// appBaseURL is used to build the SPA callback redirect; a trailing slash
 	// would yield a double-slash path, so it must be trimmed.
-	s := newTestService(t, new(pgxpool.Pool), new(auth.Service), func(d *Deps) { d.AppBaseURL = "https://app.qeet.com/" })
+	s := newTestService(t, new(pgxpool.Pool), new(authentication.Service), func(d *Deps) { d.AppBaseURL = "https://app.qeet.com/" })
 	if s.appBaseURL != "https://app.qeet.com" {
 		t.Errorf("appBaseURL = %q, want trailing slash trimmed", s.appBaseURL)
 	}
@@ -20,7 +20,7 @@ func TestNewService_TrimsTrailingSlash(t *testing.T) {
 // TestValidateReturnTo checks that return_to accepts only "", a path with a
 // single leading "/", and URLs on an allowed origin.
 func TestValidateReturnTo(t *testing.T) {
-	s := newTestService(t, new(pgxpool.Pool), new(auth.Service), func(d *Deps) {
+	s := newTestService(t, new(pgxpool.Pool), new(authentication.Service), func(d *Deps) {
 		d.ReturnOrigins = []string{"https://login.qeet.in", "https://console.qeet.in/"}
 	})
 
@@ -79,7 +79,7 @@ func TestValidateReturnTo(t *testing.T) {
 // TestValidateReturnToWithNoAllowlist pins the safe default: with no origins
 // configured, only root-relative paths are accepted.
 func TestValidateReturnToWithNoAllowlist(t *testing.T) {
-	s := newTestService(t, new(pgxpool.Pool), new(auth.Service))
+	s := newTestService(t, new(pgxpool.Pool), new(authentication.Service))
 	if err := s.validateReturnTo("/oauth/authorize"); err != nil {
 		t.Errorf("root-relative path = %v, want nil", err)
 	}

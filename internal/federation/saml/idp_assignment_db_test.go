@@ -15,7 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -57,7 +57,7 @@ func TestAssignedOnlySPSignsInWhoIsAssigned(t *testing.T) {
 	}
 	req := httptest.NewRequest(http.MethodGet, "https://other.example/saml/idp/"+organization.String()+"/sso?sp="+sp.ID.String(), nil)
 	req.Header.Set("Accept", "text/html,application/xhtml+xml")
-	req.AddCookie(&http.Cookie{Name: auth.LoginSessionCookie, Value: aliceCookie})
+	req.AddCookie(&http.Cookie{Name: authentication.LoginSessionCookie, Value: aliceCookie})
 	page := httptest.NewRecorder()
 	s.router.ServeHTTP(page, req)
 	if page.Code != http.StatusForbidden || !strings.HasPrefix(page.Header().Get("Content-Type"), "text/html") ||

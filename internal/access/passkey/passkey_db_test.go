@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth/authtest"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/authtest"
 
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"

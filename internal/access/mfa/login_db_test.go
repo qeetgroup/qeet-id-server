@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
@@ -24,7 +24,7 @@ func TestWrongCodesInARowLockSignIn(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	mail := &dbtest.Mailbox{}
-	mfaSvc, authSvc := services(t, notifier.LogSender{}, func(d *auth.Deps) { d.Sender = mail })
+	mfaSvc, authSvc := services(t, notifier.LogSender{}, func(d *authentication.Deps) { d.Sender = mail })
 	a, _ := member(t)
 	secret, recovery := enrolTOTP(t, mfaSvc, a)
 	run := func(failures int) {
@@ -64,7 +64,7 @@ func TestWrongCodesInARowLockSignIn(t *testing.T) {
 	}
 
 	if err := inTx(t, func(tx pgx.Tx) error {
-		_, err := auth.EndSignIns(ctx, tx, nil, a.ID, "password_reset")
+		_, err := authentication.EndSignIns(ctx, tx, nil, a.ID, "password_reset")
 		return err
 	}); err != nil {
 		t.Fatal(err)
@@ -90,7 +90,7 @@ func TestPushSignIn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start push: %v", err)
 	}
-	if _, _, err := authSvc.CompleteMFALoginWith(ctx, token, auth.MFAProof{Push: true}, "", ""); !errors.Is(err, errs.ErrMFAPushPending) {
+	if _, _, err := authSvc.CompleteMFALoginWith(ctx, token, authentication.MFAProof{Push: true}, "", ""); !errors.Is(err, errs.ErrMFAPushPending) {
 		t.Errorf("complete before the phone answers: %v, want %v", err, errs.ErrMFAPushPending)
 	}
 	sent := push.sent()
@@ -100,7 +100,7 @@ func TestPushSignIn(t *testing.T) {
 	if err := svc.RespondToPushChallenge(ctx, uuid.MustParse(sent[0]), a.ID, device, true, number); err != nil {
 		t.Fatalf("approve on the phone: %v", err)
 	}
-	pair, _, err := authSvc.CompleteMFALoginWith(ctx, token, auth.MFAProof{Push: true}, "", "")
+	pair, _, err := authSvc.CompleteMFALoginWith(ctx, token, authentication.MFAProof{Push: true}, "", "")
 	if err != nil || pair == nil || pair.UserID != a.ID {
 		t.Fatalf("complete after approval: %+v, %v", pair, err)
 	}

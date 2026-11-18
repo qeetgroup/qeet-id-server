@@ -23,8 +23,8 @@ import (
 	saml2 "github.com/russellhaering/gosaml2"
 	dsig "github.com/russellhaering/goxmldsig"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth/authtest"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/authtest"
 	"github.com/qeetgroup/qeet-id-server/internal/access/ipallow"
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
@@ -373,7 +373,7 @@ func TestIdPPostBindingResumesAfterSignIn(t *testing.T) {
 // fresh sign-in still hasn't.
 func TestSAMLIdPAppliesTheOrganizationsAddressRulesAndSecondFactor(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
-	authSvc := authtest.New(t, pool, func(d *auth.Deps) { d.MFA = secondFactors(t, pool) })
+	authSvc := authtest.New(t, pool, func(d *authentication.Deps) { d.MFA = secondFactors(t, pool) })
 	idp := newTestIdP(t, pool, authSvc, func(d *IdPDeps) { d.Addresses, d.Factors = ipallow.NewService(pool), authSvc })
 	router := chi.NewRouter()
 	(&Handler{Service: &Service{}, IdP: idp, PublicBaseURL: testPublicBase}).MountPublic(router)
@@ -401,7 +401,7 @@ func TestSAMLIdPAppliesTheOrganizationsAddressRulesAndSecondFactor(t *testing.T)
 	get := func(path, cookie, from string) *httptest.ResponseRecorder {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, "https://other.example"+path, nil)
-		req.AddCookie(&http.Cookie{Name: auth.LoginSessionCookie, Value: cookie})
+		req.AddCookie(&http.Cookie{Name: authentication.LoginSessionCookie, Value: cookie})
 		req.RemoteAddr = from
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)

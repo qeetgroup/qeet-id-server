@@ -10,38 +10,38 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
-// Sign-in second factors (auth.MFAEnroller). Any confirmed factor can be
+// Sign-in second factors (authentication.MFAEnroller). Any confirmed factor can be
 // challenged: an authenticator app with its recovery codes, email and SMS
 // codes, passkeys where the organization allows them, and push devices.
 
 // LoginFactors lists the second factors userID can meet a sign-in challenge
 // with, in a stable order.
-func (s *Service) LoginFactors(ctx context.Context, userID uuid.UUID) ([]auth.LoginFactor, error) {
+func (s *Service) LoginFactors(ctx context.Context, userID uuid.UUID) ([]authentication.LoginFactor, error) {
 	return s.loginFactors(ctx, s.q, userID)
 }
 
 // LoginFactorsTx is LoginFactors read through tx.
-func (s *Service) LoginFactorsTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID) ([]auth.LoginFactor, error) {
+func (s *Service) LoginFactorsTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID) ([]authentication.LoginFactor, error) {
 	return s.loginFactors(ctx, s.q.WithTx(tx), userID)
 }
 
-func (s *Service) loginFactors(ctx context.Context, q *dbgen.Queries, userID uuid.UUID) ([]auth.LoginFactor, error) {
+func (s *Service) loginFactors(ctx context.Context, q *dbgen.Queries, userID uuid.UUID) ([]authentication.LoginFactor, error) {
 	counts, err := q.LoginFactorCounts(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
-	var out []auth.LoginFactor
+	var out []authentication.LoginFactor
 	if counts.Totp {
-		out = append(out, auth.LoginFactor{Type: "totp"})
+		out = append(out, authentication.LoginFactor{Type: "totp"})
 	}
 	if counts.RecoveryCodes > 0 {
-		out = append(out, auth.LoginFactor{Type: "recovery_code"})
+		out = append(out, authentication.LoginFactor{Type: "recovery_code"})
 	}
 	factors, err := q.ListOTPFactors(ctx, userID)
 	if err != nil {
@@ -52,13 +52,13 @@ func (s *Service) loginFactors(ctx context.Context, q *dbgen.Queries, userID uui
 			continue
 		}
 		id := f.ID
-		out = append(out, auth.LoginFactor{Type: f.Channel, ID: &id, Destination: notifier.MaskDestination(f.Channel, f.Destination)})
+		out = append(out, authentication.LoginFactor{Type: f.Channel, ID: &id, Destination: notifier.MaskDestination(f.Channel, f.Destination)})
 	}
 	if counts.Passkeys > 0 {
-		out = append(out, auth.LoginFactor{Type: "passkey"})
+		out = append(out, authentication.LoginFactor{Type: "passkey"})
 	}
 	if counts.PushDevices > 0 {
-		out = append(out, auth.LoginFactor{Type: "push"})
+		out = append(out, authentication.LoginFactor{Type: "push"})
 	}
 	return out, nil
 }
@@ -105,18 +105,18 @@ func (s *Service) FinishLoginPasskeyTx(ctx context.Context, tx pgx.Tx, userID, s
 
 // StartLoginPush sends a sign-in approval request to every push device of the
 // user and returns the request: its id, expiry and the number to match.
-func (s *Service) StartLoginPush(ctx context.Context, userID uuid.UUID, ip, ua string) (auth.LoginPush, error) {
+func (s *Service) StartLoginPush(ctx context.Context, userID uuid.UUID, ip, ua string) (authentication.LoginPush, error) {
 	id, number, err := s.CreatePushChallenge(ctx, userID, "sign_in", PushChallengeContext{
 		IP: ip, UserAgent: ua, Timestamp: time.Now().UTC().Format(time.RFC3339),
 	})
 	if err != nil {
-		return auth.LoginPush{}, err
+		return authentication.LoginPush{}, err
 	}
 	ch, err := s.GetPushChallenge(ctx, id)
 	if err != nil {
-		return auth.LoginPush{}, err
+		return authentication.LoginPush{}, err
 	}
-	return auth.LoginPush{ID: id, ExpiresAt: ch.ExpiresAt, Number: number}, nil
+	return authentication.LoginPush{ID: id, ExpiresAt: ch.ExpiresAt, Number: number}, nil
 }
 
 // LoginPushStatusTx reads the state of one of userID's push requests under

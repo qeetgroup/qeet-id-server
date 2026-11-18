@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/passkey/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
@@ -40,21 +40,21 @@ func NewRelyingParty(pool *pgxpool.Pool, wa *webauthn.WebAuthn) (*RelyingParty, 
 // holder when one is added or removed; capture refuses passkeys for addresses that require SSO.
 type Service struct {
 	*RelyingParty
-	auth        *auth.Service
+	auth        *authentication.Service
 	policy      MethodPolicy
 	invitations InvitationAcceptor
 	sender      notifier.Sender
-	capture     auth.DomainCapture
+	capture     authentication.DomainCapture
 }
 
 // Deps are what the passkey service is built from, all required.
 type Deps struct {
 	RelyingParty *RelyingParty
-	Auth         *auth.Service      // signs a person in once a passkey proves them
-	Policy       MethodPolicy       // the organization's passkey on/off setting
-	Invitations  InvitationAcceptor // accepts an invitation with a passkey
-	Sender       notifier.Sender    // tells the account holder of a passkey added or removed
-	Capture      auth.DomainCapture // refuses passkey sign-in and sign-up on a captured domain
+	Auth         *authentication.Service      // signs a person in once a passkey proves them
+	Policy       MethodPolicy                 // the organization's passkey on/off setting
+	Invitations  InvitationAcceptor           // accepts an invitation with a passkey
+	Sender       notifier.Sender              // tells the account holder of a passkey added or removed
+	Capture      authentication.DomainCapture // refuses passkey sign-in and sign-up on a captured domain
 }
 
 // NewService returns the passkey service built from d.

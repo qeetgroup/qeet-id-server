@@ -161,7 +161,7 @@ func (s *Service) ForceMFA(ctx context.Context, organizationID uuid.UUID, level 
 	}
 }
 
-// ShouldForceMFA satisfies auth.RiskAssessor: it assesses the request, without
+// ShouldForceMFA satisfies authentication.RiskAssessor: it assesses the request, without
 // recording it, and reports whether its level reaches the organization's force-MFA
 // level.
 func (s *Service) ShouldForceMFA(ctx context.Context, organizationID, userID uuid.UUID, ip, ua, country string) bool {

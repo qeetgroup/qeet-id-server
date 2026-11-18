@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/recovery/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
@@ -282,7 +282,7 @@ func (s *Service) consumeMagicLink(ctx context.Context, rawToken, app string, fr
 		return nil, err
 	}
 	if proved {
-		if _, err := auth.EndSignIns(ctx, tx, s.signals, account.ID, sessionsignal.ReasonAllSessionsRevoked); err != nil {
+		if _, err := authentication.EndSignIns(ctx, tx, s.signals, account.ID, sessionsignal.ReasonAllSessionsRevoked); err != nil {
 			return nil, err
 		}
 	}

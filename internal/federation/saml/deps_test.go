@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
@@ -57,7 +57,7 @@ func testCipher(t testing.TB) *envelope.Cipher {
 
 // testDeps are the service's dependencies on pool, signing people in through
 // authSvc, on a plan with single sign-on and no hosted login.
-func testDeps(t testing.TB, pool *pgxpool.Pool, authSvc *auth.Service) Deps {
+func testDeps(t testing.TB, pool *pgxpool.Pool, authSvc *authentication.Service) Deps {
 	return Deps{
 		Pool: pool, Auth: authSvc, Cipher: testCipher(t), Gate: allPlans{},
 		Egress: egress.PublicPolicy(), AppBaseURL: "https://console.example.test",
@@ -66,7 +66,7 @@ func testDeps(t testing.TB, pool *pgxpool.Pool, authSvc *auth.Service) Deps {
 
 // newTestService is the service on pool signing people in through authSvc,
 // its dependencies changed by each of with.
-func newTestService(t testing.TB, pool *pgxpool.Pool, authSvc *auth.Service, with ...func(*Deps)) *Service {
+func newTestService(t testing.TB, pool *pgxpool.Pool, authSvc *authentication.Service, with ...func(*Deps)) *Service {
 	t.Helper()
 	d := testDeps(t, pool, authSvc)
 	for _, change := range with {
@@ -114,14 +114,14 @@ func newTestIdP(t testing.TB, pool *pgxpool.Pool, sessions SessionResolver, with
 // dependencies, and that the error names it.
 func TestConstructorsRefuseMissingDependencies(t *testing.T) {
 	for _, name := range []string{"Pool", "Auth", "Cipher", "Gate", "Egress", "AppBaseURL"} {
-		d := testDeps(t, new(pgxpool.Pool), new(auth.Service))
+		d := testDeps(t, new(pgxpool.Pool), new(authentication.Service))
 		reflect.ValueOf(&d).Elem().FieldByName(name).SetZero()
 		if _, err := NewService(d); err == nil || !strings.Contains(err.Error(), name) {
 			t.Errorf("service built without %s: %v", name, err)
 		}
 	}
-	newTestService(t, new(pgxpool.Pool), new(auth.Service))
-	idp := testIdPDeps(t, new(pgxpool.Pool), new(auth.Service))
+	newTestService(t, new(pgxpool.Pool), new(authentication.Service))
+	idp := testIdPDeps(t, new(pgxpool.Pool), new(authentication.Service))
 	for _, name := range []string{"Pool", "LoginBaseURL", "Sessions", "Addresses", "Factors", "Gate"} {
 		d := idp
 		reflect.ValueOf(&d).Elem().FieldByName(name).SetZero()

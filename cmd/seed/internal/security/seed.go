@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/qeetgroup/qeet-id-server/cmd/seed/internal/world"
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/totp"
@@ -132,7 +132,7 @@ func (s *state) signIn(p *world.Person) {
 	if p.Unverified || w.Deps.DomainVerify.Service.RefuseCaptured(w.Ctx, p.Email) != nil {
 		return
 	}
-	res, err := w.Deps.Auth.Service.Login(w.Ctx, auth.LoginInput{Email: p.Email, Password: w.Password, IP: p.Device.IP, UserAgent: p.Device.UserAgent})
+	res, err := w.Deps.Auth.Service.Login(w.Ctx, authentication.LoginInput{Email: p.Email, Password: w.Password, IP: p.Device.IP, UserAgent: p.Device.UserAgent})
 	switch {
 	case err != nil:
 		s.refused++
@@ -161,7 +161,7 @@ var wrongPasswords = []string{"Welcome@123", "Password@2026", "Summer2026!", "Qw
 // credential stuffing that locks one account, and at Northwind and Meridian a
 // spray that throttles its source. The bot check scores each attempt.
 func (s *state) attacks(o *world.Org) {
-	w, cfg := s.w, auth.DefaultLockoutConfig()
+	w, cfg := s.w, authentication.DefaultLockoutConfig()
 	var ordinary []*world.Person
 	for _, p := range o.Active() {
 		if p.Login == "" && !p.Unverified {
@@ -170,7 +170,7 @@ func (s *state) attacks(o *world.Org) {
 	}
 	try := func(src world.Device, p *world.Person, i int) {
 		w.Deps.Bot.Service.Evaluate(w.Ctx, p.Email, src.IP, src.UserAgent)
-		_, err := w.Deps.Auth.Service.Login(w.Ctx, auth.LoginInput{Email: p.Email, Password: wrongPasswords[i%len(wrongPasswords)],
+		_, err := w.Deps.Auth.Service.Login(w.Ctx, authentication.LoginInput{Email: p.Email, Password: wrongPasswords[i%len(wrongPasswords)],
 			IP: src.IP, UserAgent: src.UserAgent})
 		if err == nil {
 			w.Check(errors.New("an attacker's password was accepted"), "attack "+p.Email)

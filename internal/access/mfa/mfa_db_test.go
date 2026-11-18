@@ -16,12 +16,12 @@ import (
 
 	"github.com/go-webauthn/webauthn/protocol"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth/authtest"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/authtest"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/totp"
@@ -50,7 +50,7 @@ var sixDigits = regexp.MustCompile(`\b\d{6}\b`)
 // services returns the MFA service, sending codes through sender on a plan
 // that includes SMS codes, and an authentication service that asks for its
 // factors. Each change applies to the authentication service's Deps.
-func services(t *testing.T, sender notifier.Sender, change ...func(*auth.Deps)) (*Service, *auth.Service) {
+func services(t *testing.T, sender notifier.Sender, change ...func(*authentication.Deps)) (*Service, *authentication.Service) {
 	t.Helper()
 	pool := dbtest.Pool(t)
 	box, err := envelope.New([]byte("0123456789abcdef0123456789abcdef"))
@@ -64,7 +64,7 @@ func services(t *testing.T, sender notifier.Sender, change ...func(*auth.Deps)) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	authSvc := authtest.New(t, pool, append([]func(*auth.Deps){func(d *auth.Deps) { d.MFA = mfaSvc }}, change...)...)
+	authSvc := authtest.New(t, pool, append([]func(*authentication.Deps){func(d *authentication.Deps) { d.MFA = mfaSvc }}, change...)...)
 	return mfaSvc, authSvc
 }
 
@@ -127,9 +127,9 @@ func enrolTOTP(t *testing.T, svc *Service, a dbtest.Account) (string, []string) 
 }
 
 // challenge signs a in with testPassword and returns the second step's token.
-func challenge(t *testing.T, authSvc *auth.Service, a dbtest.Account) string {
+func challenge(t *testing.T, authSvc *authentication.Service, a dbtest.Account) string {
 	t.Helper()
-	res, err := authSvc.Login(dbtest.Context(t), auth.LoginInput{Email: a.Email, Password: testPassword})
+	res, err := authSvc.Login(dbtest.Context(t), authentication.LoginInput{Email: a.Email, Password: testPassword})
 	if err != nil || !res.MFARequired || res.MFAToken == "" {
 		t.Fatalf("sign in: %+v, %v; want a second-factor challenge", res, err)
 	}
@@ -174,7 +174,7 @@ func newPhones(t *testing.T) *phones {
 
 // pushServices returns MFA and authentication services that deliver push
 // requests to Android phones through push.
-func pushServices(t *testing.T, push *phones) (*Service, *auth.Service) {
+func pushServices(t *testing.T, push *phones) (*Service, *authentication.Service) {
 	t.Helper()
 	mfaSvc, authSvc := services(t, notifier.LogSender{})
 	mfaSvc.fcm = push.fcm

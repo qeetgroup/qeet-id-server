@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -58,7 +60,7 @@ func (s *Service) ListIdentities(ctx context.Context, userID, organizationID uui
 // Unlink is an administrator removing an identity linked to an account in their organization, within
 // that organization only. Refused when mayChange refuses the account (checked before the transaction)
 // and, recorded, when it is the account's only way to sign in.
-func (s *Service) Unlink(ctx context.Context, id, organizationID uuid.UUID, by user.Remover, mayChange func(owner uuid.UUID) error) error {
+func (s *Service) Unlink(ctx context.Context, id, organizationID uuid.UUID, by audit.Actor, mayChange func(owner uuid.UUID) error) error {
 	// The account's other ways to sign in span its organizations.
 	ctx = postgres.AcrossOrganizations(ctx)
 	owner, err := s.q.ExternalIdentityOwner(ctx, dbgen.ExternalIdentityOwnerParams{ID: id, OrganizationID: organizationID})
@@ -123,7 +125,7 @@ func (s *Service) ListIdentitiesForUser(ctx context.Context, userID uuid.UUID) (
 // UnlinkForUser removes one of the caller's connected platform social
 // accounts. ErrNotFound when it is not theirs (nothing is removed); refused,
 // and recorded, when it is their account's only way to sign in.
-func (s *Service) UnlinkForUser(ctx context.Context, id, userID uuid.UUID, by user.Remover) error {
+func (s *Service) UnlinkForUser(ctx context.Context, id, userID uuid.UUID, by audit.Actor) error {
 	// The account's other ways to sign in span its organizations.
 	ctx = postgres.AcrossOrganizations(ctx)
 	tx, err := s.pool.Begin(ctx)
@@ -182,7 +184,7 @@ func (h *Handler) unlink(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	var by user.Remover
+	var by audit.Actor
 	if p := httpx.PrincipalFromCtx(r.Context()); p != nil {
 		by.UserID = p.UserID
 	}
@@ -272,7 +274,7 @@ func (h *Handler) unlinkMine(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	by := user.Remover{UserID: p.UserID, IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
+	by := audit.ActorOf(r)
 	if err := h.Service.UnlinkForUser(r.Context(), id, *p.UserID, by); err != nil {
 		httpx.WriteError(w, r, err)
 		return

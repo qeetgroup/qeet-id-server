@@ -109,7 +109,7 @@ with why. `TestOrganizationTablesHaveRowSecurity` fails otherwise. A new schema 
 
 ```text
 1  read the product flow           qeet-id-context/FLOWS/authentication.md  (what it should do)
-2  find the implementation         internal/access/{auth,passkey,mfa,recovery}/
+2  find the implementation         internal/access/{authentication,passkey,mfa,recovery}/
 3  check session/token impact      does it change qe_ls, qe_td, or token claims?
 4  check API impact                api/openapi/src/auth/
 5  security review                 SECURITY.md + qeet-context/SECURITY.md

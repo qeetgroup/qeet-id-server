@@ -13,7 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/logincode"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oauthstate"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidcrp"
@@ -331,7 +331,7 @@ var platformCodeRefusals = logincode.Refusals{
 // organization-less token pair, or the second-factor challenge to meet first.
 // A code that isn't a platform one fails with ErrSocialLoginCodeInvalid, so
 // the caller can try the organization exchange.
-func (s *Service) ExchangePlatformLogin(ctx context.Context, rawCode, ip, ua string) (*auth.LoginResult, error) {
+func (s *Service) ExchangePlatformLogin(ctx context.Context, rawCode, ip, ua string) (*authentication.LoginResult, error) {
 	code, err := logincode.Consume(ctx, s.pool, logincode.KindPlatformSocial, rawCode, platformCodeRefusals)
 	if err != nil {
 		return nil, err

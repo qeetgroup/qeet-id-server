@@ -133,7 +133,7 @@ func (s *Service) Delete(ctx context.Context, id, userID uuid.UUID, who Requeste
 	}
 	if methods.Total() <= 1 {
 		_ = tx.Rollback(ctx)
-		by := user.Remover{UserID: who.UserID, IP: who.IP, UserAgent: who.UserAgent, RequestID: who.RequestID}
+		by := who.Actor
 		return user.RefuseLastMethodRemoval(ctx, s.pool, userID, who.OrganizationID, "passkey", id, by)
 	}
 	if err := audit.Record(ctx, tx, who.event("passkey.deleted", userID,

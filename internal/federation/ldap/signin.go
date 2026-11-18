@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/provision"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 )
@@ -25,16 +25,16 @@ func (s *Service) findOrCreateUser(ctx context.Context, organizationID, connID u
 }
 
 // Login checks the password with the directory and signs the person in as a
-// password sign-in to the connection's organization is (auth.SignInExternal):
+// password sign-in to the connection's organization is (authentication.SignInExternal):
 // under its address, lockout, hook, risk and second-factor rules. The result
 // is a token pair, or a challenge to complete at /v1/auth/mfa.
-func (s *Service) Login(ctx context.Context, connID uuid.UUID, username, password, ip, ua string) (*auth.LoginResult, error) {
+func (s *Service) Login(ctx context.Context, connID uuid.UUID, username, password, ip, ua string) (*authentication.LoginResult, error) {
 	return directorySignIn(ctx, s, connID, username, password, ip, ua, s.auth.SignInExternal)
 }
 
 // LoginSession is Login for the hosted login: the same checks, ending in the hosted login
 // session, or the challenge to complete first.
-func (s *Service) LoginSession(ctx context.Context, connID uuid.UUID, username, password, ip, ua string) (*auth.LoginSessionResult, error) {
+func (s *Service) LoginSession(ctx context.Context, connID uuid.UUID, username, password, ip, ua string) (*authentication.LoginSessionResult, error) {
 	return directorySignIn(ctx, s, connID, username, password, ip, ua, s.auth.SignInExternalSession)
 }
 
@@ -43,7 +43,7 @@ func (s *Service) LoginSession(ctx context.Context, connID uuid.UUID, username, 
 // LDAP, then finish runs the sign-in's checks around the directory bind and
 // says how it ends.
 func directorySignIn[R any](ctx context.Context, s *Service, connID uuid.UUID, username, password, ip, ua string,
-	finish func(context.Context, auth.ExternalSignIn, auth.ExternalCheck) (R, error)) (res R, resultError error) {
+	finish func(context.Context, authentication.ExternalSignIn, authentication.ExternalCheck) (R, error)) (res R, resultError error) {
 	c, err := s.getFull(ctx, connID, uuid.Nil)
 	if err != nil {
 		return res, err
@@ -68,7 +68,7 @@ func directorySignIn[R any](ctx context.Context, s *Service, connID uuid.UUID, u
 	if username == "" || password == "" {
 		return res, ErrCredentialsRequired
 	}
-	res, err = finish(ctx, auth.ExternalSignIn{
+	res, err = finish(ctx, authentication.ExternalSignIn{
 		OrganizationID: c.OrganizationID,
 		Account:        provider + ":" + connID.String() + ":" + lockoutName(username),
 		Method:         provider,

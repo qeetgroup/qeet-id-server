@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/developer/webhook/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 )
 
@@ -186,8 +187,9 @@ func (u *Queue) enqueue(ctx context.Context, q *dbgen.Queries, organizationID uu
 	return u.queue(ctx, q, Event{ID: uuid.New(), Type: eventType, OrganizationID: organizationID, OccurredAt: time.Now().UTC(), Data: data})
 }
 
-// SendTest queues a TestEvent for sub alone, whichever events it names.
-func (s *Service) SendTest(ctx context.Context, sub *Subscription) error {
+// SendTest queues a TestEvent for sub alone, whichever events it names, recorded as actor's in the
+// same transaction.
+func (s *Service) SendTest(ctx context.Context, sub *Subscription, actor audit.Actor) error {
 	data, err := json.Marshal(map[string]any{"subscription_id": sub.ID})
 	if err != nil {
 		return err
@@ -197,5 +199,17 @@ func (s *Service) SendTest(ctx context.Context, sub *Subscription) error {
 	if err != nil {
 		return err
 	}
-	return s.q.InsertDelivery(ctx, dbgen.InsertDeliveryParams{SubscriptionID: sub.ID, EventID: e.ID, EventType: e.Type, Payload: body})
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := s.q.WithTx(tx).InsertDelivery(ctx, dbgen.InsertDeliveryParams{SubscriptionID: sub.ID, EventID: e.ID, EventType: e.Type, Payload: body}); err != nil {
+		return err
+	}
+	if err := audit.Record(ctx, tx, actor.Event(sub.OrganizationID, "webhook.test_sent", "webhook_subscription", sub.ID,
+		map[string]any{"event_id": e.ID})); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }

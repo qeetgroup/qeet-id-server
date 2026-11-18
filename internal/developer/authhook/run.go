@@ -71,7 +71,7 @@ func stateOf(hooks []dbgen.ListEnabledSignInHooksRow) hookState {
 	return hookState{present: true, id: hooks[0].ID, failOpen: true}
 }
 
-// Run implements auth.LoginHook: it calls the organization's enabled hooks, oldest first. The first
+// Run implements authentication.LoginHook: it calls the organization's enabled hooks, oldest first. The first
 // deny refuses the sign-in with ErrAuthHookDenied; otherwise it returns the claims to add to the
 // access token, a later hook's replacing an earlier one's of the same name. skipped handles a hook
 // that gives no answer.

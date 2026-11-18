@@ -14,8 +14,8 @@ import (
 	goldap "github.com/go-ldap/ldap/v3"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth/authtest"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/authtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -149,7 +149,7 @@ func (noLDAP) FeatureAllowed(context.Context, uuid.UUID, string) (bool, error) {
 
 // newAuthService is the sign-in service the directory signs people in
 // through, its accounts holding no second factor.
-func newAuthService(t *testing.T) *auth.Service {
+func newAuthService(t *testing.T) *authentication.Service {
 	t.Helper()
 	return authtest.New(t, dbtest.Pool(t))
 }
@@ -163,7 +163,7 @@ func directoryService(t *testing.T, with ...func(*Deps)) *Service {
 
 // serviceOver returns the LDAP service signing people in through authSvc,
 // allowed to reach loopback directories and able to open what the tests seal.
-func serviceOver(t *testing.T, authSvc *auth.Service, with ...func(*Deps)) *Service {
+func serviceOver(t *testing.T, authSvc *authentication.Service, with ...func(*Deps)) *Service {
 	t.Helper()
 	d := testDeps(dbtest.Pool(t), authSvc, testCipher(t))
 	for _, change := range with {

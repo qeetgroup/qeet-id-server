@@ -78,6 +78,10 @@ func TestPlatformChainsVerify(t *testing.T) {
 		if _, err := tx.Exec(ctx, `DELETE FROM audit.events WHERE organization_id IS NULL AND chain_shard = 9`); err != nil {
 			t.Fatal(err)
 		}
+		// Its checkpoint goes too, as on a chain never verified, whatever other tests ran first.
+		if _, err := tx.Exec(ctx, `DELETE FROM platform.audit_chain_checkpoints WHERE organization_id IS NULL AND chain_shard = 9`); err != nil {
+			t.Fatal(err)
+		}
 		res, err := v.Verify(ctx, nil)
 		if err != nil || res.OK || res.ReasonCode != chainShardMissing || !strings.Contains(res.BrokenReason, "9") {
 			t.Errorf("verify with chain 9 emptied: %+v, %v; want %s naming chain 9", res, err, chainShardMissing)

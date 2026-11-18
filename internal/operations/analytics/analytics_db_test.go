@@ -6,11 +6,11 @@ import (
 	"math"
 	"testing"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth/authtest"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/authtest"
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
@@ -34,8 +34,8 @@ func TestOverviewCountsPurgedSessionsSignIns(t *testing.T) {
 		dbtest.SetPassword(t, a.ID, testPassword)
 		return a
 	}
-	signIn := func(a dbtest.Account) *auth.TokenPair {
-		res, err := svc.Login(ctx, auth.LoginInput{Email: a.Email, Password: testPassword})
+	signIn := func(a dbtest.Account) *authentication.TokenPair {
+		res, err := svc.Login(ctx, authentication.LoginInput{Email: a.Email, Password: testPassword})
 		if err != nil || res.Pair == nil {
 			t.Fatalf("sign in: %+v, %v", res, err)
 		}
@@ -57,7 +57,7 @@ func TestOverviewCountsPurgedSessionsSignIns(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := auth.PurgeEndedSessions(ctx, pool, auth.SessionRetention, nil); err != nil {
+	if _, err := authentication.PurgeEndedSessions(ctx, pool, authentication.SessionRetention, nil); err != nil {
 		t.Fatalf("purge: %v", err)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM auth.sessions WHERE user_id = ANY($1)`, []uuid.UUID{earlier.ID, lapsed.ID}); n != 0 {
@@ -69,7 +69,7 @@ func TestOverviewCountsPurgedSessionsSignIns(t *testing.T) {
 	if _, err := svc.CreateLoginSession(ctx, hosted.ID, "", "test"); err != nil {
 		t.Fatalf("hosted sign-in: %v", err)
 	}
-	if _, err := svc.SwitchOrganization(ctx, auth.SwitchOrganizationInput{UserID: guest.ID, FromSessionID: signIn(guest).SessionID, OrganizationID: organization}); err != nil {
+	if _, err := svc.SwitchOrganization(ctx, authentication.SwitchOrganizationInput{UserID: guest.ID, FromSessionID: signIn(guest).SessionID, OrganizationID: organization}); err != nil {
 		t.Fatalf("switch: %v", err)
 	}
 

@@ -13,7 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidcrp"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidcsso/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/provision"
@@ -79,7 +79,7 @@ func (c *Connection) discoveryURL() string {
 type Service struct {
 	pool       *pgxpool.Pool
 	q          *dbgen.Queries
-	auth       *auth.Service
+	auth       *authentication.Service
 	box        *envelope.Cipher
 	gate       entitlements.PlanGate
 	egress     *egress.Policy
@@ -96,7 +96,7 @@ type Service struct {
 // LoginBaseURL and ReturnOrigins.
 type Deps struct {
 	Pool       *pgxpool.Pool
-	Auth       *auth.Service
+	Auth       *authentication.Service
 	Cipher     *envelope.Cipher      // seals the connections' client secrets
 	Gate       entitlements.PlanGate // whether the plan includes single sign-on
 	Egress     *egress.Policy        // the outbound policy providers are reached under

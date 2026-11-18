@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/cmd/seed/internal/world"
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/group"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/invite"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/organization"
@@ -351,7 +351,7 @@ var builtinRoles = map[string]string{world.RoleAdmin: "admin", world.RoleMember:
 func create(w *world.World, o *world.Org) {
 	d, ctx, s, owner := w.Deps, w.Ctx, o.Spec, o.Owner
 	if owner.Org == o {
-		_, u, _, err := d.Auth.Service.Signup(ctx, auth.SignupInput{Email: owner.Email, Password: w.Password, DisplayName: owner.Name(),
+		_, u, _, err := d.Auth.Service.Signup(ctx, authentication.SignupInput{Email: owner.Email, Password: w.Password, DisplayName: owner.Name(),
 			IP: owner.Device.IP, UserAgent: owner.Device.UserAgent})
 		w.Check(err, "sign up "+owner.Email)
 		owner.ID = u.ID

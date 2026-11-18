@@ -17,7 +17,7 @@ import (
 	"github.com/beevik/etree"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -84,7 +84,7 @@ func TestSAMLSignIn(t *testing.T) {
 		t.Errorf("the answered AuthnRequest is still open")
 	}
 	rec := sp.exchange(t, code)
-	var pair auth.TokenPair
+	var pair authentication.TokenPair
 	dbtest.Decode(t, rec, &pair)
 	if rec.Code != http.StatusOK || pair.UserID != member.ID || pair.AccessToken == "" || sessionOrganization(t, pair.SessionID) != organization {
 		t.Fatalf("exchange: %d %s; want a session for the member in the organization", rec.Code, rec.Body.String())
@@ -162,7 +162,7 @@ func TestSAMLIdPInitiatedSignIn(t *testing.T) {
 		t.Fatalf("opt in: %d %s", rec.Code, rec.Body.String())
 	}
 	rec := sp.exchange(t, loginCode(t, sp.post(t, conn.ID, unsolicited)))
-	var pair auth.TokenPair
+	var pair authentication.TokenPair
 	dbtest.Decode(t, rec, &pair)
 	if rec.Code != http.StatusOK || pair.UserID != member.ID {
 		t.Errorf("exchange: %d %s; want a session for the member", rec.Code, rec.Body.String())

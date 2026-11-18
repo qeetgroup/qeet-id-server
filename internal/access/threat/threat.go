@@ -15,7 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/threat/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/notification"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
@@ -112,11 +112,11 @@ func (s *Service) Record(ctx context.Context, e Event) error {
 	})
 }
 
-// OnAccountLocked implements auth.AnomalyRecorder for each sign-in lock: it
+// OnAccountLocked implements authentication.AnomalyRecorder for each sign-in lock: it
 // records a credential_stuffing anomaly for the account's user and organization and
 // notifies the user. An account with no organization is skipped; errors are
 // logged, not returned.
-func (s *Service) OnAccountLocked(ctx context.Context, lock auth.AccountLock) {
+func (s *Service) OnAccountLocked(ctx context.Context, lock authentication.AccountLock) {
 	row, err := s.q.GetUserForAnomaly(ctx, lock.Email)
 	if err != nil {
 		// No matching organization user (unknown email or organization-less) — nothing to
@@ -129,7 +129,7 @@ func (s *Service) OnAccountLocked(ctx context.Context, lock auth.AccountLock) {
 	userID := row.ID
 	organizationID := postgres.ZeroIfNull(row.OrganizationID)
 	where := "from one network"
-	if lock.Counter == auth.CounterAccount {
+	if lock.Counter == authentication.CounterAccount {
 		where = "from any network"
 	}
 	if rerr := s.Record(ctx, Event{
@@ -162,11 +162,11 @@ func (s *Service) OnAccountLocked(ctx context.Context, lock auth.AccountLock) {
 	}
 }
 
-// OnSourceThrottled implements auth.AnomalyRecorder for a source network
+// OnSourceThrottled implements authentication.AnomalyRecorder for a source network
 // throttled for failing against many accounts: it records a password_spraying
 // anomaly in each organization whose accounts were targeted. Best effort, like
 // OnAccountLocked.
-func (s *Service) OnSourceThrottled(ctx context.Context, t auth.SourceThrottle) {
+func (s *Service) OnSourceThrottled(ctx context.Context, t authentication.SourceThrottle) {
 	organizations, err := s.q.ListOrganizationsForEmails(ctx, t.Accounts)
 	if err != nil {
 		slog.Warn("resolve password_spraying targets", "err", err)
@@ -189,7 +189,7 @@ func (s *Service) OnSourceThrottled(ctx context.Context, t auth.SourceThrottle) 
 			Metadata: map[string]any{
 				"reason":            t.Reason,
 				"network":           t.Network,
-				"counter":           auth.CounterSource,
+				"counter":           authentication.CounterSource,
 				"distinct_accounts": len(t.Accounts),
 				"window_minutes":    int(t.Window / time.Minute),
 				"throttled_until":   t.ThrottledUntil,

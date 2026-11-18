@@ -7,7 +7,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/auth"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
@@ -31,7 +31,7 @@ func TestInviteAccept(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("accept: status %d (%s)", rec.Code, rec.Body.String())
 	}
-	var pair auth.TokenPair
+	var pair authentication.TokenPair
 	dbtest.Decode(t, rec, &pair)
 	if pair.AccessToken == "" || pair.OrganizationID == nil || *pair.OrganizationID != organization {
 		t.Fatalf("accept signed in to organization %v, want %s", pair.OrganizationID, organization)
@@ -49,7 +49,7 @@ func TestInviteAccept(t *testing.T) {
 	if rec := dbtest.Do(t, public, http.MethodPost, "/invites/accept", map[string]any{"token": token, "password": testPassword}); rec.Code != http.StatusBadRequest {
 		t.Errorf("second accept: status %d, want 400", rec.Code)
 	}
-	login, err := authSvc.Login(ctx, auth.LoginInput{Email: email, Password: testPassword})
+	login, err := authSvc.Login(ctx, authentication.LoginInput{Email: email, Password: testPassword})
 	if err != nil || login.Pair == nil {
 		t.Fatalf("sign in with the invitation's password: %+v, %v", login, err)
 	}
