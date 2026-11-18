@@ -13,6 +13,9 @@ import (
 // the client's credentials once, from the form or HTTP Basic, runs the grant
 // grant_type names and answers a refusal in the RFC 6749 §5.2 shape.
 func (h *Handler) token(w http.ResponseWriter, r *http.Request) {
+	var grantType string
+	outcome := "refused"
+	defer func() { tokenRequests.WithLabelValues(grantLabel(grantType), outcome).Inc() }()
 	clientID, clientSecret, err := h.clientCreds(r)
 	if err != nil {
 		writeTokenError(w, r, err)
@@ -29,7 +32,7 @@ func (h *Handler) token(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	grantType := r.Form.Get("grant_type")
+	grantType = r.Form.Get("grant_type")
 	// Explicitly refused, never silently dropped: these grants bind no resource.
 	if resource != "" && (grantType == grantTypeDeviceCode || grantType == grantTypeCIBA) {
 		writeTokenError(w, r, oauthErr("invalid_target", "resource indicators aren't supported on the device and backchannel flows"))
@@ -71,9 +74,11 @@ func (h *Handler) token(w http.ResponseWriter, r *http.Request) {
 		err = ErrGrantTypeUnsupported
 	}
 	if err != nil {
+		outcome = tokenOutcome(err)
 		writeTokenError(w, r, err)
 		return
 	}
+	outcome = "issued"
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 

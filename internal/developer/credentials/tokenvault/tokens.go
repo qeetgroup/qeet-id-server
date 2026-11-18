@@ -12,7 +12,6 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/developer/credentials/tokenvault/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 // GetAccessToken returns a live access token for (organizationID, userID, provider), refreshing it
@@ -34,7 +33,7 @@ func (s *Service) GetAccessToken(ctx context.Context, organizationID, userID uui
 func (s *Service) accessToken(ctx context.Context, organizationID, userID uuid.UUID, provider string) (string, error) {
 	grant, err := s.q.GetTokenGrant(ctx, dbgen.GetTokenGrantParams{OrganizationID: organizationID, UserID: userID, Provider: provider})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", errs.ErrTokenVaultGrantNotFound
+		return "", ErrGrantNotFound
 	}
 	if err != nil {
 		return "", err
@@ -78,7 +77,7 @@ func (s *Service) refresh(ctx context.Context, organizationID, userID uuid.UUID,
 	q := s.q.WithTx(tx)
 	grant, err := q.LockTokenGrant(ctx, dbgen.LockTokenGrantParams{OrganizationID: organizationID, UserID: userID, Provider: provider})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", errs.ErrTokenVaultGrantNotFound
+		return "", ErrGrantNotFound
 	}
 	if err != nil {
 		return "", err
@@ -145,7 +144,7 @@ func (s *Service) Disconnect(ctx context.Context, organizationID, userID uuid.UU
 		return err
 	}
 	if n == 0 {
-		return errs.ErrTokenVaultGrantNotFound
+		return ErrGrantNotFound
 	}
 	return nil
 }

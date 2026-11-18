@@ -71,6 +71,7 @@ func (s *Service) issuePair(ctx context.Context, userID, organizationID uuid.UUI
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
+	countSignIn(method)
 	return pair, nil
 }
 

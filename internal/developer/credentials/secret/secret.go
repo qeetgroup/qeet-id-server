@@ -19,7 +19,6 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/developer/credentials/secret/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
@@ -156,7 +155,7 @@ func toSecret(row dbgen.ListSecretsRow, now time.Time) *Secret {
 func get(ctx context.Context, q *dbgen.Queries, organizationID, id uuid.UUID) (*Secret, error) {
 	row, err := q.GetSecret(ctx, dbgen.GetSecretParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrSecretNotFound
+		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -284,7 +283,7 @@ func (s *Service) Update(ctx context.Context, organizationID, id uuid.UUID, in U
 		action = "secret.rotated"
 		current, err := q.RevealSecret(ctx, dbgen.RevealSecretParams{ID: id, OrganizationID: organizationID})
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errs.ErrSecretNotFound
+			return nil, ErrNotFound
 		}
 		if err != nil {
 			return nil, err
@@ -311,7 +310,7 @@ func (s *Service) Update(ctx context.Context, organizationID, id uuid.UUID, in U
 		}
 	}
 	if n == 0 {
-		return nil, errs.ErrSecretNotFound
+		return nil, ErrNotFound
 	}
 	return s.recorded(ctx, tx, organizationID, id, action, by)
 }
@@ -322,7 +321,7 @@ func (s *Service) Update(ctx context.Context, organizationID, id uuid.UUID, in U
 func (s *Service) Reveal(ctx context.Context, organizationID, id uuid.UUID, by Caller) (string, string, error) {
 	row, err := s.q.RevealSecret(ctx, dbgen.RevealSecretParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", errs.ErrSecretNotFound
+		return "", "", ErrNotFound
 	}
 	if err != nil {
 		return "", "", err
@@ -360,7 +359,7 @@ func (s *Service) Reveal(ctx context.Context, organizationID, id uuid.UUID, by C
 func (s *Service) GetByName(ctx context.Context, organizationID uuid.UUID, name string, by Caller) (uuid.UUID, string, error) {
 	row, err := s.q.GetSecretByName(ctx, dbgen.GetSecretByNameParams{OrganizationID: organizationID, Name: name})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, "", errs.ErrSecretNotFound
+		return uuid.Nil, "", ErrNotFound
 	}
 	if err != nil {
 		return uuid.Nil, "", err
@@ -387,7 +386,7 @@ func (s *Service) Delete(ctx context.Context, organizationID, id uuid.UUID, by C
 		return err
 	}
 	if n == 0 {
-		return errs.ErrSecretNotFound
+		return ErrNotFound
 	}
 	if err := audit.Record(ctx, tx, by.event(organizationID, id, "secret.deleted", nil)); err != nil {
 		return err

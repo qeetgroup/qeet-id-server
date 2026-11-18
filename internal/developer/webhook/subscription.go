@@ -158,7 +158,7 @@ func subscriptionOf(row dbgen.GetWebhookSubscriptionRow) *Subscription {
 func (s *Service) Get(ctx context.Context, id, organizationID uuid.UUID) (*Subscription, error) {
 	row, err := s.q.GetWebhookSubscription(ctx, dbgen.GetWebhookSubscriptionParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrWebhookNotFound
+		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -201,7 +201,7 @@ func (s *Service) Update(ctx context.Context, id, organizationID uuid.UUID, in U
 	q := s.q.WithTx(tx)
 	row, err := q.GetWebhookSubscription(ctx, dbgen.GetWebhookSubscriptionParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrWebhookNotFound
+		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -214,7 +214,7 @@ func (s *Service) Update(ctx context.Context, id, organizationID uuid.UUID, in U
 	if _, err := q.UpdateWebhookSubscription(ctx, dbgen.UpdateWebhookSubscriptionParams{
 		ID: id, OrganizationID: organizationID, Url: in.URL, Events: events,
 	}); errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrWebhookNotFound
+		return nil, ErrNotFound
 	} else if err != nil {
 		return nil, err
 	}
@@ -250,7 +250,7 @@ func (s *Service) Disable(ctx context.Context, id, organizationID uuid.UUID, act
 	defer tx.Rollback(ctx)
 	url, err := s.q.WithTx(tx).DisableWebhookSubscription(ctx, dbgen.DisableWebhookSubscriptionParams{ID: id, OrganizationID: organizationID, DisabledBy: actor.UserID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return errs.ErrWebhookNotFound
+		return ErrNotFound
 	}
 	if err != nil {
 		return err
@@ -277,7 +277,7 @@ func (s *Service) Enable(ctx context.Context, id, organizationID uuid.UUID, acto
 	q := s.q.WithTx(tx)
 	url, err := q.EnableWebhookSubscription(ctx, dbgen.EnableWebhookSubscriptionParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrWebhookNotFound
+		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -313,7 +313,7 @@ func (s *Service) RotateSecret(ctx context.Context, id, organizationID uuid.UUID
 	q := s.q.WithTx(tx)
 	cur, err := q.LockWebhookSecret(ctx, dbgen.LockWebhookSecretParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", time.Time{}, errs.ErrWebhookNotFound
+		return "", time.Time{}, ErrNotFound
 	}
 	if err != nil {
 		return "", time.Time{}, err

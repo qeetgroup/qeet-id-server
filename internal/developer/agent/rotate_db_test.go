@@ -100,8 +100,8 @@ func TestAgentSecretsRotateAndAgentsResumeTogether(t *testing.T) {
 	if _, _, err := svc.ClientCredentials(ctx, a.ID.String(), secret); !errors.Is(err, errs.ErrAgentTokenInvalid) {
 		t.Errorf("a secret rotated with no overlap: %v, want %v", err, errs.ErrAgentTokenInvalid)
 	}
-	if _, _, err := svc.RotateSecret(ctx, other, a.ID, time.Hour, system); !errors.Is(err, errs.ErrAgentNotFound) {
-		t.Errorf("rotate from another organization: %v, want %v", err, errs.ErrAgentNotFound)
+	if _, _, err := svc.RotateSecret(ctx, other, a.ID, time.Hour, system); !errors.Is(err, ErrNotFound) {
+		t.Errorf("rotate from another organization: %v, want %v", err, ErrNotFound)
 	}
 
 	for _, tid := range []uuid.UUID{organization, other} {

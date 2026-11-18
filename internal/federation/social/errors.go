@@ -39,4 +39,8 @@ var (
 	ErrBrowserMismatch       = errs.New("social.browser_mismatch", errs.KindForbidden, "This sign-in was started in a different browser. Please start again here.").AsRetryable()
 	ErrLinkCodeInvalid       = errs.New(CodeLinkCodeInvalid, errs.KindInvalid, "That connection has expired or was already completed. Please connect the account again.").AsRetryable()
 	ErrLinkAccountMismatch   = errs.New(CodeLinkAccountMismatch, errs.KindForbidden, "This connection was started from a different account.")
+	// ErrProviderNotConfigured also covers a switched-off provider; ErrAccountNotInOrganization is
+	// vague, so it reveals no other organization's address.
+	ErrProviderNotConfigured    = errs.New("social.provider_not_configured", errs.KindNotFound, "That sign-in option isn't available for this organization.")
+	ErrAccountNotInOrganization = errs.New("social.account_not_in_organization", errs.KindForbidden, "That account can't sign in with this provider.")
 )

@@ -20,4 +20,8 @@ var (
 	ErrTemplateNameExists  = errs.New("group.template_name_exists", errs.KindConflict, "A template with that name already exists.")
 	ErrImportEmpty         = errs.New("group.import_empty", errs.KindUnprocessable, "There are no groups to import.")
 	ErrImportTooLarge      = errs.New("group.import_too_large", errs.KindUnprocessable, "Import up to 500 groups at a time.")
+	// ErrUserNotFound and ErrParentNotFound give the same answer for missing and
+	// other-organization IDs, so IDs can't be probed.
+	ErrUserNotFound   = errs.New("group.user_not_found", errs.KindNotFound, "That user doesn't exist in this organization.")
+	ErrParentNotFound = errs.New("group.parent_not_found", errs.KindNotFound, "That parent group doesn't exist in this organization.")
 )

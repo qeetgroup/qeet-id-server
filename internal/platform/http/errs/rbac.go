@@ -7,12 +7,11 @@ const (
 	CodeRBACTargetIsOwner       = "rbac.target_is_owner"
 	CodeRBACTargetOutranks      = "rbac.target_outranks_caller"
 	CodeRBACTrustChangeOutranks = "rbac.trust_change_outranks_caller"
-	CodeRBACRoleInUse           = "rbac.role_in_use"
 )
 
 // RBAC errors. ErrRBACUserOrRoleNotFound gives the same answer for missing and
 // other-organization IDs, ErrRBACGrantExceedsCaller and ErrRBACTargetOutranks name
-// the permission in their metadata, and ErrRBACRoleInUse counts the holders.
+// the permission in their metadata.
 var (
 	ErrRBACUserOrRoleNotFound = New("rbac.user_or_role_not_found", KindNotFound, "That user or role doesn't exist in this organization.")
 	ErrRBACPermissionDenied   = New("rbac.permission_denied", KindForbidden, "You don't have permission to do that.")
@@ -23,5 +22,4 @@ var (
 	// ErrRBACTrustChangeOutranks refuses changing what a connection trusts while
 	// it signs in someone who outranks the caller: it could then sign in as them.
 	ErrRBACTrustChangeOutranks = New(CodeRBACTrustChangeOutranks, KindForbidden, "This connection signs in someone who outranks you, so you can't change what it trusts. Ask an owner.")
-	ErrRBACRoleInUse           = New(CodeRBACRoleInUse, KindConflict, "Someone still holds this role. Give its people, groups and invitations another role first.")
 )

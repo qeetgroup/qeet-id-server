@@ -1,0 +1,9 @@
+# Loads every dashboard in /var/lib/grafana/dashboards into the "Qeet ID" folder.
+apiVersion: 1
+providers:
+  - name: qeet-id
+    folder: Qeet ID
+    type: file
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards

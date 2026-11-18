@@ -39,7 +39,7 @@ func (s *Service) AddMember(ctx context.Context, groupID, userID, organizationID
 			GroupID: groupID, UserID: userID, OrganizationID: organizationID,
 		})
 		if err == nil && !valid {
-			err = errs.ErrGroupUserNotFound
+			err = ErrUserNotFound
 		}
 		return err
 	}

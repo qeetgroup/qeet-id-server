@@ -225,7 +225,7 @@ func (h *Handler) linkStart(w http.ResponseWriter, r *http.Request) {
 	}
 	provider := chi.URLParam(r, "provider")
 	if !h.Service.PlatformProviderEnabled(provider) {
-		httpx.WriteError(w, r, errs.ErrSocialProviderNotConfigured)
+		httpx.WriteError(w, r, ErrProviderNotConfigured)
 		return
 	}
 	authURL, err := h.Service.BeginPlatformLink(r.Context(), provider, h.callbackURL(r, provider), *p.UserID)

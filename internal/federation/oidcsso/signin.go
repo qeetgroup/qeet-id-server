@@ -169,7 +169,7 @@ func (s *Service) CompleteSignIn(ctx context.Context, cb Callback) (loginCode, r
 	rules.NonceHash = st.NonceHash
 	claims, err := s.providers.VerifyIDToken(ctx, tokens.IDToken, doc.JWKSURI, rules)
 	if err != nil {
-		return "", back, errs.ErrOIDCSSOIDTokenInvalid.Wrap(err)
+		return "", back, ErrIDTokenInvalid.Wrap(err)
 	}
 	userID, err := s.findOrCreateUser(ctx, c, c.profileOf(claims), cb)
 	if err != nil {

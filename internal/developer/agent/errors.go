@@ -12,4 +12,5 @@ var (
 	ErrSponsorRequired   = errs.New("agent.sponsor_required", errs.KindUnprocessable, "Select a sponsoring user for the agent — every agent needs a named human owner.")
 	ErrSponsorNotMember  = errs.New("agent.sponsor_not_member", errs.KindUnprocessable, "The sponsoring user must be a member of this organization.")
 	ErrInvalidID         = errs.New("agent.invalid_id", errs.KindInvalid, "That identifier isn't valid.")
+	ErrNotFound          = errs.New("agent.not_found", errs.KindNotFound, "That agent doesn't exist.")
 )

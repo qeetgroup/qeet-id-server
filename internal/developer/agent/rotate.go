@@ -13,7 +13,6 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 // RotateSecret gives one of the organization's agents that isn't decommissioned a new
@@ -38,7 +37,7 @@ func (s *Service) RotateSecret(ctx context.Context, organizationID, id uuid.UUID
 		ID: id, OrganizationID: organizationID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", time.Time{}, errs.ErrAgentNotFound
+		return "", time.Time{}, ErrNotFound
 	}
 	if err != nil {
 		return "", time.Time{}, err
@@ -83,11 +82,11 @@ func (s *Service) ResumeAll(ctx context.Context, organizationID uuid.UUID, actor
 	return count, nil
 }
 
-// Scopes returns the scopes of agent id of organizationID, or ErrAgentNotFound.
+// Scopes returns the scopes of agent id of organizationID, or ErrNotFound.
 func (s *Service) Scopes(ctx context.Context, organizationID, id uuid.UUID) ([]string, error) {
 	scopes, err := s.q.AgentScopes(ctx, dbgen.AgentScopesParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrAgentNotFound
+		return nil, ErrNotFound
 	}
 	return scopes, err
 }

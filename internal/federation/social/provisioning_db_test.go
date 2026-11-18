@@ -336,8 +336,8 @@ func TestSocialSignInAdoptsOnlyAnAccountInTheOrganization(t *testing.T) {
 		t.Errorf("sign-in to the home organization = %s, %v; want the account %s", got, err, account.ID)
 	}
 	for name, organization := range map[string]uuid.UUID{"joined": joined, "another": other} {
-		if got, err := signIn(organization); !errors.Is(err, errs.ErrSocialAccountNotInOrganization) {
-			t.Errorf("sign-in to the %s organization = %s, %v; want %v", name, got, err, errs.ErrSocialAccountNotInOrganization)
+		if got, err := signIn(organization); !errors.Is(err, ErrAccountNotInOrganization) {
+			t.Errorf("sign-in to the %s organization = %s, %v; want %v", name, got, err, ErrAccountNotInOrganization)
 		}
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE user_id = $1 AND organization_id <> $2`, account.ID, home); n != 0 {

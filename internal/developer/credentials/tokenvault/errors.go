@@ -24,4 +24,5 @@ var (
 	ErrTokenExpired             = errs.New("tokenvault.token_expired", errs.KindUnauthenticated, "Your connection to this provider has expired. Please reconnect your account.")
 	ErrScopeRequired            = errs.New("tokenvault.scope_required", errs.KindForbidden, "You don't have permission to access this connected account.")
 	ErrPeopleOnly               = errs.New("tokenvault.people_only", errs.KindForbidden, "Only the person who connected this account can read its token, while signed in.")
+	ErrGrantNotFound            = errs.New("tokenvault.grant_not_found", errs.KindNotFound, "No connected account was found for this provider.")
 )

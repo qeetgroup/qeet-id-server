@@ -16,4 +16,6 @@ var (
 	ErrGroupOrRoleNotFound   = errs.New("rbac.group_or_role_not_found", errs.KindNotFound, "That group or role doesn't exist in this organization.")
 	ErrPermissionRequired    = errs.New("rbac.permission_required", errs.KindInvalid, "Specify the permission to check.")
 	ErrSystemRoleFixed       = errs.New(CodeSystemRoleFixed, errs.KindForbidden, "A built-in role can't be changed. Create a role of your own for a different set of permissions.")
+	// ErrRoleInUse counts the holders in its metadata.
+	ErrRoleInUse = errs.New("rbac.role_in_use", errs.KindConflict, "Someone still holds this role. Give its people, groups and invitations another role first.")
 )

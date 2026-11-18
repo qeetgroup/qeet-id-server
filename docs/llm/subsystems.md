@@ -62,7 +62,7 @@ ES256 or RS256, by the signing key's type, and verifiable via the public JWKS."*
 **L4 pointers**
 
 ```text
-auth.go             Service, its policies and the shared sign-in types
+authentication.go   Service, its policies and the shared sign-in types
 signup.go           self-service sign-up
 password.go         password sign-in and password changes
 issue.go            session issuing, the login hook
@@ -77,7 +77,7 @@ lockout.go          per-account lockout
 ```
 
 **Tests** beside each file (`refresh_test.go`, `mfachallenge_db_test.go`, …; `TestMain` in
-`auth_db_test.go`) · integration: `flows_test.go`, `revocation_signals_test.go`
+`authentication_db_test.go`)
 
 ---
 

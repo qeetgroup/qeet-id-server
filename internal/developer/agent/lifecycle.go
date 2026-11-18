@@ -11,7 +11,6 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/developer/agent/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 // agentTransitions maps a target status to the source statuses it may come from.
@@ -59,7 +58,7 @@ func (s *Service) Transition(ctx context.Context, id, organizationID uuid.UUID, 
 	q := s.q.WithTx(tx)
 	cur, err := q.LockAgentStatus(ctx, dbgen.LockAgentStatusParams{ID: id, OrganizationID: organizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", errs.ErrAgentNotFound
+		return "", ErrNotFound
 	}
 	if err != nil {
 		return "", err

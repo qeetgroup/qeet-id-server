@@ -1,0 +1,8 @@
+# Blackbox probes for the local stack: what a customer's application reaches, checked from outside.
+modules:
+  http_2xx:
+    prober: http
+    timeout: 5s
+    http:
+      valid_status_codes: [200]
+      preferred_ip_protocol: ip4

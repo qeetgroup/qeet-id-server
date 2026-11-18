@@ -11,7 +11,6 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/logincode"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
@@ -22,7 +21,7 @@ var loginCodeRefusals = logincode.Refusals{
 	Invalid:  ErrLoginCodeInvalid,
 	Used:     ErrLoginCodeUsed,
 	Expired:  ErrLoginCodeExpired,
-	Disabled: errs.ErrSocialProviderNotConfigured,
+	Disabled: ErrProviderNotConfigured,
 }
 
 // ExchangeLogin trades a one-time social login code for a Qeet token pair, or

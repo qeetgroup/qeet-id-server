@@ -117,4 +117,6 @@ var (
 	// Client secret rotation & shadow-AI review.
 	ErrPublicClientNoSecret = errs.New(CodePublicClientNoSecret, errs.KindUnprocessable, "Public clients have no secret to rotate.")
 	ErrReviewerRequired     = errs.New("oidc.reviewer_required", errs.KindUnauthenticated, "This review must be attributed to a signed-in user.")
+	// ErrRedirectURINotRegistered is shown to the user, never sent to the unregistered address.
+	ErrRedirectURINotRegistered = errs.New("oidc.redirect_uri_not_registered", errs.KindInvalid, "This application didn't register that return address, so we can't send you back to it.")
 )

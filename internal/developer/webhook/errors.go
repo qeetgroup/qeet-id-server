@@ -16,4 +16,5 @@ var (
 	ErrInvalidID        = errs.New("webhook.invalid_id", errs.KindInvalid, "That identifier isn't valid.")
 	ErrEventsRequired   = errs.New("webhook.events_required", errs.KindUnprocessable, "Choose at least one event for the webhook.")
 	ErrEventUnknown     = errs.New("webhook.event_unknown", errs.KindUnprocessable, "That isn't an event a webhook can receive.")
+	ErrNotFound         = errs.New("webhook.not_found", errs.KindNotFound, "That webhook subscription doesn't exist.")
 )

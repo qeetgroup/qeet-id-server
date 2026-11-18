@@ -94,11 +94,7 @@ const (
 // for as long as the request's context allows, which a whole-request
 // http.Client.Timeout would cut short.
 func newStreamClient(policy *egress.Policy, headerTimeout time.Duration) *http.Client {
-	client := policy.HTTPClient(0)
-	if t, ok := client.Transport.(*http.Transport); ok {
-		t.ResponseHeaderTimeout = headerTimeout
-	}
-	return client
+	return policy.StreamingHTTPClient(headerTimeout)
 }
 
 // NewProviderConfig builds the service, sealing organization keys with box, the

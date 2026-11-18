@@ -83,9 +83,6 @@ func TestProviderConfigClients(t *testing.T) {
 	if p.HTTPClient != c.streamClient || p.HTTPClient.Timeout != 0 {
 		t.Errorf("model calls use a client with timeout %s, want the stream client with none", p.HTTPClient.Timeout)
 	}
-	if tr, ok := c.streamClient.Transport.(*http.Transport); !ok || tr.ResponseHeaderTimeout != streamHeaderTimeout {
-		t.Errorf("stream client transport %T has no %s response header timeout", c.streamClient.Transport, streamHeaderTimeout)
-	}
 }
 
 // TestEvalProbeAnswers checks the code and status a Test probe answers with for

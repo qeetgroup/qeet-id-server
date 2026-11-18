@@ -1,0 +1,25 @@
+# Gitleaks: the default rules, plus the paths whose matches are reviewed fixtures, never real secrets.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "reviewed fixtures and git-ignored local files"
+paths = [
+  # git-ignored local key material and dependencies (the working-tree scan reads files git never sees)
+  '''(^|/)\.env$''',
+  '''(^|/)\.secrets/''',
+  '''(^|/)node_modules/''',
+  '''(^|/)bin/''',
+  '''(^|/)\.git/''',
+  # example values in the API documents (sample tokens, keys and client secrets)
+  '''^api/openapi/''',
+  # test fixtures: fixed fake keys and tokens
+  '''_test\.go$''',
+  # the development seed's fictional demo integrations; it refuses to run outside SERVICE_ENV=dev
+  '''^cmd/seed/''',
+  # paths of the former monorepo, present only in history
+  '''^(backend|frontend|tests)/''',
+]
+# variable names the generic rule reads as keys
+regexTarget = "line"
+regexes = ['''argon2IDKey\s*=''']

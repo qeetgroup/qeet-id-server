@@ -3,7 +3,6 @@ package errs
 // Sign-in / account / credential error codes (shared by the auth, passkey, and
 // invitation flows — anything about the caller's identity or credentials).
 const (
-	CodeAuthSessionInvalid  = "auth.session_invalid"
 	CodeAuthAccountInactive = "auth.account_inactive"
 	CodeAuthEmailExists     = "auth.email_exists"
 
@@ -17,12 +16,11 @@ const (
 	CodeAuthSSORequired         = "auth.sso_required"
 )
 
-// Sign-in errors. ErrAuthMethodDisabled, ErrAuthSignInUnavailable and ErrAuthAddressNotAllowed reveal
-// nothing about the account or the rule that matched. ErrAuthSSORequired depends only on the domain
+// Sign-in errors. ErrAuthMethodDisabled and ErrAuthAddressNotAllowed reveal nothing about the account
+// or the rule that matched. ErrAuthSSORequired depends only on the domain
 // and names the connections in its metadata. ErrAuthPasswordBreached is no longer returned; its code
 // stays reserved.
 var (
-	ErrAuthSessionInvalid   = New(CodeAuthSessionInvalid, KindInvalid, "Your sign-in session is invalid. Please sign in again.").AsRetryable()
 	ErrAuthAccountInactive  = New(CodeAuthAccountInactive, KindForbidden, "Your account isn't active. Contact your administrator.")
 	ErrAuthEmailExists      = New(CodeAuthEmailExists, KindConflict, "An account with this email already exists.")
 	ErrAuthEmailRequired    = New("auth.email_required", KindUnprocessable, "Enter your email address.")
@@ -36,7 +34,6 @@ var (
 	ErrAuthSessionRevoked           = New(CodeAuthSessionRevoked, KindUnauthenticated, "Your session was revoked. Please sign in again.").AsRetryable()
 	ErrAuthLastSignInMethod         = New(CodeAuthLastSignInMethod, KindConflict, "This is the only way to sign in to this account. Add another — a passkey or a password — before removing it.")
 	ErrAuthAccountSuspended         = New(CodeAuthAccountSuspended, KindUnauthenticated, "Your account is no longer active. Please contact your administrator.")
-	ErrAuthSignInUnavailable        = New("auth.sign_in_unavailable", KindUnavailable, "Sign-in is temporarily unavailable. Please try again in a moment.").AsRetryable()
 	ErrAuthAddressNotAllowed        = New(CodeAuthAddressNotAllowed, KindForbidden, "Your organization doesn't allow sign-in from this network. Contact your administrator.")
 	ErrAuthSSORequired              = New(CodeAuthSSORequired, KindForbidden, "Your organization requires you to sign in with its single sign-on.")
 )

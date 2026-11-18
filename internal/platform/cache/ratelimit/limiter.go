@@ -156,6 +156,7 @@ func (l *Limiter) MiddlewareBy(scopeName string, extract KeyFunc) func(http.Hand
 			}
 			allowed, retry := l.Take(r.Context(), scopeName+":"+id)
 			if !allowed {
+				rejections.WithLabelValues(scopeName).Inc()
 				w.Header().Set("Retry-After", strconv.Itoa(retry))
 				// Write the standard error envelope, not a bare status, so clients get a
 				// code to branch on.

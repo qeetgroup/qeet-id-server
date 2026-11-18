@@ -9,7 +9,6 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 // consentRequestTTL is how long an authorization request waits on the hosted
@@ -35,11 +34,11 @@ type ConsentRequest struct {
 
 // StartConsentRequest stores an authorization request for the hosted consent
 // screen and returns its id. The redirect_uri must already be registered for
-// the client: an unregistered one is ErrOIDCRedirectURINotRegistered, and no
+// the client: an unregistered one is ErrRedirectURINotRegistered, and no
 // request is stored.
 func (s *Service) StartConsentRequest(ctx context.Context, loginSessionID, userID uuid.UUID, in ConsentRequest) (uuid.UUID, error) {
 	if !s.RegisteredRedirect(ctx, in.ClientID, in.RedirectURI) {
-		return uuid.Nil, errs.ErrOIDCRedirectURINotRegistered
+		return uuid.Nil, ErrRedirectURINotRegistered
 	}
 	// A request the authorization would refuse (a scope the client isn't
 	// registered for, no proof key) is refused now, not after the person has

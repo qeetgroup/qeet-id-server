@@ -127,7 +127,7 @@ func (s *Service) ImportGroups(
 				switch {
 				case errors.Is(err, ErrNameExists):
 					row.Reason, row.Code, row.Field = "a group with this name already exists", CodeImportNameExists, "name"
-				case errors.Is(err, errs.ErrGroupParentNotFound):
+				case errors.Is(err, ErrParentNotFound):
 					row.Reason, row.Code, row.Field = "parent group \""+r.Parent+"\" was not found", CodeImportParentNotFound, "parent"
 				default:
 					slog.Warn("group import row not created", "organization_id", organizationID, "err", err)

@@ -201,6 +201,7 @@ func (l *OrganizationLimiter) MiddlewareBy(scopeName string, extract KeyFunc) fu
 				return
 			}
 			if !allowed {
+				rejections.WithLabelValues(scopeName).Inc()
 				w.Header().Set("Retry-After", strconv.Itoa(retry))
 				// Write the standard error envelope, not a bare status, so clients get a
 				// code to branch on.

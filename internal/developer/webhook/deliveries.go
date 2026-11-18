@@ -96,7 +96,7 @@ func (s *Service) RetryDead(ctx context.Context, subscriptionID, organizationID 
 	defer tx.Rollback(ctx)
 	q := s.q.WithTx(tx)
 	if _, err := q.GetWebhookSubscription(ctx, dbgen.GetWebhookSubscriptionParams{ID: subscriptionID, OrganizationID: organizationID}); errors.Is(err, pgx.ErrNoRows) {
-		return 0, errs.ErrWebhookNotFound
+		return 0, ErrNotFound
 	} else if err != nil {
 		return 0, err
 	}

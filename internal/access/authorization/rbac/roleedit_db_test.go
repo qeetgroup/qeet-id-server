@@ -102,7 +102,7 @@ func TestCustomRolesAreEditedWhole(t *testing.T) {
 
 	holder := dbtest.User(t, organization)
 	dbtest.Assign(t, holder.ID, organization, support)
-	check("deleting a role someone holds", http.StatusConflict, errs.CodeRBACRoleInUse, http.MethodDelete, asOwner, rolePath(support), nil)
+	check("deleting a role someone holds", http.StatusConflict, ErrRoleInUse.Code, http.MethodDelete, asOwner, rolePath(support), nil)
 	if _, err := pool.Exec(ctx, `DELETE FROM rbac.user_roles WHERE user_id = $1 AND organization_id = $2 AND role_id = $3`, holder.ID, organization, support); err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestCustomRolesAreEditedWhole(t *testing.T) {
 		organization, dbtest.Unique("i")+"@example.com", support, dbtest.Unique("h")); err != nil {
 		t.Fatal(err)
 	}
-	if body := check("deleting a role an invitation offers", http.StatusConflict, errs.CodeRBACRoleInUse, http.MethodDelete, asOwner, rolePath(support), nil); !strings.Contains(string(body), `"invitations":1`) {
+	if body := check("deleting a role an invitation offers", http.StatusConflict, ErrRoleInUse.Code, http.MethodDelete, asOwner, rolePath(support), nil); !strings.Contains(string(body), `"invitations":1`) {
 		t.Errorf("the refusal doesn't count the invitation: %s", body)
 	}
 	if _, err := pool.Exec(ctx, `UPDATE organization.invites SET status = 'revoked' WHERE organization_id = $1 AND role_id = $2`, organization, support); err != nil {

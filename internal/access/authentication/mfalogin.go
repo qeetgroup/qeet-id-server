@@ -118,13 +118,13 @@ type pendingMFAChallenge struct {
 	emailCodeExpiresAt *time.Time
 }
 
-// loadMFAChallenge reads a live challenge under lock: ErrAuthSessionInvalid
+// loadMFAChallenge reads a live challenge under lock: ErrSessionInvalid
 // for a malformed token, ErrAuthMFAChallengeExpired for an unknown or expired
 // one.
 func loadMFAChallenge(ctx context.Context, tx pgx.Tx, mfaToken string) (uuid.UUID, pendingMFAChallenge, error) {
 	id, err := uuid.Parse(mfaToken)
 	if err != nil {
-		return uuid.Nil, pendingMFAChallenge{}, errs.ErrAuthSessionInvalid
+		return uuid.Nil, pendingMFAChallenge{}, ErrSessionInvalid
 	}
 	row, err := dbgen.New(tx).LockMFAChallenge(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && time.Now().After(row.ExpiresAt)) {

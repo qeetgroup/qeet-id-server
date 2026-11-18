@@ -144,7 +144,7 @@ func (s *Service) UpdateRole(ctx context.Context, organizationID, roleID uuid.UU
 }
 
 // DeleteRole deletes organizationID's custom role roleID, audited as role.deleted.
-// It is refused with ErrRBACRoleInUse, counting them, while people, groups or
+// It is refused with ErrRoleInUse, counting them, while people, groups or
 // open invitations hold it: someone whose only role it is would leave the
 // organization with it. A built-in role is refused.
 func (s *Service) DeleteRole(ctx context.Context, organizationID, roleID uuid.UUID, actor audit.Actor) error {
@@ -164,7 +164,7 @@ func (s *Service) DeleteRole(ctx context.Context, organizationID, roleID uuid.UU
 		return err
 	}
 	if use.People > 0 || use.Groups > 0 || use.Invitations > 0 {
-		return errs.ErrRBACRoleInUse.WithMetadata(map[string]any{
+		return ErrRoleInUse.WithMetadata(map[string]any{
 			"people": use.People, "groups": use.Groups, "invitations": use.Invitations,
 		})
 	}

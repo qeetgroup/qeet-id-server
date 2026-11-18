@@ -149,7 +149,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput, actor audit.Actor)
 			return nil, err
 		}
 		if !ok {
-			return nil, errs.ErrGroupParentNotFound
+			return nil, ErrParentNotFound
 		}
 	}
 	row, err := s.q.WithTx(tx).InsertGroup(ctx, dbgen.InsertGroupParams{
@@ -286,7 +286,7 @@ func (s *Service) Update(ctx context.Context, id, organizationID uuid.UUID, in U
 			return nil, err
 		}
 		if !ok {
-			return nil, errs.ErrGroupParentNotFound
+			return nil, ErrParentNotFound
 		}
 		loops, err := q.IsGroupOrDescendant(ctx, dbgen.IsGroupOrDescendantParams{
 			GroupID: id, OrganizationID: organizationID, CandidateID: parent,

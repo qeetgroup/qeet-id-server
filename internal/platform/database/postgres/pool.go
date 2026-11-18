@@ -55,6 +55,8 @@ func NewPool(ctx context.Context, url string, minConns, maxConns int32) (*pgxpoo
 	// organization of the context that takes it (see rowsecurity.go).
 	cfg.AfterConnect = useAppRole
 	cfg.PrepareConn = prepareScope
+	// Each query of a traced request is a span (see tracing.go); a no-op while tracing is off.
+	cfg.ConnConfig.Tracer = queryTracer{}
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {

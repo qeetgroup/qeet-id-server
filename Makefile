@@ -1,4 +1,4 @@
-.PHONY: install dev dev-secrets build test test-db lint sqlc sqlc-check openapi openapi-check vuln sast ci migrate-down db-up db-down db-reset seed seed-reset kill
+.PHONY: install dev dev-secrets build test test-db lint sqlc sqlc-check openapi openapi-check vuln sast secrets scan-image obs-up obs-down dev-observed ci migrate-down db-up db-down db-reset seed seed-reset kill
 
 # Tool versions; keep in step with .github/workflows/ci.yml.
 GOLANGCI_VERSION    = v2.15.0
@@ -49,6 +49,28 @@ dev: dev-secrets
 	 SAML_IDP_CERT="$$(cat $(SECRETS_DIR)/saml_idp_cert.pem)" \
 	 go run ./cmd/api
 
+# `make dev`, observed: JSON logs, also appended to bin/logs/api.log for Loki, and traces to the local
+# collector. Start the stack first with `make obs-up`; Grafana is http://localhost:3300.
+dev-observed: dev-secrets
+	@mkdir -p bin/logs
+	@echo "starting qeet-id on :$${HTTP_PORT:-4001}, observed (logs bin/logs/api.log, traces localhost:4318)"
+	@JWT_SIGNING_KEY="$$(cat $(SECRETS_DIR)/jwt_es256.pem)" \
+	 SAML_IDP_KEY="$$(cat $(SECRETS_DIR)/saml_idp_key.pem)" \
+	 SAML_IDP_CERT="$$(cat $(SECRETS_DIR)/saml_idp_cert.pem)" \
+	 LOG_FORMAT=json OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 \
+	 go run ./cmd/api 2>&1 | tee -a bin/logs/api.log
+
+# The local observability stack (docker-compose.yml, profile observability): the OpenTelemetry
+# Collector, Prometheus with the alert and SLO rules, Alertmanager (to Mailpit), Loki, Tempo, Grafana,
+# and the PostgreSQL and blackbox exporters. obs-down stops only these services.
+OBS_SERVICES := otel-collector prometheus alertmanager loki tempo grafana postgres-exporter blackbox-exporter
+obs-up:
+	@mkdir -p bin/logs
+	docker compose --profile observability up -d $(OBS_SERVICES)
+	@echo "Grafana http://localhost:3300 · Prometheus http://localhost:9090 · Alertmanager http://localhost:9093 · alert mail http://localhost:8025"
+obs-down:
+	docker compose --profile observability stop $(OBS_SERVICES)
+
 build:
 	go build -o bin/qeet-id ./cmd/api
 
@@ -97,12 +119,31 @@ sast:
 		go build -o "$$bin" github.com/securego/gosec/v2/cmd/gosec) || exit 1; }; \
 	"$$bin" -quiet -conf .gosec.json -exclude-dir='.*dbgen' -exclude-generated ./...
 
+# Secret scan with the same gitleaks as CI, in Docker: the git history, then the working tree as it
+# is (uncommitted work too), skipping what .gitleaks.toml lists. Findings are redacted.
+GITLEAKS_IMAGE := ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+secrets:
+	docker run --rm -v "$(CURDIR):/repo" -w /repo $(GITLEAKS_IMAGE) git --redact --exit-code 1 --config .gitleaks.toml .
+	docker run --rm -v "$(CURDIR):/repo" -w /repo $(GITLEAKS_IMAGE) dir --redact --exit-code 1 --config .gitleaks.toml .
+
+# Container scan with Trivy, in Docker: builds the server image, then reports HIGH and CRITICAL
+# vulnerabilities that have a fix in its OS packages and binaries, and misconfigurations in the
+# Dockerfile and compose files. The image is handed over as a saved tar, not the Docker socket.
+TRIVY_IMAGE := aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb
+TRIVY := docker run --rm -v qeet-id-trivy-cache:/root/.cache/trivy -v "$(CURDIR):/repo" -w /repo $(TRIVY_IMAGE)
+scan-image:
+	docker build -q -t qeet-id-server:scan . >/dev/null
+	@mkdir -p bin && docker save qeet-id-server:scan -o bin/image-scan.tar
+	$(TRIVY) image --input bin/image-scan.tar --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --no-progress
+	$(TRIVY) config --exit-code 1 --severity HIGH,CRITICAL .
+	@rm -f bin/image-scan.tar
+
 # The full local gate before a push (CI runs only Verify): build, every test
 # with the race detector, the database ones too (needs Docker), lint (with
-# vet), generated SQL and API documents, and the vulnerability and security scans.
+# vet), generated SQL and API documents, and the vulnerability, security and secret scans.
 ci:
 	go build ./...
-	$(MAKE) test-db lint sqlc-check openapi-check vuln sast
+	$(MAKE) test-db lint sqlc-check openapi-check vuln sast secrets
 	@echo "ci: every check passed"
 
 # Fail if any dbgen/ differs from what sqlc generates, or a queries.sql is not

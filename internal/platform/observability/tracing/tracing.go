@@ -6,6 +6,7 @@ package tracing
 import (
 	"context"
 	"fmt"
+	"net/url"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
@@ -18,7 +19,7 @@ import (
 // Config controls tracing setup. The zero value (empty Endpoint) yields a
 // no-op tracer.
 type Config struct {
-	Endpoint    string  // OTLP/HTTP collector URL (OTEL_EXPORTER_OTLP_ENDPOINT); empty disables tracing
+	Endpoint    string  // OTLP/HTTP collector base URL, or its full traces URL (OTEL_EXPORTER_OTLP_ENDPOINT); empty disables tracing
 	ServiceName string  // the service.name resource attribute
 	ServiceEnv  string  // the deployment.environment resource attribute
 	SampleRatio float64 // head-sampling ratio for root spans, 0..1; child spans follow their parent
@@ -49,7 +50,7 @@ func Init(ctx context.Context, cfg Config) (shutdown func(context.Context) error
 		return noop, nil
 	}
 
-	exporter, err := otlptracehttp.New(ctx, otlptracehttp.WithEndpointURL(cfg.Endpoint))
+	exporter, err := otlptracehttp.New(ctx, otlptracehttp.WithEndpointURL(tracesURL(cfg.Endpoint)))
 	if err != nil {
 		return nil, fmt.Errorf("otlp trace exporter: %w", err)
 	}
@@ -77,4 +78,15 @@ func Init(ctx context.Context, cfg Config) (shutdown func(context.Context) error
 	otel.SetTracerProvider(tp)
 
 	return tp.Shutdown, nil
+}
+
+// tracesURL reads endpoint as the OTLP specification reads OTEL_EXPORTER_OTLP_ENDPOINT: a base URL,
+// to which the traces path /v1/traces is added. A URL that already names a path is used as it is.
+func tracesURL(endpoint string) string {
+	u, err := url.Parse(endpoint)
+	if err != nil || (u.Path != "" && u.Path != "/") {
+		return endpoint
+	}
+	u.Path = "/v1/traces"
+	return u.String()
 }

@@ -15,7 +15,6 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/federation/provision"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/social/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/returnto"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
@@ -94,7 +93,7 @@ func NewService(d Deps) (*Service, error) {
 		s.platform[p.name] = p.config
 	}
 	s.link = &provision.Flow{Pool: d.Pool, Method: "social", Weigh: s.weigh, Errors: provision.Errors{
-		NotHome:            errs.ErrSocialAccountNotInOrganization,
+		NotHome:            ErrAccountNotInOrganization,
 		EmailMissing:       ErrEmailMissing,
 		AccountUnverified:  ErrAccountUnverified,
 		AccountAdministers: ErrAccountAdministers,

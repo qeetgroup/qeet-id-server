@@ -62,3 +62,38 @@ func TestMiddleware_NoopSafe(t *testing.T) {
 		t.Errorf("status = %d, want 418 (middleware altered response)", rec.Code)
 	}
 }
+
+// TestInit_ExportsToTheTracesPath checks that a collector's base URL, as OTEL_EXPORTER_OTLP_ENDPOINT
+// is usually set, receives the spans at /v1/traces, and that a full traces URL is used as it is.
+func TestInit_ExportsToTheTracesPath(t *testing.T) {
+	for _, c := range []struct{ suffix, want string }{
+		{"", "/v1/traces"},
+		{"/", "/v1/traces"},
+		{"/custom/v1/traces", "/custom/v1/traces"},
+	} {
+		got := make(chan string, 4)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			got <- r.URL.Path
+			w.WriteHeader(http.StatusOK)
+		}))
+		ctx := context.Background()
+		shutdown, err := Init(ctx, Config{Endpoint: srv.URL + c.suffix, ServiceName: "qeet-id-test", SampleRatio: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, span := otel.Tracer("test").Start(ctx, "span")
+		span.End()
+		if err := shutdown(ctx); err != nil {
+			t.Fatalf("endpoint %q: flush: %v", c.suffix, err)
+		}
+		srv.Close()
+		select {
+		case path := <-got:
+			if path != c.want {
+				t.Errorf("endpoint %q: spans sent to %s, want %s", c.suffix, path, c.want)
+			}
+		default:
+			t.Errorf("endpoint %q: no spans were sent", c.suffix)
+		}
+	}
+}

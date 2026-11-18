@@ -15,4 +15,5 @@ var (
 	ErrClaimsInvalid       = errs.New("vc.claims_invalid", errs.KindUnprocessable, "Credential claims must be a valid JSON object.")
 	ErrCredentialRequired  = errs.New("vc.credential_required", errs.KindUnprocessable, "A credential (JWT) is required.")
 	ErrUserNotMember       = errs.New(CodeUserNotMember, errs.KindUnprocessable, "That person isn't a member of this organization.")
+	ErrCredentialNotFound  = errs.New("vc.credential_not_found", errs.KindNotFound, "We couldn't find that credential.")
 )

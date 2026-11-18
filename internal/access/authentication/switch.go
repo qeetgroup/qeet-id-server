@@ -117,6 +117,7 @@ func (s *Service) SwitchOrganization(ctx context.Context, in SwitchOrganizationI
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
+	countSignIn("organization_switch")
 	return pair, nil
 }
 
@@ -206,6 +207,7 @@ func (s *Service) enterOrganization(ctx context.Context, userID, organizationID,
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
+	countSignIn(method)
 	return pair, nil
 }
 

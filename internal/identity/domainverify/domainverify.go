@@ -291,7 +291,7 @@ func (s *Service) UpdateSettings(
 
 // Verify marks the domain verified if its DNS TXT record holds the token. A
 // failed check is recorded and returns the retryable
-// ErrDomainVerifyDNSRecordMissing; a domain another organization has verified returns
+// ErrDNSRecordMissing; a domain another organization has verified returns
 // ErrDomainVerifyClaimedByOther.
 func (s *Service) Verify(ctx context.Context, id, organizationID uuid.UUID, actor audit.Actor) (*Domain, error) {
 	row, err := s.q.GetDomainForVerify(ctx, dbgen.GetDomainForVerifyParams{ID: id, OrganizationID: organizationID})
@@ -327,7 +327,7 @@ func (s *Service) Verify(ctx context.Context, id, organizationID uuid.UUID, acto
 		if uerr := s.q.RecordDomainCheck(ctx, dbgen.RecordDomainCheckParams{LastError: &reason, ID: id, OrganizationID: organizationID}); uerr != nil {
 			return nil, uerr
 		}
-		return nil, errs.ErrDomainVerifyDNSRecordMissing
+		return nil, ErrDNSRecordMissing
 	}
 
 	tx, err := s.pool.Begin(ctx)

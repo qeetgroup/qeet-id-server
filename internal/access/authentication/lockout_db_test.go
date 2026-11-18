@@ -305,8 +305,8 @@ func TestLockoutCounters(t *testing.T) {
 		svc := newService(t)
 		svc.lockoutSource = func(context.Context, uuid.UUID) (Lockout, error) { return Lockout{}, errors.New("store down") }
 		a, _ := member(t)
-		if err := login(svc, a.Email, testPassword, freshIP()); !errors.Is(err, errs.ErrAuthSignInUnavailable) {
-			t.Errorf("sign in while the lockout settings can't be read: %v, want %v", err, errs.ErrAuthSignInUnavailable)
+		if err := login(svc, a.Email, testPassword, freshIP()); !errors.Is(err, ErrSignInUnavailable) {
+			t.Errorf("sign in while the lockout settings can't be read: %v, want %v", err, ErrSignInUnavailable)
 		}
 		if n := dbtest.Count(t, `SELECT count(*) FROM auth.sessions WHERE user_id = $1`, a.ID); n != 0 {
 			t.Errorf("a sign-in the lockout couldn't judge opened %d sessions", n)

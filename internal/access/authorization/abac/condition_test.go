@@ -535,3 +535,40 @@ func TestEvaluateCondition_ReferenceLookAlikeIsLiteral(t *testing.T) {
 		}
 	}
 }
+
+// FuzzEvaluateCondition feeds arbitrary condition trees to the evaluator. It must never panic, a
+// tree that fails to evaluate never applies (fail closed), and a tree the API would store
+// (validateCondition accepts it) always evaluates, so a saved policy can't fail at decision time.
+func FuzzEvaluateCondition(f *testing.F) {
+	for _, seed := range []string{
+		`{}`, `null`, ``, `[]`, `{"attr":"subject.dept","op":"eq","value":"eng"}`,
+		`{"all":[{"any":[{"attr":"subject.role","op":"eq","value":"admin"}]},{"not":{"attr":"subject.suspended","op":"eq","value":true}}]}`,
+		`{"all":[{"attr":"resource.classification","op":"exists"},{"attr":"resource.classification","op":"eq","value":"secret"}]}`,
+		`{"attr":"context.hour","op":"gte","value":9}`, `{"attr":"context.score","op":"lt","value":0.3}`,
+		`{"attr":"resource.name","op":"contains","value":{"attr":"resource.owner"}}`,
+		`{"attr":"resource.name","op":"regex","value":"^prod-"}`, `{"attr":"subject.role","op":"in","value":["admin","owner"]}`,
+		`{"all":[{"attr":"subject.role","op":"unknownop","value":"admin"}]}`, `{"not":{"not":{"not":{}}}}`,
+	} {
+		f.Add(seed)
+	}
+	bag := AttributeBag{
+		"subject":  {"dept": "eng", "role": "admin", "level": float64(3), "suspended": false},
+		"resource": {"name": "prod-db", "owner": "u1", "classification": "secret"},
+		"action":   {"name": "read"},
+		"context":  {"hour": float64(10), "score": 0.2, "mfa": true},
+	}
+	f.Fuzz(func(t *testing.T, raw string) {
+		valid := validateCondition(json.RawMessage(raw)) == nil
+		for _, effect := range []string{"allow", "deny"} {
+			if applies, err := EvaluateCondition(json.RawMessage(raw), effect, bag); err != nil && applies {
+				t.Fatalf("%s policy %q applies although it failed to evaluate: %v", effect, raw, err)
+			}
+			if !valid {
+				continue
+			}
+			if _, err := EvaluateCondition(json.RawMessage(raw), effect, AttributeBag{}); err != nil {
+				t.Fatalf("condition %q passes validation but fails to evaluate: %v", raw, err)
+			}
+		}
+	})
+}

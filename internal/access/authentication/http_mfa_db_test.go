@@ -56,7 +56,7 @@ func TestMFAChallengeOverHTTP(t *testing.T) {
 	}{
 		{"no proof", map[string]any{"mfa_token": token}, http.StatusUnprocessableEntity, errs.CodeValidation},
 		{"two proofs", map[string]any{"mfa_token": token, "code": "246810", "push": true}, http.StatusUnprocessableEntity, errs.CodeValidation},
-		{"a malformed token", map[string]any{"mfa_token": "not-a-token", "code": "246810"}, http.StatusBadRequest, errs.CodeAuthSessionInvalid},
+		{"a malformed token", map[string]any{"mfa_token": "not-a-token", "code": "246810"}, http.StatusBadRequest, ErrSessionInvalid.Code},
 		{"an unknown token", map[string]any{"mfa_token": uuid.NewString(), "code": "246810"}, http.StatusUnauthorized, errs.CodeAuthMFAChallengeExpired},
 		{"a wrong code", map[string]any{"mfa_token": token, "code": "000000"}, http.StatusUnauthorized, errs.CodeMFACodeInvalid},
 	} {

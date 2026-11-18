@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 // TestSocialCodeOfAProviderTurnedOffDoesNotExchange checks that a login code
@@ -20,7 +19,7 @@ func TestSocialCodeOfAProviderTurnedOffDoesNotExchange(t *testing.T) {
 	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+dbtest.Domain(t, organization), organization, organization)
 	person := verified(t, member)
 	for _, tc := range []struct{ provider, change, want string }{
-		{"okta", `UPDATE organization.social_providers SET enabled = false WHERE organization_id = $1 AND provider = $2`, errs.CodeSocialProviderNotConfigured},
+		{"okta", `UPDATE organization.social_providers SET enabled = false WHERE organization_id = $1 AND provider = $2`, ErrProviderNotConfigured.Code},
 		{"keycloak", `DELETE FROM organization.social_providers WHERE organization_id = $1 AND provider = $2`, CodeLoginCodeInvalid},
 	} {
 		if rec := dbtest.Do(t, asAdmin, http.MethodPost, "/social/providers", map[string]string{

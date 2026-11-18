@@ -20,7 +20,6 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 const vcContext = "https://www.w3.org/ns/credentials/v2"
@@ -294,7 +293,7 @@ func (s *Service) Revoke(ctx context.Context, id, organizationID uuid.UUID, acto
 		return err
 	}
 	if n == 0 {
-		return errs.ErrVCCredentialNotFound
+		return ErrCredentialNotFound
 	}
 	if err := audit.Record(ctx, tx, actor.Event(organizationID, "credential.revoked", "credential", id, nil)); err != nil {
 		return err

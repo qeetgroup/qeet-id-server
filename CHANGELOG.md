@@ -184,6 +184,10 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
 
 ### Fixed
 
+- A plan bought through checkout (an organization's upgrade or a paid sign-up) is audited as
+  `billing.plan_changed` (`via: checkout`) on the organization's chain, in the same transaction, as a plan
+  switch is; it left no audit row. Completing the same checkout again, as a payment provider's retry does,
+  still changes nothing.
 - Retrying one webhook delivery (`POST /v1/webhooks/{id}/deliveries/{deliveryID}/retry`) and sending a test
   event (`POST /v1/webhooks/{id}/test`) are audited, as `webhook.delivery_retried` and `webhook.test_sent`, in
   the same transaction as the change; they left no audit row.

@@ -18,7 +18,6 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
@@ -267,7 +266,7 @@ func TestConnectedAccountLifecycle(t *testing.T) {
 	if rec := dbtest.Do(t, asPerson, http.MethodDelete, "/vault/tokens/acme", nil); rec.Code != http.StatusNoContent {
 		t.Errorf("disconnect: %d", rec.Code)
 	}
-	if code, body := accessToken(asPerson); !strings.Contains(body, errs.CodeTokenVaultGrantNotFound) {
+	if code, body := accessToken(asPerson); !strings.Contains(body, ErrGrantNotFound.Code) {
 		t.Errorf("after disconnecting: %d %s", code, body)
 	}
 	if rec := dbtest.Do(t, asPerson, http.MethodDelete, providers+"/acme", nil); rec.Code != http.StatusNoContent {

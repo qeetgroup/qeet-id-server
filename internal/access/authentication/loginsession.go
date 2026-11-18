@@ -118,7 +118,11 @@ func (s *Service) createLoginSession(ctx context.Context, userID, organizationID
 	if err := audit.Record(ctx, tx, signInEvent(userID, organizationID, "login_session", sessionID, ip, ua, method, meta)); err != nil {
 		return "", err
 	}
-	return raw, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return "", err
+	}
+	countSignIn(method)
+	return raw, nil
 }
 
 // LoginSessionFactorShortfall reports what stops a code or token being issued

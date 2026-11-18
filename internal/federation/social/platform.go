@@ -20,7 +20,6 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/federation/social/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/codes"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/strutil"
 )
@@ -89,7 +88,7 @@ func (s *Service) BeginPlatformLink(ctx context.Context, provider, redirectURI s
 func (s *Service) beginPlatform(ctx context.Context, provider, redirectURI string, linkUserID uuid.UUID, allowCreate bool) (string, error) {
 	pc, ok := s.platform[provider]
 	if !ok {
-		return "", errs.ErrSocialProviderNotConfigured
+		return "", ErrProviderNotConfigured
 	}
 	var doc oidcrp.Discovery
 	if pc.kind == kindOIDC {
@@ -137,7 +136,7 @@ func (s *Service) CompletePlatformCallback(ctx context.Context, provider, state,
 	}
 	pc, ok := s.platform[provider]
 	if !ok {
-		return nil, errs.ErrSocialProviderNotConfigured
+		return nil, ErrProviderNotConfigured
 	}
 	st, err := oauthstate.Take(ctx, s.pool, oauthstate.KindPlatformSocial, state, uuid.Nil, stateRefusals)
 	if err != nil {

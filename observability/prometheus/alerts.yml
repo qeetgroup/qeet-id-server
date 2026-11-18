@@ -1,0 +1,131 @@
+# Alert rules for qeet-id: availability, errors, latency and runtime, then the security and data
+# integrity signals the server exports. They work with standalone Prometheus (rule_files) and can be
+# pasted into a Prometheus Operator PrometheusRule. A metric's own "job" label (scheduled jobs)
+# arrives as exported_job, since the scrape sets job="qeet-id".
+groups:
+  - name: qeet-id.availability
+    rules:
+      - alert: QeetIdTargetDown
+        expr: up{job="qeet-id"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "qeet-id target down"
+          description: "Prometheus cannot scrape {{ $labels.instance }} for 2m."
+      - alert: QeetIdNoMetrics
+        expr: absent(up{job="qeet-id"})
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "qeet-id has no scrape target"
+          description: "No qeet-id target is being scraped: check service discovery."
+
+  - name: qeet-id.errors
+    rules:
+      - alert: QeetIdHighErrorRate
+        # More than 5% of requests answered 5xx over 5m, health and metrics routes aside.
+        expr: |
+          sum(rate(http_requests_total{job="qeet-id",status=~"5..",route!~"/metrics|/healthz|/readyz"}[5m]))
+            /
+          clamp_min(sum(rate(http_requests_total{job="qeet-id",route!~"/metrics|/healthz|/readyz"}[5m])), 1e-9)
+            > 0.05
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "qeet-id 5xx error rate above 5%"
+          description: "5xx ratio is {{ $value | humanizePercentage }} over the last 5m."
+
+  - name: qeet-id.latency
+    rules:
+      - alert: QeetIdHighLatencyP99
+        expr: |
+          histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{job="qeet-id"}[5m])) by (le)) > 1
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "qeet-id p99 latency above 1s"
+          description: "p99 request latency is {{ $value }}s over the last 5m."
+
+  - name: qeet-id.runtime
+    rules:
+      - alert: QeetIdHighGoroutines
+        expr: go_goroutines{job="qeet-id"} > 5000
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "qeet-id goroutine count high"
+          description: "{{ $value }} goroutines: a possible leak, such as unbounded outbound calls."
+      - alert: QeetIdRestarting
+        # Kubernetes only: needs kube-state-metrics.
+        expr: increase(kube_pod_container_status_restarts_total{container="qeet-id"}[15m]) > 2
+        labels: { severity: warning }
+        annotations:
+          summary: "qeet-id pod restarting"
+          description: "{{ $labels.pod }} restarted more than twice in 15m."
+
+  - name: qeet-id.security
+    rules:
+      - alert: QeetIdAuditChainBroken
+        # The scheduled verification found a chain that doesn't verify: rows changed, removed or reordered.
+        expr: increase(audit_verify_failures_total{job="qeet-id"}[30m]) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "an audit chain failed verification"
+          description: "audit_verify_failures_total rose: read the stored verification run for the broken chain."
+      - alert: QeetIdAuditVerificationStale
+        expr: time() - audit_verify_last_success_timestamp_seconds{job="qeet-id"} > 6 * 3600
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "audit chains not verified for 6h"
+          description: "The audit-chain-verify job hasn't succeeded for {{ $value | humanizeDuration }}."
+      - alert: QeetIdSessionRevocationsNotAnnounced
+        # A session ended but the applications weren't told: tokens could outlive the revocation.
+        expr: increase(session_revocation_signal_failures_total{job="qeet-id"}[15m]) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "session revocations failed to announce"
+          description: "{{ $value }} revocation signals failed ({{ $labels.reason }})."
+      - alert: QeetIdSigningKeySyncFailing
+        expr: increase(jwt_signing_key_sync_failures_total{job="qeet-id"}[10m]) > 0
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "signing-key registry sync failing"
+          description: "This instance can't read the shared signing-key registry; tokens from a rotated key may be refused."
+      - alert: QeetIdSignInLockoutSpike
+        # Many accounts or sources locked at once: a password-spraying or credential-stuffing run.
+        expr: sum(rate(sign_in_lockouts_total{job="qeet-id"}[5m])) * 300 > 20
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "sign-in lockouts spiking"
+          description: "{{ $value }} lockouts in 5m: check the threat and bot views for a spraying source."
+
+  - name: qeet-id.data
+    rules:
+      - alert: QeetIdOutboxDeadLetters
+        expr: increase(outbox_dead_lettered_total{job="qeet-id"}[15m]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "outbox events dead-lettered"
+          description: "Events gave up after their retries: replay them with `scheduler replay-dead-letters`."
+      - alert: QeetIdScheduledJobFailing
+        expr: increase(scheduled_job_failures_total{job="qeet-id"}[30m]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "scheduled job {{ $labels.exported_job }} failing"
+          description: "{{ $labels.exported_job }} failed {{ $value }} times in 30m."
+      - alert: QeetIdSIEMForwardLagging
+        expr: siem_forward_lag_seconds{job="qeet-id"} > 900
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "SIEM forwarding behind by more than 15m"
+          description: "Audit events reach the organizations' SIEM {{ $value | humanizeDuration }} late."
+      - alert: QeetIdGDPRErasureFailing
+        expr: increase(gdpr_erasure_failures_total{job="qeet-id"}[1h]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "GDPR erasures failing"
+          description: "An erasure request failed and will be retried; it has a legal deadline."

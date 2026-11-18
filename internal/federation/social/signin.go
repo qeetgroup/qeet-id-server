@@ -68,7 +68,7 @@ func (s *Service) loadProvider(ctx context.Context, organizationID uuid.UUID, pr
 	row, err := s.q.GetSocialProviderConfig(ctx, dbgen.GetSocialProviderConfigParams{OrganizationID: organizationID, Provider: provider})
 	enabled, clientID, discoveryURL, teamID, keyID, ciphertext, nonce := row.Enabled, row.ClientID, row.DiscoveryUrl, row.AppleTeamID, row.AppleKeyID, row.ClientSecretCt, row.ClientSecretNonce
 	if errors.Is(err, pgx.ErrNoRows) {
-		return pc, errs.ErrSocialProviderNotConfigured
+		return pc, ErrProviderNotConfigured
 	}
 	if err != nil {
 		return pc, err
@@ -76,7 +76,7 @@ func (s *Service) loadProvider(ctx context.Context, organizationID uuid.UUID, pr
 	// Switched off reads exactly like never set up: an unauthenticated
 	// caller cannot tell an organization has switched a provider off.
 	if !enabled {
-		return pc, errs.ErrSocialProviderNotConfigured
+		return pc, ErrProviderNotConfigured
 	}
 	pc.kind = adapterKind(provider)
 	if pc.kind == kindOIDC {
@@ -87,7 +87,7 @@ func (s *Service) loadProvider(ctx context.Context, organizationID uuid.UUID, pr
 	}
 	if pc.kind == kindApple {
 		if teamID == nil || keyID == nil {
-			return pc, errs.ErrSocialProviderNotConfigured
+			return pc, ErrProviderNotConfigured
 		}
 		pc.teamID, pc.keyID = *teamID, *keyID
 	}

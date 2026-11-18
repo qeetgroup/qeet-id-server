@@ -135,9 +135,9 @@ func TestOIDCSignInRefusesBadIDTokens(t *testing.T) {
 		},
 	}
 	for name, run := range bad {
-		refused(t, "a token "+name, run(t), errs.CodeOIDCSSOIDTokenInvalid)
+		refused(t, "a token "+name, run(t), ErrIDTokenInvalid.Code)
 	}
-	if n := failures(t, organization, errs.CodeOIDCSSOIDTokenInvalid); n != len(bad) {
+	if n := failures(t, organization, ErrIDTokenInvalid.Code); n != len(bad) {
 		t.Errorf("%d refused tokens recorded, want %d", n, len(bad))
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, email); n != 0 {
@@ -254,7 +254,7 @@ func TestOIDCSignInEntraTenants(t *testing.T) {
 	if pair := s.signIn(t, idp, conn.ID, as(idp, "u-1", member.Email, from(mine))); pair.UserID != member.ID {
 		t.Errorf("a listed tenant signed in %s, want the member", pair.UserID)
 	}
-	refused(t, "a tenant the connection doesn't list", s.answer(t, idp, conn.ID, as(idp, "u-1", member.Email, from(theirs))), errs.CodeOIDCSSOIDTokenInvalid)
+	refused(t, "a tenant the connection doesn't list", s.answer(t, idp, conn.ID, as(idp, "u-1", member.Email, from(theirs))), ErrIDTokenInvalid.Code)
 
 	open := s.connect(t, organization, idp, map[string]any{"issuer": idp.URL + "/organizations/v2.0", "discovery_url": discovery})
 	rec := s.send(httptest.NewRequestWithContext(dbtest.Context(t), http.MethodGet, "/oidc-connections/"+open.ID.String()+"/login", nil))

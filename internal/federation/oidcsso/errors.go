@@ -64,4 +64,5 @@ var (
 	ErrLoginCodeInvalid         = errs.New(CodeLoginCodeInvalid, errs.KindUnauthenticated, "That sign-in code is invalid. Please sign in again.")
 	ErrLoginCodeUsed            = errs.New(CodeLoginCodeUsed, errs.KindUnauthenticated, "That sign-in code has already been used. Please sign in again.")
 	ErrLoginCodeExpired         = errs.New("oidc_connection.login_code_expired", errs.KindUnauthenticated, "That sign-in code has expired. Please sign in again.")
+	ErrIDTokenInvalid           = errs.New("oidc_connection.id_token_invalid", errs.KindUnauthenticated, "We couldn't validate the sign-in from your organization's provider.")
 )

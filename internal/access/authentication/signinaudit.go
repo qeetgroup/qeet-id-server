@@ -83,6 +83,15 @@ func (s *Service) RecordSignInFailure(ctx context.Context, f SignInFailure) {
 	if f.OrganizationID == uuid.Nil && f.UserID != uuid.Nil {
 		f.OrganizationID = s.homeOrganization(ctx, f.UserID)
 	}
+	method := f.Method
+	if method == "" {
+		method = "unknown"
+	}
+	reason := f.Reason
+	if reason == "" {
+		reason = "refused"
+	}
+	signIns.WithLabelValues(method, reason).Inc()
 	if !s.failures.allow(ctx, f) {
 		unrecordedFailures.WithLabelValues(f.Method).Inc()
 		return

@@ -366,7 +366,7 @@ func TestAuthorizeAnswersOnlyRegisteredRedirects(t *testing.T) {
 	} {
 		target, _ := authorizeURL(t, tc.clientID, "redirect_uri", tc.redirect)
 		rec := browse(t, p.public, http.MethodGet, target, cookie, nil)
-		if rec.Header().Get("Location") != "" || !strings.Contains(rec.Body.String(), errs.CodeOIDCRedirectURINotRegistered) {
+		if rec.Header().Get("Location") != "" || !strings.Contains(rec.Body.String(), ErrRedirectURINotRegistered.Code) {
 			t.Errorf("client %s redirect_uri %q: %d to %q, want the error shown here", tc.clientID, tc.redirect, rec.Code, rec.Header().Get("Location"))
 		}
 	}
@@ -460,7 +460,7 @@ func TestLoopbackRedirectOnAnyPort(t *testing.T) {
 	for _, redirect := range []string{"http://127.0.0.1:49152/other", "http://127.0.0.2:49152/callback", "http://localhost:49152/callback"} {
 		target, _ := authorizeURL(t, native.ClientID, "redirect_uri", redirect)
 		rec := browse(t, p.public, http.MethodGet, target, cookie, nil)
-		if rec.Header().Get("Location") != "" || !strings.Contains(rec.Body.String(), errs.CodeOIDCRedirectURINotRegistered) {
+		if rec.Header().Get("Location") != "" || !strings.Contains(rec.Body.String(), ErrRedirectURINotRegistered.Code) {
 			t.Errorf("redirect_uri %q: %d to %q, want the error shown here", redirect, rec.Code, rec.Header().Get("Location"))
 		}
 	}

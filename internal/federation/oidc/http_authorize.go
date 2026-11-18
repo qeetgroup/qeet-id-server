@@ -29,7 +29,7 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 	// Nothing about this request is trusted until its redirect_uri is one the
 	// client registered: until then the error is shown here, never sent there.
 	if !h.Service.RegisteredRedirect(r.Context(), clientID, redirect) {
-		httpx.WriteError(w, r, errs.ErrOIDCRedirectURINotRegistered)
+		httpx.WriteError(w, r, ErrRedirectURINotRegistered)
 		return
 	}
 	if err := checkAuthorizeRequest(q); err != nil {
@@ -230,7 +230,7 @@ func (h *Handler) decision(w http.ResponseWriter, r *http.Request) {
 	}
 	// The client may have dropped the address since the request was stored.
 	if !h.Service.RegisteredRedirect(r.Context(), req.ClientID, req.RedirectURI) {
-		httpx.WriteError(w, r, errs.ErrOIDCRedirectURINotRegistered)
+		httpx.WriteError(w, r, ErrRedirectURINotRegistered)
 		return
 	}
 	if !in.Approve {

@@ -1,0 +1,68 @@
+# OpenTelemetry Collector for the local stack: traces the API exports over OTLP go to Tempo; the JSON
+# log lines `make dev-observed` writes to bin/logs/*.log go to Loki, over Loki's OTLP endpoint.
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+  file_log:
+    include: [/var/log/qeet-id/*.log]
+    start_at: end
+    operators:
+      - type: json_parser
+        parse_to: attributes
+        timestamp:
+          parse_from: attributes.time
+          layout_type: gotime
+          layout: "2006-01-02T15:04:05.999999999Z07:00"
+        severity:
+          parse_from: attributes.level
+      # The access log's trace_id and span_id become the record's trace context, so Grafana links a
+      # request's log line to its trace in Tempo.
+      - type: trace_parser
+        trace_id:
+          parse_from: attributes.trace_id
+        span_id:
+          parse_from: attributes.span_id
+
+processors:
+  memory_limiter:
+    check_interval: 5s
+    limit_percentage: 80
+    spike_limit_percentage: 25
+  batch:
+    timeout: 5s
+  resource:
+    attributes:
+      - key: service.name
+        value: qeet-id
+        action: upsert
+
+exporters:
+  otlp_grpc/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+  otlp_http/loki:
+    endpoint: http://loki:3100/otlp
+
+service:
+  telemetry:
+    metrics:
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp_grpc/tempo]
+    logs:
+      receivers: [file_log, otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlp_http/loki]

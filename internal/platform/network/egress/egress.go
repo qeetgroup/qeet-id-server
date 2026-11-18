@@ -324,7 +324,19 @@ func (p *Policy) CheckRedirect(req *http.Request, via []*http.Request) error {
 // or sends everything through Options.ProxyURL when set; ambient proxy
 // variables are ignored.
 func (p *Policy) HTTPClient(timeout time.Duration) *http.Client {
+	return p.client(timeout, 0)
+}
+
+// StreamingHTTPClient is HTTPClient for a response that streams for as long as its request's
+// context allows: no whole-request timeout, but the headers must arrive within headerTimeout.
+func (p *Policy) StreamingHTTPClient(headerTimeout time.Duration) *http.Client {
+	return p.client(0, headerTimeout)
+}
+
+// client builds the egress-guarded client both constructors return; a zero headerTimeout sets none.
+func (p *Policy) client(timeout, headerTimeout time.Duration) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = headerTimeout
 	if p.proxyURL != nil {
 		// The proxy opens the destination connection, so pinning here would only
 		// check the proxy's own, usually private, address. URLs are still validated;
@@ -336,7 +348,7 @@ func (p *Policy) HTTPClient(timeout time.Duration) *http.Client {
 	}
 	return &http.Client{
 		Timeout:       timeout,
-		Transport:     transport,
+		Transport:     tracedTransport{next: transport},
 		CheckRedirect: p.CheckRedirect,
 	}
 }

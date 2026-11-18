@@ -39,11 +39,11 @@ func NewService(pool *pgxpool.Pool, issuer *tokens.Issuer) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool), issuer: issuer}
 }
 
-// AgentStatus returns an agent's current lifecycle status, or ErrAgentNotFound.
+// AgentStatus returns an agent's current lifecycle status, or ErrNotFound.
 func (s *Service) AgentStatus(ctx context.Context, agentID uuid.UUID) (string, error) {
 	status, err := s.q.GetAgentStatusByID(ctx, agentID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", errs.ErrAgentNotFound
+		return "", ErrNotFound
 	}
 	return status, err
 }
@@ -200,7 +200,7 @@ func (s *Service) Delete(ctx context.Context, id, organizationID uuid.UUID, acto
 		return err
 	}
 	if n == 0 {
-		return errs.ErrAgentNotFound
+		return ErrNotFound
 	}
 	if err := audit.Record(ctx, tx, actor.Event(organizationID, "agent.deleted", "agent", id, nil)); err != nil {
 		return err

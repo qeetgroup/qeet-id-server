@@ -18,4 +18,7 @@ var (
 	ErrSessionTimedOut             = errs.New("auth.session_timed_out", errs.KindUnauthenticated, "Your session has timed out. Please sign in again.").AsRetryable()
 	ErrSessionLimit                = errs.New("auth.session_limit", errs.KindForbidden, "You're signed in on too many devices for this organization. Sign out of one of them, then try again.")
 	ErrOrganizationInactive        = errs.New("auth.organization_inactive", errs.KindForbidden, "This organization isn't active. Contact its administrator.")
+	ErrSessionInvalid              = errs.New("auth.session_invalid", errs.KindInvalid, "Your sign-in session is invalid. Please sign in again.").AsRetryable()
+	// ErrSignInUnavailable reveals nothing about the account or the rule that matched.
+	ErrSignInUnavailable = errs.New("auth.sign_in_unavailable", errs.KindUnavailable, "Sign-in is temporarily unavailable. Please try again in a moment.").AsRetryable()
 )

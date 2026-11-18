@@ -121,7 +121,7 @@ func (m metChallenge) method() string {
 func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken string, proof MFAProof, ip, ua string) (metChallenge, error) {
 	id, err := uuid.Parse(mfaToken)
 	if err != nil {
-		return metChallenge{}, errs.ErrAuthSessionInvalid
+		return metChallenge{}, ErrSessionInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -464,6 +464,7 @@ func (s *Service) CompleteMFALoginWith(ctx context.Context, mfaToken string, pro
 	if err := tx.Commit(ctx); err != nil {
 		return nil, nil, err
 	}
+	countSignIn(met.method())
 	s.recordSignIn(ctx, met.userID, met.organizationID, ua, httpx.GeoCountry(ctx))
 	return pair, met.recoveryCodes, nil
 }

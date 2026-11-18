@@ -93,7 +93,7 @@ func (e *Error) Is(target error) bool {
 // Wrap attaches err as the cause, kept for logs and never shown to users. It
 // returns e unchanged when err is nil:
 //
-//	return errs.ErrAuthSessionInvalid.Wrap(dbErr)
+//	return authentication.ErrSessionInvalid.Wrap(dbErr)
 func (e *Error) Wrap(err error) *Error {
 	if err == nil {
 		return e

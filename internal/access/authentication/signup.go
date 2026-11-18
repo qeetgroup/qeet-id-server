@@ -129,6 +129,7 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (*TokenPair, *user
 	if err := tx.Commit(ctx); err != nil {
 		return nil, nil, nil, err
 	}
+	countSignIn(firstFactorPassword)
 
 	return &TokenPair{
 		AccessToken:      access,

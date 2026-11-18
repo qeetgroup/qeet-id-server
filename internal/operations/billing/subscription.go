@@ -185,15 +185,21 @@ func (s *Service) activateUnpaid(ctx context.Context, q *dbgen.Queries, organiza
 }
 
 // activatePaid puts the organization on planCode within tx for a period a completed
-// checkout paid for. The invoice records what the checkout charged.
+// checkout paid for, audited on its chain as the billing system's. The invoice records
+// what the checkout charged.
 func (s *Service) activatePaid(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, planCode, currency string, charged TaxResult) error {
 	q := s.q.WithTx(tx)
 	p, err := lookupPlanPrice(ctx, q, planCode, currency)
 	if err != nil {
 		return err
 	}
-	_, err = s.activate(ctx, q, organizationID, p, charged, true)
-	return err
+	sub, err := s.activate(ctx, q, organizationID, p, charged, true)
+	if err != nil {
+		return err
+	}
+	return recordBillingEvent(ctx, tx, organizationID, "billing.plan_changed", map[string]any{
+		"plan": sub.PlanCode, "currency": sub.Currency, "amount_minor": sub.AmountMinor, "via": "checkout",
+	})
 }
 
 // SwitchPlan is ChangePlan for an organization changing its own plan without a checkout, recorded as

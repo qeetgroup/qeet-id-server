@@ -150,8 +150,8 @@ func TestVerifyAndConsumeMFAChallenge(t *testing.T) {
 
 	t.Run("unusable tokens", func(t *testing.T) {
 		svc, a, organization := setup(t, held)
-		if _, err := svc.verifyAndConsumeMFAChallenge(ctx, "not-a-token", MFAProof{Code: "135790"}, "", ""); !errors.Is(err, errs.ErrAuthSessionInvalid) {
-			t.Errorf("malformed token: %v, want %v", err, errs.ErrAuthSessionInvalid)
+		if _, err := svc.verifyAndConsumeMFAChallenge(ctx, "not-a-token", MFAProof{Code: "135790"}, "", ""); !errors.Is(err, ErrSessionInvalid) {
+			t.Errorf("malformed token: %v, want %v", err, ErrSessionInvalid)
 		}
 		if _, err := svc.verifyAndConsumeMFAChallenge(ctx, uuid.NewString(), MFAProof{Code: "135790"}, "", ""); !errors.Is(err, errs.ErrAuthMFAChallengeExpired) {
 			t.Errorf("unknown token: %v, want %v", err, errs.ErrAuthMFAChallengeExpired)

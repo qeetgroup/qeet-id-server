@@ -3,7 +3,7 @@ package authentication
 // Sign-in lockout counts failed password sign-ins in PostgreSQL, so all replicas
 // agree: per account and network, per account across networks, and per network
 // across accounts (spraying). Unknown addresses count like real ones. If the
-// counters are unavailable, sign-in fails closed with ErrAuthSignInUnavailable.
+// counters are unavailable, sign-in fails closed with ErrSignInUnavailable.
 
 import (
 	"context"
@@ -210,7 +210,7 @@ func lockoutContext(ctx context.Context) (context.Context, context.CancelFunc) {
 // sign-in (fail closed). The cause is kept for the request log.
 func lockoutFailed(stage string, err error) error {
 	lockoutUnavailable.WithLabelValues(stage).Inc()
-	return errs.ErrAuthSignInUnavailable.Wrap(fmt.Errorf("sign-in lockout %s: %w", stage, err))
+	return ErrSignInUnavailable.Wrap(fmt.Errorf("sign-in lockout %s: %w", stage, err))
 }
 
 // checkLockout refuses an attempt from a throttled source network, or for an
