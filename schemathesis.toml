@@ -63,6 +63,7 @@ include-name = [
   "POST /v1/oauth/logout",
   "POST /v1/me/invites/{id}/decline",
   "POST /v1/register/passkey/finish",
+  "GET /v1/oidc-connections/{id}/login",
 ]
 checks.positive_data_acceptance.enabled = false
 

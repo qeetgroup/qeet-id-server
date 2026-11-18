@@ -46,37 +46,40 @@ get:
       description: Inclusive lower bound (RFC3339); defaults to now-24h.
       schema:
         type: string
-        format: date-time
+        anyOf:
+          - format: date-time
+          - maxLength: 0
+        description: An RFC 3339 time; empty means none.
     - name: to
       in: query
       required: false
       description: Inclusive upper bound (RFC3339); defaults to now.
       schema:
         type: string
-        format: date-time
+        anyOf:
+          - format: date-time
+          - maxLength: 0
+        description: An RFC 3339 time; empty means none.
     - name: category
       in: query
       required: false
       description: Comma-separated categories, as for the history.
       schema:
         type: string
+        pattern: "^(authentication|authorization|security|directory|developer|system)(,(authentication|authorization|security|directory|developer|system))*$"
     - name: severity
       in: query
       required: false
       description: Comma-separated severities, as for the history.
       schema:
         type: string
+        pattern: "^(info|success|warning|error|critical)(,(info|success|warning|error|critical))*$"
     - name: min_severity
       in: query
       required: false
       schema:
         type: string
-        enum:
-          - info
-          - success
-          - warning
-          - error
-          - critical
+        enum: [info, success, warning, error, critical]
     - name: resource_type
       in: query
       required: false

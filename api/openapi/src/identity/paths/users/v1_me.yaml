@@ -61,10 +61,19 @@ patch:
               enum: [en, de, es, fr, hi, ja, pt, zh, null]
               description: The console language.
             phone:
+              type:
+                - string
+                - "null"
               description: Accepted and ignored here; an administrator changes it at PATCH /v1/users/{id}.
             status:
+              type:
+                - string
+                - "null"
               description: Accepted and ignored here; an administrator changes it at PATCH /v1/users/{id}.
             metadata:
+              type:
+                - object
+                - "null"
               description: Accepted and ignored here; an administrator changes it at PATCH /v1/users/{id}.
   responses:
     "200":

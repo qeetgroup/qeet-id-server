@@ -2266,10 +2266,19 @@ paths:
                     - null
                   description: The console language.
                 phone:
+                  type:
+                    - string
+                    - "null"
                   description: Accepted and ignored here; an administrator changes it at PATCH /v1/users/{id}.
                 status:
+                  type:
+                    - string
+                    - "null"
                   description: Accepted and ignored here; an administrator changes it at PATCH /v1/users/{id}.
                 metadata:
+                  type:
+                    - object
+                    - "null"
                   description: Accepted and ignored here; an administrator changes it at PATCH /v1/users/{id}.
       responses:
         "200":
@@ -2774,7 +2783,7 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        "200":
+        "201":
           description: OK
           content:
             application/json:
@@ -2925,7 +2934,9 @@ paths:
                       name:
                         type: string
                       description:
-                        type: string
+                        type:
+                          - string
+                          - "null"
                       parent:
                         type:
                           - string
@@ -5036,9 +5047,13 @@ components:
           type: string
           minLength: 1
         description:
-          type: string
+          type:
+            - string
+            - "null"
         children:
-          type: array
+          type:
+            - array
+            - "null"
           items:
             $ref: "#/components/schemas/GroupTemplateNode"
     ImportRowResult:

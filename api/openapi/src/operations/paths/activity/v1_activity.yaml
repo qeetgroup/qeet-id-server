@@ -45,19 +45,14 @@ get:
         stored. For a minimum, use min_severity.
       schema:
         type: string
-        example: error,critical
+        pattern: "^(info|success|warning|error|critical)(,(info|success|warning|error|critical))*$"
     - name: min_severity
       in: query
       required: false
       description: Events of at least this severity.
       schema:
         type: string
-        enum:
-          - info
-          - success
-          - warning
-          - error
-          - critical
+        enum: [info, success, warning, error, critical]
     - name: category
       in: query
       required: false
@@ -67,7 +62,7 @@ get:
         event type prefix.
       schema:
         type: string
-        example: authentication,security
+        pattern: "^(authentication|authorization|security|directory|developer|system)(,(authentication|authorization|security|directory|developer|system))*$"
     - name: resource_type
       in: query
       required: false
@@ -127,14 +122,20 @@ get:
       description: Inclusive lower bound on event timestamp (RFC3339).
       schema:
         type: string
-        format: date-time
+        anyOf:
+          - format: date-time
+          - maxLength: 0
+        description: An RFC 3339 time; empty means none.
     - name: to
       in: query
       required: false
       description: Inclusive upper bound on event timestamp (RFC3339).
       schema:
         type: string
-        format: date-time
+        anyOf:
+          - format: date-time
+          - maxLength: 0
+        description: An RFC 3339 time; empty means none.
   security:
     - bearerAuth: []
     - apiKeyAuth: []

@@ -51,7 +51,7 @@ post:
               type:
                 - string
                 - "null"
-              pattern: '^[A-Za-z]{2}$'
+              pattern: "^[A-Za-z]{2}$"
               description: An ISO 3166-1 alpha-2 code, such as IN.
             success_url:
               type: string
@@ -74,6 +74,8 @@ post:
       $ref: ../../../shared/responses/BadRequest.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
+    "404":
+      $ref: ../../../shared/responses/NotFound.yaml
     "413":
       $ref: ../../../shared/responses/PayloadTooLarge.yaml
     "422":

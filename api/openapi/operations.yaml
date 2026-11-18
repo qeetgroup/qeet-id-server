@@ -198,7 +198,7 @@ paths:
           description: Comma-separated severities (info, success, warning, error, critical); events of any of them. Severity is derived from the event type, not stored. For a minimum, use min_severity.
           schema:
             type: string
-            example: error,critical
+            pattern: ^(info|success|warning|error|critical)(,(info|success|warning|error|critical))*$
         - name: min_severity
           in: query
           required: false
@@ -217,7 +217,7 @@ paths:
           description: Comma-separated categories (authentication, authorization, security, directory, developer, system); events of any of them. Derived from the event type prefix.
           schema:
             type: string
-            example: authentication,security
+            pattern: ^(authentication|authorization|security|directory|developer|system)(,(authentication|authorization|security|directory|developer|system))*$
         - name: resource_type
           in: query
           required: false
@@ -266,14 +266,20 @@ paths:
           description: Inclusive lower bound on event timestamp (RFC3339).
           schema:
             type: string
-            format: date-time
+            anyOf:
+              - format: date-time
+              - maxLength: 0
+            description: An RFC 3339 time; empty means none.
         - name: to
           in: query
           required: false
           description: Inclusive upper bound on event timestamp (RFC3339).
           schema:
             type: string
-            format: date-time
+            anyOf:
+              - format: date-time
+              - maxLength: 0
+            description: An RFC 3339 time; empty means none.
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -398,26 +404,34 @@ paths:
           description: Inclusive lower bound (RFC3339); defaults to now-24h.
           schema:
             type: string
-            format: date-time
+            anyOf:
+              - format: date-time
+              - maxLength: 0
+            description: An RFC 3339 time; empty means none.
         - name: to
           in: query
           required: false
           description: Inclusive upper bound (RFC3339); defaults to now.
           schema:
             type: string
-            format: date-time
+            anyOf:
+              - format: date-time
+              - maxLength: 0
+            description: An RFC 3339 time; empty means none.
         - name: category
           in: query
           required: false
           description: Comma-separated categories, as for the history.
           schema:
             type: string
+            pattern: ^(authentication|authorization|security|directory|developer|system)(,(authentication|authorization|security|directory|developer|system))*$
         - name: severity
           in: query
           required: false
           description: Comma-separated severities, as for the history.
           schema:
             type: string
+            pattern: ^(info|success|warning|error|critical)(,(info|success|warning|error|critical))*$
         - name: min_severity
           in: query
           required: false
@@ -3453,6 +3467,17 @@ paths:
             schema:
               type: object
               additionalProperties: false
+              if:
+                properties:
+                  provider:
+                    const: azure
+              then:
+                required:
+                  - base_url
+                properties:
+                  base_url:
+                    type: string
+                    minLength: 1
               required:
                 - provider
                 - model
@@ -3565,6 +3590,17 @@ paths:
             schema:
               type: object
               additionalProperties: false
+              if:
+                properties:
+                  provider:
+                    const: azure
+              then:
+                required:
+                  - base_url
+                properties:
+                  base_url:
+                    type: string
+                    minLength: 1
               required:
                 - provider
                 - model
@@ -4112,6 +4148,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
         "422":
@@ -5579,6 +5617,7 @@ components:
           type:
             - string
             - "null"
+          format: uuid
           description: Accepted and ignored; the export is always in the caller's organization.
         user_id:
           type: string

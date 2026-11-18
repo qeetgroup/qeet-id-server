@@ -92,10 +92,6 @@ paths:
                   type:
                     - string
                     - "null"
-                  enum:
-                    - hosted_login
-                    - console
-                    - null
                   description: Where the reset was requested from. `hosted_login` makes the emailed link open the hosted login's own reset page. `console`, any other value, or omitting it opens the console's reset screen (the default).
                 return_to:
                   type:

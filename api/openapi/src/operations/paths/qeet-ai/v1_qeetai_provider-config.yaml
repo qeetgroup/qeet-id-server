@@ -78,6 +78,17 @@ put:
         schema:
           type: object
           additionalProperties: false
+          if:
+            properties:
+              provider:
+                const: azure
+          then:
+            required:
+              - base_url
+            properties:
+              base_url:
+                type: string
+                minLength: 1
           required:
             - provider
             - model
