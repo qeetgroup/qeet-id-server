@@ -64,6 +64,10 @@ The first release, 2027.1.0, is in preparation. No version has been published ye
 
 ### Changed
 
+- A refresh token lasts 7 days unused by default (`REFRESH_TOKEN_TTL=168h`, was 30 days). Each renewal starts
+  the 7 days again, so a person who keeps using an application stays signed in until the session's maximum
+  age (`SESSION_MAX_AGE`, still 30 days); an application left unused for 7 days signs in again. API and
+  console sessions still end after `SESSION_IDLE_TIMEOUT` (24 hours) without renewal.
 - Releases follow a fixed monthly rhythm: the branch is cut on the first working day of the month, tested for
   about two weeks and released on the third Tuesday; urgent fixes still ship as hotfixes. The first release
   is `2027.1.0`, planned for Tuesday 19 January 2027, and the documents name it that way throughout. Its
