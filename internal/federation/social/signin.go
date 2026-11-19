@@ -205,8 +205,9 @@ var stateRefusals = oauthstate.Refusals{Invalid: ErrStateInvalid, Expired: ErrSt
 
 // CompleteCallback consumes the state, exchanges the code, finds or creates the user and linked
 // identity, and returns a one-time code the SPA trades for a session. Without startedHere it fails with
-// ErrSocialBrowserMismatch; that and a closed organization still return the result's ReturnTo. ip and
-// ua are the browser's, for the record of a refusal.
+// ErrSocialBrowserMismatch; that, a closed organization and a domain that requires single sign-on
+// (errs.ErrAuthSSORequired) still return the result's ReturnTo. ip and ua are the browser's, for the
+// record of a refusal.
 func (s *Service) CompleteCallback(ctx context.Context, provider, state, code string, startedHere bool, ip, ua string) (*CallbackResult, error) {
 	if state == "" || code == "" {
 		return nil, ErrCallbackParamsMissing
@@ -239,12 +240,17 @@ func (s *Service) CompleteCallback(ctx context.Context, provider, state, code st
 		}
 		return &CallbackResult{ReturnTo: st.ReturnTo, OrganizationID: st.OrganizationID}, err
 	}
-	if err != nil {
-		return nil, err
+	if err == nil {
+		// An account already linked signs in no more once its organization requires
+		// single sign-on on its domain (adoption and sign-up were refused above).
+		err = s.refuseCapturedAccount(ctx, userID)
 	}
-	// An account already linked signs in no more once its organization requires
-	// single sign-on on its domain (adoption and sign-up were refused above).
-	if err := s.refuseCapturedAccount(ctx, userID); err != nil {
+	if errors.Is(err, errs.ErrAuthSSORequired) {
+		// So does that refusal, so the person can go on through the
+		// organization's single sign-on instead.
+		return &CallbackResult{ReturnTo: st.ReturnTo, OrganizationID: st.OrganizationID}, err
+	}
+	if err != nil {
 		return nil, err
 	}
 
@@ -431,22 +437,16 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res, err := h.Service.CompleteCallback(r.Context(), provider, state, code, startedHere, httpx.ClientIP(r), r.UserAgent())
-	if (errors.Is(err, errs.ErrAuthSelfRegistrationDisabled) || errors.Is(err, ErrBrowserMismatch)) && h.LoginBaseURL != "" {
-		// A closed organization, or a sign-in begun in another browser, not a
-		// provider failure: say so, and keep the way back to the application
-		// (validated when the sign-in began).
-		q := url.Values{"error": {"registration_closed"}}
-		if errors.Is(err, ErrBrowserMismatch) {
-			q.Set("error", "other_browser")
-		}
-		if res != nil && res.ReturnTo != "" {
-			q.Set("return_to", res.ReturnTo)
-		}
-		http.Redirect(w, r, h.LoginBaseURL+"/sign-in?"+q.Encode(), http.StatusFound)
-		return
-	}
 	if err != nil {
-		h.redirectSocialError(w, r, err)
+		// A closed organization, a sign-in begun in another browser or a
+		// domain that requires single sign-on is not a provider failure: say
+		// so, and keep the way back to the application (validated when the
+		// sign-in began). The callback's own query carries no return_to.
+		returnTo := ""
+		if res != nil {
+			returnTo = res.ReturnTo
+		}
+		h.redirectToLogin(w, r, err, returnTo)
 		return
 	}
 	h.binding().Remove(w, r, state)

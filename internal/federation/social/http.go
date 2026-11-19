@@ -63,22 +63,44 @@ func (h *Handler) MountPublic(r chi.Router) {
 // return_to so the person can retry. Without LoginBaseURL it writes the error
 // as JSON.
 func (h *Handler) redirectSocialError(w http.ResponseWriter, r *http.Request, err error) {
+	h.redirectToLogin(w, r, err, r.URL.Query().Get("return_to"))
+}
+
+// redirectToLogin sends a failed ceremony back to the hosted login with err's
+// code (socialErrorCode) and returnTo, when there is one. Without LoginBaseURL
+// it writes the error as JSON.
+func (h *Handler) redirectToLogin(w http.ResponseWriter, r *http.Request, err error, returnTo string) {
 	if h.LoginBaseURL == "" {
 		// No hosted login app configured — fall back to the JSON error.
 		httpx.WriteError(w, r, err)
 		return
 	}
-	q := url.Values{"error": {"social"}}
-	// A suspended or deleted account is told so, as at password sign-in, and
-	// one that can't be adopted yet is told to verify its address.
-	switch {
-	case errors.Is(err, errs.ErrAuthAccountInactive):
-		q.Set("error", "account_inactive")
-	case errors.Is(err, ErrAccountUnverified):
-		q.Set("error", "account_unverified")
-	}
-	if rt := r.URL.Query().Get("return_to"); rt != "" {
-		q.Set("return_to", rt)
+	q := url.Values{"error": {socialErrorCode(err)}}
+	if returnTo != "" {
+		q.Set("return_to", returnTo)
 	}
 	http.Redirect(w, r, h.LoginBaseURL+"/sign-in?"+q.Encode(), http.StatusFound)
+}
+
+// socialErrorCode is the error code the hosted login is given for err: social
+// for any failure the person can do nothing about, and a named code for one
+// they can. A suspended or deleted account is told so, as at password
+// sign-in; one that can't be adopted yet is told to verify its address; a
+// closed organization, a sign-in begun in another browser and an address on a
+// domain whose organization requires single sign-on are named, the last
+// depending only on the domain, as the password sign-in's refusal does.
+func socialErrorCode(err error) string {
+	switch {
+	case errors.Is(err, errs.ErrAuthAccountInactive):
+		return "account_inactive"
+	case errors.Is(err, ErrAccountUnverified):
+		return "account_unverified"
+	case errors.Is(err, errs.ErrAuthSelfRegistrationDisabled):
+		return "registration_closed"
+	case errors.Is(err, ErrBrowserMismatch):
+		return "other_browser"
+	case errors.Is(err, errs.ErrAuthSSORequired):
+		return "sso_required"
+	}
+	return "social"
 }

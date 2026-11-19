@@ -17,8 +17,11 @@ get:
     (social.signup_refused, naming the provider and the address), and the
     browser is sent to the hosted login with error=registration_closed and the
     original return_to. Nor is an account created on a domain another
-    organization has verified, or on one whose organization requires single
-    sign-on (error=social). The console's own sign-up (intent=signup) creates
+    organization has verified (error=social), or on one whose organization
+    requires single sign-on (error=sso_required and the original return_to,
+    so the hosted login can send the person to the organization's single
+    sign-on; like the password sign-in's 403 auth.sso_required it depends only
+    on the domain). The console's own sign-up (intent=signup) creates
     no account on a domain an organization has verified either (error=social).
     An address the organization's address rules refuse is
     sent there with error=address_not_allowed and the return_to, and no
@@ -43,7 +46,8 @@ get:
     organization, whether linked before or adopted by email. Neither it nor the
     console's own sign-in signs in, adopts or links an account on a domain
     whose organization requires single sign-on, except its break-glass members
-    (error=social; the console flow gets the same): only that organization's
+    (error=sso_required and the return_to; the console flow is sent to the
+    hosted login with error=sso_required too): only that organization's
     identity provider signs its people in. Nor does any
     provider adopt by email an account that owns or administers the
     organization (social.account_administers; the browser gets error=social):
