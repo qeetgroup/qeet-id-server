@@ -1,7 +1,18 @@
 type: object
+required:
+  - user
+  - access_token
+  - token_type
+  - expires_at
+  - refresh_token
+  - session_id
+  - user_id
 properties:
   user:
     $ref: ../../../shared/schemas/User.yaml
+    description: >-
+      The new account. It belongs to no organization yet, so its
+      organization_id is the nil UUID (all zeros) until it creates or joins one.
   access_token:
     type: string
   token_type:

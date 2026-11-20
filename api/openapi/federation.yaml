@@ -3103,6 +3103,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   truncated:
                     $ref: "#/components/schemas/Truncated"
@@ -5293,6 +5295,14 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
+                  - total
+                  - limit
+                  - summary
+                  - categories
+                  - connections
+                  - remediations
                 properties:
                   next_cursor:
                     $ref: "#/components/schemas/NextCursor"
@@ -5306,6 +5316,12 @@ paths:
                     type: integer
                   summary:
                     type: object
+                    required:
+                      - open
+                      - critical
+                      - warning
+                      - retried
+                      - impacted_users
                     properties:
                       open:
                         type: integer
@@ -5323,6 +5339,9 @@ paths:
                     type: array
                     items:
                       type: object
+                      required:
+                        - key
+                        - count
                       properties:
                         key:
                           type: string
@@ -5332,6 +5351,9 @@ paths:
                     type: array
                     items:
                       type: object
+                      required:
+                        - key
+                        - count
                       properties:
                         key:
                           type: string
@@ -7076,6 +7098,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   truncated:
                     $ref: "#/components/schemas/Truncated"
@@ -7424,6 +7448,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   truncated:
                     $ref: "#/components/schemas/Truncated"
@@ -9561,11 +9587,20 @@ components:
         - operation
         - trigger
         - resource_type
+        - resource_id
         - started_at
         - duration_ms
+        - http_status
         - status
         - users_synced
         - groups_synced
+        - error_code
+        - message
+        - category
+        - severity
+        - resolution
+        - resolved_at
+        - retry_of
         - retryable
       properties:
         id:

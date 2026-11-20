@@ -1,4 +1,9 @@
 type: object
+required:
+  - organization_id
+  - enabled
+  - score_threshold
+  - min_baseline_events
 properties:
   organization_id:
     type: string

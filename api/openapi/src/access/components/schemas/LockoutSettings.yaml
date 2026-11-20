@@ -1,4 +1,8 @@
 type: object
+required:
+  - threshold
+  - window_minutes
+  - duration_minutes
 properties:
   threshold:
     type: integer

@@ -109,6 +109,14 @@ The first release, 2027.1.0, is in preparation. No version has been published ye
   admin portal's context read answers `PortalContext`, as its session does. Invitation, SAML connection
   and Qeet AI source states are enumerated, and an organization's plan may be `starter`. The answers
   themselves are unchanged.
+- The API documents also require what these answers always carry: the auth policy's `lockout_limits`
+  (`defaults`, `min` and `max`, each in full), the audit anomaly settings, the sign-up answer (its `user`
+  belongs to no organization yet, so its `organization_id` is the nil UUID), the directory errors page
+  and every directory event's fields (all but `reason`, `params`, `subject` and `user_id`), and the
+  `items` of the SAML connections lists (the organization's and the admin portal's) and of the admin
+  portal's domains. The anomaly settings PUT takes its own `AuditAnomalySettingsUpdate` with all
+  three settings required: it replaces them all, and one left out is stored as false or 0. The answers
+  themselves are unchanged.
 - Releases follow a fixed monthly rhythm: the branch is cut on the first working day of the month, tested for
   about two weeks and released on the third Tuesday; urgent fixes still ship as hotfixes. The first release
   is `2027.1.0`, planned for Tuesday 19 January 2027, and the documents name it that way throughout. Its

@@ -7,6 +7,10 @@ description: >-
   window and lock up to 24 hours. An organization's settings govern the lock on one
   network; the lock on every network (4 times the platform threshold) always
   uses the platform defaults. Ignored on update.
+required:
+  - defaults
+  - min
+  - max
 properties:
   defaults:
     $ref: ./LockoutSettings.yaml

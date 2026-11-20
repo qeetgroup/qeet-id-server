@@ -1229,7 +1229,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AuditAnomalySettings"
+              $ref: "#/components/schemas/AuditAnomalySettingsUpdate"
       responses:
         "200":
           description: Updated
@@ -5626,6 +5626,11 @@ components:
           type: integer
     AuditAnomalySettings:
       type: object
+      required:
+        - organization_id
+        - enabled
+        - score_threshold
+        - min_baseline_events
       properties:
         organization_id:
           type: string
@@ -5637,6 +5642,25 @@ components:
           description: 0..1; an event scoring at or above this is flagged.
         min_baseline_events:
           type: integer
+          description: Cold-start guard — an actor needs this many historical events before anything is flagged for them.
+    AuditAnomalySettingsUpdate:
+      type: object
+      description: "The anomaly detection settings PUT stores. It replaces all three, so each is sent: a value left out would be stored as false or 0."
+      required:
+        - enabled
+        - score_threshold
+        - min_baseline_events
+      properties:
+        enabled:
+          type: boolean
+        score_threshold:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: 0..1; an event scoring at or above this is flagged.
+        min_baseline_events:
+          type: integer
+          minimum: 0
           description: Cold-start guard — an actor needs this many historical events before anything is flagged for them.
     Truncated:
       type: boolean
