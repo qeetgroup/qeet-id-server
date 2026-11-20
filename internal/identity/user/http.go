@@ -312,13 +312,8 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	after, err := paging.ParseCursor(r.URL.Query())
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
 	limit := paging.Limit(r.URL.Query(), listLimit, listMaxLimit)
-	out, next, total, err := h.Repo.List(r.Context(), *p.OrganizationID, filter, limit, after)
+	out, next, total, err := h.Repo.List(r.Context(), *p.OrganizationID, filter, limit, r.URL.Query().Get("cursor"))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

@@ -14052,7 +14052,7 @@
               "request": {
                 "name": "List users",
                 "description": {
-                  "content": "Returns a page of users in the caller's organization, with total, how many match. Every filter is optional and they combine: q (display name, email or phone, case-insensitive), role (a role name in the organization), department (metadata.department), mfa (on or off: a confirmed second factor), email_verified, status (active, invited or suspended), last_seen (today: under a day; week: 1 to 7 days; month: 7 to 30 days; older: over 30 days; never). sort is created (the default, newest first), name or last_seen, with order asc or desc; a malformed value is refused with 400. Pages by opaque cursor, in the default order only: next_cursor is present while there is another page, and any other order answers its first page. Requires an existing organization; scope comes from the authenticated principal. Members are the organization's own users (their home is this organization) and the people who hold a role in it; a member whose home is another organization is shown with empty metadata, which their home organization keeps; last_seen_at and last_seen_ip come from sessions in this organization only.",
+                  "content": "Returns a page of users in the caller's organization, with total, how many match. Every filter is optional and they combine: q (display name, email or phone, case-insensitive), role (a role name in the organization), department (metadata.department), mfa (on or off: a confirmed second factor), email_verified, status (active, invited or suspended), last_seen (today: under a day; week: 1 to 7 days; month: 7 to 30 days; older: over 30 days; never), admins_without_mfa (true: the members holding the built-in owner or admin role with no confirmed second factor, exactly those the summary's admins_without_mfa counts; false: everyone else), in_group (true: in at least one of the organization's groups; false: in none of them, whatever groups they are in elsewhere). sort is created (the default, newest first), name (by display name, or the email without one, case-insensitive; A first by default) or last_seen (most recent first by default; a member never seen comes last either way), with order asc or desc; a malformed value is refused with 400. Pages by opaque cursor in every order, stable when sort keys tie: next_cursor is present while there is another page, and a cursor works only with the sort and order of the page that gave it (400 otherwise). Requires an existing organization; scope comes from the authenticated principal. Members are the organization's own users (their home is this organization) and the people who hold a role in it; a member whose home is another organization is shown with empty metadata, which their home organization keeps; last_seen_at and last_seen_ip come from sessions in this organization only.",
                   "type": "text/plain"
                 },
                 "url": {
@@ -14131,11 +14131,29 @@
                     {
                       "disabled": true,
                       "description": {
+                        "content": "true: only the members holding the built-in owner or admin role with no confirmed second factor; false: everyone else.",
+                        "type": "text/plain"
+                      },
+                      "key": "admins_without_mfa",
+                      "value": "true"
+                    },
+                    {
+                      "disabled": true,
+                      "description": {
+                        "content": "true: only the members in at least one of the organization's groups; false: only those in none of them.",
+                        "type": "text/plain"
+                      },
+                      "key": "in_group",
+                      "value": "true"
+                    },
+                    {
+                      "disabled": true,
+                      "description": {
                         "content": " (This can only be one of created,name,last_seen)",
                         "type": "text/plain"
                       },
                       "key": "sort",
-                      "value": "last_seen"
+                      "value": "name"
                     },
                     {
                       "disabled": true,
@@ -14238,11 +14256,29 @@
                         {
                           "disabled": true,
                           "description": {
+                            "content": "true: only the members holding the built-in owner or admin role with no confirmed second factor; false: everyone else.",
+                            "type": "text/plain"
+                          },
+                          "key": "admins_without_mfa",
+                          "value": "true"
+                        },
+                        {
+                          "disabled": true,
+                          "description": {
+                            "content": "true: only the members in at least one of the organization's groups; false: only those in none of them.",
+                            "type": "text/plain"
+                          },
+                          "key": "in_group",
+                          "value": "true"
+                        },
+                        {
+                          "disabled": true,
+                          "description": {
                             "content": " (This can only be one of created,name,last_seen)",
                             "type": "text/plain"
                           },
                           "key": "sort",
-                          "value": "last_seen"
+                          "value": "name"
                         },
                         {
                           "disabled": true,
@@ -14273,7 +14309,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"items\": [\n    \"\",\n    \"\"\n  ],\n  \"total\": 305,\n  \"next_cursor\": \"string\"\n}",
+                  "body": "{\n  \"items\": [\n    \"\",\n    \"\"\n  ],\n  \"total\": 2330,\n  \"next_cursor\": null\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }

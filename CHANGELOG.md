@@ -10,6 +10,10 @@ The first release, 2027.1.0, is in preparation. No version has been published ye
 
 ### Added
 
+- `GET /v1/users` filters `admins_without_mfa` (the owners and admins with no second factor, exactly those the
+  summary counts) and `in_group` (in one of the organization's groups, or in none), and pages by cursor in
+  every order: by name, by when last seen and by creation, either way, stable when sort keys tie. A cursor
+  works only with the sort and order of the page that gave it.
 - `GET /v1/me/permissions`: a person's own effective permissions in the organization their token is for,
   with every grant behind them, as `GET /v1/users/{userID}/organizations/{organizationID}/permissions`
   answers. It needs no permission, so someone holding none (the built-in member role) reads empty lists and
