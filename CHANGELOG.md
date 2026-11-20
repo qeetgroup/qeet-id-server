@@ -120,8 +120,9 @@ The first release, 2027.1.0, is in preparation. No version has been published ye
 - Every list answer's `items` is required in the API documents: the server always sends the list, an
   empty one when there is nothing, never null. Twenty answers still left it optional, among them the API
   keys, agents, webhooks and their deliveries, log sinks, OIDC clients and resources, OIDC connections,
-  sessions and the email lists. The directory activity page's `summary` and each `volume` day are
-  required in full as well. The answers themselves are unchanged.
+  sessions and the email lists. The directory activity page's `summary` and each `volume` day, and an
+  OIDC client's auth failures (`locked_until`, and each failure's `at`, `ip` and `reason`), are required
+  in full as well. The answers themselves are unchanged.
 - Releases follow a fixed monthly rhythm: the branch is cut on the first working day of the month, tested for
   about two weeks and released on the third Tuesday; urgent fixes still ship as hotfixes. The first release
   is `2027.1.0`, planned for Tuesday 19 January 2027, and the documents name it that way throughout. Its
