@@ -81,6 +81,10 @@ The first release, 2027.1.0, is in preparation. No version has been published ye
   RS256, so a deployment that is to be OpenID Certified, or serves applications that accept only RS256, signs
   with an RSA key. The key a development instance makes for itself stays ES256. A rotation may change the key's
   type: the retired key's tokens still verify for the grace period.
+- `make migrate-up` applies every pending migration without starting the API. It runs the server's own
+  migrator, as `make dev` and `make seed` do at start, so the files it applies are recorded and the server
+  accepts the database afterwards (the `migrate` CLI keeps no such record). After `make migrate-down`, it
+  applies that migration again.
 
 ### Changed
 

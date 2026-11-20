@@ -22,7 +22,7 @@ scheduler entry points can run its asynchronous work independently.
 | Language | Go 1.27.0 (toolchain 1.27.4)                                                  |
 | Router   | chi v5                                                                        |
 | Database | PostgreSQL, pgx v5, hand-written SQL via sqlc                                 |
-| Binaries | `api`, `worker`, `scheduler`, `migrate`, `seed`                               |
+| Binaries | `api`, `scheduler`, `seed`, plus `devtool` (the Makefile's tasks)             |
 | Port     | 4001                                                                          |
 | Status   | active repository; the **product** has not had its first release (`2027.1.0`) |
 

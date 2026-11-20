@@ -8,7 +8,7 @@
 DEVTOOL = go run ./cmd/devtool
 
 .PHONY: help install dev-secrets dev dev-observed build kill \
-	db-up db-down db-reset seed seed-reset migrate-down \
+	db-up db-down db-reset seed seed-reset migrate-up migrate-down \
 	test test-db lint fmt fmt-check sqlc sqlc-check openapi openapi-check postman ci \
 	vuln sast secrets scan-image \
 	load dast fuzz-api sonar-up sonar sonar-down \
@@ -67,9 +67,13 @@ seed:
 seed-reset:
 	@$(DEVTOOL) seed-reset
 
-# Roll one migration back with the migrate CLI, to try its down file. There is no migrate-up: the
-# server applies every pending migration itself when it starts (make dev), and refuses a database
-# the migrate CLI moved up, since that keeps no record of the files it applied.
+# Apply every pending migration without starting the server. It uses the server's own migrator, as
+# make dev and make seed do at start, so the files it applies are recorded. Never run `migrate up`
+# with the migrate CLI instead: it keeps no such record, and the server then refuses the database.
+migrate-up:
+	@$(DEVTOOL) migrate-up
+
+# Roll one migration back with the migrate CLI, to try its down file; make migrate-up applies it again.
 migrate-down:
 	@$(DEVTOOL) migrate-down
 
