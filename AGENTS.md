@@ -68,11 +68,10 @@ topic (`register.go`, `login.go`). Only three packages (rbac, organization, user
 
 **Names.** Three words say who holds what: an **account** is a person's sign-in, an **organization**
 is a customer company, and an **application** is an app an organization connects. Use them in code,
-SQL, comments and docs, with the one spelling "organization". Never add an `organization` name. The public
-contract still says organization, and changes in one change of its own: the `/v1/organizations/{organizationID}/…`
-paths, the `organization_id` JSON field and token claim, and the `organization.*` permission, event and error
-names. Leave those strings alone until then. A Microsoft Entra directory is also called a tenant;
-that is the provider's word and it stays (`allowed_idp_tenant_ids`).
+SQL, comments and docs, with the one spelling "organization". Never add a `tenant` name. The public
+contract says organization too: the `/v1/organizations/{organizationID}/…` paths, the `organization_id` JSON
+field and token claim, and the `organization.*` permission, event and error names. A Microsoft Entra directory
+is also called a tenant; that is the provider's word and it stays (`allowed_idp_tenant_ids`).
 
 ### 3. Preserve package boundaries
 
