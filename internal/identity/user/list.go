@@ -41,8 +41,14 @@ type ListFilter struct {
 	// summary counts them; InGroup is in one of the organization's groups.
 	AdminsWithoutMFA *bool
 	InGroup          *bool
-	Sort             string
-	Desc             bool
+	// IDs and Emails name the members wanted (an email exactly, in any case),
+	// and IncludeDeleted lets the list name someone since deleted, as history
+	// still names them.
+	IDs            []uuid.UUID
+	Emails         []string
+	IncludeDeleted bool
+	Sort           string
+	Desc           bool
 
 	id *uuid.UUID // one member, for a single read
 }
@@ -75,9 +81,13 @@ const adminWithoutMFA = `NOT m.mfa_enabled AND EXISTS (
 	SELECT 1 FROM rbac.user_roles ur JOIN rbac.roles r ON r.id = ur.role_id
 	WHERE ur.user_id = m.id AND ur.organization_id = $1 AND r.is_system AND r.name IN ('owner', 'admin'))`
 
+// maxNamed is how many members one list may name by id, and by email.
+const maxNamed = 200
+
 // ParseListFilter reads the members list's query parameters: q, role,
 // department, mfa (on or off), email_verified, status, last_seen,
-// admins_without_mfa, in_group, sort and order (asc or desc). A malformed one
+// admins_without_mfa, in_group, id and email (each repeatable, up to
+// maxNamed), include_deleted, sort and order (asc or desc). A malformed one
 // is refused with ErrBadRequest.
 func ParseListFilter(v url.Values) (ListFilter, error) {
 	f := ListFilter{
@@ -98,6 +108,30 @@ func ParseListFilter(v url.Values) (ListFilter, error) {
 		f.MFA = &on
 	default:
 		return bad("mfa")
+	}
+	if len(v["id"]) > maxNamed || len(v["email"]) > maxNamed {
+		return bad("id or email: at most " + strconv.Itoa(maxNamed))
+	}
+	for _, raw := range v["id"] {
+		id, err := uuid.Parse(strings.TrimSpace(raw))
+		if err != nil {
+			return bad("id")
+		}
+		f.IDs = append(f.IDs, id)
+	}
+	for _, raw := range v["email"] {
+		email := strings.ToLower(strings.TrimSpace(raw))
+		if email == "" || len(email) > 320 {
+			return bad("email")
+		}
+		f.Emails = append(f.Emails, email)
+	}
+	if raw := v.Get("include_deleted"); raw != "" {
+		b, err := strconv.ParseBool(raw)
+		if err != nil {
+			return bad("include_deleted")
+		}
+		f.IncludeDeleted = b
 	}
 	for name, into := range map[string]**bool{
 		"email_verified": &f.EmailVerified, "admins_without_mfa": &f.AdminsWithoutMFA, "in_group": &f.InGroup,
@@ -139,12 +173,22 @@ func ParseListFilter(v url.Values) (ListFilter, error) {
 	return f, nil
 }
 
-// membersCTE is an organization's members ($1): its home people and those
-// holding one of its roles, with their roles there, whether they have a second
-// factor, how many of its groups they're in, when they were last seen there,
-// and their home organization's name.
-const membersCTE = `WITH m AS (
-	SELECT ` + userCols + `,
+// membersCTE is an organization's live members ($1): its home people and
+// those holding one of its roles, with their roles there, whether they have a
+// second factor, how many of its groups they're in, when they were last seen
+// there, and their home organization's name.
+var membersCTE = membersOf(false)
+
+// membersOf is membersCTE, with the members since deleted too when
+// includeDeleted: its people deleted from their home here, and those still
+// holding one of its roles.
+func membersOf(includeDeleted bool) string {
+	live, liveHome := "deleted_at IS NULL\n\t  AND ", " AND u.deleted_at IS NULL"
+	if includeDeleted {
+		live, liveHome = "", ""
+	}
+	return `WITH m AS (
+	SELECT ` + userCols + `, account.users.deleted_at,
 	  COALESCE((
 		SELECT array_agg(r.name ORDER BY r.name)
 		FROM rbac.user_roles ur2 JOIN rbac.roles r ON r.id = ur2.role_id
@@ -163,14 +207,14 @@ const membersCTE = `WITH m AS (
 	  ` + lastSeenCols + `,
 	  (SELECT ht.name FROM organization.organizations ht WHERE ht.id = account.users.organization_id) AS home_organization_name
 	FROM account.users
-	WHERE deleted_at IS NULL
-	  AND id IN (
-		SELECT u.id FROM account.users u WHERE u.organization_id = $1 AND u.deleted_at IS NULL
+	WHERE ` + live + `id IN (
+		SELECT u.id FROM account.users u WHERE u.organization_id = $1` + liveHome + `
 		UNION
 		SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.organization_id = $1
 	  )
 )
 `
+}
 
 // where is f's conditions on the members m, with their arguments after the
 // args already taken.
@@ -182,6 +226,12 @@ func (f ListFilter) where(args []any) (string, []any) {
 	}
 	if f.id != nil {
 		conds = append(conds, "m.id = "+arg(*f.id))
+	}
+	if len(f.IDs) > 0 {
+		conds = append(conds, "m.id = ANY("+arg(f.IDs)+"::uuid[])")
+	}
+	if len(f.Emails) > 0 {
+		conds = append(conds, "lower(m.email) = ANY("+arg(f.Emails)+"::text[])")
 	}
 	if f.Query != "" {
 		p := arg("%" + postgres.EscapeLike(f.Query) + "%")
@@ -232,12 +282,13 @@ func (r *Repository) List(ctx context.Context, organizationID uuid.UUID, f ListF
 	if err != nil {
 		return nil, "", 0, err
 	}
+	members := membersOf(f.IncludeDeleted)
 	where, args := f.where([]any{organizationID})
 	// Counted apart from the page: the count reads only the columns the filters
 	// name, and the page works out the rest for its own rows alone.
 	var total int
 	if f.id == nil {
-		if err := r.pool.QueryRow(ctx, membersCTE+`SELECT count(*) FROM m WHERE `+where, args...).Scan(&total); err != nil {
+		if err := r.pool.QueryRow(ctx, members+`SELECT count(*) FROM m WHERE `+where, args...).Scan(&total); err != nil {
 			return nil, "", 0, err
 		}
 	}
@@ -251,8 +302,8 @@ func (r *Repository) List(ctx context.Context, organizationID uuid.UUID, f ListF
 		dir = "DESC"
 	}
 	args = append(args, limit+1)
-	rows, err := r.pool.Query(ctx, membersCTE+`SELECT `+userCols+`, roles, role_refs, mfa_enabled, groups_count,
-		last_seen_at, last_seen_ip, home_organization_name, `+sortName+`
+	rows, err := r.pool.Query(ctx, members+`SELECT `+userCols+`, roles, role_refs, mfa_enabled, groups_count,
+		last_seen_at, last_seen_ip, home_organization_name, `+sortName+`, deleted_at
 		FROM m WHERE `+where+` ORDER BY `+fmt.Sprintf(listSorts[f.Sort], dir)+
 		fmt.Sprintf(` LIMIT $%d`, len(args)), args...)
 	if err != nil {
@@ -272,7 +323,7 @@ func (r *Repository) List(ctx context.Context, organizationID uuid.UUID, f ListF
 		if err := rows.Scan(&u.ID, &tid, &u.Email, &u.EmailVerifiedAt,
 			&u.Phone, &u.PhoneVerifiedAt, &u.DisplayName, &u.Status, &meta,
 			&u.CreatedAt, &u.UpdatedAt, &u.Roles, &refs,
-			&mfaEnabled, &groupsCount, &u.LastSeenAt, &u.LastSeenIP, &u.HomeOrganizationName, &name); err != nil {
+			&mfaEnabled, &groupsCount, &u.LastSeenAt, &u.LastSeenIP, &u.HomeOrganizationName, &name, &u.DeletedAt); err != nil {
 			return nil, "", 0, err
 		}
 		if tid != nil {

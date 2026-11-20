@@ -14052,7 +14052,7 @@
               "request": {
                 "name": "List users",
                 "description": {
-                  "content": "Returns a page of users in the caller's organization, with total, how many match. Every filter is optional and they combine: q (display name, email or phone, case-insensitive), role (a role name in the organization), department (metadata.department), mfa (on or off: a confirmed second factor), email_verified, status (active, invited or suspended), last_seen (today: under a day; week: 1 to 7 days; month: 7 to 30 days; older: over 30 days; never), admins_without_mfa (true: the members holding the built-in owner or admin role with no confirmed second factor, exactly those the summary's admins_without_mfa counts; false: everyone else), in_group (true: in at least one of the organization's groups; false: in none of them, whatever groups they are in elsewhere). sort is created (the default, newest first), name (by display name, or the email without one, case-insensitive; A first by default) or last_seen (most recent first by default; a member never seen comes last either way), with order asc or desc; a malformed value is refused with 400. Pages by opaque cursor in every order, stable when sort keys tie: next_cursor is present while there is another page, and a cursor works only with the sort and order of the page that gave it (400 otherwise). Requires an existing organization; scope comes from the authenticated principal. Members are the organization's own users (their home is this organization) and the people who hold a role in it; a member whose home is another organization is shown with empty metadata, which their home organization keeps; last_seen_at and last_seen_ip come from sessions in this organization only.",
+                  "content": "Returns a page of users in the caller's organization, with total, how many match. Every filter is optional and they combine: q (display name, email or phone, case-insensitive), role (a role name in the organization), department (metadata.department), mfa (on or off: a confirmed second factor), email_verified, status (active, invited or suspended), last_seen (today: under a day; week: 1 to 7 days; month: 7 to 30 days; older: over 30 days; never), admins_without_mfa (true: the members holding the built-in owner or admin role with no confirmed second factor, exactly those the summary's admins_without_mfa counts; false: everyone else), in_group (true: in at least one of the organization's groups; false: in none of them, whatever groups they are in elsewhere), id and email (each repeatable, up to 200: exactly the members named, an email in any case; with limit=200 one read puts a name to up to 200 people), include_deleted (true: also the members since deleted, so history can still name them, each marked with deleted_at and status deleted). sort is created (the default, newest first), name (by display name, or the email without one, case-insensitive; A first by default) or last_seen (most recent first by default; a member never seen comes last either way), with order asc or desc; a malformed value is refused with 400. Pages by opaque cursor in every order, stable when sort keys tie: next_cursor is present while there is another page, and a cursor works only with the sort and order of the page that gave it (400 otherwise). Requires an existing organization; scope comes from the authenticated principal. Members are the organization's own users (their home is this organization) and the people who hold a role in it; a member whose home is another organization is shown with empty metadata, which their home organization keeps; last_seen_at and last_seen_ip come from sessions in this organization only.",
                   "type": "text/plain"
                 },
                 "url": {
@@ -14149,11 +14149,56 @@
                     {
                       "disabled": true,
                       "description": {
+                        "content": "Only these members, by id. Repeat it, up to 200 times (id=a&id=b); another organization's people are never answered.",
+                        "type": "text/plain"
+                      },
+                      "key": "id",
+                      "value": "cf570820-ad0f-042c-b84d-08d68c0b3762"
+                    },
+                    {
+                      "disabled": true,
+                      "description": {
+                        "content": "Only these members, by id. Repeat it, up to 200 times (id=a&id=b); another organization's people are never answered.",
+                        "type": "text/plain"
+                      },
+                      "key": "id",
+                      "value": "96626d4f-a20f-abae-15ca-214556734bbf"
+                    },
+                    {
+                      "disabled": true,
+                      "description": {
+                        "content": "Only these members, by email, exactly but in any case. Repeat it, up to 200 times.",
+                        "type": "text/plain"
+                      },
+                      "key": "email",
+                      "value": "string"
+                    },
+                    {
+                      "disabled": true,
+                      "description": {
+                        "content": "Only these members, by email, exactly but in any case. Repeat it, up to 200 times.",
+                        "type": "text/plain"
+                      },
+                      "key": "email",
+                      "value": "string"
+                    },
+                    {
+                      "disabled": true,
+                      "description": {
+                        "content": "true: the members since deleted too (the organization's own people it deleted, and anyone deleted who still holds one of its roles), each with deleted_at and status deleted.",
+                        "type": "text/plain"
+                      },
+                      "key": "include_deleted",
+                      "value": "true"
+                    },
+                    {
+                      "disabled": true,
+                      "description": {
                         "content": " (This can only be one of created,name,last_seen)",
                         "type": "text/plain"
                       },
                       "key": "sort",
-                      "value": "name"
+                      "value": "created"
                     },
                     {
                       "disabled": true,
@@ -14274,11 +14319,38 @@
                         {
                           "disabled": true,
                           "description": {
+                            "content": "Only these members, by id. Repeat it, up to 200 times (id=a&id=b); another organization's people are never answered.",
+                            "type": "text/plain"
+                          },
+                          "key": "id",
+                          "value": "96626d4f-a20f-abae-15ca-214556734bbf"
+                        },
+                        {
+                          "disabled": true,
+                          "description": {
+                            "content": "Only these members, by email, exactly but in any case. Repeat it, up to 200 times.",
+                            "type": "text/plain"
+                          },
+                          "key": "email",
+                          "value": "string"
+                        },
+                        {
+                          "disabled": true,
+                          "description": {
+                            "content": "true: the members since deleted too (the organization's own people it deleted, and anyone deleted who still holds one of its roles), each with deleted_at and status deleted.",
+                            "type": "text/plain"
+                          },
+                          "key": "include_deleted",
+                          "value": "true"
+                        },
+                        {
+                          "disabled": true,
+                          "description": {
                             "content": " (This can only be one of created,name,last_seen)",
                             "type": "text/plain"
                           },
                           "key": "sort",
-                          "value": "name"
+                          "value": "created"
                         },
                         {
                           "disabled": true,
@@ -14309,7 +14381,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"items\": [\n    \"\",\n    \"\"\n  ],\n  \"total\": 2330,\n  \"next_cursor\": null\n}",
+                  "body": "{\n  \"items\": [\n    \"\",\n    \"\"\n  ],\n  \"total\": 4416,\n  \"next_cursor\": \"string\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -14452,7 +14524,7 @@
                 "method": "POST",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"users\": [\n    {\n      \"email\": \"GcVmDyjvZNyyk@RnXdTHjbWaHMJW.biu\",\n      \"password\": \"stringstring\",\n      \"display_name\": \"string\",\n      \"phone\": \"string\"\n    }\n  ],\n  \"organization_id\": null,\n  \"role_id\": null\n}",
+                  "raw": "{\n  \"users\": [\n    {\n      \"email\": \"ldShtPJGY6uWc@YjjkvJPdpSUySIO.xa\",\n      \"password\": \"stringstring\",\n      \"display_name\": \"string\",\n      \"phone\": \"string\"\n    }\n  ],\n  \"organization_id\": null,\n  \"role_id\": null\n}",
                   "options": { "raw": { "headerFamily": "json", "language": "json" } }
                 },
                 "auth": {
@@ -14486,14 +14558,14 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"users\": [\n    {\n      \"email\": \"GcVmDyjvZNyyk@RnXdTHjbWaHMJW.biu\",\n      \"password\": \"stringstring\",\n      \"display_name\": \"string\",\n      \"phone\": \"string\"\n    }\n  ],\n  \"organization_id\": null,\n  \"role_id\": null\n}",
+                      "raw": "{\n  \"users\": [\n    {\n      \"email\": \"ldShtPJGY6uWc@YjjkvJPdpSUySIO.xa\",\n      \"password\": \"stringstring\",\n      \"display_name\": \"string\",\n      \"phone\": \"string\"\n    }\n  ],\n  \"organization_id\": null,\n  \"role_id\": null\n}",
                       "options": { "raw": { "headerFamily": "json", "language": "json" } }
                     }
                   },
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"succeeded\": 3232,\n  \"failed\": 5988,\n  \"created\": [\n    {\n      \"line\": 8071,\n      \"email\": \"string\",\n      \"id\": \"7d5b6530-1fae-8bb0-bd2c-b14a98ce5c06\"\n    },\n    {\n      \"line\": 4054,\n      \"email\": \"string\",\n      \"id\": \"e7dac3e0-30ee-3894-9824-05729b32ddb8\"\n    }\n  ],\n  \"errors\": [\n    {\n      \"code\": \"auth.password_weak\",\n      \"message\": \"string\",\n      \"line\": 9649,\n      \"email\": \"string\",\n      \"field\": \"phone\"\n    },\n    {\n      \"code\": \"user.import_row_malformed\",\n      \"message\": \"string\",\n      \"line\": 477,\n      \"email\": \"string\",\n      \"field\": \"email\"\n    }\n  ]\n}",
+                  "body": "{\n  \"succeeded\": 4560,\n  \"failed\": 5849,\n  \"created\": [\n    {\n      \"line\": 7372,\n      \"email\": \"string\",\n      \"id\": \"4a65dee7-c620-c5a8-b24d-fb0233f19677\"\n    },\n    {\n      \"line\": 7090,\n      \"email\": \"string\",\n      \"id\": \"6633b637-c4e9-9b29-b49d-70dcb5a9839c\"\n    }\n  ],\n  \"errors\": [\n    {\n      \"code\": \"authpolicy.password_breached\",\n      \"message\": \"string\",\n      \"line\": 6691,\n      \"email\": \"string\",\n      \"field\": \"email\"\n    },\n    {\n      \"code\": \"auth.password_weak\",\n      \"message\": \"string\",\n      \"line\": 207,\n      \"email\": \"string\",\n      \"field\": \"display_name\"\n    }\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -14521,7 +14593,7 @@
                         "type": "text/plain"
                       },
                       "key": "source",
-                      "value": "cognito"
+                      "value": "auth0"
                     }
                   ],
                   "variable": []
@@ -14557,7 +14629,7 @@
                             "type": "text/plain"
                           },
                           "key": "source",
-                          "value": "cognito"
+                          "value": "auth0"
                         }
                       ],
                       "variable": []
@@ -14584,7 +14656,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"succeeded\": 3232,\n  \"failed\": 5988,\n  \"created\": [\n    {\n      \"line\": 8071,\n      \"email\": \"string\",\n      \"id\": \"7d5b6530-1fae-8bb0-bd2c-b14a98ce5c06\"\n    },\n    {\n      \"line\": 4054,\n      \"email\": \"string\",\n      \"id\": \"e7dac3e0-30ee-3894-9824-05729b32ddb8\"\n    }\n  ],\n  \"errors\": [\n    {\n      \"code\": \"auth.password_weak\",\n      \"message\": \"string\",\n      \"line\": 9649,\n      \"email\": \"string\",\n      \"field\": \"phone\"\n    },\n    {\n      \"code\": \"user.import_row_malformed\",\n      \"message\": \"string\",\n      \"line\": 477,\n      \"email\": \"string\",\n      \"field\": \"email\"\n    }\n  ]\n}",
+                  "body": "{\n  \"succeeded\": 4560,\n  \"failed\": 5849,\n  \"created\": [\n    {\n      \"line\": 7372,\n      \"email\": \"string\",\n      \"id\": \"4a65dee7-c620-c5a8-b24d-fb0233f19677\"\n    },\n    {\n      \"line\": 7090,\n      \"email\": \"string\",\n      \"id\": \"6633b637-c4e9-9b29-b49d-70dcb5a9839c\"\n    }\n  ],\n  \"errors\": [\n    {\n      \"code\": \"authpolicy.password_breached\",\n      \"message\": \"string\",\n      \"line\": 6691,\n      \"email\": \"string\",\n      \"field\": \"email\"\n    },\n    {\n      \"code\": \"auth.password_weak\",\n      \"message\": \"string\",\n      \"line\": 207,\n      \"email\": \"string\",\n      \"field\": \"display_name\"\n    }\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -14681,7 +14753,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"items\": [\n    {\n      \"id\": \"633b6370-4e93-b29e-49d2-0dcb5a9839c0\",\n      \"email\": \"string\",\n      \"display_name\": null,\n      \"deleted_at\": \"1967-02-28T21:08:42.570Z\",\n      \"deleted_by\": null,\n      \"created_at\": \"1987-12-27T14:13:27.516Z\"\n    },\n    {\n      \"id\": \"13b3e336-98a0-8945-931b-40f4ad17bed7\",\n      \"email\": \"string\",\n      \"display_name\": \"string\",\n      \"deleted_at\": \"1959-12-01T01:07:24.524Z\",\n      \"deleted_by\": null,\n      \"created_at\": \"2017-11-29T12:50:46.945Z\"\n    }\n  ],\n  \"next_cursor\": \"string\"\n}",
+                  "body": "{\n  \"items\": [\n    {\n      \"id\": \"d7712d76-d6cc-6015-9df3-d1492783d8ea\",\n      \"email\": \"string\",\n      \"display_name\": \"string\",\n      \"deleted_at\": \"1972-03-13T20:00:48.774Z\",\n      \"deleted_by\": null,\n      \"created_at\": \"2000-11-24T10:11:07.734Z\"\n    },\n    {\n      \"id\": \"581c8797-a119-b0d4-bcfe-010dcf85d533\",\n      \"email\": \"string\",\n      \"display_name\": \"string\",\n      \"deleted_at\": \"2024-05-21T16:53:10.413Z\",\n      \"deleted_by\": \"643ece57-5bfa-771c-a11e-e39aefbb7887\",\n      \"created_at\": \"1999-07-18T07:53:40.930Z\"\n    }\n  ],\n  \"next_cursor\": \"string\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -14756,7 +14828,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"id\": \"1492783d-a770-2e73-8b35-f2fc581c8797\",\n  \"deleted_at\": \"1998-11-24T14:31:27.494Z\",\n  \"deleted_by\": \"91b0d41b-ea01-dcf8-d533-4ac15fd03146\"\n}",
+                  "body": "{\n  \"id\": \"30e9528b-0dd8-5caa-b3e4-234f817a8428\",\n  \"deleted_at\": \"1952-04-28T07:51:20.327Z\",\n  \"deleted_by\": null\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -14831,7 +14903,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"id\": \"f771cea1-7e39-efbb-8872-7123593362d3\",\n  \"organization_id\": \"9528bb50-815c-a2b3-4523-f817a84289e8\",\n  \"email\": \"kCDfde@hOC.zan\",\n  \"email_verified_at\": null,\n  \"phone\": null,\n  \"phone_verified_at\": null,\n  \"display_name\": \"string\",\n  \"avatar_url\": \"string\",\n  \"status\": \"active\",\n  \"metadata\": {\n    \"key_0\": 3761.82489329949,\n    \"key_1\": 1941,\n    \"key_2\": \"string\"\n  },\n  \"created_at\": \"2011-07-10T09:48:54.009Z\",\n  \"updated_at\": \"1996-03-11T13:21:05.814Z\",\n  \"roles\": [\n    \"string\",\n    \"string\"\n  ],\n  \"assigned_roles\": [\n    {\n      \"id\": \"da6583e9-0ec5-4ed9-3b44-c9d60ab72051\",\n      \"name\": \"string\"\n    },\n    {\n      \"id\": \"18a9ac26-96e9-6f29-1f06-48e16f8e2be3\",\n      \"name\": \"string\"\n    }\n  ],\n  \"mfa_enabled\": false,\n  \"groups_count\": 842,\n  \"last_seen_at\": \"2013-07-28T04:32:45.866Z\",\n  \"last_seen_ip\": \"string\",\n  \"home_organization_name\": null,\n  \"suspension\": null\n}",
+                  "body": "{\n  \"id\": \"8dfef5c2-2358-f085-9445-bb3901f8275e\",\n  \"organization_id\": \"b48b726a-89da-583e-100e-5d4ed983b44e\",\n  \"email\": \"JzbOTBjcwgvAR9@AhZSGgBIFHOitIFEvWEzvYgEkgYavRnB.bjzn\",\n  \"email_verified_at\": \"1969-06-07T13:31:16.011Z\",\n  \"phone\": \"string\",\n  \"phone_verified_at\": \"2007-07-04T04:36:58.370Z\",\n  \"display_name\": \"string\",\n  \"avatar_url\": \"string\",\n  \"status\": \"invited\",\n  \"metadata\": {\n    \"key_0\": false,\n    \"key_1\": 1090.5987513251603,\n    \"key_2\": 8125,\n    \"key_3\": true\n  },\n  \"created_at\": \"2014-11-09T05:26:24.204Z\",\n  \"updated_at\": \"1966-11-25T10:34:22.278Z\",\n  \"roles\": [\n    \"string\",\n    \"string\"\n  ],\n  \"assigned_roles\": [\n    {\n      \"id\": \"b14c1fb8-453c-8209-b393-d98adfd961c6\",\n      \"name\": \"string\"\n    },\n    {\n      \"id\": \"56129e93-5562-955c-0119-f78b1661161d\",\n      \"name\": \"string\"\n    }\n  ],\n  \"mfa_enabled\": true,\n  \"groups_count\": 9928,\n  \"last_seen_at\": null,\n  \"last_seen_ip\": null,\n  \"home_organization_name\": \"string\",\n  \"deleted_at\": \"1967-02-17T08:32:17.292Z\",\n  \"suspension\": null\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -14869,7 +14941,7 @@
                 "method": "PATCH",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"display_name\": null,\n  \"avatar_url\": null,\n  \"phone\": null,\n  \"status\": \"active\",\n  \"metadata\": null\n}",
+                  "raw": "{\n  \"display_name\": null,\n  \"avatar_url\": null,\n  \"phone\": \"string\",\n  \"status\": null,\n  \"metadata\": {\n    \"key_0\": \"string\",\n    \"key_1\": 6601\n  }\n}",
                   "options": { "raw": { "headerFamily": "json", "language": "json" } }
                 },
                 "auth": {
@@ -14911,14 +14983,14 @@
                     "method": "PATCH",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"display_name\": null,\n  \"avatar_url\": null,\n  \"phone\": null,\n  \"status\": \"active\",\n  \"metadata\": null\n}",
+                      "raw": "{\n  \"display_name\": null,\n  \"avatar_url\": null,\n  \"phone\": \"string\",\n  \"status\": null,\n  \"metadata\": {\n    \"key_0\": \"string\",\n    \"key_1\": 6601\n  }\n}",
                       "options": { "raw": { "headerFamily": "json", "language": "json" } }
                     }
                   },
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"id\": \"f771cea1-7e39-efbb-8872-7123593362d3\",\n  \"organization_id\": \"9528bb50-815c-a2b3-4523-f817a84289e8\",\n  \"email\": \"kCDfde@hOC.zan\",\n  \"email_verified_at\": null,\n  \"phone\": null,\n  \"phone_verified_at\": null,\n  \"display_name\": \"string\",\n  \"avatar_url\": \"string\",\n  \"status\": \"active\",\n  \"metadata\": {\n    \"key_0\": 3761.82489329949,\n    \"key_1\": 1941,\n    \"key_2\": \"string\"\n  },\n  \"created_at\": \"2011-07-10T09:48:54.009Z\",\n  \"updated_at\": \"1996-03-11T13:21:05.814Z\",\n  \"roles\": [\n    \"string\",\n    \"string\"\n  ],\n  \"assigned_roles\": [\n    {\n      \"id\": \"da6583e9-0ec5-4ed9-3b44-c9d60ab72051\",\n      \"name\": \"string\"\n    },\n    {\n      \"id\": \"18a9ac26-96e9-6f29-1f06-48e16f8e2be3\",\n      \"name\": \"string\"\n    }\n  ],\n  \"mfa_enabled\": false,\n  \"groups_count\": 842,\n  \"last_seen_at\": \"2013-07-28T04:32:45.866Z\",\n  \"last_seen_ip\": \"string\",\n  \"home_organization_name\": null,\n  \"suspension\": null\n}",
+                  "body": "{\n  \"id\": \"8dfef5c2-2358-f085-9445-bb3901f8275e\",\n  \"organization_id\": \"b48b726a-89da-583e-100e-5d4ed983b44e\",\n  \"email\": \"JzbOTBjcwgvAR9@AhZSGgBIFHOitIFEvWEzvYgEkgYavRnB.bjzn\",\n  \"email_verified_at\": \"1969-06-07T13:31:16.011Z\",\n  \"phone\": \"string\",\n  \"phone_verified_at\": \"2007-07-04T04:36:58.370Z\",\n  \"display_name\": \"string\",\n  \"avatar_url\": \"string\",\n  \"status\": \"invited\",\n  \"metadata\": {\n    \"key_0\": false,\n    \"key_1\": 1090.5987513251603,\n    \"key_2\": 8125,\n    \"key_3\": true\n  },\n  \"created_at\": \"2014-11-09T05:26:24.204Z\",\n  \"updated_at\": \"1966-11-25T10:34:22.278Z\",\n  \"roles\": [\n    \"string\",\n    \"string\"\n  ],\n  \"assigned_roles\": [\n    {\n      \"id\": \"b14c1fb8-453c-8209-b393-d98adfd961c6\",\n      \"name\": \"string\"\n    },\n    {\n      \"id\": \"56129e93-5562-955c-0119-f78b1661161d\",\n      \"name\": \"string\"\n    }\n  ],\n  \"mfa_enabled\": true,\n  \"groups_count\": 9928,\n  \"last_seen_at\": null,\n  \"last_seen_ip\": null,\n  \"home_organization_name\": \"string\",\n  \"deleted_at\": \"1967-02-17T08:32:17.292Z\",\n  \"suspension\": null\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -15153,7 +15225,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"items\": [\n    {\n      \"id\": \"fa453c78-93b3-35d9-adfd-61c6abbcca30\",\n      \"organization_id\": \"6129e93e-5625-55cc-1195-78b1661161d1\",\n      \"device\": \"string\",\n      \"device_kind\": \"unknown\",\n      \"user_agent\": \"string\",\n      \"created_at\": \"1950-11-08T06:34:33.385Z\",\n      \"last_used_at\": \"1959-01-04T10:05:25.097Z\",\n      \"expires_at\": \"1955-05-03T13:50:30.282Z\",\n      \"current\": false\n    },\n    {\n      \"id\": \"03b6abe8-646c-28a1-0154-a36d48da08d5\",\n      \"organization_id\": \"2cceee8e-e23d-2061-ae08-6c1384ee3059\",\n      \"device\": \"string\",\n      \"device_kind\": \"desktop\",\n      \"user_agent\": \"string\",\n      \"created_at\": \"1989-05-08T16:50:14.218Z\",\n      \"last_used_at\": \"1952-10-21T16:57:40.456Z\",\n      \"expires_at\": \"2017-02-25T21:03:59.351Z\",\n      \"current\": true\n    }\n  ],\n  \"truncated\": true\n}",
+                  "body": "{\n  \"items\": [\n    {\n      \"id\": \"ae23d420-dae0-b6c1-84ee-059b63c3981d\",\n      \"organization_id\": null,\n      \"device\": \"string\",\n      \"device_kind\": \"unknown\",\n      \"user_agent\": \"string\",\n      \"created_at\": \"1964-11-14T18:27:10.640Z\",\n      \"last_used_at\": \"2019-11-25T10:25:57.551Z\",\n      \"expires_at\": \"1946-07-14T21:25:27.509Z\",\n      \"current\": true\n    },\n    {\n      \"id\": \"c6757291-d456-cc07-ca97-840692bbd723\",\n      \"organization_id\": \"e1de0b5d-a269-053c-5b31-0cd2b3b210e0\",\n      \"device\": \"string\",\n      \"device_kind\": \"unknown\",\n      \"user_agent\": \"string\",\n      \"created_at\": \"1975-11-03T14:51:04.319Z\",\n      \"last_used_at\": \"1976-02-27T08:34:32.343Z\",\n      \"expires_at\": \"1983-07-21T00:40:14.111Z\",\n      \"current\": true\n    }\n  ],\n  \"truncated\": false\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -15228,7 +15300,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"forgotten\": 8779\n}",
+                  "body": "{\n  \"forgotten\": 4104\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -15317,7 +15389,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"forgotten\": 8779\n}",
+                  "body": "{\n  \"forgotten\": 4104\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -15392,7 +15464,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"items\": [\n    {\n      \"id\": \"757291df-562c-07dc-97f8-0692bbd72321\",\n      \"name\": \"string\",\n      \"platform\": \"android\",\n      \"created_at\": \"1970-07-24T10:58:25.133Z\",\n      \"last_seen_at\": \"1956-10-07T08:24:40.408Z\"\n    },\n    {\n      \"id\": \"90053c25-130c-2b3b-10e0-5b7f5b13af49\",\n      \"name\": \"string\",\n      \"platform\": \"android\",\n      \"created_at\": \"1968-01-23T04:10:43.312Z\",\n      \"last_seen_at\": \"1951-03-28T05:51:22.760Z\"\n    }\n  ],\n  \"truncated\": true\n}",
+                  "body": "{\n  \"items\": [\n    {\n      \"id\": \"4366179a-d3b1-e5b4-8430-7f557e8a48fc\",\n      \"name\": \"string\",\n      \"platform\": \"android\",\n      \"created_at\": \"1948-11-27T19:06:35.782Z\",\n      \"last_seen_at\": \"1950-07-04T04:08:49.825Z\"\n    },\n    {\n      \"id\": \"c0c743cd-7d87-7fcb-3400-580c9b1cd3ce\",\n      \"name\": \"string\",\n      \"platform\": \"ios\",\n      \"created_at\": \"1987-11-03T19:17:52.546Z\",\n      \"last_seen_at\": \"2024-08-27T17:01:45.922Z\"\n    }\n  ],\n  \"truncated\": false\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -15554,7 +15626,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"mfa_required\": false,\n  \"mfa_enabled\": true,\n  \"totp_enabled\": true,\n  \"otp_factors\": 910,\n  \"push_devices\": 2226,\n  \"passkeys\": 4005,\n  \"passkey_last_used_at\": \"1980-04-27T14:18:27.038Z\",\n  \"recovery_codes_remaining\": 5587,\n  \"password_set\": true,\n  \"password_changed_at\": null,\n  \"active_sessions\": 3400,\n  \"distinct_devices\": 3414\n}",
+                  "body": "{\n  \"mfa_required\": false,\n  \"mfa_enabled\": false,\n  \"totp_enabled\": true,\n  \"otp_factors\": 1513,\n  \"push_devices\": 5273,\n  \"passkeys\": 652,\n  \"passkey_last_used_at\": \"2005-12-05T23:19:01.584Z\",\n  \"recovery_codes_remaining\": 9619,\n  \"password_set\": false,\n  \"password_changed_at\": null,\n  \"active_sessions\": 9420,\n  \"distinct_devices\": 5586\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -15629,7 +15701,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"items\": [\n    {\n      \"id\": \"7e8a48fc-3adb-0f5f-46c0-743cd147d87f\",\n      \"ip\": null,\n      \"user_agent\": null,\n      \"created_at\": \"2008-12-04T15:37:03.527Z\",\n      \"last_seen_at\": \"2025-01-27T15:00:42.719Z\",\n      \"device\": \"string\",\n      \"device_kind\": \"desktop\",\n      \"country\": \"string\",\n      \"city\": \"string\"\n    },\n    {\n      \"id\": \"7075056c-a1a2-de29-c1c4-cf374d4f88c2\",\n      \"ip\": null,\n      \"user_agent\": null,\n      \"created_at\": \"1998-06-11T02:38:10.886Z\",\n      \"last_seen_at\": \"1958-05-08T20:39:34.378Z\",\n      \"device\": \"string\",\n      \"device_kind\": \"desktop\",\n      \"country\": \"string\",\n      \"city\": \"string\"\n    }\n  ],\n  \"truncated\": false\n}",
+                  "body": "{\n  \"items\": [\n    {\n      \"id\": \"b9022d6e-4987-c6f5-2142-ebfb344be1fc\",\n      \"ip\": \"string\",\n      \"user_agent\": null,\n      \"created_at\": \"2017-04-13T14:55:14.030Z\",\n      \"last_seen_at\": \"1976-03-19T01:46:08.975Z\",\n      \"device\": \"string\",\n      \"device_kind\": \"desktop\",\n      \"country\": \"string\",\n      \"city\": \"string\"\n    },\n    {\n      \"id\": \"7058dd90-1c2d-4fa5-7f9a-c4ad0f6d34a8\",\n      \"ip\": null,\n      \"user_agent\": \"string\",\n      \"created_at\": \"1972-07-27T10:06:23.463Z\",\n      \"last_seen_at\": \"1986-08-08T02:08:25.098Z\",\n      \"device\": \"string\",\n      \"device_kind\": \"unknown\",\n      \"country\": \"string\",\n      \"city\": \"string\"\n    }\n  ],\n  \"truncated\": true\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -15704,7 +15776,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"revoked\": 7776,\n  \"sessions\": 9667,\n  \"hosted_login_sessions\": 7615,\n  \"app_grants\": 1080,\n  \"trusted_devices\": 1301,\n  \"pending_authorizations\": 9015\n}",
+                  "body": "{\n  \"revoked\": 706,\n  \"sessions\": 4784,\n  \"hosted_login_sessions\": 5700,\n  \"app_grants\": 1219,\n  \"trusted_devices\": 482,\n  \"pending_authorizations\": 3611\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -15779,7 +15851,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"organization\": {\n    \"id\": \"fc828e5b-4974-1204-acd5-0ec567058dd9\",\n    \"name\": \"string\",\n    \"slug\": \"string\"\n  },\n  \"roles\": [\n    {\n      \"id\": \"87f9a6c4-0f6d-4a8f-718c-a9726fbc898a\",\n      \"name\": \"string\",\n      \"description\": \"string\"\n    },\n    {\n      \"id\": \"e991a0f5-35f4-08df-19bb-857929adabec\",\n      \"name\": \"string\",\n      \"description\": \"string\"\n    }\n  ],\n  \"groups\": [\n    {\n      \"id\": \"46b2022b-7f0a-c712-9542-c8d1862b2044\",\n      \"name\": \"string\",\n      \"description\": \"string\"\n    },\n    {\n      \"id\": \"b681a717-1d86-9962-7a74-249d042b53d5\",\n      \"name\": \"string\",\n      \"description\": \"string\"\n    }\n  ],\n  \"applications_count\": 928,\n  \"policies_count\": 5090,\n  \"permissions_direct\": 7912,\n  \"permissions_inherited\": 458,\n  \"permissions_total\": 8033\n}",
+                  "body": "{\n  \"organization\": null,\n  \"roles\": [\n    {\n      \"id\": \"819bb385-29ad-bece-6ae3-fd2e046b2022\",\n      \"name\": \"string\",\n      \"description\": \"string\"\n    },\n    {\n      \"id\": \"2495427c-1862-2044-d62c-8919fb681a71\",\n      \"name\": \"string\",\n      \"description\": \"string\"\n    }\n  ],\n  \"groups\": [\n    {\n      \"id\": \"a7a74424-042b-3d52-09b6-1e89cc0bc5b2\",\n      \"name\": \"string\",\n      \"description\": \"string\"\n    },\n    {\n      \"id\": \"493ba1b4-100b-93a0-2fd9-abe5d1b38b26\",\n      \"name\": \"string\",\n      \"description\": \"string\"\n    }\n  ],\n  \"applications_count\": 2868,\n  \"policies_count\": 6856,\n  \"permissions_direct\": 2705,\n  \"permissions_inherited\": 154,\n  \"permissions_total\": 1116\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -16014,7 +16086,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"id\": \"a1b40110-f93a-b2fd-7abe-d1b38b26d0e7\",\n  \"roles_removed\": 1617,\n  \"sessions_ended\": 2868\n}",
+                  "body": "{\n  \"id\": \"39821e79-fe02-8ebd-4c06-aefeed2057be\",\n  \"roles_removed\": 7627,\n  \"sessions_ended\": 7712\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -16089,7 +16161,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"id\": \"f771cea1-7e39-efbb-8872-7123593362d3\",\n  \"organization_id\": \"9528bb50-815c-a2b3-4523-f817a84289e8\",\n  \"email\": \"kCDfde@hOC.zan\",\n  \"email_verified_at\": null,\n  \"phone\": null,\n  \"phone_verified_at\": null,\n  \"display_name\": \"string\",\n  \"avatar_url\": \"string\",\n  \"status\": \"active\",\n  \"metadata\": {\n    \"key_0\": 3761.82489329949,\n    \"key_1\": 1941,\n    \"key_2\": \"string\"\n  },\n  \"created_at\": \"2011-07-10T09:48:54.009Z\",\n  \"updated_at\": \"1996-03-11T13:21:05.814Z\",\n  \"roles\": [\n    \"string\",\n    \"string\"\n  ],\n  \"assigned_roles\": [\n    {\n      \"id\": \"da6583e9-0ec5-4ed9-3b44-c9d60ab72051\",\n      \"name\": \"string\"\n    },\n    {\n      \"id\": \"18a9ac26-96e9-6f29-1f06-48e16f8e2be3\",\n      \"name\": \"string\"\n    }\n  ],\n  \"mfa_enabled\": false,\n  \"groups_count\": 842,\n  \"last_seen_at\": \"2013-07-28T04:32:45.866Z\",\n  \"last_seen_ip\": \"string\",\n  \"home_organization_name\": null,\n  \"suspension\": null\n}",
+                  "body": "{\n  \"id\": \"8dfef5c2-2358-f085-9445-bb3901f8275e\",\n  \"organization_id\": \"b48b726a-89da-583e-100e-5d4ed983b44e\",\n  \"email\": \"JzbOTBjcwgvAR9@AhZSGgBIFHOitIFEvWEzvYgEkgYavRnB.bjzn\",\n  \"email_verified_at\": \"1969-06-07T13:31:16.011Z\",\n  \"phone\": \"string\",\n  \"phone_verified_at\": \"2007-07-04T04:36:58.370Z\",\n  \"display_name\": \"string\",\n  \"avatar_url\": \"string\",\n  \"status\": \"invited\",\n  \"metadata\": {\n    \"key_0\": false,\n    \"key_1\": 1090.5987513251603,\n    \"key_2\": 8125,\n    \"key_3\": true\n  },\n  \"created_at\": \"2014-11-09T05:26:24.204Z\",\n  \"updated_at\": \"1966-11-25T10:34:22.278Z\",\n  \"roles\": [\n    \"string\",\n    \"string\"\n  ],\n  \"assigned_roles\": [\n    {\n      \"id\": \"b14c1fb8-453c-8209-b393-d98adfd961c6\",\n      \"name\": \"string\"\n    },\n    {\n      \"id\": \"56129e93-5562-955c-0119-f78b1661161d\",\n      \"name\": \"string\"\n    }\n  ],\n  \"mfa_enabled\": true,\n  \"groups_count\": 9928,\n  \"last_seen_at\": null,\n  \"last_seen_ip\": null,\n  \"home_organization_name\": \"string\",\n  \"deleted_at\": \"1967-02-17T08:32:17.292Z\",\n  \"suspension\": null\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -16148,7 +16220,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"id\": \"f771cea1-7e39-efbb-8872-7123593362d3\",\n  \"organization_id\": \"9528bb50-815c-a2b3-4523-f817a84289e8\",\n  \"email\": \"kCDfde@hOC.zan\",\n  \"email_verified_at\": null,\n  \"phone\": null,\n  \"phone_verified_at\": null,\n  \"display_name\": \"string\",\n  \"avatar_url\": \"string\",\n  \"status\": \"active\",\n  \"metadata\": {\n    \"key_0\": 3761.82489329949,\n    \"key_1\": 1941,\n    \"key_2\": \"string\"\n  },\n  \"created_at\": \"2011-07-10T09:48:54.009Z\",\n  \"updated_at\": \"1996-03-11T13:21:05.814Z\",\n  \"roles\": [\n    \"string\",\n    \"string\"\n  ],\n  \"assigned_roles\": [\n    {\n      \"id\": \"da6583e9-0ec5-4ed9-3b44-c9d60ab72051\",\n      \"name\": \"string\"\n    },\n    {\n      \"id\": \"18a9ac26-96e9-6f29-1f06-48e16f8e2be3\",\n      \"name\": \"string\"\n    }\n  ],\n  \"mfa_enabled\": false,\n  \"groups_count\": 842,\n  \"last_seen_at\": \"2013-07-28T04:32:45.866Z\",\n  \"last_seen_ip\": \"string\",\n  \"home_organization_name\": null,\n  \"suspension\": null\n}",
+                  "body": "{\n  \"id\": \"8dfef5c2-2358-f085-9445-bb3901f8275e\",\n  \"organization_id\": \"b48b726a-89da-583e-100e-5d4ed983b44e\",\n  \"email\": \"JzbOTBjcwgvAR9@AhZSGgBIFHOitIFEvWEzvYgEkgYavRnB.bjzn\",\n  \"email_verified_at\": \"1969-06-07T13:31:16.011Z\",\n  \"phone\": \"string\",\n  \"phone_verified_at\": \"2007-07-04T04:36:58.370Z\",\n  \"display_name\": \"string\",\n  \"avatar_url\": \"string\",\n  \"status\": \"invited\",\n  \"metadata\": {\n    \"key_0\": false,\n    \"key_1\": 1090.5987513251603,\n    \"key_2\": 8125,\n    \"key_3\": true\n  },\n  \"created_at\": \"2014-11-09T05:26:24.204Z\",\n  \"updated_at\": \"1966-11-25T10:34:22.278Z\",\n  \"roles\": [\n    \"string\",\n    \"string\"\n  ],\n  \"assigned_roles\": [\n    {\n      \"id\": \"b14c1fb8-453c-8209-b393-d98adfd961c6\",\n      \"name\": \"string\"\n    },\n    {\n      \"id\": \"56129e93-5562-955c-0119-f78b1661161d\",\n      \"name\": \"string\"\n    }\n  ],\n  \"mfa_enabled\": true,\n  \"groups_count\": 9928,\n  \"last_seen_at\": null,\n  \"last_seen_ip\": null,\n  \"home_organization_name\": \"string\",\n  \"deleted_at\": \"1967-02-17T08:32:17.292Z\",\n  \"suspension\": null\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -16219,7 +16291,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"id\": \"f771cea1-7e39-efbb-8872-7123593362d3\",\n  \"organization_id\": \"9528bb50-815c-a2b3-4523-f817a84289e8\",\n  \"email\": \"kCDfde@hOC.zan\",\n  \"email_verified_at\": null,\n  \"phone\": null,\n  \"phone_verified_at\": null,\n  \"display_name\": \"string\",\n  \"avatar_url\": \"string\",\n  \"status\": \"active\",\n  \"metadata\": {\n    \"key_0\": 3761.82489329949,\n    \"key_1\": 1941,\n    \"key_2\": \"string\"\n  },\n  \"created_at\": \"2011-07-10T09:48:54.009Z\",\n  \"updated_at\": \"1996-03-11T13:21:05.814Z\",\n  \"roles\": [\n    \"string\",\n    \"string\"\n  ],\n  \"assigned_roles\": [\n    {\n      \"id\": \"da6583e9-0ec5-4ed9-3b44-c9d60ab72051\",\n      \"name\": \"string\"\n    },\n    {\n      \"id\": \"18a9ac26-96e9-6f29-1f06-48e16f8e2be3\",\n      \"name\": \"string\"\n    }\n  ],\n  \"mfa_enabled\": false,\n  \"groups_count\": 842,\n  \"last_seen_at\": \"2013-07-28T04:32:45.866Z\",\n  \"last_seen_ip\": \"string\",\n  \"home_organization_name\": null,\n  \"suspension\": null\n}",
+                  "body": "{\n  \"id\": \"8dfef5c2-2358-f085-9445-bb3901f8275e\",\n  \"organization_id\": \"b48b726a-89da-583e-100e-5d4ed983b44e\",\n  \"email\": \"JzbOTBjcwgvAR9@AhZSGgBIFHOitIFEvWEzvYgEkgYavRnB.bjzn\",\n  \"email_verified_at\": \"1969-06-07T13:31:16.011Z\",\n  \"phone\": \"string\",\n  \"phone_verified_at\": \"2007-07-04T04:36:58.370Z\",\n  \"display_name\": \"string\",\n  \"avatar_url\": \"string\",\n  \"status\": \"invited\",\n  \"metadata\": {\n    \"key_0\": false,\n    \"key_1\": 1090.5987513251603,\n    \"key_2\": 8125,\n    \"key_3\": true\n  },\n  \"created_at\": \"2014-11-09T05:26:24.204Z\",\n  \"updated_at\": \"1966-11-25T10:34:22.278Z\",\n  \"roles\": [\n    \"string\",\n    \"string\"\n  ],\n  \"assigned_roles\": [\n    {\n      \"id\": \"b14c1fb8-453c-8209-b393-d98adfd961c6\",\n      \"name\": \"string\"\n    },\n    {\n      \"id\": \"56129e93-5562-955c-0119-f78b1661161d\",\n      \"name\": \"string\"\n    }\n  ],\n  \"mfa_enabled\": true,\n  \"groups_count\": 9928,\n  \"last_seen_at\": null,\n  \"last_seen_ip\": null,\n  \"home_organization_name\": \"string\",\n  \"deleted_at\": \"1967-02-17T08:32:17.292Z\",\n  \"suspension\": null\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -16444,7 +16516,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"truncated\": true,\n  \"items\": [\n    {\n      \"id\": \"8204c703-21e7-d0fe-2a8e-dd4c060aefee\",\n      \"name\": \"string\",\n      \"created_at\": \"1967-01-27T12:48:26.154Z\",\n      \"last_used_at\": null\n    },\n    {\n      \"id\": \"de8b506e-8ef5-6d9a-695b-fd24d74d4b83\",\n      \"name\": \"string\",\n      \"created_at\": \"2014-08-19T18:01:34.107Z\",\n      \"last_used_at\": \"2020-04-22T02:07:46.740Z\"\n    }\n  ]\n}",
+                  "body": "{\n  \"truncated\": true,\n  \"items\": [\n    {\n      \"id\": \"556d9a36-bffd-4d74-4b83-4a7e25716e25\",\n      \"name\": null,\n      \"created_at\": \"2000-11-09T19:48:51.643Z\",\n      \"last_used_at\": null\n    },\n    {\n      \"id\": \"7defe854-2311-2e6d-4a86-02a2431f6251\",\n      \"name\": \"string\",\n      \"created_at\": \"1983-11-25T02:48:00.222Z\",\n      \"last_used_at\": null\n    }\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -16592,13 +16664,13 @@
                       "disabled": true,
                       "description": { "content": "", "type": "text/plain" },
                       "key": "from",
-                      "value": "1951-10-12T13:36:25.634Z"
+                      "value": "1973-06-15T21:31:08.121Z"
                     },
                     {
                       "disabled": true,
                       "description": { "content": "", "type": "text/plain" },
                       "key": "to",
-                      "value": "1951-10-12T13:36:25.634Z"
+                      "value": "1973-06-15T21:31:08.121Z"
                     },
                     {
                       "disabled": true,
@@ -16655,13 +16727,13 @@
                           "disabled": true,
                           "description": { "content": "", "type": "text/plain" },
                           "key": "from",
-                          "value": "1951-10-12T13:36:25.634Z"
+                          "value": "1973-06-15T21:31:08.121Z"
                         },
                         {
                           "disabled": true,
                           "description": { "content": "", "type": "text/plain" },
                           "key": "to",
-                          "value": "1951-10-12T13:36:25.634Z"
+                          "value": "1973-06-15T21:31:08.121Z"
                         },
                         {
                           "disabled": true,
@@ -16707,7 +16779,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"from\": \"2007-11-11T09:37:46.469Z\",\n  \"to\": \"1948-03-22T23:16:10.266Z\",\n  \"sign_ins\": 8318,\n  \"with_second_step\": 9858,\n  \"by_method\": [\n    {\n      \"method\": \"string\",\n      \"count\": 1540,\n      \"with_second_step\": 4205\n    },\n    {\n      \"method\": \"string\",\n      \"count\": 1474,\n      \"with_second_step\": 2313\n    }\n  ],\n  \"by_address\": [\n    {\n      \"ip\": \"string\",\n      \"count\": 5262,\n      \"last_at\": \"1983-05-18T00:38:35.165Z\"\n    },\n    {\n      \"ip\": \"string\",\n      \"count\": 8000,\n      \"last_at\": \"1964-10-26T22:06:20.833Z\"\n    }\n  ],\n  \"by_browser\": [\n    {\n      \"device\": \"string\",\n      \"kind\": \"string\",\n      \"count\": 9302\n    },\n    {\n      \"device\": \"string\",\n      \"kind\": \"string\",\n      \"count\": 2135\n    }\n  ],\n  \"failures\": 9074,\n  \"failures_by_reason\": [\n    {\n      \"reason\": \"string\",\n      \"count\": 8182\n    },\n    {\n      \"reason\": \"string\",\n      \"count\": 9857\n    }\n  ]\n}",
+                  "body": "{\n  \"from\": \"1958-12-17T01:11:24.613Z\",\n  \"to\": \"1976-08-30T21:33:20.991Z\",\n  \"sign_ins\": 4430,\n  \"with_second_step\": 35,\n  \"by_method\": [\n    {\n      \"method\": \"string\",\n      \"count\": 9191,\n      \"with_second_step\": 3661\n    },\n    {\n      \"method\": \"string\",\n      \"count\": 925,\n      \"with_second_step\": 5374\n    }\n  ],\n  \"by_address\": [\n    {\n      \"ip\": \"string\",\n      \"count\": 8324,\n      \"last_at\": \"1986-08-01T11:28:41.561Z\"\n    },\n    {\n      \"ip\": \"string\",\n      \"count\": 2194,\n      \"last_at\": \"2002-01-23T02:08:38.837Z\"\n    }\n  ],\n  \"by_browser\": [\n    {\n      \"device\": \"string\",\n      \"kind\": \"string\",\n      \"count\": 8244\n    },\n    {\n      \"device\": \"string\",\n      \"kind\": \"string\",\n      \"count\": 1685\n    }\n  ],\n  \"failures\": 4327,\n  \"failures_by_reason\": [\n    {\n      \"reason\": \"string\",\n      \"count\": 8522\n    },\n    {\n      \"reason\": \"string\",\n      \"count\": 3931\n    }\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -16830,7 +16902,7 @@
                 "method": "POST",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"email\": \"DZsgq@AjYVASCxgLkQwHylW.lvep\"\n}",
+                  "raw": "{\n  \"email\": \"VcmWHFrd@paVUhDSFQbQAUfuff.aaig\"\n}",
                   "options": { "raw": { "headerFamily": "json", "language": "json" } }
                 },
                 "auth": {
@@ -16864,7 +16936,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"email\": \"DZsgq@AjYVASCxgLkQwHylW.lvep\"\n}",
+                      "raw": "{\n  \"email\": \"VcmWHFrd@paVUhDSFQbQAUfuff.aaig\"\n}",
                       "options": { "raw": { "headerFamily": "json", "language": "json" } }
                     }
                   },
@@ -17142,7 +17214,7 @@
                 "method": "POST",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"phone\": null\n}",
+                  "raw": "{\n  \"phone\": \"string\"\n}",
                   "options": { "raw": { "headerFamily": "json", "language": "json" } }
                 },
                 "auth": {
@@ -17184,7 +17256,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"phone\": null\n}",
+                      "raw": "{\n  \"phone\": \"string\"\n}",
                       "options": { "raw": { "headerFamily": "json", "language": "json" } }
                     }
                   },
@@ -17236,7 +17308,7 @@
                 "method": "POST",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"string\",\n  \"description\": \"string\",\n  \"parent_id\": \"8840840e-8d9d-d8e1-11e0-54c4ffc8c082\"\n}",
+                  "raw": "{\n  \"name\": \"string\",\n  \"description\": null,\n  \"parent_id\": null\n}",
                   "options": { "raw": { "headerFamily": "json", "language": "json" } }
                 },
                 "auth": {
@@ -17279,7 +17351,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"name\": \"string\",\n  \"description\": \"string\",\n  \"parent_id\": \"8840840e-8d9d-d8e1-11e0-54c4ffc8c082\"\n}",
+                      "raw": "{\n  \"name\": \"string\",\n  \"description\": null,\n  \"parent_id\": null\n}",
                       "options": { "raw": { "headerFamily": "json", "language": "json" } }
                     }
                   },
@@ -17297,7 +17369,7 @@
                       "value": "true"
                     }
                   ],
-                  "body": "{\n  \"created_at\": \"2011-02-28T01:28:00.846Z\",\n  \"description\": \"string\",\n  \"id\": \"151d4507-59d2-fca1-269c-527e864bd2b2\",\n  \"member_count\": 5055,\n  \"name\": \"string\",\n  \"parent_id\": null,\n  \"organization_id\": \"541b2e11-c6e3-67cc-1f4d-a06f66e3e32e\",\n  \"roles\": [\n    {\n      \"role_id\": \"a43f797f-d6c3-d401-395b-682b4ccc6950\",\n      \"name\": \"string\"\n    },\n    {\n      \"role_id\": \"573efa35-c2d2-0a5e-10a6-af9075fc0a54\",\n      \"name\": \"string\"\n    }\n  ]\n}",
+                  "body": "{\n  \"created_at\": \"1965-02-03T13:32:20.714Z\",\n  \"description\": \"string\",\n  \"id\": \"864bd2b2-692f-0354-b2e1-32c6e3a67cc6\",\n  \"member_count\": 9736,\n  \"name\": \"string\",\n  \"parent_id\": \"f66e3e32-c6e2-a43f-97f7-d6c3cd401a39\",\n  \"organization_id\": \"4682b4cc-9502-26ab-2573-fa3520c2d210\",\n  \"roles\": [\n    {\n      \"role_id\": \"a65af907-c0a5-5b6f-2a8b-8722c233b686\",\n      \"name\": \"string\"\n    },\n    {\n      \"role_id\": \"834ed781-77c7-4232-1385-37f8c1845048\",\n      \"name\": \"string\"\n    }\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -17348,7 +17420,7 @@
                 "method": "PATCH",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"description\": null,\n  \"name\": \"string\",\n  \"parent_id\": \"b68614d6-3283-ed78-7277-744232813858\"\n}",
+                  "raw": "{\n  \"description\": null,\n  \"name\": \"string\",\n  \"parent_id\": null\n}",
                   "options": { "raw": { "headerFamily": "json", "language": "json" } }
                 },
                 "auth": {
@@ -17390,14 +17462,14 @@
                     "method": "PATCH",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"description\": null,\n  \"name\": \"string\",\n  \"parent_id\": \"b68614d6-3283-ed78-7277-744232813858\"\n}",
+                      "raw": "{\n  \"description\": null,\n  \"name\": \"string\",\n  \"parent_id\": null\n}",
                       "options": { "raw": { "headerFamily": "json", "language": "json" } }
                     }
                   },
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"created_at\": \"2011-02-28T01:28:00.846Z\",\n  \"description\": \"string\",\n  \"id\": \"151d4507-59d2-fca1-269c-527e864bd2b2\",\n  \"member_count\": 5055,\n  \"name\": \"string\",\n  \"parent_id\": null,\n  \"organization_id\": \"541b2e11-c6e3-67cc-1f4d-a06f66e3e32e\",\n  \"roles\": [\n    {\n      \"role_id\": \"a43f797f-d6c3-d401-395b-682b4ccc6950\",\n      \"name\": \"string\"\n    },\n    {\n      \"role_id\": \"573efa35-c2d2-0a5e-10a6-af9075fc0a54\",\n      \"name\": \"string\"\n    }\n  ]\n}",
+                  "body": "{\n  \"created_at\": \"1965-02-03T13:32:20.714Z\",\n  \"description\": \"string\",\n  \"id\": \"864bd2b2-692f-0354-b2e1-32c6e3a67cc6\",\n  \"member_count\": 9736,\n  \"name\": \"string\",\n  \"parent_id\": \"f66e3e32-c6e2-a43f-97f7-d6c3cd401a39\",\n  \"organization_id\": \"4682b4cc-9502-26ab-2573-fa3520c2d210\",\n  \"roles\": [\n    {\n      \"role_id\": \"a65af907-c0a5-5b6f-2a8b-8722c233b686\",\n      \"name\": \"string\"\n    },\n    {\n      \"role_id\": \"834ed781-77c7-4232-1385-37f8c1845048\",\n      \"name\": \"string\"\n    }\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -17529,7 +17601,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"items\": [\n    {\n      \"created_at\": \"2021-12-03T06:02:23.839Z\",\n      \"description\": \"string\",\n      \"group_count\": 7729,\n      \"id\": \"83a6b891-adc0-3565-a614-154c67e9a8c5\",\n      \"name\": \"string\",\n      \"nodes\": [\n        {\n          \"description\": \"string\",\n          \"name\": \"string\",\n          \"children\": [\n            {\n              \"value\": \"<Circular reference to #/components/schemas/TemplateNode detected>\"\n            },\n            {\n              \"value\": \"<Circular reference to #/components/schemas/TemplateNode detected>\"\n            }\n          ]\n        },\n        {\n          \"description\": \"string\",\n          \"name\": \"string\",\n          \"children\": [\n            {\n              \"value\": \"<Circular reference to #/components/schemas/TemplateNode detected>\"\n            },\n            {\n              \"value\": \"<Circular reference to #/components/schemas/TemplateNode detected>\"\n            }\n          ]\n        }\n      ],\n      \"organization_id\": \"abe64bb6-d89e-0e3f-e33a-fe5a84cad2bb\",\n      \"updated_at\": \"1953-02-26T09:34:36.137Z\"\n    },\n    {\n      \"created_at\": \"1960-06-16T10:09:53.417Z\",\n      \"description\": \"string\",\n      \"group_count\": 3117,\n      \"id\": \"fd8f54d8-514b-8d2f-f465-5a2eeced1df8\",\n      \"name\": \"string\",\n      \"nodes\": [\n        {\n          \"description\": \"string\",\n          \"name\": \"string\",\n          \"children\": [\n            {\n              \"value\": \"<Circular reference to #/components/schemas/TemplateNode detected>\"\n            },\n            {\n              \"value\": \"<Circular reference to #/components/schemas/TemplateNode detected>\"\n            }\n          ]\n        },\n        {\n          \"description\": \"string\",\n          \"name\": \"string\",\n          \"children\": [\n            {\n              \"value\": \"<Circular reference to #/components/schemas/TemplateNode detected>\"\n            },\n            {\n              \"value\": \"<Circular reference to #/components/schemas/TemplateNode detected>\"\n            }\n          ]\n        }\n      ],\n      \"organization_id\": \"610de71a-2bb5-cb0b-eeb5-8dc565f0a8a9\",\n      \"updated_at\": \"1998-11-10T12:56:54.241Z\"\n    }\n  ],\n  \"truncated\": false\n}",
+                  "body": "{\n  \"items\": [\n    {\n      \"created_at\": \"1991-11-25T16:19:33.239Z\",\n      \"description\": \"string\",\n      \"group_count\": 3205,\n      \"id\": \"67e9a8c5-c9fa-53f8-e4d6-b21a894b2bea\",\n      \"name\": \"string\",\n      \"nodes\": [\n        {\n          \"description\": \"string\",\n          \"name\": \"string\",\n          \"children\": [\n            {\n              \"value\": \"<Circular reference to #/components/schemas/TemplateNode detected>\"\n            },\n            {\n              \"value\": \"<Circular reference to #/components/schemas/TemplateNode detected>\"\n            }\n          ]\n        },\n        {\n          \"description\": \"string\",\n          \"name\": \"string\",\n          \"children\": [\n            {\n              \"value\": \"<Circular reference to #/components/schemas/TemplateNode detected>\"\n            },\n            {\n              \"value\": \"<Circular reference to #/components/schemas/TemplateNode detected>\"\n            }\n          ]\n        }\n      ],\n      \"organization_id\": \"84cad2bb-8caa-bcd2-bafd-f54d8d3514bc\",\n      \"updated_at\": \"1956-09-30T22:46:42.475Z\"\n    },\n    {\n      \"created_at\": \"2003-05-30T08:24:10.937Z\",\n      \"description\": \"string\",\n      \"group_count\": 6739,\n      \"id\": \"eced1df8-8737-918c-d225-9dc232935e85\",\n      \"name\": \"string\",\n      \"nodes\": [\n        {\n          \"description\": \"string\",\n          \"name\": \"string\",\n          \"children\": [\n            {\n              \"value\": \"<Circular reference to #/components/schemas/TemplateNode detected>\"\n            },\n            {\n              \"value\": \"<Circular reference to #/components/schemas/TemplateNode detected>\"\n            }\n          ]\n        },\n        {\n          \"description\": \"string\",\n          \"name\": \"string\",\n          \"children\": [\n            {\n              \"value\": \"<Circular reference to #/components/schemas/TemplateNode detected>\"\n            },\n            {\n              \"value\": \"<Circular reference to #/components/schemas/TemplateNode detected>\"\n            }\n          ]\n        }\n      ],\n      \"organization_id\": \"65f0a8a9-46df-dd8a-c3cb-ebb9734dac81\",\n      \"updated_at\": \"1980-07-24T10:02:37.924Z\"\n    }\n  ],\n  \"truncated\": true\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -17559,7 +17631,7 @@
                 "method": "POST",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"string\",\n  \"nodes\": [\n    {\n      \"name\": \"string\",\n      \"description\": null,\n      \"children\": [\n        {\n          \"value\": \"<Circular reference to #/components/schemas/GroupTemplateNode detected>\"\n        },\n        {\n          \"value\": \"<Circular reference to #/components/schemas/GroupTemplateNode detected>\"\n        }\n      ]\n    }\n  ],\n  \"description\": null\n}",
+                  "raw": "{\n  \"name\": \"string\",\n  \"nodes\": [\n    {\n      \"name\": \"string\",\n      \"description\": \"string\",\n      \"children\": null\n    }\n  ],\n  \"description\": null\n}",
                   "options": { "raw": { "headerFamily": "json", "language": "json" } }
                 },
                 "auth": {
@@ -17593,14 +17665,14 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"name\": \"string\",\n  \"nodes\": [\n    {\n      \"name\": \"string\",\n      \"description\": null,\n      \"children\": [\n        {\n          \"value\": \"<Circular reference to #/components/schemas/GroupTemplateNode detected>\"\n        },\n        {\n          \"value\": \"<Circular reference to #/components/schemas/GroupTemplateNode detected>\"\n        }\n      ]\n    }\n  ],\n  \"description\": null\n}",
+                      "raw": "{\n  \"name\": \"string\",\n  \"nodes\": [\n    {\n      \"name\": \"string\",\n      \"description\": \"string\",\n      \"children\": null\n    }\n  ],\n  \"description\": null\n}",
                       "options": { "raw": { "headerFamily": "json", "language": "json" } }
                     }
                   },
                   "status": "Created",
                   "code": 201,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"created_at\": \"2016-08-11T05:31:34.598Z\",\n  \"description\": \"string\",\n  \"group_count\": 4270,\n  \"id\": \"ab2615f8-6f28-38c0-a0a2-2b2b5776a7aa\",\n  \"name\": \"string\",\n  \"nodes\": [\n    {\n      \"description\": \"string\",\n      \"name\": \"string\",\n      \"children\": [\n        {\n          \"value\": \"<Circular reference to #/components/schemas/TemplateNode detected>\"\n        },\n        {\n          \"value\": \"<Circular reference to #/components/schemas/TemplateNode detected>\"\n        }\n      ]\n    },\n    {\n      \"description\": \"string\",\n      \"name\": \"string\",\n      \"children\": [\n        {\n          \"value\": \"<Circular reference to #/components/schemas/TemplateNode detected>\"\n        },\n        {\n          \"value\": \"<Circular reference to #/components/schemas/TemplateNode detected>\"\n        }\n      ]\n    }\n  ],\n  \"organization_id\": \"d4d1e9d9-8bbb-23cd-baeb-9fad068bd3cb\",\n  \"updated_at\": \"2013-09-26T04:55:52.682Z\"\n}",
+                  "body": "{\n  \"created_at\": \"2021-01-26T13:25:00.417Z\",\n  \"description\": \"string\",\n  \"group_count\": 7436,\n  \"id\": \"5776a7aa-6922-17a6-d28a-896678026db4\",\n  \"name\": \"string\",\n  \"nodes\": [\n    {\n      \"description\": \"string\",\n      \"name\": \"string\",\n      \"children\": [\n        {\n          \"value\": \"<Circular reference to #/components/schemas/TemplateNode detected>\"\n        },\n        {\n          \"value\": \"<Circular reference to #/components/schemas/TemplateNode detected>\"\n        }\n      ]\n    },\n    {\n      \"description\": \"string\",\n      \"name\": \"string\",\n      \"children\": [\n        {\n          \"value\": \"<Circular reference to #/components/schemas/TemplateNode detected>\"\n        },\n        {\n          \"value\": \"<Circular reference to #/components/schemas/TemplateNode detected>\"\n        }\n      ]\n    }\n  ],\n  \"organization_id\": \"068bd3cb-b456-c00b-3b96-de4227ba3da6\",\n  \"updated_at\": \"1984-07-21T22:12:00.100Z\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -17724,7 +17796,7 @@
                 "method": "POST",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"parent_id\": \"93b96bde-27ba-da6a-b13f-64d7ff38fd04\",\n  \"prefix\": null,\n  \"root_name\": null\n}",
+                  "raw": "{\n  \"parent_id\": null,\n  \"prefix\": null,\n  \"root_name\": \"string\"\n}",
                   "options": { "raw": { "headerFamily": "json", "language": "json" } }
                 },
                 "auth": {
@@ -17766,14 +17838,14 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"parent_id\": \"93b96bde-27ba-da6a-b13f-64d7ff38fd04\",\n  \"prefix\": null,\n  \"root_name\": null\n}",
+                      "raw": "{\n  \"parent_id\": null,\n  \"prefix\": null,\n  \"root_name\": \"string\"\n}",
                       "options": { "raw": { "headerFamily": "json", "language": "json" } }
                     }
                   },
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"items\": [\n    {\n      \"created_at\": \"1985-05-07T10:51:17.566Z\",\n      \"description\": \"string\",\n      \"id\": \"9b785f22-60c7-9584-4a0f-521cdbeda1f3\",\n      \"member_count\": 5124,\n      \"name\": \"string\",\n      \"parent_id\": null,\n      \"organization_id\": \"9bfd751a-17b9-ef80-6e5a-5a58abe11da0\",\n      \"roles\": [\n        {\n          \"role_id\": \"eddf34d5-6910-a5e8-a666-d862a1f7797a\",\n          \"name\": \"string\"\n        },\n        {\n          \"role_id\": \"5297ac0a-23f6-5048-c3b5-ff3edaf2e89c\",\n          \"name\": \"string\"\n        }\n      ]\n    },\n    {\n      \"created_at\": \"1980-05-11T19:06:31.813Z\",\n      \"description\": \"string\",\n      \"id\": \"39387a67-ad2a-8323-aa93-c6546818eea3\",\n      \"member_count\": 550,\n      \"name\": \"string\",\n      \"parent_id\": \"8a8b0d8e-d46e-a480-79fb-e4d0016d5892\",\n      \"organization_id\": \"e17ebf7a-43a0-9485-19ba-70f93f56f18c\",\n      \"roles\": [\n        {\n          \"role_id\": \"a58c0af6-cd14-a81b-2df0-9b3aae70ed32\",\n          \"name\": \"string\"\n        },\n        {\n          \"role_id\": \"13a203fa-cd66-eb5a-5dd5-6ee497a7d8e9\",\n          \"name\": \"string\"\n        }\n      ]\n    }\n  ]\n}",
+                  "body": "{\n  \"items\": [\n    {\n      \"created_at\": \"2005-03-18T15:37:17.194Z\",\n      \"description\": \"string\",\n      \"id\": \"c88886c9-85f2-2a60-7b95-474a0f5521cd\",\n      \"member_count\": 8984,\n      \"name\": \"string\",\n      \"parent_id\": \"83ea6968-fd75-aaf1-b94e-8036e5a25a58\",\n      \"organization_id\": \"e11da0f1-11ed-f34d-fb69-0fa5e88a666c\",\n      \"roles\": [\n        {\n          \"role_id\": \"f7797a23-8237-297a-0a86-3f655048ac3b\",\n          \"name\": \"string\"\n        },\n        {\n          \"role_id\": \"f2e89cd0-4f12-2e32-3938-a67e1ad2a883\",\n          \"name\": \"string\"\n        }\n      ]\n    },\n    {\n      \"created_at\": \"1962-05-29T17:25:22.382Z\",\n      \"description\": \"string\",\n      \"id\": \"18eea3d0-a52c-a8b0-8e00-46e3a480a79f\",\n      \"member_count\": 7886,\n      \"name\": \"string\",\n      \"parent_id\": \"6d589270-7ebf-a6e4-a0c9-85219ba570f9\",\n      \"organization_id\": \"56f18c23-1ba5-c0af-b3cd-41a81bc2df04\",\n      \"roles\": [\n        {\n          \"role_id\": \"70ed321c-200d-3a20-fa63-d66beb5a95dd\",\n          \"name\": \"string\"\n        },\n        {\n          \"role_id\": \"a7d8e9e0-b0fa-39d7-7fe1-354a8e600e3f\",\n          \"name\": \"string\"\n        }\n      ]\n    }\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -17803,7 +17875,7 @@
                 "method": "POST",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"groups\": [\n    {\n      \"name\": \"string\",\n      \"description\": null,\n      \"parent\": \"string\"\n    }\n  ]\n}",
+                  "raw": "{\n  \"groups\": [\n    {\n      \"name\": \"string\",\n      \"description\": null,\n      \"parent\": null\n    }\n  ]\n}",
                   "options": { "raw": { "headerFamily": "json", "language": "json" } }
                 },
                 "auth": {
@@ -17837,14 +17909,14 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"groups\": [\n    {\n      \"name\": \"string\",\n      \"description\": null,\n      \"parent\": \"string\"\n    }\n  ]\n}",
+                      "raw": "{\n  \"groups\": [\n    {\n      \"name\": \"string\",\n      \"description\": null,\n      \"parent\": null\n    }\n  ]\n}",
                       "options": { "raw": { "headerFamily": "json", "language": "json" } }
                     }
                   },
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"created\": 9058,\n  \"failed\": 82,\n  \"rows\": [\n    {\n      \"name\": \"string\",\n      \"status\": \"created\",\n      \"code\": \"group.import_name_required\",\n      \"field\": \"parent\",\n      \"reason\": \"string\"\n    },\n    {\n      \"name\": \"string\",\n      \"status\": \"skipped\",\n      \"code\": \"group.import_parent_not_found\",\n      \"field\": \"parent\",\n      \"reason\": \"string\"\n    }\n  ],\n  \"skipped\": 675\n}",
+                  "body": "{\n  \"created\": 7239,\n  \"failed\": 1159,\n  \"rows\": [\n    {\n      \"name\": \"string\",\n      \"status\": \"skipped\",\n      \"code\": \"internal\",\n      \"field\": \"parent\",\n      \"reason\": \"string\"\n    },\n    {\n      \"name\": \"string\",\n      \"status\": \"created\",\n      \"code\": \"group.import_parent_not_found\",\n      \"field\": \"parent\",\n      \"reason\": \"string\"\n    }\n  ],\n  \"skipped\": 9350\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -17919,7 +17991,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"items\": [\n    {\n      \"display_name\": null,\n      \"email\": \"string\",\n      \"user_id\": \"233247b6-7e5e-a93b-76c0-2aff39ee90ed\"\n    },\n    {\n      \"display_name\": null,\n      \"email\": \"string\",\n      \"user_id\": \"b97f44bd-188a-3b1a-600c-af643ee67e29\"\n    }\n  ],\n  \"truncated\": true\n}",
+                  "body": "{\n  \"items\": [\n    {\n      \"display_name\": \"string\",\n      \"email\": \"string\",\n      \"user_id\": \"ee90ed01-c544-ab97-44bd-5188a73b1a96\"\n    },\n    {\n      \"display_name\": null,\n      \"email\": \"string\",\n      \"user_id\": \"e67e2968-6fde-6a93-b0ec-f0e0a669a4cc\"\n    }\n  ],\n  \"truncated\": false\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -18212,7 +18284,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"items\": [\n    {\n      \"created_at\": \"1969-04-03T07:28:29.500Z\",\n      \"description\": \"string\",\n      \"id\": \"0e0a669a-cd56-74cb-7836-940734107092\",\n      \"member_count\": 369,\n      \"name\": \"string\",\n      \"parent_id\": null,\n      \"organization_id\": \"027d5e41-321d-2fda-74e4-dae16ca5c434\",\n      \"roles\": [\n        {\n          \"role_id\": \"efc81a54-1713-11bd-e1bf-d2bb523fcbad\",\n          \"name\": \"string\"\n        },\n        {\n          \"role_id\": \"24e7d3f8-0947-99cf-5213-1b320723acbe\",\n          \"name\": \"string\"\n        }\n      ]\n    },\n    {\n      \"created_at\": \"1966-10-08T16:13:58.431Z\",\n      \"description\": \"string\",\n      \"id\": \"9b193304-5e2d-12f0-8faf-2e0e85394111\",\n      \"member_count\": 4211,\n      \"name\": \"string\",\n      \"parent_id\": null,\n      \"organization_id\": \"48abd8e9-a2a1-7c16-d988-f9ad34816a82\",\n      \"roles\": [\n        {\n          \"role_id\": \"25d3587e-8eba-e4d2-ddb3-0a5dcbffc9d8\",\n          \"name\": \"string\"\n        },\n        {\n          \"role_id\": \"d217df03-01e0-29d6-9ea3-faf317c7fe2a\",\n          \"name\": \"string\"\n        }\n      ]\n    }\n  ],\n  \"truncated\": true\n}",
+                  "body": "{\n  \"items\": [\n    {\n      \"created_at\": \"1976-01-02T06:36:30.286Z\",\n      \"description\": \"string\",\n      \"id\": \"107092a0-79ad-027d-e417-321d52fdac74\",\n      \"member_count\": 2503,\n      \"name\": \"string\",\n      \"parent_id\": \"ca5c4342-9c5e-c81a-4231-13f11bdce1bf\",\n      \"organization_id\": \"2bb523fc-d790-dfc0-4e7d-f84a0947199c\",\n      \"roles\": [\n        {\n          \"role_id\": \"51b32072-cbea-d0fd-5b11-ed9b193304ed\",\n          \"name\": \"string\"\n        },\n        {\n          \"role_id\": \"028faf42-e853-4111-609c-c6b48abd8e99\",\n          \"name\": \"string\"\n        }\n      ]\n    },\n    {\n      \"created_at\": \"2016-12-25T17:44:49.946Z\",\n      \"description\": \"string\",\n      \"id\": \"8df9ad34-6a82-c4e5-25d3-87e288eba4e4\",\n      \"member_count\": 1379,\n      \"name\": \"string\",\n      \"parent_id\": \"0a5dcbff-d88c-f6a8-d217-f03ea01e0229\",\n      \"organization_id\": \"b9ea3cfa-17c7-e2ae-69fc-231b1041a746\",\n      \"roles\": [\n        {\n          \"role_id\": \"bcb8ae1d-02e9-c8bb-2b59-c38ec1e53eb0\",\n          \"name\": \"string\"\n        },\n        {\n          \"role_id\": \"fae984bb-f01d-ad2c-c179-ecad23e3dfc8\",\n          \"name\": \"string\"\n        }\n      ]\n    }\n  ],\n  \"truncated\": false\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -18411,7 +18483,7 @@
                       "value": "no-cache"
                     }
                   ],
-                  "body": "{\n  \"access_token\": \"string\",\n  \"expires_at\": \"1977-07-05T02:45:29.428Z\",\n  \"idle_expires_at\": \"1964-01-24T18:22:09.817Z\",\n  \"refresh_token\": \"string\",\n  \"session_expires_at\": \"2018-08-30T20:19:14.306Z\",\n  \"session_id\": \"a02e9dc8-22b5-cc38-c1e5-eb06d3e27daf\",\n  \"token_type\": \"Bearer\",\n  \"user_id\": \"84bbdbf0-3ad2-fc17-9eca-23e3dfc8e562\",\n  \"organization_id\": \"a550539e-8f27-2d94-3ac7-d22134c39ed4\"\n}",
+                  "body": "{\n  \"access_token\": \"string\",\n  \"expires_at\": \"2002-03-16T23:43:49.313Z\",\n  \"idle_expires_at\": \"2006-07-28T08:39:04.524Z\",\n  \"refresh_token\": \"string\",\n  \"session_expires_at\": \"1959-07-05T05:42:42.158Z\",\n  \"session_id\": \"134c39ed-f934-8f57-4d4e-9e7fd36c7cab\",\n  \"token_type\": \"Bearer\",\n  \"user_id\": \"b38add96-51d5-f65b-1710-e9fab9b2eab8\",\n  \"organization_id\": \"ad28bc0e-0599-942f-991f-ab336d8ff17e\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -18486,7 +18558,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"organization\": {\n    \"name\": \"string\",\n    \"slug\": \"string\"\n  },\n  \"email\": \"string\",\n  \"expires_at\": \"2007-03-24T07:11:50.982Z\",\n  \"account_exists\": true,\n  \"methods\": {\n    \"password\": true,\n    \"passkey\": true\n  }\n}",
+                  "body": "{\n  \"organization\": {\n    \"name\": \"string\",\n    \"slug\": \"string\"\n  },\n  \"email\": \"string\",\n  \"expires_at\": \"2002-09-15T14:56:21.359Z\",\n  \"account_exists\": false,\n  \"methods\": {\n    \"password\": false,\n    \"passkey\": true\n  }\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -18546,7 +18618,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"publicKey\": {\n    \"challenge\": \"\",\n    \"rp\": {\n      \"id\": \"string\",\n      \"name\": \"string\"\n    },\n    \"user\": {\n      \"displayName\": \"string\",\n      \"id\": \"\",\n      \"name\": \"string\"\n    },\n    \"attestation\": \"string\",\n    \"attestationFormats\": [\n      \"string\",\n      \"string\"\n    ],\n    \"authenticatorSelection\": {\n      \"authenticatorAttachment\": \"string\",\n      \"requireResidentKey\": true,\n      \"residentKey\": \"string\",\n      \"userVerification\": \"string\"\n    },\n    \"excludeCredentials\": [\n      {\n        \"id\": \"\",\n        \"type\": \"string\",\n        \"transports\": [\n          \"string\",\n          \"string\"\n        ]\n      },\n      {\n        \"id\": \"\",\n        \"type\": \"string\",\n        \"transports\": [\n          \"string\",\n          \"string\"\n        ]\n      }\n    ],\n    \"extensions\": \"\",\n    \"hints\": [\n      \"string\",\n      \"string\"\n    ],\n    \"pubKeyCredParams\": [\n      {\n        \"alg\": 9646,\n        \"type\": \"string\"\n      },\n      {\n        \"alg\": 4263,\n        \"type\": \"string\"\n      }\n    ],\n    \"timeout\": 6534\n  },\n  \"session_id\": \"97921b1c-84d9-96dd-dbc4-959c2cfc5e71\"\n}",
+                  "body": "{\n  \"publicKey\": {\n    \"challenge\": \"\",\n    \"rp\": {\n      \"id\": \"string\",\n      \"name\": \"string\"\n    },\n    \"user\": {\n      \"displayName\": \"string\",\n      \"id\": \"\",\n      \"name\": \"string\"\n    },\n    \"attestation\": \"string\",\n    \"attestationFormats\": [\n      \"string\",\n      \"string\"\n    ],\n    \"authenticatorSelection\": {\n      \"authenticatorAttachment\": \"string\",\n      \"requireResidentKey\": true,\n      \"residentKey\": \"string\",\n      \"userVerification\": \"string\"\n    },\n    \"excludeCredentials\": [\n      {\n        \"id\": \"\",\n        \"type\": \"string\",\n        \"transports\": [\n          \"string\",\n          \"string\"\n        ]\n      },\n      {\n        \"id\": \"\",\n        \"type\": \"string\",\n        \"transports\": [\n          \"string\",\n          \"string\"\n        ]\n      }\n    ],\n    \"extensions\": \"\",\n    \"hints\": [\n      \"string\",\n      \"string\"\n    ],\n    \"pubKeyCredParams\": [\n      {\n        \"alg\": 6811,\n        \"type\": \"string\"\n      },\n      {\n        \"alg\": 4201,\n        \"type\": \"string\"\n      }\n    ],\n    \"timeout\": 6522\n  },\n  \"session_id\": \"fb1c43c2-a62b-df3f-639a-1274588a2e90\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -18576,7 +18648,7 @@
                 "method": "POST",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"session_id\": \"{{sessionID}}\",\n  \"credential\": {\n    \"key_0\": 1774,\n    \"key_1\": 5858.971974812448,\n    \"key_2\": 6811.510880943388\n  },\n  \"name\": \"string\"\n}",
+                  "raw": "{\n  \"session_id\": \"{{sessionID}}\",\n  \"credential\": {\n    \"key_0\": false\n  },\n  \"name\": \"string\"\n}",
                   "options": { "raw": { "headerFamily": "json", "language": "json" } }
                 },
                 "auth": { "type": "noauth" }
@@ -18599,7 +18671,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"session_id\": \"7005d631-0447-96bb-78e2-79a6a1618079\",\n  \"credential\": {\n    \"key_0\": 1774,\n    \"key_1\": 5858.971974812448,\n    \"key_2\": 6811.510880943388\n  },\n  \"name\": \"string\"\n}",
+                      "raw": "{\n  \"session_id\": \"cc00b2b6-5884-a135-8792-3bb722f841bd\",\n  \"credential\": {\n    \"key_0\": false\n  },\n  \"name\": \"string\"\n}",
                       "options": { "raw": { "headerFamily": "json", "language": "json" } }
                     }
                   },
@@ -18626,7 +18698,7 @@
                       "value": "no-cache"
                     }
                   ],
-                  "body": "{\n  \"access_token\": \"string\",\n  \"expires_at\": \"1977-07-05T02:45:29.428Z\",\n  \"idle_expires_at\": \"1964-01-24T18:22:09.817Z\",\n  \"refresh_token\": \"string\",\n  \"session_expires_at\": \"2018-08-30T20:19:14.306Z\",\n  \"session_id\": \"a02e9dc8-22b5-cc38-c1e5-eb06d3e27daf\",\n  \"token_type\": \"Bearer\",\n  \"user_id\": \"84bbdbf0-3ad2-fc17-9eca-23e3dfc8e562\",\n  \"organization_id\": \"a550539e-8f27-2d94-3ac7-d22134c39ed4\"\n}",
+                  "body": "{\n  \"access_token\": \"string\",\n  \"expires_at\": \"2002-03-16T23:43:49.313Z\",\n  \"idle_expires_at\": \"2006-07-28T08:39:04.524Z\",\n  \"refresh_token\": \"string\",\n  \"session_expires_at\": \"1959-07-05T05:42:42.158Z\",\n  \"session_id\": \"134c39ed-f934-8f57-4d4e-9e7fd36c7cab\",\n  \"token_type\": \"Bearer\",\n  \"user_id\": \"b38add96-51d5-f65b-1710-e9fab9b2eab8\",\n  \"organization_id\": \"ad28bc0e-0599-942f-991f-ab336d8ff17e\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -18700,7 +18772,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"items\": [\n    {\n      \"created_at\": \"2003-05-31T22:00:27.385Z\",\n      \"email\": \"string\",\n      \"expires_at\": \"1964-10-24T18:25:29.033Z\",\n      \"id\": \"c244a62b-f3f1-39ac-2745-8a2e909e30ac\",\n      \"role_id\": \"b2b65c58-ea13-c879-03bb-22f841bd11e6\",\n      \"organization_id\": \"45417723-5443-9a0e-85f4-acdc7d9353ab\",\n      \"organization_name\": \"string\",\n      \"organization_slug\": \"string\"\n    },\n    {\n      \"created_at\": \"1964-09-09T07:26:07.929Z\",\n      \"email\": \"string\",\n      \"expires_at\": \"1981-04-20T13:41:24.159Z\",\n      \"id\": \"ad170325-f260-0fa2-8ed0-45257f490ca1\",\n      \"role_id\": null,\n      \"organization_id\": \"7b6b8f02-a700-7c38-5c35-135ead276027\",\n      \"organization_name\": \"string\",\n      \"organization_slug\": \"string\"\n    }\n  ],\n  \"truncated\": false\n}",
+                  "body": "{\n  \"items\": [\n    {\n      \"created_at\": \"2023-09-08T00:04:53.808Z\",\n      \"email\": \"string\",\n      \"expires_at\": \"2012-06-13T23:07:11.976Z\",\n      \"id\": \"f46acdc7-353a-efd3-ae26-c77a38cfad17\",\n      \"role_id\": \"5b2f2606-a208-d0e4-257f-90ca17e587b6\",\n      \"organization_id\": \"f02cba70-7c38-5c35-135e-d27602765534\",\n      \"organization_name\": \"string\",\n      \"organization_slug\": \"string\"\n    },\n    {\n      \"created_at\": \"2025-09-30T08:12:56.329Z\",\n      \"email\": \"string\",\n      \"expires_at\": \"2012-12-25T21:07:32.075Z\",\n      \"id\": \"70ff9fc2-11c4-953e-5cb8-7c476e3de9fd\",\n      \"role_id\": \"cc380936-8344-c901-efd5-46a4cd621add\",\n      \"organization_id\": \"a6135b4d-f126-8738-6cfc-d5012a40c558\",\n      \"organization_name\": \"string\",\n      \"organization_slug\": \"string\"\n    }\n  ],\n  \"truncated\": false\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -18791,7 +18863,7 @@
                       "value": "no-cache"
                     }
                   ],
-                  "body": "{\n  \"access_token\": \"string\",\n  \"expires_at\": \"1977-07-05T02:45:29.428Z\",\n  \"idle_expires_at\": \"1964-01-24T18:22:09.817Z\",\n  \"refresh_token\": \"string\",\n  \"session_expires_at\": \"2018-08-30T20:19:14.306Z\",\n  \"session_id\": \"a02e9dc8-22b5-cc38-c1e5-eb06d3e27daf\",\n  \"token_type\": \"Bearer\",\n  \"user_id\": \"84bbdbf0-3ad2-fc17-9eca-23e3dfc8e562\",\n  \"organization_id\": \"a550539e-8f27-2d94-3ac7-d22134c39ed4\"\n}",
+                  "body": "{\n  \"access_token\": \"string\",\n  \"expires_at\": \"2002-03-16T23:43:49.313Z\",\n  \"idle_expires_at\": \"2006-07-28T08:39:04.524Z\",\n  \"refresh_token\": \"string\",\n  \"session_expires_at\": \"1959-07-05T05:42:42.158Z\",\n  \"session_id\": \"134c39ed-f934-8f57-4d4e-9e7fd36c7cab\",\n  \"token_type\": \"Bearer\",\n  \"user_id\": \"b38add96-51d5-f65b-1710-e9fab9b2eab8\",\n  \"organization_id\": \"ad28bc0e-0599-942f-991f-ab336d8ff17e\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -18901,7 +18973,7 @@
                       "value": "no-cache"
                     }
                   ],
-                  "body": "{\n  \"access_token\": \"string\",\n  \"expires_at\": \"1977-07-05T02:45:29.428Z\",\n  \"idle_expires_at\": \"1964-01-24T18:22:09.817Z\",\n  \"refresh_token\": \"string\",\n  \"session_expires_at\": \"2018-08-30T20:19:14.306Z\",\n  \"session_id\": \"a02e9dc8-22b5-cc38-c1e5-eb06d3e27daf\",\n  \"token_type\": \"Bearer\",\n  \"user_id\": \"84bbdbf0-3ad2-fc17-9eca-23e3dfc8e562\",\n  \"organization_id\": \"a550539e-8f27-2d94-3ac7-d22134c39ed4\"\n}",
+                  "body": "{\n  \"access_token\": \"string\",\n  \"expires_at\": \"2002-03-16T23:43:49.313Z\",\n  \"idle_expires_at\": \"2006-07-28T08:39:04.524Z\",\n  \"refresh_token\": \"string\",\n  \"session_expires_at\": \"1959-07-05T05:42:42.158Z\",\n  \"session_id\": \"134c39ed-f934-8f57-4d4e-9e7fd36c7cab\",\n  \"token_type\": \"Bearer\",\n  \"user_id\": \"b38add96-51d5-f65b-1710-e9fab9b2eab8\",\n  \"organization_id\": \"ad28bc0e-0599-942f-991f-ab336d8ff17e\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -19139,7 +19211,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"invite\": {\n    \"accepted_at\": \"1951-05-16T19:36:54.243Z\",\n    \"created_at\": \"2021-12-08T04:32:47.633Z\",\n    \"email\": \"string\",\n    \"expires_at\": \"1964-06-12T18:34:08.541Z\",\n    \"id\": \"e11c4095-f5cb-77c4-6e3d-9fd85dcc3809\",\n    \"role_id\": \"383447c9-2efd-846a-cd62-add7fa6135b4\",\n    \"status\": \"expired\",\n    \"organization_id\": \"126d8738-cfc3-5012-40c5-8cadcfc53c36\",\n    \"delivery\": {\n      \"status\": \"string\",\n      \"code\": \"string\",\n      \"message\": \"string\"\n    }\n  }\n}",
+                  "body": "{\n  \"invite\": {\n    \"accepted_at\": \"2022-08-24T21:55:34.647Z\",\n    \"created_at\": \"1970-01-27T18:42:59.829Z\",\n    \"email\": \"string\",\n    \"expires_at\": \"1983-09-16T19:25:54.234Z\",\n    \"id\": \"8f12d63c-480f-4a0d-2195-7f7437d84b45\",\n    \"role_id\": \"5f64c2ce-f538-5b25-8fd2-f10e6e462163\",\n    \"status\": \"revoked\",\n    \"organization_id\": \"94536fb8-23ea-cdf6-04e5-38887a7253fc\",\n    \"delivery\": {\n      \"status\": \"string\",\n      \"code\": \"string\",\n      \"message\": \"string\"\n    }\n  }\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -19220,7 +19292,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"items\": [\n    {\n      \"accepted_at\": \"1957-05-05T13:14:14.536Z\",\n      \"created_at\": \"2010-10-03T03:53:38.135Z\",\n      \"email\": \"string\",\n      \"expires_at\": \"1985-12-15T14:13:19.683Z\",\n      \"id\": \"34a0db21-c7f7-37d8-b459-05f64c2ce0ef\",\n      \"role_id\": \"85b2528f-1f10-6e46-1632-c594536fb8de\",\n      \"status\": \"accepted\",\n      \"organization_id\": \"ecdf6d04-4388-7a72-3fcf-c45e57366a07\",\n      \"delivery\": {\n        \"status\": \"string\",\n        \"code\": \"string\",\n        \"message\": \"string\"\n      }\n    },\n    {\n      \"accepted_at\": null,\n      \"created_at\": \"2005-02-10T08:08:29.688Z\",\n      \"email\": \"string\",\n      \"expires_at\": \"1996-01-28T00:41:54.679Z\",\n      \"id\": \"049496c7-12d5-42b7-94e0-73a4504f040f\",\n      \"role_id\": null,\n      \"status\": \"expired\",\n      \"organization_id\": \"f792914a-bdea-2069-1716-149f62d0e1e7\",\n      \"delivery\": {\n        \"status\": \"string\",\n        \"code\": \"string\",\n        \"message\": \"string\"\n      }\n    }\n  ],\n  \"truncated\": true\n}",
+                  "body": "{\n  \"items\": [\n    {\n      \"accepted_at\": \"1980-09-17T15:37:20.046Z\",\n      \"created_at\": \"1989-09-13T17:35:47.904Z\",\n      \"email\": \"string\",\n      \"expires_at\": \"1996-09-14T21:06:19.677Z\",\n      \"id\": \"4944e53e-9496-7de1-d524-b7694e0e73a4\",\n      \"role_id\": \"f040f9c3-af79-914a-bbde-72069e171641\",\n      \"status\": \"expired\",\n      \"organization_id\": \"2d0e1e79-c2e1-6a49-2f91-510f84a8d2cb\",\n      \"delivery\": {\n        \"status\": \"string\",\n        \"code\": \"string\",\n        \"message\": \"string\"\n      }\n    },\n    {\n      \"accepted_at\": \"1995-08-31T11:35:35.292Z\",\n      \"created_at\": \"1979-04-08T07:47:09.042Z\",\n      \"email\": \"string\",\n      \"expires_at\": \"1984-02-24T10:07:19.046Z\",\n      \"id\": \"13e5c67f-d6ec-a03e-4f08-044b8bc38249\",\n      \"role_id\": \"2c79267b-75a6-3318-f5d5-136ddb944b28\",\n      \"status\": \"expired\",\n      \"organization_id\": \"380fedc6-ab91-6e3e-aaa7-5a21324a0106\",\n      \"delivery\": {\n        \"status\": \"string\",\n        \"code\": \"string\",\n        \"message\": \"string\"\n      }\n    }\n  ],\n  \"truncated\": true\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -19395,7 +19467,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"organization_id\": \"b64aedfb-c6b5-b146-6952-280a13e5c67f\",\n  \"logo_url\": null,\n  \"primary_color\": \"string\",\n  \"secondary_color\": null,\n  \"custom_domain\": \"string\",\n  \"email_from_name\": null,\n  \"settings\": {\n    \"background_color\": \"#B4c45d\",\n    \"email_reply_to\": \"string\"\n  }\n}",
+                  "body": "{\n  \"organization_id\": \"5beeb8ca-bfbd-2615-b0d8-d67c84d1bf6f\",\n  \"logo_url\": null,\n  \"primary_color\": \"string\",\n  \"secondary_color\": \"string\",\n  \"custom_domain\": \"string\",\n  \"email_from_name\": \"string\",\n  \"settings\": {\n    \"background_color\": \"\",\n    \"email_reply_to\": \"string\",\n    \"key_0\": 9587.538843043149\n  }\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -19436,7 +19508,7 @@
                 "method": "PUT",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"organization_id\": \"{{organizationID}}\",\n  \"logo_url\": null,\n  \"primary_color\": null,\n  \"secondary_color\": \"string\",\n  \"custom_domain\": null,\n  \"email_from_name\": null,\n  \"email_from_address\": null,\n  \"settings\": {\n    \"background_color\": \"\",\n    \"email_reply_to\": \"string\"\n  }\n}",
+                  "raw": "{\n  \"organization_id\": \"{{organizationID}}\",\n  \"logo_url\": \"string\",\n  \"primary_color\": \"string\",\n  \"secondary_color\": null,\n  \"custom_domain\": null,\n  \"email_from_name\": \"string\",\n  \"email_from_address\": null,\n  \"settings\": {\n    \"background_color\": \"#5eBD20\",\n    \"email_reply_to\": \"string\",\n    \"key_0\": \"string\",\n    \"key_1\": \"string\",\n    \"key_2\": 7598.031389061362,\n    \"key_3\": true\n  }\n}",
                   "options": { "raw": { "headerFamily": "json", "language": "json" } }
                 },
                 "auth": {
@@ -19481,14 +19553,14 @@
                     "method": "PUT",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"organization_id\": \"6c3318cf-5d13-ddb9-4b28-b3d380fedc6c\",\n  \"logo_url\": null,\n  \"primary_color\": null,\n  \"secondary_color\": \"string\",\n  \"custom_domain\": null,\n  \"email_from_name\": null,\n  \"email_from_address\": null,\n  \"settings\": {\n    \"background_color\": \"\",\n    \"email_reply_to\": \"string\"\n  }\n}",
+                      "raw": "{\n  \"organization_id\": \"80136c8a-0794-8eab-1a96-a6de4d53e211\",\n  \"logo_url\": \"string\",\n  \"primary_color\": \"string\",\n  \"secondary_color\": null,\n  \"custom_domain\": null,\n  \"email_from_name\": \"string\",\n  \"email_from_address\": null,\n  \"settings\": {\n    \"background_color\": \"#5eBD20\",\n    \"email_reply_to\": \"string\",\n    \"key_0\": \"string\",\n    \"key_1\": \"string\",\n    \"key_2\": 7598.031389061362,\n    \"key_3\": true\n  }\n}",
                       "options": { "raw": { "headerFamily": "json", "language": "json" } }
                     }
                   },
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"organization_id\": \"b64aedfb-c6b5-b146-6952-280a13e5c67f\",\n  \"logo_url\": null,\n  \"primary_color\": \"string\",\n  \"secondary_color\": null,\n  \"custom_domain\": \"string\",\n  \"email_from_name\": null,\n  \"settings\": {\n    \"background_color\": \"#B4c45d\",\n    \"email_reply_to\": \"string\"\n  }\n}",
+                  "body": "{\n  \"organization_id\": \"5beeb8ca-bfbd-2615-b0d8-d67c84d1bf6f\",\n  \"logo_url\": null,\n  \"primary_color\": \"string\",\n  \"secondary_color\": \"string\",\n  \"custom_domain\": \"string\",\n  \"email_from_name\": \"string\",\n  \"settings\": {\n    \"background_color\": \"\",\n    \"email_reply_to\": \"string\",\n    \"key_0\": 9587.538843043149\n  }\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }

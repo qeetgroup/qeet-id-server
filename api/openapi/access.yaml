@@ -7135,10 +7135,12 @@ components:
           description: The person's picture as a data:image/ URL, or null for none.
         status:
           type: string
+          description: deleted only for someone since deleted, on a members list that asked to include them (include_deleted).
           enum:
             - active
             - invited
             - suspended
+            - deleted
         metadata:
           type:
             - object
@@ -7188,6 +7190,10 @@ components:
             - string
             - "null"
           description: The name of the organization that manages the account (organization_id).
+        deleted_at:
+          type: string
+          format: date-time
+          description: When someone since deleted was, on a members list that asked to include them (include_deleted); absent for everyone else.
         suspension:
           type:
             - object

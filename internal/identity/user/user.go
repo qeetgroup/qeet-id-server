@@ -41,6 +41,9 @@ type User struct {
 	LastSeenIP           *string     `json:"last_seen_ip,omitempty"`
 	HomeOrganizationName *string     `json:"home_organization_name,omitempty"`
 	Suspension           *Suspension `json:"suspension,omitempty"`
+	// DeletedAt is when someone since deleted was, on a list that asked for
+	// them (include_deleted); absent for everyone else.
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
 }
 
 // SeenBy is u as organization organizationID sees it: a person whose home is

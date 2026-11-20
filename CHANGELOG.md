@@ -10,6 +10,9 @@ The first release, 2027.1.0, is in preparation. No version has been published ye
 
 ### Added
 
+- `GET /v1/users` names people in one read: `id` and `email` (each repeatable, up to 200; an email in any case)
+  answer exactly those members, with the other filters, and `include_deleted=true` adds the members since
+  deleted, each marked with `deleted_at` and status `deleted`, so history can still name them.
 - `GET /v1/users` filters `admins_without_mfa` (the owners and admins with no second factor, exactly those the
   summary counts) and `in_group` (in one of the organization's groups, or in none), and pages by cursor in
   every order: by name, by when last seen and by creation, either way, stable when sort keys tie. A cursor

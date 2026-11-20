@@ -492,3 +492,85 @@ func TestEveryOrderPagesToTheEnd(t *testing.T) {
 		}
 	}
 }
+
+// TestTheListNamesMembersByIDOrEmail checks that the members list answers
+// exactly the members named by id or by email (in any case), combined with the
+// other filters, never another organization's people, and someone since
+// deleted only when asked to include them, marked as deleted. Too many names,
+// or a malformed one, is refused.
+func TestTheListNamesMembersByIDOrEmail(t *testing.T) {
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	asha := dbtest.UserAt(t, dbtest.Unique("Asha")+"@Example.test", organization, organization)
+	ravi := dbtest.User(t, organization, organization)
+	exec(t, `UPDATE account.users SET status = 'suspended' WHERE id = $1`, ravi.ID)
+	visitor := dbtest.User(t, other, organization)
+	stranger := dbtest.User(t, other, other)
+	gone := dbtest.User(t, organization, organization)
+	exec(t, `UPDATE account.users SET deleted_at = NOW(), status = 'deleted' WHERE id = $1`, gone.ID)
+	as := dbtest.Serve(dbtest.Principal(admin.ID, organization), testHandler(t, nil).Mount)
+	type page struct {
+		Items []User `json:"items"`
+		Total int    `json:"total"`
+	}
+	list := func(query url.Values) page {
+		t.Helper()
+		rec := dbtest.Do(t, as, http.MethodGet, "/users?"+query.Encode(), nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list %v: %d %s", query, rec.Code, rec.Body.String())
+		}
+		var p page
+		dbtest.Decode(t, rec, &p)
+		return p
+	}
+	sorted := func(p page) []uuid.UUID {
+		out := make([]uuid.UUID, 0, len(p.Items))
+		for _, u := range p.Items {
+			out = append(out, u.ID)
+		}
+		return slices.SortedFunc(slices.Values(out), uuidCompare)
+	}
+	want := func(ids ...uuid.UUID) []uuid.UUID { return slices.SortedFunc(slices.Values(ids), uuidCompare) }
+
+	for name, c := range map[string]struct {
+		query url.Values
+		want  []uuid.UUID
+	}{
+		"two by id":                    {url.Values{"id": {asha.ID.String(), visitor.ID.String()}}, want(asha.ID, visitor.ID)},
+		"by id, with a filter":         {url.Values{"id": {asha.ID.String(), ravi.ID.String()}, "status": {"suspended"}}, want(ravi.ID)},
+		"another organization's by id": {url.Values{"id": {stranger.ID.String()}}, nil},
+		"by email, in another case":    {url.Values{"email": {strings.ToUpper(asha.Email), ravi.Email}}, want(asha.ID, ravi.ID)},
+		"another organization's email": {url.Values{"email": {stranger.Email}}, nil},
+		"by id and by email":           {url.Values{"id": {asha.ID.String()}, "email": {asha.Email, ravi.Email}}, want(asha.ID)},
+		"someone deleted":              {url.Values{"id": {gone.ID.String()}}, nil},
+		"someone deleted, asked for":   {url.Values{"id": {gone.ID.String(), asha.ID.String()}, "include_deleted": {"true"}}, want(gone.ID, asha.ID)},
+	} {
+		p := list(c.query)
+		if got := sorted(p); !slices.Equal(got, c.want) || p.Total != len(c.want) {
+			t.Errorf("%s: %v (total %d), want %v", name, got, p.Total, c.want)
+		}
+	}
+
+	everyone := list(url.Values{"include_deleted": {"true"}, "limit": {"200"}})
+	if got := sorted(everyone); !slices.Equal(got, want(admin.ID, asha.ID, ravi.ID, visitor.ID, gone.ID)) {
+		t.Errorf("everyone, the deleted included: %v", got)
+	}
+	for _, u := range everyone.Items {
+		if (u.ID == gone.ID) != (u.DeletedAt != nil) || u.ID == gone.ID && u.Status != "deleted" {
+			t.Errorf("%s is marked deleted at %v with status %s; want only the deleted person marked", u.ID, u.DeletedAt, u.Status)
+		}
+	}
+	if body := dbtest.Do(t, as, http.MethodGet, "/users", nil).Body.String(); strings.Contains(body, "deleted_at") || strings.Contains(body, gone.ID.String()) {
+		t.Errorf("the list without include_deleted: %s; want no one deleted", body)
+	}
+
+	many := url.Values{}
+	for range 201 {
+		many.Add("id", uuid.NewString())
+	}
+	for _, bad := range []url.Values{many, {"id": {"not-an-id"}}, {"email": {" "}}, {"include_deleted": {"maybe"}}} {
+		if rec := dbtest.Do(t, as, http.MethodGet, "/users?"+bad.Encode(), nil); rec.Code != http.StatusBadRequest {
+			t.Errorf("list with %.80s: %d, want 400", bad.Encode(), rec.Code)
+		}
+	}
+}

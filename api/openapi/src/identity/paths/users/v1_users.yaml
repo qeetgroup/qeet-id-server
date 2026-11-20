@@ -11,7 +11,11 @@ get:
     admin role with no confirmed second factor, exactly those the summary's
     admins_without_mfa counts; false: everyone else), in_group (true: in at
     least one of the organization's groups; false: in none of them, whatever
-    groups they are in elsewhere). sort is created (the default, newest first),
+    groups they are in elsewhere), id and email (each repeatable, up to 200:
+    exactly the members named, an email in any case; with limit=200 one read
+    puts a name to up to 200 people), include_deleted (true: also the members
+    since deleted, so history can still name them, each marked with
+    deleted_at and status deleted). sort is created (the default, newest first),
     name (by display name, or the email without one, case-insensitive; A first
     by default) or last_seen (most recent first by default; a member never
     seen comes last either way), with order asc or desc; a malformed value is
@@ -96,6 +100,44 @@ get:
       description: >-
         true: only the members in at least one of the organization's groups;
         false: only those in none of them.
+      schema:
+        type: boolean
+    - name: id
+      in: query
+      required: false
+      description: >-
+        Only these members, by id. Repeat it, up to 200 times
+        (id=a&id=b); another organization's people are never answered.
+      style: form
+      explode: true
+      schema:
+        type: array
+        maxItems: 200
+        items:
+          type: string
+          format: uuid
+    - name: email
+      in: query
+      required: false
+      description: >-
+        Only these members, by email, exactly but in any case. Repeat it, up
+        to 200 times.
+      style: form
+      explode: true
+      schema:
+        type: array
+        maxItems: 200
+        items:
+          type: string
+          minLength: 1
+          maxLength: 320
+    - name: include_deleted
+      in: query
+      required: false
+      description: >-
+        true: the members since deleted too (the organization's own people
+        it deleted, and anyone deleted who still holds one of its roles), each
+        with deleted_at and status deleted.
       schema:
         type: boolean
     - name: sort
