@@ -81,7 +81,9 @@ tags:
       from the transactional outbox; reconnects replay missed events via
       Last-Event-ID.
   - name: Analytics
-    description: Per-organization usage analytics.
+    description: >-
+      Per-organization usage analytics, and the dashboard's overview of what is
+      set up.
   - name: Search
     description: >-
       Universal organization-scoped fuzzy search across all resource types. Results
@@ -147,6 +149,8 @@ paths:
     $ref: paths/health/v1_organizations_{organizationID}_service-health.yaml
   /v1/organizations/{organizationID}/analytics/overview:
     $ref: paths/analytics/v1_organizations_{organizationID}_analytics_overview.yaml
+  /v1/organizations/{organizationID}/overview:
+    $ref: paths/analytics/v1_organizations_{organizationID}_overview.yaml
   /v1/search:
     $ref: paths/search/v1_search.yaml
   /v1/organizations/{organizationID}/audit:

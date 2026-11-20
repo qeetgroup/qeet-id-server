@@ -42,7 +42,7 @@ tags:
   - name: Activity
     description: Live Activity feed — a real-time SSE event stream and cursor-paginated history, both sourced from the hash-chained audit log and the NATS outbox. Organization-scoped; requires audit.read. The SSE stream fans out domain events from the transactional outbox; reconnects replay missed events via Last-Event-ID.
   - name: Analytics
-    description: Per-organization usage analytics.
+    description: Per-organization usage analytics, and the dashboard's overview of what is set up.
   - name: Search
     description: Universal organization-scoped fuzzy search across all resource types. Results are RBAC-gated per type — the caller only sees resources their role allows them to read.
   - name: Audit
@@ -738,6 +738,35 @@ paths:
           $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/organizations/{organizationID}/overview:
+    get:
+      operationId: getOrganizationOverview
+      summary: Organization overview
+      description: "The dashboard's set-up checklist and counts in one read. Each area is answered only to a caller the area's own list would admit, and left out of the answer otherwise: single_sign_on, applications, domains, directory and remembered_devices need connection.read; api_keys apikey.read; webhooks webhook.read; sign_in, access_policies and threats policy.read; invitations user.read; billing billing.read. A person is judged by their roles, an application's token also by its scopes, and an API key, service principal or agent by its scopes, as the route guard judges them. The read itself needs organization.read. The detailed lists stay at their own reads."
+      tags:
+        - Analytics
+      parameters:
+        - $ref: "#/components/parameters/OrganizationID"
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        "200":
+          description: The overview, with the areas the caller may read
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizationOverview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "429":
           $ref: "#/components/responses/TooManyRequests"
   /v1/search:
@@ -5147,6 +5176,212 @@ components:
                     type: integer
                   failed:
                     type: integer
+    OverviewCount:
+      type: object
+      description: How many there are of something, and how many are in use.
+      required:
+        - total
+        - active
+      properties:
+        total:
+          type: integer
+        active:
+          type: integer
+    OrganizationOverview:
+      type: object
+      description: An organization's set-up state and counts. An area is present only when the caller may read it, and then carries every one of its fields.
+      required:
+        - organization_id
+        - generated_at
+      properties:
+        organization_id:
+          type: string
+          format: uuid
+        generated_at:
+          type: string
+          format: date-time
+        single_sign_on:
+          type: object
+          description: "The organization's SAML, LDAP and OpenID Connect connections (active: status active), its social providers (active: turned on) and its SCIM tokens still accepted. Needs connection.read."
+          required:
+            - saml
+            - ldap
+            - oidc
+            - social_providers
+            - scim_tokens_active
+          properties:
+            saml:
+              $ref: "#/components/schemas/OverviewCount"
+            ldap:
+              $ref: "#/components/schemas/OverviewCount"
+            oidc:
+              $ref: "#/components/schemas/OverviewCount"
+            social_providers:
+              $ref: "#/components/schemas/OverviewCount"
+            scim_tokens_active:
+              type: integer
+        applications:
+          type: object
+          description: "The organization's OpenID Connect applications, the SAML service providers it signs people in to (active: status active), the live grants people gave the applications, and how many people hold one. Needs connection.read."
+          required:
+            - oidc_clients
+            - saml_service_providers
+            - active_grants
+            - people_with_grants
+          properties:
+            oidc_clients:
+              type: integer
+            saml_service_providers:
+              $ref: "#/components/schemas/OverviewCount"
+            active_grants:
+              type: integer
+            people_with_grants:
+              type: integer
+        domains:
+          type: object
+          description: "The organization's domains: all, verified, and verified with single sign-on required. Needs connection.read."
+          required:
+            - total
+            - verified
+            - sso_required
+          properties:
+            total:
+              type: integer
+            verified:
+              type: integer
+            sso_required:
+              type: integer
+        directory:
+          type: object
+          description: The directory errors of the last 7 days still open, as the directory errors page shows them by default. Needs connection.read.
+          required:
+            - open_errors
+          properties:
+            open_errors:
+              type: integer
+        remembered_devices:
+          type: object
+          description: The devices that still skip the second step, and the people they belong to. Needs connection.read.
+          required:
+            - devices
+            - people
+          properties:
+            devices:
+              type: integer
+            people:
+              type: integer
+        api_keys:
+          type: object
+          description: The API keys still accepted (not revoked, not expired). Needs apikey.read.
+          required:
+            - active
+          properties:
+            active:
+              type: integer
+        webhooks:
+          type: object
+          description: "The webhook subscriptions: all, turned on, and turned on with failing deliveries. Needs webhook.read."
+          required:
+            - total
+            - enabled
+            - failing
+          properties:
+            total:
+              type: integer
+            enabled:
+              type: integer
+            failing:
+              type: integer
+        sign_in:
+          type: object
+          description: The first-factor methods allowed, whether people may register themselves and devices be remembered, and who must use a second factor. Needs policy.read.
+          required:
+            - password
+            - passkey
+            - magic_link
+            - self_registration
+            - remember_device
+            - mfa_enforcement
+          properties:
+            password:
+              type: boolean
+            passkey:
+              type: boolean
+            magic_link:
+              type: boolean
+            self_registration:
+              type: boolean
+            remember_device:
+              type: boolean
+            mfa_enforcement:
+              type: string
+              enum:
+                - optional
+                - required
+                - admin_only
+        access_policies:
+          type: object
+          description: "The attribute-based access policies (active: turned on). Needs policy.read."
+          required:
+            - abac
+          properties:
+            abac:
+              $ref: "#/components/schemas/OverviewCount"
+        threats:
+          type: object
+          description: The security anomalies still open. Needs policy.read.
+          required:
+            - open_anomalies
+          properties:
+            open_anomalies:
+              type: integer
+        invitations:
+          type: object
+          description: "The invitations still waiting to be answered: pending and not expired. Needs user.read."
+          required:
+            - pending
+          properties:
+            pending:
+              type: integer
+        billing:
+          type: object
+          description: The plan, and the subscription's state when there is one (null fields without). Needs billing.read.
+          required:
+            - plan
+            - subscription_status
+            - trial_end
+            - current_period_end
+            - cancel_at_period_end
+          properties:
+            plan:
+              type: string
+              enum:
+                - free
+                - starter
+                - pro
+                - enterprise
+            subscription_status:
+              type:
+                - string
+                - "null"
+              enum:
+                - active
+                - trialing
+                - canceled
+                - past_due
+                - null
+            trial_end:
+              type:
+                - string
+                - "null"
+              format: date-time
+            current_period_end:
+              type:
+                - string
+                - "null"
+              format: date-time
+            cancel_at_period_end:
+              type: boolean
     SearchResult:
       type: object
       description: One item returned by the universal search endpoint.

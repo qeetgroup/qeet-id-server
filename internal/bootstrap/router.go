@@ -59,6 +59,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/gdpr"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/notification"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/overview"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/qeetai"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/ratelimits"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/retention"
@@ -114,6 +115,7 @@ type Deps struct {
 	Entitlement   *entitlements.Handler
 	Sales         *sales.Handler
 	Analytics     *analytics.Handler
+	Overview      *overview.Handler
 	ServiceHealth *servicehealth.Handler
 	OIDC          *oidc.Handler
 	Passkey       *passkey.Handler
@@ -369,17 +371,7 @@ func mountAuthenticatedRoutes(r chi.Router, d Deps) {
 	d.Webhook.Mount(r)
 	d.Policy.Mount(r)
 	d.AuthPolicy.Mount(r)
-	d.GDPR.Mount(r)
-	d.Compliance.Mount(r)
-	d.Retention.Mount(r)
-	d.Audit.Mount(r)
-	d.AuditAnomaly.Mount(r)
-	d.CriticalEvents.Mount(r)
-	d.Billing.Mount(r)
-	d.Entitlement.Mount(r)
-	d.Sales.Mount(r)
-	d.Analytics.Mount(r)
-	d.ServiceHealth.Mount(r)
+	mountOperationsRoutes(r, d)
 	d.OIDC.Mount(r)
 	d.Passkey.Mount(r)
 	d.Social.Mount(r)
@@ -412,6 +404,24 @@ func mountAuthenticatedRoutes(r chi.Router, d Deps) {
 	d.Qeetai.Mount(r)
 	d.Search.Mount(r)
 	d.Activity.Mount(r)
+}
+
+// mountOperationsRoutes is mountAuthenticatedRoutes' step for the operations
+// context's compliance, audit, billing and reporting routes, on the same
+// router and behind the same middleware.
+func mountOperationsRoutes(r chi.Router, d Deps) {
+	d.GDPR.Mount(r)
+	d.Compliance.Mount(r)
+	d.Retention.Mount(r)
+	d.Audit.Mount(r)
+	d.AuditAnomaly.Mount(r)
+	d.CriticalEvents.Mount(r)
+	d.Billing.Mount(r)
+	d.Entitlement.Mount(r)
+	d.Sales.Mount(r)
+	d.Analytics.Mount(r)
+	d.Overview.Mount(r)
+	d.ServiceHealth.Mount(r)
 }
 
 // ApplicationTokenRoutes lists the authenticated routes that accept a token

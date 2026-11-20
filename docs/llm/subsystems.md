@@ -306,7 +306,7 @@ SHA-256 hash chaining to the previous row in the same organization; tampering (d
 breaks the chain and is caught by `Verifier.Verify`."_ Rows with no organization go on one of 16
 platform chains (`chain_shard`, the writer's database connection's), so their writers don't
 queue on one lock; each is a whole chain with its own tip, lock and checkpoint.
-**Path** `internal/operations/{audit,billing,gdpr,compliance,analytics,retention,siem,activity,notification,entitlements,ratelimits,search,sales,email,qeetai,servicehealth}/`
+**Path** `internal/operations/{audit,billing,gdpr,compliance,analytics,overview,retention,siem,activity,notification,entitlements,ratelimits,search,sales,email,qeetai,servicehealth}/`
 **Key dependencies** `platform/http/{errs,httpx}` · `platform/ai` (+`openai`, `anthropic`) — **sole
 consumer** · `platform/cache/ratelimit`
 **Security** **Critical** for `audit/`; **High** for `billing/`, `gdpr/`, `siem/`
@@ -327,6 +327,7 @@ gdpr/organizationpurge.go        a deleted organization's data purged after 30 d
 retention/retention.go · retention/sweeps.go   purge window, sweeps of every growing table
 siem/forward.go · analytics/analytics.go
 servicehealth/servicehealth.go   each component's state, operator-posted incidents
+overview/overview.go   the dashboard's set-up state and counts, each area only for a caller its list admits
 activity/{activity,stream,history,summary,related,rows,hub}.go   SSE feed and history
 qeetai/{qeetai,orchestrator,sse,tools,providercfg,http}.go
 entitlements/ · ratelimits/ · search/ · notifications/ · sales/ · email/

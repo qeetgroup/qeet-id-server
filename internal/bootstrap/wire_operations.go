@@ -22,6 +22,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/gdpr"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/notification"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/overview"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/qeetai"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/ratelimits"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/retention"
@@ -208,6 +209,12 @@ func (w *wiring) operationsCheckedHandlers(d *Deps) error {
 	}); err != nil {
 		return fmt.Errorf("qeet ai handler: %w", err)
 	}
+	// The overview shows each area to a caller its own list's route would admit.
+	overviewService, err := overview.NewService(w.pool, overviewAccess(w.decider), w.authPolicyService)
+	if err != nil {
+		return fmt.Errorf("overview service: %w", err)
+	}
+	d.Overview = &overview.Handler{Service: overviewService}
 	// An open activity stream is checked again as its request was admitted.
 	if d.Activity, err = activity.NewHandler(w.pool, w.activityHub,
 		streamAccess(w.verifier, w.decider, RoutePolicies()["GET /v1/activity/stream"])); err != nil {
@@ -417,8 +424,10 @@ func operationsPermissions() map[string]string {
 		"GET /v1/organizations/{organizationID}/entitlements":                      "billing.read",
 		"GET /v1/organizations/{organizationID}/entitlements/usage":                "billing.read",
 
-		// Analytics.
+		// Analytics, and the dashboard's overview: each of its areas only for a
+		// caller holding the permission that area's own list needs.
 		"GET /v1/organizations/{organizationID}/analytics/overview": "analytics.read",
+		"GET /v1/organizations/{organizationID}/overview":           "organization.read",
 		"GET /v1/organizations/{organizationID}/service-health":     "organization.read",
 
 		// Email delivery: whether the organization's mail arrived (support),

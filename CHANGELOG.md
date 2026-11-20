@@ -10,6 +10,12 @@ The first release, 2027.1.0, is in preparation. No version has been published ye
 
 ### Added
 
+- `GET /v1/organizations/{organizationID}/overview`: the dashboard's set-up checklist and counts in one read,
+  in place of the many list reads it made only to learn what is set up: single sign-on connections, social
+  providers and SCIM tokens, applications and their grants, domains, directory errors, remembered devices, API
+  keys, webhooks, sign-in settings, access policies, open anomalies, pending invitations and the plan. Each
+  area is answered only to a caller the area's own list would admit, and left out otherwise; the read itself
+  needs `organization.read`.
 - `GET /v1/users/stats` counts the organization's own people by team (`by_team`: department, team and count) and
   by location (`by_location`), from their metadata, as `by_department` does: largest first, up to 200 each, and
   always sent (an empty list when there are none).
