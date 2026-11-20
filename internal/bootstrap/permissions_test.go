@@ -62,6 +62,20 @@ func TestDirectoryConnectionsRequireConnectionRead(test *testing.T) {
 	}
 }
 
+// TestPeopleReadTheirOwnPermissionsWithoutRoleRead checks that a person reads
+// their own effective permissions as a person's own route, with no permission
+// and no machine credential, while another person's still need role.read.
+func TestPeopleReadTheirOwnPermissionsWithoutRoleRead(t *testing.T) {
+	policies := RoutePolicies()
+	own := policies["GET /v1/me/permissions"]
+	if !own.AllowUser || own.UserPermission != "" || own.AllowAPIKey || own.AllowService || own.AllowAgent || len(own.MachineScopes) != 0 {
+		t.Errorf("GET /v1/me/permissions policy = %+v, want a person's own route", own)
+	}
+	if other := policies["GET /v1/users/{userID}/organizations/{organizationID}/permissions"]; other.UserPermission != "role.read" {
+		t.Errorf("reading another person's permissions needs %q, want role.read", other.UserPermission)
+	}
+}
+
 func TestAuthenticatedRoutesHaveExplicitPolicies(t *testing.T) {
 	router := chi.NewRouter()
 	router.Route("/v1", func(r chi.Router) {

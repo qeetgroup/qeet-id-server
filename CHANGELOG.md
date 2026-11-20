@@ -10,6 +10,10 @@ The first release, 2027.1.0, is in preparation. No version has been published ye
 
 ### Added
 
+- `GET /v1/me/permissions`: a person's own effective permissions in the organization their token is for,
+  with every grant behind them, as `GET /v1/users/{userID}/organizations/{organizationID}/permissions`
+  answers. It needs no permission, so someone holding none (the built-in member role) reads empty lists and
+  the console can show them what they may use; another person's still need `role.read`.
 - Metrics for sign-ins (`sign_ins_total`, by method and outcome), the token endpoint
   (`oauth_token_requests_total`, by grant and outcome), rate-limit rejections (`rate_limit_rejections_total`)
   and webhooks (`webhook_deliveries_total`, `webhook_pending_deliveries`, `webhook_oldest_pending_age_seconds`).

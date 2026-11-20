@@ -53,6 +53,8 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Delete("/organizations/{organizationID}/groups/{groupID}/roles/{roleID}", h.unassignGroupRole)
 
 	r.Get("/users/{userID}/organizations/{organizationID}/permissions", h.effective)
+	// A person's own, in the organization they're signed in to: no role.read.
+	r.Get("/me/permissions", h.myEffective)
 	r.Get("/check", h.check)
 }
 
@@ -396,15 +398,42 @@ func (h *Handler) effective(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	keys, err := h.Repo.EffectivePermissions(r.Context(), uid, tid)
+	h.writeEffective(w, r, uid, tid)
+}
+
+// myEffective serves GET /me/permissions: the caller's own effective
+// permissions in the organization their token is for, with every grant behind
+// them, so someone holding none can still learn what they may use. Another
+// person's need role.read (effective).
+func (h *Handler) myEffective(w http.ResponseWriter, r *http.Request) {
+	organizationID, err := httpx.RequireOrganization(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	grants, err := h.Repo.Grants(r.Context(), uid, tid)
+	userID, err := httpx.RequireUser(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
+	}
+	h.writeEffective(w, r, userID, organizationID)
+}
+
+// writeEffective answers userID's effective permissions in organizationID and
+// the grants behind them, each an empty list when there are none.
+func (h *Handler) writeEffective(w http.ResponseWriter, r *http.Request, userID, organizationID uuid.UUID) {
+	keys, err := h.Repo.EffectivePermissions(r.Context(), userID, organizationID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	grants, err := h.Repo.Grants(r.Context(), userID, organizationID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if keys == nil {
+		keys = []string{}
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"permissions": keys, "grants": grants})
 }

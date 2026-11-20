@@ -4215,7 +4215,7 @@ paths:
   /v1/users/{userID}/organizations/{organizationID}/permissions:
     get:
       operationId: listEffectivePermissions
-      description: "Returns the flattened set of permission keys a user effectively holds in a organization, combining direct role assignments with roles inherited through group membership, and in grants every grant behind them: each permission with the role granting it, held directly or through which group (one entry per role and group, so a permission granted twice appears twice). Use it to explain why a user can or cannot perform an action, complementing the single-permission decision from the permission-check call. It is read-only and reflects the grants in force at call time. Needs role.read."
+      description: "Returns the flattened set of permission keys a user effectively holds in a organization, combining direct role assignments with roles inherited through group membership, and in grants every grant behind them: each permission with the role granting it, held directly or through which group (one entry per role and group, so a permission granted twice appears twice). Use it to explain why a user can or cannot perform an action, complementing the single-permission decision from the permission-check call. It is read-only and reflects the grants in force at call time. Needs role.read, even for the caller's own: a person reads their own without it at GET /v1/me/permissions."
       summary: Effective permissions
       tags:
         - RBAC
@@ -4257,6 +4257,42 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/me/permissions:
+    get:
+      operationId: listMyEffectivePermissions
+      summary: My effective permissions
+      description: The permission keys the signed-in person holds in the organization their token is for, from the roles assigned to them and those their groups hold, with every grant behind them, as GET /v1/users/{userID}/organizations/{organizationID}/permissions answers for anyone. It needs no permission, so someone holding none (the built-in member role grants none) reads empty lists and an application can show them what they may use. Another person's permissions still need role.read. A token for no organization is refused with 401.
+      tags:
+        - RBAC
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The caller's effective permissions
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - permissions
+                  - grants
+                properties:
+                  permissions:
+                    type: array
+                    description: Each permission key once, in order.
+                    items:
+                      type: string
+                  grants:
+                    type: array
+                    description: "Every grant behind them: one entry per permission, role and group (a permission granted twice appears twice)."
+                    items:
+                      $ref: "#/components/schemas/AuthzGrantStep"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "429":
           $ref: "#/components/responses/TooManyRequests"
   /v1/users/{userID}/organizations/{organizationID}/roles/{roleID}:
