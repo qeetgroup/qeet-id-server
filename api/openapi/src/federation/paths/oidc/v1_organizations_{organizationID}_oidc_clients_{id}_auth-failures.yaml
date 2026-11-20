@@ -35,6 +35,8 @@ get:
         application/json:
           schema:
             type: object
+            required:
+              - items
             properties:
               locked_until:
                 type:

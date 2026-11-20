@@ -70,6 +70,12 @@ get:
                 type: integer
               summary:
                 type: object
+                required:
+                  - total
+                  - successful
+                  - warnings
+                  - failed
+                  - average_duration_ms
                 properties:
                   total:
                     type: integer
@@ -87,6 +93,10 @@ get:
                 type: array
                 items:
                   type: object
+                  required:
+                    - date
+                    - users
+                    - groups
                   properties:
                     date:
                       type: string

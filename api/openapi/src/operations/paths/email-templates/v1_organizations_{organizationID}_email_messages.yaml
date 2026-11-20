@@ -39,6 +39,8 @@ get:
         application/json:
           schema:
             type: object
+            required:
+              - items
             properties:
               next_cursor:
                 $ref: ../../../shared/schemas/NextCursor.yaml

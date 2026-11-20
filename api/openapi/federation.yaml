@@ -1514,6 +1514,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   truncated:
                     $ref: "#/components/schemas/Truncated"
@@ -1713,6 +1715,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   locked_until:
                     type:
@@ -1760,6 +1764,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   truncated:
                     $ref: "#/components/schemas/Truncated"
@@ -4005,6 +4011,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   truncated:
                     $ref: "#/components/schemas/Truncated"
@@ -4961,6 +4969,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   truncated:
                     $ref: "#/components/schemas/Truncated"
@@ -5521,6 +5531,12 @@ paths:
                     type: integer
                   summary:
                     type: object
+                    required:
+                      - total
+                      - successful
+                      - warnings
+                      - failed
+                      - average_duration_ms
                     properties:
                       total:
                         type: integer
@@ -5538,6 +5554,10 @@ paths:
                     type: array
                     items:
                       type: object
+                      required:
+                        - date
+                        - users
+                        - groups
                       properties:
                         date:
                           type: string

@@ -117,6 +117,11 @@ The first release, 2027.1.0, is in preparation. No version has been published ye
   portal's domains. The anomaly settings PUT takes its own `AuditAnomalySettingsUpdate` with all
   three settings required: it replaces them all, and one left out is stored as false or 0. The answers
   themselves are unchanged.
+- Every list answer's `items` is required in the API documents: the server always sends the list, an
+  empty one when there is nothing, never null. Twenty answers still left it optional, among them the API
+  keys, agents, webhooks and their deliveries, log sinks, OIDC clients and resources, OIDC connections,
+  sessions and the email lists. The directory activity page's `summary` and each `volume` day are
+  required in full as well. The answers themselves are unchanged.
 - Releases follow a fixed monthly rhythm: the branch is cut on the first working day of the month, tested for
   about two weeks and released on the third Tuesday; urgent fixes still ship as hotfixes. The first release
   is `2027.1.0`, planned for Tuesday 19 January 2027, and the documents name it that way throughout. Its
