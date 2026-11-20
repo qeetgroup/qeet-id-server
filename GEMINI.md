@@ -19,7 +19,7 @@ GEMINI.md  →  AGENTS.md  →  docs/llm/*
 | [docs/llm/boundaries.md](docs/llm/boundaries.md)             | Ownership and hard limits             |
 | [docs/llm/workflows.md](docs/llm/workflows.md)               | Step-by-step for common changes       |
 
-Parent context: **L0** `qeetgroup/qeet-context` · **L1** `qeetgroup/qeet-id-context`.
+Parent context: **L0** `qeetgroup/qeet-context` · **L1** `qeetgroup/qeet-id-files`.
 
 ## What this repository is
 

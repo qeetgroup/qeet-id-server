@@ -23,7 +23,7 @@ this repository decides.
 ```text
 qeet-context      L0   organization standards   security · domain · API · engineering
       ↓
-qeet-id-context   L1   product architecture     flows · repositories · contracts
+qeet-id-files   L1   product architecture     flows · repositories · contracts
       ↓
 qeet-id-server    L2   THIS REPOSITORY          implementation
       ↓
@@ -155,8 +155,7 @@ Do not weaken authentication, authorization, CSRF or origin checks, token valida
 handling, secret handling, cryptography, or organization isolation — **including to make a test pass**.
 
 If the implementation does not meet an L0 or L1 requirement, that is a **finding to report**, not a
-standard to redefine. Record the product-level divergence in `qeet-id-context` and its
-`CONTEXT-CHANGELOG.md`; do not cite the retired `DRIFT-REGISTER.md`.
+standard to redefine. Record the product-level divergence in `qeet-id-files` (its PRD or TAD); do not cite the retired `DRIFT-REGISTER.md`.
 
 Two behaviours look like bugs and are **deliberate, with ADRs**: the rate limiter fails **open** when
 its store errors, and auth hooks default to **fail-open**. Do not "fix" either.
@@ -323,4 +322,4 @@ Report rather than proceed if a task would:
 - restructure the chi route tree
 - require modifying another repository
 
-For cross-repository impact, see `qeet-id-context/CHANGE-MATRIX.md`.
+For cross-repository impact, see `qeet-id-files/TAD.md` §15.

@@ -15,7 +15,7 @@ A navigation index. "Where is X?" answered in one hop. For _how_ things work, re
 | --------------------------- | -------------------------------------- |
 | Repository identity         | [`qeet-repo.yml`](../../qeet-repo.yml) |
 | Agent instructions          | [`AGENTS.md`](../../AGENTS.md)         |
-| Product architecture (L1)   | `qeetgroup/qeet-id-context`            |
+| Product architecture (L1)   | `qeetgroup/qeet-id-files`              |
 | Organization standards (L0) | `qeetgroup/qeet-context`               |
 
 ## Entrypoints

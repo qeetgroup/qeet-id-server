@@ -1,6 +1,6 @@
 # qeet-id-server — repository context metadata (Level 2).
 # Machine-readable identity for coding agents and tooling.
-# Inherits qeetgroup/qeet-context (L0) and qeetgroup/qeet-id-context (L1).
+# Inherits qeetgroup/qeet-context (L0) and qeetgroup/qeet-id-files (L1).
 
 schema_version: 1
 
@@ -15,7 +15,7 @@ inheritance:
     repository: qeetgroup/qeet-context
     level: L0 # organization standards — security, domain, API, engineering
   product:
-    repository: qeetgroup/qeet-id-context
+    repository: qeetgroup/qeet-id-files
     level: L1 # Qeet ID product architecture, flows, cross-repo contracts
 
 repository:

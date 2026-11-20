@@ -109,13 +109,13 @@ with why. `TestOrganizationTablesHaveRowSecurity` fails otherwise. A new schema 
 **Security review required.**
 
 ```text
-1  read the product flow           qeet-id-context/FLOWS/authentication.md  (what it should do)
+1  read the product flow           qeet-id-files/TAD.md §6  (what it should do)
 2  find the implementation         internal/access/{authentication,passkey,mfa,recovery}/
 3  check session/token impact      does it change qe_ls, qe_td, or token claims?
 4  check API impact                api/openapi/src/access/
 5  security review                 SECURITY.md + qeet-context/SECURITY.md
 6  tests                           unit
-7  cross-repo                      qeet-id-context/CHANGE-MATRIX.md
+7  cross-repo                      qeet-id-files/TAD.md §15
 ```
 
 **Never weaken** enumeration safety, lockout, hashing parameters, or challenge TTLs. Password hashing
@@ -160,7 +160,7 @@ OAuth scope. Check every caller type when a permission changes.
 3  internal/bootstrap/router.go                where the guard is applied
 4  every affected queries.sql                  the predicate
 5  tests                            cross-organization denial, at every layer touched
-6  report, do not resolve           record product-level drift in qeet-id-context and its changelog
+6  report, do not resolve           fix the PRD or TAD in qeet-id-files when the product changed
 ```
 
 **Restructuring the chi route tree counts as an organization-isolation change** — the guard depends on
@@ -197,14 +197,14 @@ organization explicitly through the job payload.
 **Security _and_ interoperability review. The widest blast radius in the repository.**
 
 ```text
-1  read                            qeet-id-context/FLOWS/oauth-oidc.md
+1  read                            qeet-id-files/TAD.md §6
 2  internal/federation/oidc/
 3  discovery impact                does the discovery document change? → every RP
 4  claims impact                   → EVERY Qeet product and external RPs
 5  spec conformance                cite the RFC; do not improvise
 6  api/openapi/src/federation/ + make openapi
 7  tests                           unit
-8  cross-repo                      qeet-id-context/CHANGE-MATRIX.md — coordinate BEFORE merging
+8  cross-repo                      qeet-id-files/TAD.md §15 — coordinate BEFORE merging
 ```
 
 There is **one token endpoint**, `POST /v1/oauth/token` (`http_token.go`), for every grant, chosen by
@@ -236,7 +236,7 @@ SAML deviates on success paths. Both are correct — protocol compliance beats h
 "normalise" them.
 
 Additive only, or a deprecation window with direct customer notice. See
-`qeet-id-context/CHANGE-MATRIX.md`.
+`qeet-id-files/TAD.md` §15.
 
 ---
 

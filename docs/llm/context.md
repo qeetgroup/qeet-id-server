@@ -31,7 +31,7 @@ scheduler entry points can run its asynchronous work independently.
 ```text
 qeet-context      L0   organization standards
       ↓
-qeet-id-context   L1   Qeet ID product architecture
+qeet-id-files   L1   Qeet ID product architecture
       ↓
 qeet-id-server    L2   THIS DOCUMENT — implementation
       ↓
@@ -41,16 +41,15 @@ source                 L3/L4
 **This document does not restate L0 or L1.** It describes how this repository implements what they
 require.
 
-| Question                                                            | Level                      |
-| ------------------------------------------------------------------- | -------------------------- |
-| What is Qeet's cookie policy? Domain model? API standard?           | **L0** — `qeet-context`    |
-| What is Qeet ID? Which repositories? How does the auth _flow_ work? | **L1** — `qeet-id-context` |
-| Where is that flow implemented? Which package? How is it wired?     | **L2** — here              |
-| What exactly does this function do?                                 | **L3/L4** — the source     |
+| Question                                                            | Level                    |
+| ------------------------------------------------------------------- | ------------------------ |
+| What is Qeet's cookie policy? Domain model? API standard?           | **L0** — `qeet-context`  |
+| What is Qeet ID? Which repositories? How does the auth _flow_ work? | **L1** — `qeet-id-files` |
+| Where is that flow implemented? Which package? How is it wired?     | **L2** — here            |
+| What exactly does this function do?                                 | **L3/L4** — the source   |
 
 **Policy flows down and is not overridden here.** If this implementation does not meet an L0 or L1
-requirement, that is a product-level divergence to record in `qeet-id-context` and its
-`CONTEXT-CHANGELOG.md` — not a redefinition of the standard.
+requirement, that is a product-level divergence to record in `qeet-id-files` (its PRD or TAD) — not a redefinition of the standard.
 
 ---
 
@@ -415,7 +414,7 @@ baseline, then the breach check — fail-open, each allowed-on-error counted in
 interfaces such as `authpolicy.PasswordRules` and refuse (501) to set a password when it is not wired.
 
 **Per-package file pointers: [subsystems.md](subsystems.md#access--authentication).**
-For the product-level flow narrative, read `qeet-id-context/FLOWS/`.
+For the product-level flow narrative, read `qeet-id-files/TAD.md` §6.
 
 ## Authorization
 
@@ -659,7 +658,7 @@ Then `make test`, `make lint`, `make build`.
 
 What review a change needs. Cross-repository impact is expanded in
 [boundaries.md](boundaries.md#requires-cross-repository-coordination) and, at product level, in
-`qeet-id-context/CHANGE-MATRIX.md`.
+`qeet-id-files/TAD.md` §15.
 
 | Change                            | Security review | API review | DB / migration |        Cross-repo review         |
 | --------------------------------- | :-------------: | :--------: | :------------: | :------------------------------: |
@@ -699,7 +698,7 @@ What review a change needs. Cross-repository impact is expanded in
 ## Known technical debt
 
 Repository-local documentation was reconciled with `c2454fec` on 15 Nov 2026. New product-level
-divergences belong in `qeet-id-context` and its `CONTEXT-CHANGELOG.md`; repository implementation
+divergences belong in `qeet-id-files` (its PRD or TAD); repository implementation
 claims belong here. Keep counts and status claims tied to a verification scope rather than treating
 an old audit as current state.
 
@@ -710,7 +709,7 @@ an old audit as current state.
 | What does the code do?           | The source                                        |
 | What is the API contract?        | `api/openapi/`                                    |
 | What is the security policy?     | `SECURITY.md`, then L0 `qeet-context/SECURITY.md` |
-| How does the product work?       | L1 `qeet-id-context`                              |
+| How does the product work?       | L1 `qeet-id-files`                                |
 | What are the organization rules? | L0 `qeet-context`                                 |
 | **How is it implemented here?**  | **This document**                                 |
 
