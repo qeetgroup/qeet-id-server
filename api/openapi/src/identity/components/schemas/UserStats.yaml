@@ -12,6 +12,8 @@ required:
   - email_unverified
   - by_role
   - by_department
+  - by_team
+  - by_location
 properties:
   total:
     type: integer
@@ -67,7 +69,10 @@ properties:
           type: integer
   by_department:
     type: array
-    description: Up to 200 departments, largest first.
+    description: >-
+      Up to 200 departments (metadata.department), largest first, counting
+      the organization's own people: another organization's show it no
+      metadata.
     items:
       type: object
       required:
@@ -75,6 +80,40 @@ properties:
         - count
       properties:
         department:
+          type: string
+        count:
+          type: integer
+  by_team:
+    type: array
+    description: >-
+      Up to 200 teams (metadata.team) within their departments
+      (metadata.department, "" when a member names none), largest first,
+      counting the organization's own people.
+    items:
+      type: object
+      required:
+        - department
+        - team
+        - count
+      properties:
+        department:
+          type: string
+        team:
+          type: string
+        count:
+          type: integer
+  by_location:
+    type: array
+    description: >-
+      Up to 200 locations (metadata.location), largest first, counting the
+      organization's own people.
+    items:
+      type: object
+      required:
+        - location
+        - count
+      properties:
+        location:
           type: string
         count:
           type: integer

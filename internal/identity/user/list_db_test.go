@@ -39,11 +39,13 @@ func TestTheMembersListIsSearchedAndCountedOnTheServer(t *testing.T) {
 	}
 	alice := dbtest.UserAt(t, dbtest.Unique("alice")+"@example.test", organization)
 	dbtest.Assign(t, alice.ID, organization, admin)
-	exec(`UPDATE account.users SET display_name = 'Alice Arden', email_verified_at = NOW(), metadata = '{"department":"Sales"}' WHERE id = $1`, alice.ID)
+	exec(`UPDATE account.users SET display_name = 'Alice Arden', email_verified_at = NOW(),
+		metadata = '{"department":"Sales","team":"Enterprise","location":"Pune, India"}' WHERE id = $1`, alice.ID)
 	exec(`INSERT INTO auth.sessions (user_id, organization_id, last_seen_at) VALUES ($1, $2, NOW())`, alice.ID, organization)
 
 	bob := dbtest.UserAt(t, dbtest.Unique("bob")+"@example.test", organization, organization)
-	exec(`UPDATE account.users SET display_name = 'Bob Brook', metadata = '{"department":"Engineering"}' WHERE id = $1`, bob.ID)
+	exec(`UPDATE account.users SET display_name = 'Bob Brook',
+		metadata = '{"department":"Engineering","team":"Platform","location":"Pune, India"}' WHERE id = $1`, bob.ID)
 	exec(`INSERT INTO auth.mfa_totp (user_id, secret_ct, secret_nonce, confirmed_at) VALUES ($1, '\x00', '\x00', NOW())`, bob.ID)
 
 	carol := dbtest.UserAt(t, dbtest.Unique("carol")+"@example.test", organization, organization)
@@ -52,6 +54,8 @@ func TestTheMembersListIsSearchedAndCountedOnTheServer(t *testing.T) {
 
 	visitor := dbtest.User(t, other, organization) // managed by another organization
 	stranger := dbtest.User(t, other, other)
+	// What the visitor's home organization keeps on them, which this one never sees.
+	exec(`UPDATE account.users SET metadata = '{"department":"Engineering","team":"Platform","location":"Lisbon"}' WHERE id = $1`, visitor.ID)
 	for _, in := range []struct {
 		organization uuid.UUID
 		member       uuid.UUID
@@ -158,12 +162,14 @@ func TestTheMembersListIsSearchedAndCountedOnTheServer(t *testing.T) {
 	}
 
 	var stats struct {
-		Total            int            `json:"total"`
-		LastSeen         map[string]int `json:"last_seen"`
-		AdminsWithoutMFA int            `json:"admins_without_mfa"`
-		EmailUnverified  int            `json:"email_unverified"`
-		ByRole           []RoleCount    `json:"by_role"`
-		ByDepartment     []DeptCount    `json:"by_department"`
+		Total            int             `json:"total"`
+		LastSeen         map[string]int  `json:"last_seen"`
+		AdminsWithoutMFA int             `json:"admins_without_mfa"`
+		EmailUnverified  int             `json:"email_unverified"`
+		ByRole           []RoleCount     `json:"by_role"`
+		ByDepartment     []DeptCount     `json:"by_department"`
+		ByTeam           []TeamCount     `json:"by_team"`
+		ByLocation       []LocationCount `json:"by_location"`
 	}
 	dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, "/users/stats", nil), &stats)
 	for bucket, n := range stats.LastSeen {
@@ -174,8 +180,19 @@ func TestTheMembersListIsSearchedAndCountedOnTheServer(t *testing.T) {
 	if stats.Total != 4 || stats.AdminsWithoutMFA != list(url.Values{"admins_without_mfa": {"true"}}).Total || stats.EmailUnverified != list(url.Values{"email_verified": {"false"}}).Total {
 		t.Errorf("stats %+v", stats)
 	}
-	if len(stats.ByRole) == 0 || len(stats.ByDepartment) != 2 {
-		t.Errorf("stats by role %v, by department %v", stats.ByRole, stats.ByDepartment)
+	if len(stats.ByRole) == 0 || !slices.Equal(stats.ByDepartment, []DeptCount{{"Engineering", 1}, {"Sales", 1}}) {
+		t.Errorf("stats by role %v, by department %v; want Engineering and Sales once each, not the visitor's", stats.ByRole, stats.ByDepartment)
+	}
+	if !slices.Equal(stats.ByTeam, []TeamCount{{"Engineering", "Platform", 1}, {"Sales", "Enterprise", 1}}) {
+		t.Errorf("stats by team %v; want Platform and Enterprise in their departments once each, not the visitor's", stats.ByTeam)
+	}
+	if !slices.Equal(stats.ByLocation, []LocationCount{{"Pune, India", 2}}) {
+		t.Errorf("stats by location %v; want Pune twice, not the visitor's Lisbon", stats.ByLocation)
+	}
+	for _, d := range stats.ByDepartment {
+		if want := list(url.Values{"department": {d.Department}}).Total; d.Count != want {
+			t.Errorf("stats by_department %s = %d, the list's total %d", d.Department, d.Count, want)
+		}
 	}
 }
 
@@ -316,6 +333,10 @@ func TestListPagesThroughTheOrganizationsMembers(t *testing.T) {
 	dbtest.Decode(t, dbtest.Do(t, as, http.MethodGet, "/users/stats", nil), &stats)
 	if stats != (UserStats{Total: 6, Active: 6, MFAEnabled: 1, MFAMissing: 5, NewLast30d: 6}) {
 		t.Errorf("stats %+v, want 6 active members, 1 with a second factor", stats)
+	}
+	if body := dbtest.Do(t, as, http.MethodGet, "/users/stats", nil).Body.String(); !strings.Contains(body, `"by_team":[]`) ||
+		!strings.Contains(body, `"by_location":[]`) || !strings.Contains(body, `"by_department":[]`) {
+		t.Errorf("stats with no departments, teams or locations: %s; want each an empty list", body)
 	}
 	var trends UserTrends
 	dbtest.Decode(t, dbtest.Do(t, as, http.MethodGet, "/users/trends", nil), &trends)

@@ -4,7 +4,7 @@ get:
     Returns a page of users in the caller's organization, with total, how many match.
     Every filter is optional and they combine: q (display name, email or phone,
     case-insensitive), role (a role name in the organization), department
-    (metadata.department), mfa (on or off: a confirmed second factor),
+    (metadata.department, of the organization's own people), mfa (on or off: a confirmed second factor),
     email_verified, status (active, invited or suspended), last_seen (today:
     under a day; week: 1 to 7 days; month: 7 to 30 days; older: over 30 days;
     never), admins_without_mfa (true: the members holding the built-in owner or

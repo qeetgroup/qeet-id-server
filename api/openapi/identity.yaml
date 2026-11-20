@@ -994,7 +994,7 @@ paths:
     get:
       operationId: getUserStats
       summary: User directory summary
-      description: "Organization-wide member counts for the Users admin summary: total, active, suspended, invited, with and without a second factor, new in the last 30 days; members by when they were last seen (last_seen: today, week, month, older, never, with the same edges as the list's last_seen filter); owners and admins without a second factor; members whose email isn't verified; and members by role and by department (metadata.department). Each count equals the list's total for the matching filter. Requires `user.read`."
+      description: "Organization-wide member counts for the Users admin summary: total, active, suspended, invited, with and without a second factor, new in the last 30 days; members by when they were last seen (last_seen: today, week, month, older, never, with the same edges as the list's last_seen filter); owners and admins without a second factor; members whose email isn't verified; members by role; and the organization's own people by department (metadata.department), by team within its department (metadata.team) and by location (metadata.location), each up to 200, largest first, and an empty list when there are none. Each count equals the list's total for the matching filter. Requires `user.read`."
       tags:
         - Users
       security:
@@ -1016,7 +1016,7 @@ paths:
   /v1/users:
     get:
       operationId: listUsers
-      description: "Returns a page of users in the caller's organization, with total, how many match. Every filter is optional and they combine: q (display name, email or phone, case-insensitive), role (a role name in the organization), department (metadata.department), mfa (on or off: a confirmed second factor), email_verified, status (active, invited or suspended), last_seen (today: under a day; week: 1 to 7 days; month: 7 to 30 days; older: over 30 days; never), admins_without_mfa (true: the members holding the built-in owner or admin role with no confirmed second factor, exactly those the summary's admins_without_mfa counts; false: everyone else), in_group (true: in at least one of the organization's groups; false: in none of them, whatever groups they are in elsewhere), id and email (each repeatable, up to 200: exactly the members named, an email in any case; with limit=200 one read puts a name to up to 200 people), include_deleted (true: also the members since deleted, so history can still name them, each marked with deleted_at and status deleted). sort is created (the default, newest first), name (by display name, or the email without one, case-insensitive; A first by default) or last_seen (most recent first by default; a member never seen comes last either way), with order asc or desc; a malformed value is refused with 400. Pages by opaque cursor in every order, stable when sort keys tie: next_cursor is present while there is another page, and a cursor works only with the sort and order of the page that gave it (400 otherwise). Requires an existing organization; scope comes from the authenticated principal. Members are the organization's own users (their home is this organization) and the people who hold a role in it; a member whose home is another organization is shown with empty metadata, which their home organization keeps; last_seen_at and last_seen_ip come from sessions in this organization only."
+      description: "Returns a page of users in the caller's organization, with total, how many match. Every filter is optional and they combine: q (display name, email or phone, case-insensitive), role (a role name in the organization), department (metadata.department, of the organization's own people), mfa (on or off: a confirmed second factor), email_verified, status (active, invited or suspended), last_seen (today: under a day; week: 1 to 7 days; month: 7 to 30 days; older: over 30 days; never), admins_without_mfa (true: the members holding the built-in owner or admin role with no confirmed second factor, exactly those the summary's admins_without_mfa counts; false: everyone else), in_group (true: in at least one of the organization's groups; false: in none of them, whatever groups they are in elsewhere), id and email (each repeatable, up to 200: exactly the members named, an email in any case; with limit=200 one read puts a name to up to 200 people), include_deleted (true: also the members since deleted, so history can still name them, each marked with deleted_at and status deleted). sort is created (the default, newest first), name (by display name, or the email without one, case-insensitive; A first by default) or last_seen (most recent first by default; a member never seen comes last either way), with order asc or desc; a malformed value is refused with 400. Pages by opaque cursor in every order, stable when sort keys tie: next_cursor is present while there is another page, and a cursor works only with the sort and order of the page that gave it (400 otherwise). Requires an existing organization; scope comes from the authenticated principal. Members are the organization's own users (their home is this organization) and the people who hold a role in it; a member whose home is another organization is shown with empty metadata, which their home organization keeps; last_seen_at and last_seen_ip come from sessions in this organization only."
       summary: List users
       tags:
         - Users
@@ -4755,6 +4755,8 @@ components:
         - email_unverified
         - by_role
         - by_department
+        - by_team
+        - by_location
       properties:
         total:
           type: integer
@@ -4808,7 +4810,7 @@ components:
                 type: integer
         by_department:
           type: array
-          description: Up to 200 departments, largest first.
+          description: "Up to 200 departments (metadata.department), largest first, counting the organization's own people: another organization's show it no metadata."
           items:
             type: object
             required:
@@ -4816,6 +4818,35 @@ components:
               - count
             properties:
               department:
+                type: string
+              count:
+                type: integer
+        by_team:
+          type: array
+          description: Up to 200 teams (metadata.team) within their departments (metadata.department, "" when a member names none), largest first, counting the organization's own people.
+          items:
+            type: object
+            required:
+              - department
+              - team
+              - count
+            properties:
+              department:
+                type: string
+              team:
+                type: string
+              count:
+                type: integer
+        by_location:
+          type: array
+          description: Up to 200 locations (metadata.location), largest first, counting the organization's own people.
+          items:
+            type: object
+            required:
+              - location
+              - count
+            properties:
+              location:
                 type: string
               count:
                 type: integer

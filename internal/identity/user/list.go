@@ -32,7 +32,7 @@ type RoleRef struct {
 type ListFilter struct {
 	Query         string // display name, email or phone, case-insensitive
 	Role          string // a role name in the organization
-	Department    string // metadata.department
+	Department    string // metadata.department, of the organization's own people
 	MFA           *bool  // a confirmed second factor
 	EmailVerified *bool
 	Status        string // active, invited or suspended
@@ -241,7 +241,8 @@ func (f ListFilter) where(args []any) (string, []any) {
 		conds = append(conds, "EXISTS (SELECT 1 FROM unnest(m.roles) rn WHERE lower(rn) = lower("+arg(f.Role)+"))")
 	}
 	if f.Department != "" {
-		conds = append(conds, "lower(m.metadata->>'department') = lower("+arg(f.Department)+")")
+		// Another organization's people show it no metadata (SeenBy).
+		conds = append(conds, "m.organization_id = $1 AND lower(m.metadata->>'department') = lower("+arg(f.Department)+")")
 	}
 	if f.MFA != nil {
 		conds = append(conds, "m.mfa_enabled = "+arg(*f.MFA))
@@ -479,13 +480,16 @@ func (r *Repository) SuspensionOf(ctx context.Context, organizationID, id uuid.U
 
 // MemberCounts is the rest of the Users summary: members by when they were
 // last seen, the owners and admins without a second factor, the members
-// whose email isn't verified, and members by role and by department.
+// whose email isn't verified, members by role, and the organization's own
+// people by department, by team and by location.
 type MemberCounts struct {
-	LastSeen         map[string]int `json:"last_seen"`
-	AdminsWithoutMFA int            `json:"admins_without_mfa"`
-	EmailUnverified  int            `json:"email_unverified"`
-	ByRole           []RoleCount    `json:"by_role"`
-	ByDepartment     []DeptCount    `json:"by_department"`
+	LastSeen         map[string]int  `json:"last_seen"`
+	AdminsWithoutMFA int             `json:"admins_without_mfa"`
+	EmailUnverified  int             `json:"email_unverified"`
+	ByRole           []RoleCount     `json:"by_role"`
+	ByDepartment     []DeptCount     `json:"by_department"`
+	ByTeam           []TeamCount     `json:"by_team"`
+	ByLocation       []LocationCount `json:"by_location"`
 }
 
 // RoleCount is how many members hold a role.
@@ -500,8 +504,28 @@ type DeptCount struct {
 	Count      int    `json:"count"`
 }
 
+// TeamCount is how many members are in a team, within its department ("" when
+// they name none).
+type TeamCount struct {
+	Department string `json:"department"`
+	Team       string `json:"team"`
+	Count      int    `json:"count"`
+}
+
+// LocationCount is how many members work in a location.
+type LocationCount struct {
+	Location string `json:"location"`
+	Count    int    `json:"count"`
+}
+
+// maxBreakdown is how many departments, teams or locations the summary lists.
+const maxBreakdown = 200
+
 // Counts returns the organization's MemberCounts, each with the same edges as the
-// list's filters, so a count equals the list's total for that filter.
+// list's filters, so a count equals the list's total for that filter. The
+// departments, teams and locations come from the metadata of the people whose
+// home is the organization: another organization's people show it none, as
+// SeenBy does.
 func (r *Repository) Counts(ctx context.Context, organizationID uuid.UUID) (*MemberCounts, error) {
 	c := MemberCounts{LastSeen: map[string]int{}}
 	var today, week, month, older, never int
@@ -518,30 +542,51 @@ func (r *Repository) Counts(ctx context.Context, organizationID uuid.UUID) (*Mem
 	}
 	c.LastSeen = map[string]int{"today": today, "week": week, "month": month, "older": older, "never": never}
 
-	rows, err := r.pool.Query(ctx, membersCTE+`SELECT rn, count(*)::int FROM m, unnest(m.roles) rn
-		GROUP BY rn ORDER BY 2 DESC, 1`, organizationID)
-	if err != nil {
-		return nil, err
-	}
-	c.ByRole, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (RoleCount, error) {
+	var err error
+	if c.ByRole, err = collect(ctx, r, membersCTE+`SELECT rn, count(*)::int FROM m, unnest(m.roles) rn
+		GROUP BY rn ORDER BY 2 DESC, 1`, func(row pgx.CollectableRow) (RoleCount, error) {
 		var rc RoleCount
 		return rc, row.Scan(&rc.Role, &rc.Count)
-	})
-	if err != nil {
+	}, organizationID); err != nil {
 		return nil, err
 	}
-	rows, err = r.pool.Query(ctx, membersCTE+`SELECT m.metadata->>'department', count(*)::int FROM m
-		WHERE COALESCE(m.metadata->>'department', '') <> ''
-		GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 200`, organizationID)
-	if err != nil {
-		return nil, err
-	}
-	c.ByDepartment, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (DeptCount, error) {
+	if c.ByDepartment, err = collect(ctx, r, membersCTE+`SELECT m.metadata->>'department', count(*)::int FROM m
+		WHERE m.organization_id = $1 AND COALESCE(m.metadata->>'department', '') <> ''
+		GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT $2`, func(row pgx.CollectableRow) (DeptCount, error) {
 		var dc DeptCount
 		return dc, row.Scan(&dc.Department, &dc.Count)
-	})
-	if err != nil {
+	}, organizationID, maxBreakdown); err != nil {
+		return nil, err
+	}
+	if c.ByTeam, err = collect(ctx, r, membersCTE+`SELECT COALESCE(m.metadata->>'department', ''), m.metadata->>'team', count(*)::int FROM m
+		WHERE m.organization_id = $1 AND COALESCE(m.metadata->>'team', '') <> ''
+		GROUP BY 1, 2 ORDER BY 3 DESC, 1, 2 LIMIT $2`, func(row pgx.CollectableRow) (TeamCount, error) {
+		var tc TeamCount
+		return tc, row.Scan(&tc.Department, &tc.Team, &tc.Count)
+	}, organizationID, maxBreakdown); err != nil {
+		return nil, err
+	}
+	if c.ByLocation, err = collect(ctx, r, membersCTE+`SELECT m.metadata->>'location', count(*)::int FROM m
+		WHERE m.organization_id = $1 AND COALESCE(m.metadata->>'location', '') <> ''
+		GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT $2`, func(row pgx.CollectableRow) (LocationCount, error) {
+		var lc LocationCount
+		return lc, row.Scan(&lc.Location, &lc.Count)
+	}, organizationID, maxBreakdown); err != nil {
 		return nil, err
 	}
 	return &c, nil
+}
+
+// collect runs query with args and returns each row as scan reads it, an
+// empty list (never nil) for none.
+func collect[T any](ctx context.Context, r *Repository, query string, scan pgx.RowToFunc[T], args ...any) ([]T, error) {
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	out, err := pgx.CollectRows(rows, scan)
+	if out == nil && err == nil {
+		out = []T{}
+	}
+	return out, err
 }

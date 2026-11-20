@@ -10,6 +10,9 @@ The first release, 2027.1.0, is in preparation. No version has been published ye
 
 ### Added
 
+- `GET /v1/users/stats` counts the organization's own people by team (`by_team`: department, team and count) and
+  by location (`by_location`), from their metadata, as `by_department` does: largest first, up to 200 each, and
+  always sent (an empty list when there are none).
 - `GET /v1/users` names people in one read: `id` and `email` (each repeatable, up to 200; an email in any case)
   answer exactly those members, with the other filters, and `include_deleted=true` adds the members since
   deleted, each marked with `deleted_at` and status `deleted`, so history can still name them.
@@ -251,6 +254,9 @@ The first release, 2027.1.0, is in preparation. No version has been published ye
 
 ### Fixed
 
+- The Users summary's `by_department` and the list's `department` filter read only the metadata of the people
+  whose home is the organization. A member managed by another organization, whose metadata the organization
+  never sees, was counted and matched by that organization's department.
 - SonarQube's five findings, all in two scripts. The load test makes its accounts' password for each run
   instead of carrying one, and takes the accounts in turn, not at random. The Postman generator states its
   32-bit wrap, its sort order and its path pattern plainly; the collection it writes is unchanged.
