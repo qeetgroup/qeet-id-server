@@ -24,11 +24,24 @@ get:
         application/json:
           schema:
             type: object
+            required:
+              - organization
+              - roles
+              - groups
+              - applications_count
+              - policies_count
+              - permissions_direct
+              - permissions_inherited
+              - permissions_total
             properties:
               organization:
                 type:
                   - object
                   - "null"
+                required:
+                  - id
+                  - name
+                  - slug
                 properties:
                   id:
                     type: string
@@ -41,6 +54,10 @@ get:
                 type: array
                 items:
                   type: object
+                  required:
+                    - id
+                    - name
+                    - description
                   properties:
                     id:
                       type: string
@@ -53,6 +70,10 @@ get:
                 type: array
                 items:
                   type: object
+                  required:
+                    - id
+                    - name
+                    - description
                   properties:
                     id:
                       type: string

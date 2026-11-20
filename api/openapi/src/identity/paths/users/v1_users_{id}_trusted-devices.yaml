@@ -23,6 +23,8 @@ get:
         application/json:
           schema:
             type: object
+            required:
+              - items
             properties:
               truncated:
                 $ref: ../../../shared/schemas/Truncated.yaml
@@ -30,6 +32,16 @@ get:
                 type: array
                 items:
                   type: object
+                  required:
+                    - id
+                    - organization_id
+                    - device
+                    - device_kind
+                    - user_agent
+                    - created_at
+                    - last_used_at
+                    - expires_at
+                    - current
                   properties:
                     id:
                       type: string

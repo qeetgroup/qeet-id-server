@@ -63,6 +63,15 @@ get:
         application/json:
           schema:
             type: object
+            required:
+              - items
+              - total
+              - limit
+              - summary
+              - reasons
+              - risks
+              - queue
+              - teams
             properties:
               next_cursor:
                 $ref: ../../../shared/schemas/NextCursor.yaml
@@ -76,6 +85,12 @@ get:
                 type: integer
               summary:
                 type: object
+                required:
+                  - total
+                  - high_risk
+                  - policy
+                  - manual
+                  - pending
                 properties:
                   total:
                     type: integer
@@ -91,6 +106,9 @@ get:
                 type: array
                 items:
                   type: object
+                  required:
+                    - key
+                    - count
                   properties:
                     key:
                       type: string
@@ -100,6 +118,9 @@ get:
                 type: array
                 items:
                   type: object
+                  required:
+                    - key
+                    - count
                   properties:
                     key:
                       type: string

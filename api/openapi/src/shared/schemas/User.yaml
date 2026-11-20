@@ -1,4 +1,17 @@
 type: object
+required:
+  - id
+  - organization_id
+  - email
+  - email_verified_at
+  - phone
+  - phone_verified_at
+  - display_name
+  - avatar_url
+  - status
+  - metadata
+  - created_at
+  - updated_at
 properties:
   id:
     type: string

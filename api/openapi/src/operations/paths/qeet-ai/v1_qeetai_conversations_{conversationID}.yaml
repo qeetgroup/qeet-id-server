@@ -22,6 +22,9 @@ get:
         application/json:
           schema:
             type: object
+            required:
+              - conversation
+              - messages
             properties:
               conversation:
                 $ref: ../../components/schemas/QeetAIConversation.yaml

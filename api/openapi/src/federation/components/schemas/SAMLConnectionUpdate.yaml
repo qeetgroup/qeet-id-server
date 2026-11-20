@@ -1,0 +1,64 @@
+type: object
+additionalProperties: false
+description: >-
+  The fields to change; every one is optional, and a field left out or null
+  keeps its value.
+properties:
+  name:
+    type:
+      - string
+      - "null"
+  idp_entity_id:
+    type:
+      - string
+      - "null"
+  idp_sso_url:
+    type:
+      - string
+      - "null"
+    format: uri
+    description: Checked as on create (422 saml.sso_url_invalid).
+  idp_certificate:
+    type:
+      - string
+      - "null"
+    description: >-
+      PEM or base64 DER X.509 signing certificate (422 saml.certificate_invalid
+      otherwise). It becomes the only certificate the connection trusts; add and
+      remove certificates one at a time with the certificates endpoints.
+  email_attribute:
+    type:
+      - string
+      - "null"
+  name_attribute:
+    type:
+      - string
+      - "null"
+  groups_attribute:
+    type:
+      - string
+      - "null"
+    maxLength: 256
+    description: >-
+      The attribute carrying the person's groups; empty reads the common ones
+      (see SAMLConnection). Over 256 characters is refused with 422
+      validation_failed.
+  status:
+    type:
+      - string
+      - "null"
+    enum:
+      - draft
+      - active
+      - disabled
+      - null
+    description: >-
+      Turning a connection active needs its IdP's entity ID, SSO URL and a
+      certificate (422 saml.connection_incomplete otherwise).
+  allow_idp_initiated:
+    type:
+      - boolean
+      - "null"
+    description: >-
+      Accept IdP-initiated sign-ins (unsolicited assertions); see
+      SAMLConnection.

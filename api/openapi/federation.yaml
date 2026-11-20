@@ -446,6 +446,10 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - request_id
+                  - client_id
+                  - scope
                 properties:
                   request_id:
                     type: string
@@ -482,6 +486,9 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - client_name
+                  - scopes
                 properties:
                   client_name:
                     type: string
@@ -529,6 +536,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - status
                 properties:
                   status:
                     type: string
@@ -751,12 +760,45 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
+                required:
+                  - client_name
+                  - organization_id
+                  - providers
+                  - self_registration_enabled
+                  - remember_device_enabled
+                  - sign_in_methods
+                  - branding
                 properties:
                   client_name:
                     type: string
                   organization_id:
                     type: string
                     format: uuid
+                  providers:
+                    type: array
+                    items:
+                      type: string
+                    description: The names of the social sign-in providers the organization has turned on, for GET /v1/social/{provider}/start; empty when none is, or they can't be read.
+                  self_registration_enabled:
+                    type: boolean
+                    description: Whether people may create an account here; false when the setting can't be read.
+                  remember_device_enabled:
+                    type: boolean
+                    description: Whether a device may skip the second step for remember_device_days; false when the setting can't be read.
+                  sign_in_methods:
+                    type: object
+                    description: Which first-factor methods the organization allows. All true when the setting can't be read; each is refused anyway where the credential is accepted.
+                    required:
+                      - password
+                      - passkey
+                      - magic_link
+                    properties:
+                      password:
+                        type: boolean
+                      passkey:
+                        type: boolean
+                      magic_link:
+                        type: boolean
                   logo_uri:
                     type: string
                     format: uri
@@ -771,6 +813,11 @@ paths:
                   password_policy:
                     type: object
                     description: The rules the organization's new passwords must meet, so the hosted pages can show them as they are met. The server still checks them when a password is set. Absent when the policy can't be read.
+                    required:
+                      - min_length
+                      - require_uppercase
+                      - require_number
+                      - require_symbol
                     properties:
                       min_length:
                         type: integer
@@ -790,6 +837,7 @@ paths:
                     type:
                       - object
                       - "null"
+                    description: The organization's brand for the hosted pages, each part present only when set; null when none is (or the plan doesn't include custom_branding).
                     properties:
                       logo_url:
                         type: string
@@ -1165,6 +1213,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - keys
                 properties:
                   keys:
                     type: array
@@ -1395,6 +1445,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   truncated:
                     $ref: "#/components/schemas/Truncated"
@@ -3123,6 +3175,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   truncated:
                     $ref: "#/components/schemas/Truncated"
@@ -3263,7 +3317,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SAMLServiceProviderCreate"
+              $ref: "#/components/schemas/SAMLServiceProviderUpdate"
       responses:
         "200":
           description: Updated
@@ -3908,7 +3962,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SAMLConnectionCreate"
+              $ref: "#/components/schemas/SAMLConnectionUpdate"
       responses:
         "200":
           description: Updated
@@ -4413,8 +4467,15 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                oneOf:
+                  - type: object
+                    required:
+                      - user_id
+                    properties:
+                      user_id:
+                        type: string
+                        format: uuid
+                  - $ref: "#/components/schemas/MFAChallenge"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -6810,6 +6871,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   truncated:
                     $ref: "#/components/schemas/Truncated"
@@ -6992,7 +7055,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AdminPortalContext"
+                $ref: "#/components/schemas/PortalContext"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "429":
@@ -7114,7 +7177,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SAMLConnectionCreate"
+              $ref: "#/components/schemas/SAMLConnectionUpdate"
       responses:
         "200":
           description: Updated, with the service-provider addresses to enter at the IdP
@@ -7877,6 +7940,22 @@ components:
           description: "Origins (scheme, host and optional port: https, or http only for localhost) a browser application calls the OAuth endpoints from. Left out or null: its redirect URIs' origins. An entry that isn't one is refused with 422 oidc.web_origin_invalid."
     OIDCClient:
       type: object
+      required:
+        - id
+        - organization_id
+        - client_id
+        - type
+        - name
+        - redirect_uris
+        - post_logout_uris
+        - grant_types
+        - scopes
+        - created_at
+        - pkce_exempt_until
+        - backchannel_logout_uri
+        - frontchannel_logout_uri
+        - logo_uri
+        - client_uri
       properties:
         id:
           type: string
@@ -7946,6 +8025,13 @@ components:
     SigningKey:
       type: object
       description: Non-secret metadata for an issuer signing key (no key material).
+      required:
+        - kid
+        - alg
+        - use
+        - status
+        - created_at
+        - activated_at
       properties:
         kid:
           type: string
@@ -8050,6 +8136,19 @@ components:
     OAuthDeviceAuthorization:
       type: object
       description: Admin view of an RFC 8628 device-authorization row. Never includes the device_code or its hash.
+      required:
+        - id
+        - client_id
+        - client_name
+        - user_code
+        - status
+        - user_id
+        - user_email
+        - scopes
+        - created_at
+        - expires_at
+        - last_polled_at
+        - consumed_at
       properties:
         id:
           type: string
@@ -8491,6 +8590,28 @@ components:
           format: date-time
     SAMLConnection:
       type: object
+      required:
+        - sp_entity_id
+        - acs_url
+        - sp_metadata_url
+        - id
+        - organization_id
+        - name
+        - idp_entity_id
+        - idp_sso_url
+        - idp_certificate
+        - certificates
+        - metadata_url
+        - metadata_refreshed_at
+        - metadata_error
+        - email_attribute
+        - name_attribute
+        - groups_attribute
+        - status
+        - allow_idp_initiated
+        - created_at
+        - updated_at
+        - last_login_at
       properties:
         sp_entity_id:
           type: string
@@ -8550,6 +8671,10 @@ components:
           description: The attribute carrying the person's groups, matched against the connection's group mappings and the external ids of groups SCIM provisioned. Empty (the default) reads groups, http://schemas.microsoft.com/ws/2008/06/identity/claims/groups and memberOf. When Microsoft Entra ID leaves the groups out for being too many, memberships stay as they are.
         status:
           type: string
+          enum:
+            - draft
+            - active
+            - disabled
         allow_idp_initiated:
           type: boolean
           default: false
@@ -8629,6 +8754,24 @@ components:
           description: The attribute's NameFormat; basic when absent
     SAMLServiceProvider:
       type: object
+      required:
+        - id
+        - organization_id
+        - name
+        - entity_id
+        - acs_url
+        - name_id_format
+        - name_id_attribute
+        - certificate
+        - require_signed_requests
+        - encrypt_assertions
+        - certificate_details
+        - status
+        - attributes
+        - assignment_required
+        - created_at
+        - updated_at
+        - last_login_at
       properties:
         id:
           type: string
@@ -8745,6 +8888,82 @@ components:
           description: The attributes to send; absent sends the default email (from email) and name (from display_name), an empty list none
           items:
             $ref: "#/components/schemas/SAMLAttributeMapping"
+        status:
+          type:
+            - string
+            - "null"
+          enum:
+            - draft
+            - active
+            - disabled
+            - null
+          description: The SP's state; refused with 422 saml.status_invalid otherwise.
+        assignment_required:
+          type:
+            - boolean
+            - "null"
+          description: Sign in only the people assigned to the SP; off by default
+    SAMLServiceProviderUpdate:
+      type: object
+      additionalProperties: false
+      description: The fields to change; every one is optional, and one left out or null keeps its value. attributes replaces the whole list.
+      properties:
+        name:
+          type:
+            - string
+            - "null"
+        entity_id:
+          type:
+            - string
+            - "null"
+        acs_url:
+          type:
+            - string
+            - "null"
+          format: uri
+        name_id_format:
+          type:
+            - string
+            - "null"
+          description: urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress (the default), urn:oasis:names:tc:SAML:2.0:nameid-format:persistent or urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified
+        name_id_attribute:
+          type:
+            - string
+            - "null"
+          description: Where the NameID comes from — email, user_id, persistent_id or metadata.<key>; by default persistent_id for a persistent NameID and email otherwise
+        certificate:
+          type:
+            - string
+            - "null"
+          description: The app's own certificate (PEM). It must be kept for require_signed_requests, encrypt_assertions or both (422 saml.certificate_unused otherwise), and either needs one (422 saml.certificate_required); encryption needs an RSA key (422 saml.encryption_key_unsupported).
+        require_signed_requests:
+          type:
+            - boolean
+            - "null"
+          description: Refuse sign-in requests not signed with the certificate; off by default
+        encrypt_assertions:
+          type:
+            - boolean
+            - "null"
+          description: Encrypt each assertion to the certificate; off by default
+        attributes:
+          type:
+            - array
+            - "null"
+          maxItems: 50
+          description: The attributes to send; absent sends the default email (from email) and name (from display_name), an empty list none
+          items:
+            $ref: "#/components/schemas/SAMLAttributeMapping"
+        status:
+          type:
+            - string
+            - "null"
+          enum:
+            - draft
+            - active
+            - disabled
+            - null
+          description: The SP's state; refused with 422 saml.status_invalid otherwise.
         assignment_required:
           type:
             - boolean
@@ -8896,6 +9115,59 @@ components:
         group_id:
           type: string
           format: uuid
+    SAMLConnectionUpdate:
+      type: object
+      additionalProperties: false
+      description: The fields to change; every one is optional, and a field left out or null keeps its value.
+      properties:
+        name:
+          type:
+            - string
+            - "null"
+        idp_entity_id:
+          type:
+            - string
+            - "null"
+        idp_sso_url:
+          type:
+            - string
+            - "null"
+          format: uri
+          description: Checked as on create (422 saml.sso_url_invalid).
+        idp_certificate:
+          type:
+            - string
+            - "null"
+          description: PEM or base64 DER X.509 signing certificate (422 saml.certificate_invalid otherwise). It becomes the only certificate the connection trusts; add and remove certificates one at a time with the certificates endpoints.
+        email_attribute:
+          type:
+            - string
+            - "null"
+        name_attribute:
+          type:
+            - string
+            - "null"
+        groups_attribute:
+          type:
+            - string
+            - "null"
+          maxLength: 256
+          description: The attribute carrying the person's groups; empty reads the common ones (see SAMLConnection). Over 256 characters is refused with 422 validation_failed.
+        status:
+          type:
+            - string
+            - "null"
+          enum:
+            - draft
+            - active
+            - disabled
+            - null
+          description: Turning a connection active needs its IdP's entity ID, SSO URL and a certificate (422 saml.connection_incomplete otherwise).
+        allow_idp_initiated:
+          type:
+            - boolean
+            - "null"
+          description: Accept IdP-initiated sign-ins (unsolicited assertions); see SAMLConnection.
     OIDCClaimMapping:
       type: object
       description: The ID token claims a sign-in reads. An empty name reads none, except for email, which is required.
@@ -9180,18 +9452,7 @@ components:
     LdapUpdateInput:
       type: object
       additionalProperties: false
-      required:
-        - base_dn
-        - bind_dn
-        - bind_password
-        - email_attribute
-        - name
-        - name_attribute
-        - server_url
-        - skip_tls_verify
-        - start_tls
-        - status
-        - user_filter
+      description: The fields to change; every one is optional, and one left out or null keeps its value.
       properties:
         base_dn:
           type:
@@ -9736,6 +9997,15 @@ components:
           type: string
     AdminPortalLink:
       type: object
+      required:
+        - id
+        - organization_id
+        - capabilities
+        - created_by
+        - expires_at
+        - revoked_at
+        - last_used_at
+        - created_at
       properties:
         id:
           type: string
@@ -9794,24 +10064,7 @@ components:
           $ref: "#/components/schemas/PortalBranding"
         capabilities:
           type: array
-          items:
-            type: string
-        expires_at:
-          type: string
-          format: date-time
-        scim_base_url:
-          type: string
-          format: uri
-          description: The SCIM 2.0 base URL the IT admin enters at their IdP. Present only when the link's capabilities include scim.
-        organization_name:
-          type: string
-    AdminPortalContext:
-      type: object
-      properties:
-        organization_name:
-          type: string
-        capabilities:
-          type: array
+          description: What the link may set up.
           items:
             type: string
             enum:
@@ -9821,22 +10074,12 @@ components:
         expires_at:
           type: string
           format: date-time
-        branding:
-          type: object
-          properties:
-            logo_url:
-              type: string
-            primary_color:
-              type: string
-            secondary_color:
-              type: string
-            background_color:
-              type: string
-              description: Optional hosted-login page background from organization branding settings.
         scim_base_url:
           type: string
           format: uri
           description: The SCIM 2.0 base URL the IT admin enters at their IdP. Present only when the link's capabilities include scim.
+        organization_name:
+          type: string
     AdminPortalSAMLConnection:
       description: A SAML connection as the admin portal shows it, with the service-provider addresses the IT admin enters at their IdP.
       allOf:

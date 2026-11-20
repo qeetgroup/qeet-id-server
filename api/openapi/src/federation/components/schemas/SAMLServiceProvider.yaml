@@ -1,4 +1,22 @@
 type: object
+required:
+  - id
+  - organization_id
+  - name
+  - entity_id
+  - acs_url
+  - name_id_format
+  - name_id_attribute
+  - certificate
+  - require_signed_requests
+  - encrypt_assertions
+  - certificate_details
+  - status
+  - attributes
+  - assignment_required
+  - created_at
+  - updated_at
+  - last_login_at
 properties:
   id:
     type: string

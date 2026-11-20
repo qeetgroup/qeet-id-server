@@ -33,12 +33,55 @@ get:
           schema:
             type: object
             additionalProperties: true
+            required:
+              - client_name
+              - organization_id
+              - providers
+              - self_registration_enabled
+              - remember_device_enabled
+              - sign_in_methods
+              - branding
             properties:
               client_name:
                 type: string
               organization_id:
                 type: string
                 format: uuid
+              providers:
+                type: array
+                items:
+                  type: string
+                description: >-
+                  The names of the social sign-in providers the organization
+                  has turned on, for GET /v1/social/{provider}/start; empty
+                  when none is, or they can't be read.
+              self_registration_enabled:
+                type: boolean
+                description: >-
+                  Whether people may create an account here; false when the
+                  setting can't be read.
+              remember_device_enabled:
+                type: boolean
+                description: >-
+                  Whether a device may skip the second step for
+                  remember_device_days; false when the setting can't be read.
+              sign_in_methods:
+                type: object
+                description: >-
+                  Which first-factor methods the organization allows. All true
+                  when the setting can't be read; each is refused anyway where
+                  the credential is accepted.
+                required:
+                  - password
+                  - passkey
+                  - magic_link
+                properties:
+                  password:
+                    type: boolean
+                  passkey:
+                    type: boolean
+                  magic_link:
+                    type: boolean
               logo_uri:
                 type: string
                 format: uri
@@ -64,6 +107,11 @@ get:
                   hosted pages can show them as they are met. The server still
                   checks them when a password is set. Absent when the policy
                   can't be read.
+                required:
+                  - min_length
+                  - require_uppercase
+                  - require_number
+                  - require_symbol
                 properties:
                   min_length:
                     type: integer
@@ -88,6 +136,10 @@ get:
                 type:
                   - object
                   - "null"
+                description: >-
+                  The organization's brand for the hosted pages, each part
+                  present only when set; null when none is (or the plan doesn't
+                  include custom_branding).
                 properties:
                   logo_url:
                     type: string

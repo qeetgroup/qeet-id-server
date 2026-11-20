@@ -54,7 +54,7 @@ put:
     content:
       application/json:
         schema:
-          $ref: ../../components/schemas/RiskSettings.yaml
+          $ref: ../../components/schemas/RiskSettingsUpdate.yaml
   responses:
     "200":
       description: Updated settings

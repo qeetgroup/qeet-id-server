@@ -1,4 +1,26 @@
 type: object
+required:
+  - sp_entity_id
+  - acs_url
+  - sp_metadata_url
+  - id
+  - organization_id
+  - name
+  - idp_entity_id
+  - idp_sso_url
+  - idp_certificate
+  - certificates
+  - metadata_url
+  - metadata_refreshed_at
+  - metadata_error
+  - email_attribute
+  - name_attribute
+  - groups_attribute
+  - status
+  - allow_idp_initiated
+  - created_at
+  - updated_at
+  - last_login_at
 properties:
   sp_entity_id:
     type: string
@@ -73,6 +95,10 @@ properties:
       many, memberships stay as they are.
   status:
     type: string
+    enum:
+      - draft
+      - active
+      - disabled
   allow_idp_initiated:
     type: boolean
     default: false

@@ -32,8 +32,8 @@ post:
     Creates an organization and makes the calling user its owner. A newly registered
     user has no organization until this succeeds; every organization-scoped endpoint
     requires one. A verified email is required before an organization can be
-    provisioned. Only the free plan is created here (plan may be left out): pro and
-    enterprise answer 402 billing.checkout_required, since a paid plan starts with
+    provisioned. Only the free plan is created here (plan may be left out): starter,
+    pro and enterprise answer 402 billing.checkout_required, since a paid plan starts with
     checkout. Every organization is created in the region this service is
     hosted in; asking for another is refused with 422 organization.region_unavailable
     (metadata.available names the one there is). The response includes a
@@ -72,12 +72,15 @@ post:
               id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
               slug: acme
               name: Acme, Inc.
+              status: active
               plan: free
               region: ap-south-1
+              logo_url: ""
+              metadata:
+                industry: fintech
               created_at: "2026-09-24T10:15:00Z"
               updated_at: "2026-09-24T10:15:00Z"
-              member_count: 1
-              mfa_enabled_count: 0
+              deletion_due_at: null
             organization_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
             roles:
               - owner

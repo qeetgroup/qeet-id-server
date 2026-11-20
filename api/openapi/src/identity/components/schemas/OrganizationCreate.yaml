@@ -18,6 +18,7 @@ properties:
       - "null"
     enum:
       - free
+      - starter
       - pro
       - enterprise
       - null
@@ -30,6 +31,14 @@ properties:
       organization.region_unavailable, with metadata.available, otherwise); the
       organization is created there either way.
     maxLength: 64
+  logo_url:
+    type:
+      - string
+      - "null"
+    maxLength: 3000000
+    description: >-
+      Optional logo, a hosted URL or a small inline data URL, up to 3,000,000
+      characters. Left out or empty, the console shows the name's initials.
   metadata:
     type:
       - object

@@ -37,6 +37,9 @@ post:
         application/json:
           schema:
             type: object
+            required:
+              - secret
+              - provisioning_url
             properties:
               secret:
                 type: string

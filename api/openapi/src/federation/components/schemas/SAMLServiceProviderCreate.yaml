@@ -60,6 +60,16 @@ properties:
       name (from display_name), an empty list none
     items:
       $ref: ./SAMLAttributeMapping.yaml
+  status:
+    type:
+      - string
+      - "null"
+    enum:
+      - draft
+      - active
+      - disabled
+      - null
+    description: The SP's state; refused with 422 saml.status_invalid otherwise.
   assignment_required:
     type:
       - boolean

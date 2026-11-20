@@ -55,11 +55,18 @@ get:
         application/json:
           schema:
             type: object
+            required:
+              - nodes
+              - edges
             properties:
               nodes:
                 type: array
                 items:
                   type: object
+                  required:
+                    - id
+                    - type
+                    - label
                   properties:
                     id:
                       type: string
@@ -77,6 +84,10 @@ get:
                 type: array
                 items:
                   type: object
+                  required:
+                    - from
+                    - to
+                    - relation
                   properties:
                     from:
                       type: string

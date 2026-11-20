@@ -28,6 +28,9 @@ post:
         application/json:
           schema:
             type: object
+            required:
+              - session_id
+              - publicKey
             properties:
               session_id:
                 type: string

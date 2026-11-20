@@ -2,6 +2,12 @@ type: object
 description: >-
   One link in an authorization decision's grant path: a role that confers the
   requested permission and how that role reaches the user.
+required:
+  - permission
+  - granted_by
+  - via
+  - role_id
+  - role_name
 properties:
   permission:
     type: string

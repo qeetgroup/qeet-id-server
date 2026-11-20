@@ -1,5 +1,12 @@
 type: object
 description: Non-secret metadata for an issuer signing key (no key material).
+required:
+  - kid
+  - alg
+  - use
+  - status
+  - created_at
+  - activated_at
 properties:
   kid:
     type: string

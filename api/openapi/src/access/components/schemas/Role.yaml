@@ -1,4 +1,11 @@
 type: object
+required:
+  - id
+  - organization_id
+  - name
+  - description
+  - is_system
+  - created_at
 properties:
   id:
     type: string

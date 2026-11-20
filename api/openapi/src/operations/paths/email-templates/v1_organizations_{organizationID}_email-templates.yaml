@@ -20,6 +20,9 @@ get:
         application/json:
           schema:
             type: object
+            required:
+              - items
+              - capabilities
             properties:
               items:
                 type: array
@@ -27,6 +30,10 @@ get:
                   $ref: ../../components/schemas/EmailResolvedTemplate.yaml
               capabilities:
                 type: object
+                required:
+                  - rich_text
+                  - localization
+                  - test_email
                 properties:
                   rich_text:
                     type: boolean

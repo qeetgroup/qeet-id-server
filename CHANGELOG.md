@@ -64,6 +64,27 @@ The first release, 2027.1.0, is in preparation. No version has been published ye
 
 ### Changed
 
+- The API says organization, not tenant. Paths under `/v1/tenants/{tenantID}/…` are under
+  `/v1/organizations/{organizationID}/…`; every `tenant_id` JSON field and query parameter is
+  `organization_id`, and `?tenant=` (a slug) is `?organization=`; the access token's `tenant_id` claim is
+  `organization_id`; and the `tenant.*` permissions (`tenant.read`, `tenant.write`, `tenant.delete`), error
+  codes (such as `tenant.owner_only` and `tenant.slug_taken`), audit actions and events (such as
+  `tenant.created` and `tenant.updated`) are `organization.*`. No release has shipped, so the old names
+  are not accepted alongside: every client, and every product that reads the token, follows the new
+  names.
+- The API documents mark as required every field the server always sends (a nullable one may be null),
+  and document what was missing: `logo_url` on an organization (answered, and taken on create and
+  update; `plan` is not taken on update), `providers`, `self_registration_enabled`,
+  `remember_device_enabled` and `sign_in_methods` on the hosted login's context, `available` and `source`
+  on Qeet AI's status, the 200 answer with `frontchannel_logout_uris` when the hosted login signs out,
+  the answer of the LDAP hosted sign-in, the context of an AuthZEN evaluation, and `status` on a new SAML
+  service provider. Where a read and a write shared one definition, the write has its own, with every
+  field optional as the server takes it: `SecurityPolicyUpdate`, `AuthPolicyUpdate`, `RiskSettingsUpdate`,
+  `OrganizationRateLimitsUpdate`, `SAMLConnectionUpdate` (with `allow_idp_initiated`) and
+  `SAMLServiceProviderUpdate`; an LDAP connection's update no longer lists every field as required. The
+  admin portal's context read answers `PortalContext`, as its session does. Invitation, SAML connection
+  and Qeet AI source states are enumerated, and an organization's plan may be `starter`. The answers
+  themselves are unchanged.
 - Releases follow a fixed monthly rhythm: the branch is cut on the first working day of the month, tested for
   about two weeks and released on the third Tuesday; urgent fixes still ship as hotfixes. The first release
   is `2027.1.0`, planned for Tuesday 19 January 2027, and the documents name it that way throughout. Its
@@ -144,11 +165,10 @@ The first release, 2027.1.0, is in preparation. No version has been published ye
   as newer than this build and has to be recreated (`make db-reset`); no release has shipped, so nothing is
   carried over.
 - The schema `"user"` is named `account`, so it no longer has to be quoted.
-- Inside the server the word is organization, not organization. The schema `organization` is `organization`,
-  `organization.organizations` is `organization.organizations`, every `organization_id` column is `organization_id`, the
-  row-security policy is `organization_isolation`, and the Go code, SQL and comments follow. The API is
-  unchanged: its paths, JSON fields, token claim and its permission, event and error names still say
-  organization, and are renamed in one later change.
+- Inside the server the word is organization, not tenant. The schema `tenant` is `organization`,
+  `tenant.tenants` is `organization.organizations`, every `tenant_id` column is `organization_id`, the
+  row-security policy is `organization_isolation`, and the Go code, SQL and comments follow. The API
+  followed in its own change (above).
 - A secret is stored only encrypted. The plaintext columns left from before encryption, and the code that read
   them and encrypted them on first use, are gone: webhook and auth hook signing secrets, Token Vault and
   social provider client secrets, LDAP bind passwords, SIEM tokens, authenticator app secrets and push tokens.

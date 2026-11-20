@@ -28,6 +28,19 @@ get:
         application/json:
           schema:
             type: object
+            required:
+              - mfa_required
+              - mfa_enabled
+              - totp_enabled
+              - otp_factors
+              - push_devices
+              - passkeys
+              - passkey_last_used_at
+              - recovery_codes_remaining
+              - password_set
+              - password_changed_at
+              - active_sessions
+              - distinct_devices
             properties:
               mfa_required:
                 type: boolean

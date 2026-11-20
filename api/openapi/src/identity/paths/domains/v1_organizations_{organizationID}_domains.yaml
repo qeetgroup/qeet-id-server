@@ -20,6 +20,8 @@ get:
         application/json:
           schema:
             type: object
+            required:
+              - items
             properties:
               truncated:
                 $ref: ../../../shared/schemas/Truncated.yaml

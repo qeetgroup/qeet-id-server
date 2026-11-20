@@ -1,4 +1,17 @@
 type: object
+required:
+  - total
+  - active
+  - suspended
+  - invited
+  - mfa_enabled
+  - mfa_missing
+  - new_last_30d
+  - last_seen
+  - admins_without_mfa
+  - email_unverified
+  - by_role
+  - by_department
 properties:
   total:
     type: integer
@@ -16,6 +29,12 @@ properties:
     type: integer
   last_seen:
     type: object
+    required:
+      - today
+      - week
+      - month
+      - older
+      - never
     properties:
       today:
         type: integer
@@ -38,6 +57,9 @@ properties:
     type: array
     items:
       type: object
+      required:
+        - role
+        - count
       properties:
         role:
           type: string
@@ -48,6 +70,9 @@ properties:
     description: Up to 200 departments, largest first.
     items:
       type: object
+      required:
+        - department
+        - count
       properties:
         department:
           type: string

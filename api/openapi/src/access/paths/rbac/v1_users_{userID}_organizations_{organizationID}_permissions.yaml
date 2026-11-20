@@ -30,6 +30,9 @@ get:
         application/json:
           schema:
             type: object
+            required:
+              - permissions
+              - grants
             properties:
               permissions:
                 type: array

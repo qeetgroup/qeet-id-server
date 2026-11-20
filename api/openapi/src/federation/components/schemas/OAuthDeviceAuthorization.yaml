@@ -2,6 +2,19 @@ type: object
 description: >-
   Admin view of an RFC 8628 device-authorization row. Never includes the
   device_code or its hash.
+required:
+  - id
+  - client_id
+  - client_name
+  - user_code
+  - status
+  - user_id
+  - user_email
+  - scopes
+  - created_at
+  - expires_at
+  - last_polled_at
+  - consumed_at
 properties:
   id:
     type: string

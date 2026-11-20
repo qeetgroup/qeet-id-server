@@ -1,5 +1,13 @@
 type: object
 description: Outcome of a single compliance control check against live system state.
+required:
+  - id
+  - name
+  - category
+  - criteria
+  - status
+  - detail
+  - detail_code
 properties:
   id:
     type: string

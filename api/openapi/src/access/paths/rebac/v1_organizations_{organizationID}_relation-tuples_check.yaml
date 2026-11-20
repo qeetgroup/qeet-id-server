@@ -62,6 +62,9 @@ post:
         application/json:
           schema:
             type: object
+            required:
+              - allowed
+              - decided_by
             properties:
               allowed:
                 type: boolean
@@ -75,6 +78,11 @@ post:
                 type: array
                 items:
                   type: object
+                  required:
+                    - object
+                    - relation
+                    - subject
+                    - depth
                   properties:
                     object:
                       type: string

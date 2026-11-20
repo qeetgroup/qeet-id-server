@@ -1,4 +1,20 @@
 type: object
+required:
+  - id
+  - organization_id
+  - client_id
+  - type
+  - name
+  - redirect_uris
+  - post_logout_uris
+  - grant_types
+  - scopes
+  - created_at
+  - pkce_exempt_until
+  - backchannel_logout_uri
+  - frontchannel_logout_uri
+  - logo_uri
+  - client_uri
 properties:
   id:
     type: string

@@ -2,9 +2,10 @@ get:
   operationId: getQeetAiStatus
   summary: Qeet AI configuration status
   description: >-
-    Returns whether the AI qeetai is configured server-side and which
-    provider/model is active. Never returns key material. Used by the console to
-    render the unconfigured setup state.
+    Returns whether Qeet AI is configured for the caller's organization, whose
+    key applies (source), whether the assistant may be used (available) and
+    which provider and model are active. Never returns key material. Used by
+    the console to render the unconfigured setup state.
   tags:
     - Qeet AI
   security:

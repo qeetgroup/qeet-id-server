@@ -46,7 +46,7 @@ put:
     content:
       application/json:
         schema:
-          $ref: ../../components/schemas/AuthPolicy.yaml
+          $ref: ../../components/schemas/AuthPolicyUpdate.yaml
     description: >-
       The whole policy (a full replace). `lockout_limits` is read-only and
       ignored.

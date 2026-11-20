@@ -1,0 +1,70 @@
+type: object
+description: >-
+  The authentication policy PUT stores, whole: a switch left out is off, a
+  lockout setting left out or null is the platform default, and
+  remember_device_days left out is 30; password_min_length and
+  magic_link_ttl_minutes are clamped to their bounds. lockout_limits is
+  read-only and ignored.
+properties:
+  password_enabled:
+    type: boolean
+  password_min_length:
+    type: integer
+    minimum: 8
+    maximum: 128
+  password_require_uppercase:
+    type: boolean
+  password_require_number:
+    type: boolean
+  password_require_symbol:
+    type: boolean
+  magic_link_enabled:
+    type: boolean
+  magic_link_ttl_minutes:
+    type: integer
+    minimum: 5
+    maximum: 1440
+  passkey_enabled:
+    type: boolean
+  otp_email_enabled:
+    type: boolean
+  otp_sms_enabled:
+    type: boolean
+  self_registration_enabled:
+    type: boolean
+  remember_device_enabled:
+    type: boolean
+  remember_device_days:
+    type: integer
+    minimum: 1
+    maximum: 90
+    description: >-
+      How long a device stays remembered after the sign-in that remembered it,
+      in days (30 by default; 0 on update keeps the default). Applies to devices
+      remembered after it is set.
+  lockout_threshold:
+    type:
+      - integer
+      - "null"
+    description: >-
+      Failed password sign-ins to one account from one network, each within the
+      window of the last, that lock the account for that network. null = the
+      platform default. Must lie within lockout_limits (default bounds 3..5):
+      an organization may make the lockout stricter, never looser.
+  lockout_window_minutes:
+    type:
+      - integer
+      - "null"
+    description: >-
+      A failure is forgotten once this many minutes pass with no new failure.
+      null = the platform default. Must lie within lockout_limits (default
+      bounds 15..1440).
+  lockout_duration_minutes:
+    type:
+      - integer
+      - "null"
+    description: >-
+      How long a lock lasts. null = the platform default. Must lie within
+      lockout_limits (default bounds 15..1440).
+  lockout_limits:
+    $ref: ./LockoutLimits.yaml

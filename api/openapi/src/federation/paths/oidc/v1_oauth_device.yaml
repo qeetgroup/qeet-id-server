@@ -23,6 +23,9 @@ get:
         application/json:
           schema:
             type: object
+            required:
+              - client_name
+              - scopes
             properties:
               client_name:
                 type: string

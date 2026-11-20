@@ -1,4 +1,22 @@
 type: object
+required:
+  - password_enabled
+  - password_min_length
+  - password_require_uppercase
+  - password_require_number
+  - password_require_symbol
+  - magic_link_enabled
+  - magic_link_ttl_minutes
+  - passkey_enabled
+  - otp_email_enabled
+  - otp_sms_enabled
+  - self_registration_enabled
+  - remember_device_enabled
+  - remember_device_days
+  - lockout_threshold
+  - lockout_window_minutes
+  - lockout_duration_minutes
+  - lockout_limits
 properties:
   password_enabled:
     type: boolean
