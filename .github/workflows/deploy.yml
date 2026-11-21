@@ -172,7 +172,7 @@ jobs:
   # Builds nothing and tags nothing; switches the host to a version already in
   # ECR. It stops before touching production when the version isn't retained
   # or its build can't run on the current schema (restore or roll forward
-  # instead: operations/runbooks/deployment.md in qeet-id-files).
+  # instead: the Deployment Runbook in qeet-id-files/05-engineering/operations.md).
   rollback:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.rollback_to != ''
     runs-on: ubuntu-latest
