@@ -153,7 +153,8 @@ func (w *wiring) newDirectorySync(f *federationServices) error {
 	if f.ldapService, err = ldap.NewService(ldap.Deps{
 		Pool: w.pool, Auth: w.authService, Cipher: w.sharedCipher,
 		Gate: w.entitlementSvc, Mapper: store, Observer: store, Egress: w.outboundPolicy,
-		AllowSkipTLSVerify: w.cfg.IsDev(), // skip_tls_verify is a dev-only escape hatch
+		Signals: w.sessionSignals, Notifier: w.notificationService,
+		AllowInsecureTLS: w.cfg.IsDev(), // skip_tls_verify and plain ldap:// are dev-only escape hatches
 	}); err != nil {
 		return fmt.Errorf("ldap service: %w", err)
 	}
@@ -201,6 +202,21 @@ func samlMetadataRefreshJob(pool *pgxpool.Pool, outbound []*egress.Policy) worke
 			run, err := saml.RefreshMetadata(ctx, pool, egress.PublicPolicy(outbound...))
 			if run.Refreshed+run.Failed > 0 {
 				slog.Info("saml metadata refreshed", "refreshed", run.Refreshed, "failed", run.Failed)
+			}
+			return err
+		},
+	}
+}
+
+// ldapSyncJob syncs each active LDAP connection on its own interval.
+func ldapSyncJob(svc *ldap.Service) worker.Scheduled {
+	return worker.Scheduled{
+		Name:     "ldap-directory-sync",
+		Interval: ldap.SyncJobInterval,
+		Run: func(ctx context.Context) error {
+			run, err := svc.SyncDue(ctx)
+			if run.Synced+run.Failed > 0 {
+				slog.Info("ldap directories synced", "synced", run.Synced, "failed", run.Failed)
 			}
 			return err
 		},

@@ -160,6 +160,7 @@ type Deps struct {
 	StartedAt        time.Time
 	CSRFDisabled     bool
 	CSRFCookieDomain string
+	CSRFKey          httpx.CSRFKey
 	// RateLimitStore, when set, backs every limiter (shared across replicas).
 	// Nil = in-process limits.
 	RateLimitStore ratelimit.Store
@@ -216,7 +217,7 @@ func NewRouter(d Deps) http.Handler {
 	// CSRF applies to cookie-bearing browser requests; bearer tokens and API keys
 	// bypass it. CSRFDisabled is for dev only, and startup refuses it elsewhere.
 	if !d.CSRFDisabled {
-		r.Use(CSRF(d.AllowedOrigins, d.ServiceEnv != config.EnvDev, d.CSRFCookieDomain))
+		r.Use(CSRF(d.AllowedOrigins, d.ServiceEnv != config.EnvDev, d.CSRFCookieDomain, d.CSRFKey))
 	}
 
 	// newLimiter builds an in-process limiter, or a Redis-backed one when a
@@ -569,17 +570,32 @@ func NoStoreRoutes() []string {
 
 // CSRF is the production cross-site request check (httpx.CSRF) with the
 // production exemptions, as NewRouter mounts it.
-func CSRF(allowedOrigins []string, cookieSecure bool, cookieDomain string) func(http.Handler) http.Handler {
+func CSRF(allowedOrigins []string, cookieSecure bool, cookieDomain string, key httpx.CSRFKey) func(http.Handler) http.Handler {
 	return httpx.CSRF(httpx.CSRFConfig{
 		AllowedOrigins: allowedOrigins,
 		CookieSecure:   cookieSecure,
 		CookieDomain:   cookieDomain,
+		Key:            key,
+		SessionCookie:  authentication.LoginSessionCookie,
+		RotateCookies:  []string{adminportal.SessionCookie},
+		RotatePaths:    csrfRotatePaths(),
 		// Exempt: machine and IdP endpoints authenticated otherwise (SAML ACS, OAuth
 		// revoke, introspect and token) and public pre-auth endpoints that return bearer
 		// tokens; cookie-setting endpoints stay protected. Entries are exact, end in "/"
 		// (prefix) or use "*" (one segment), so keep prefixes narrow.
 		ExemptPaths: csrfExemptPaths(),
 	})
+}
+
+// csrfRotatePaths are the token sign-ins and the organization switch; cookie
+// sign-ins rotate the CSRF token by setting qe_ls.
+func csrfRotatePaths() []string {
+	return []string{
+		"/v1/auth/login", "/v1/auth/mfa", "/v1/auth/signup",
+		"/v1/passkeys/login/finish", "/v1/auth/magic-link/consume",
+		"/v1/social/exchange", "/saml/exchange", "/v1/oidc-connections/exchange",
+		"/v1/invites/accept", "/v1/auth/switch-organization",
+	}
 }
 
 // csrfExemptPaths lists the paths that skip the double-submit/origin check.

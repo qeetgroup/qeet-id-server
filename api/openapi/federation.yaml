@@ -4536,7 +4536,7 @@ paths:
                 password:
                   type: string
                   format: password
-      description: "Signs a person in with their directory username and password and answers with a token pair, or with a challenge to complete at POST /v1/auth/mfa as for a password sign-in. The connection's organization's network rules apply first (403 auth.address_not_allowed, whatever the password), then the password is checked by a bind against the connection's directory, under the sign-in lockout, login hook, risk and second-factor rules of that organization, as a password sign-in is. The lockout counts a username case-insensitively, ignoring extra spaces. A wrong username or password is refused with 401 ldap.invalid_credentials and counted by the lockout like a wrong password. A locked account answers 429 auth.account_locked whatever the password (a throttled source network, 429 too_many_requests), and when the lockout counters cannot be read or written the sign-in is refused with 503 auth.sign_in_unavailable. A disabled connection is refused with 403 ldap.connection_disabled, and a draft one, still being set up, with 403 ldap.connection_draft; one whose organization's plan no longer includes LDAP is refused with 402 billing.upgrade_required, before the directory is asked. A sign-in that needs another step (a second factor, setting one up, or a risk confirmation by an emailed code) answers with that challenge, as POST /v1/auth/login does; the session it completes is recorded as an ldap_mfa sign-in. A directory account whose email belongs to an account outside the connection's organization is refused with 403 ldap.account_not_in_organization, and an account that is not active with 403 auth.account_inactive. An empty username or password is refused with 400 ldap.credentials_required, and a connection that does not verify the directory's certificate with 422 ldap.tls_verify_required. The account signed in must have the connection's organization as its home (403 ldap.account_not_in_organization), and an existing one adopted by email a verified address, or one the organization's directory provisioned (SCIM), which is then marked verified (403 ldap.account_unverified otherwise). A directory entry is linked to the connection that bound it. An address not yet linked is adopted or given an account only on a domain the organization has verified (the most specific verified domain decides, 403 ldap.email_domain_unverified otherwise), and an account that owns the organization or holds any permission there but the reads organization.read, user.read, role.read, group.read, connection.read, apikey.read, webhook.read, billing.read, policy.read, audit.read and analytics.read is not adopted by its address (403 ldap.account_administers): it keeps its own credentials. A new account is created only while the domain that manages the address has jit_enabled on; otherwise an address with no account is refused with 403 ldap.jit_not_allowed and nothing is created. Existing members are adopted either way. Every sign-in then brings the account in step with the directory, each change audited: its display name; its address, when the directory's is on a domain the organization has verified, is no other account's, and the account doesn't administer the organization (recovery links sent to the old address then stop working); and its groups, as GET /v1/organizations/{organizationID}/ldap/{id}/group-mappings describes."
+      description: "Signs a person in with their directory username and password and answers with a token pair, or with a challenge to complete at POST /v1/auth/mfa as for a password sign-in. The connection's organization's network rules apply first (403 auth.address_not_allowed, whatever the password), then the password is checked by a bind against the connection's directory, under the sign-in lockout, login hook, risk and second-factor rules of that organization, as a password sign-in is. The lockout counts a username case-insensitively, ignoring extra spaces. A wrong username or password is refused with 401 ldap.invalid_credentials and counted by the lockout like a wrong password. A locked account answers 429 auth.account_locked whatever the password (a throttled source network, 429 too_many_requests), and when the lockout counters cannot be read or written the sign-in is refused with 503 auth.sign_in_unavailable. A disabled connection is refused with 403 ldap.connection_disabled, and a draft one, still being set up, with 403 ldap.connection_draft; one whose organization's plan no longer includes LDAP is refused with 402 billing.upgrade_required, before the directory is asked. A sign-in that needs another step (a second factor, setting one up, or a risk confirmation by an emailed code) answers with that challenge, as POST /v1/auth/login does; the session it completes is recorded as an ldap_mfa sign-in. A directory account whose email belongs to an account outside the connection's organization is refused with 403 ldap.account_not_in_organization, and an account that is not active with 403 auth.account_inactive. An empty username or password is refused with 400 ldap.credentials_required, and a connection that does not verify the directory's certificate with 422 ldap.tls_verify_required. A connection saved without TLS (ldap:// with start_tls off) is refused with 422 ldap.tls_required before the directory is asked, so no password is sent in the clear, and the refusal is recorded in the organization's audit trail (ldap.connection_refused). The account signed in must have the connection's organization as its home (403 ldap.account_not_in_organization), and an existing one adopted by email a verified address, or one the organization's directory provisioned (SCIM), which is then marked verified (403 ldap.account_unverified otherwise). A directory entry is linked to the connection that bound it. An address not yet linked is adopted or given an account only on a domain the organization has verified (the most specific verified domain decides, 403 ldap.email_domain_unverified otherwise), and an account that owns the organization or holds any permission there but the reads organization.read, user.read, role.read, group.read, connection.read, apikey.read, webhook.read, billing.read, policy.read, audit.read and analytics.read is not adopted by its address (403 ldap.account_administers): it keeps its own credentials. A new account is created only while the domain that manages the address has jit_enabled on; otherwise an address with no account is refused with 403 ldap.jit_not_allowed and nothing is created. Existing members are adopted either way. Every sign-in then brings the account in step with the directory, each change audited: its display name; its address, when the directory's is on a domain the organization has verified, is no other account's, and the account doesn't administer the organization (recovery links sent to the old address then stop working); and its groups, as GET /v1/organizations/{organizationID}/ldap/{id}/group-mappings describes."
       responses:
         "200":
           description: Signed in with a token pair, or a challenge to complete at POST /v1/auth/mfa (the MFAChallenge of the authentication API).
@@ -4645,7 +4645,7 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/LdapCreateInput"
-      description: Creates a directory connection. A connection that turns off verification of the directory server's certificate (skip_tls_verify) is refused with 422 ldap.tls_verify_required, and nothing is saved; only a development server (SERVICE_ENV=dev) allows it. Requires connection.write.
+      description: 'Creates a directory connection. It must reach the directory over TLS, ldaps:// or ldap:// with start_tls, because binds send passwords: one without is refused with 422 ldap.tls_required ("Use ldaps:// or turn on StartTLS."). A connection that turns off verification of the directory server''s certificate (skip_tls_verify) is refused with 422 ldap.tls_verify_required. Nothing is saved either way; only a development server (SERVICE_ENV=dev) allows them. An active connection is synced with its directory every sync_interval_minutes (15 unless set; 5 to 60, 422 ldap.sync_interval_invalid otherwise), so people the directory disables or removes lose access between sign-ins. Requires connection.write.'
       responses:
         "201":
           description: Created
@@ -4758,7 +4758,7 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/LdapUpdateInput"
-      description: "Applies a partial update to a directory connection. A connection that turns off verification of the directory server's certificate (skip_tls_verify) is refused with 422 ldap.tls_verify_required, and so is any other change to a connection saved that way until it turns verification back on; only a development server (SERVICE_ENV=dev) allows it. Requires connection.write. Changing what the connection trusts (its server_url, bind_dn, base_dn, user_filter or TLS settings) is acting on every account linked to it, as the changed connection could sign in as any of them: while an administrator is linked, it needs a caller who outranks each one (403 rbac.trust_change_outranks_caller otherwise)."
+      description: "Applies a partial update to a directory connection. The connection it leaves must reach the directory over TLS (ldaps://, or ldap:// with start_tls): one without is refused with 422 ldap.tls_required, and so is any other change to a connection saved without TLS, unless the change turns it off (status disabled), so it can be turned off, then mended. A connection that turns off verification of the directory server's certificate (skip_tls_verify) is refused with 422 ldap.tls_verify_required, and so is any other change to a connection saved that way until it turns verification back on. Only a development server (SERVICE_ENV=dev) allows either. sync_interval_minutes must be 5 to 60 (422 ldap.sync_interval_invalid). Saving the connection starts its sync afresh: the next run reads every person, and isn't held to how many people the last full run found, so an administrator can accept a directory that really shrank. Requires connection.write. Changing what the connection trusts (its server_url, bind_dn, base_dn, user_filter or TLS settings) is acting on every account linked to it, as the changed connection could sign in as any of them: while an administrator is linked, it needs a caller who outranks each one (403 rbac.trust_change_outranks_caller otherwise)."
       responses:
         "200":
           description: OK
@@ -4797,7 +4797,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Binds with the connection's service account to prove its settings, without signing anyone in. A connection that turns off verification of the directory server's certificate (skip_tls_verify) is refused with 422 ldap.tls_verify_required; only a development server (SERVICE_ENV=dev) allows it. Requires connection.write.
+      description: Binds with the connection's service account to prove its settings, without signing anyone in. A connection that turns off verification of the directory server's certificate (skip_tls_verify) is refused with 422 ldap.tls_verify_required, and one saved without TLS (ldap:// with start_tls off) with 422 ldap.tls_required before the directory is asked, recorded in the organization's audit trail (ldap.connection_refused); only a development server (SERVICE_ENV=dev) allows either. Requires connection.write.
       responses:
         "200":
           description: 'The bind succeeded ({"ok": true})'
@@ -5827,7 +5827,7 @@ paths:
     get:
       operationId: listDirectoryConnections
       summary: List directory connections
-      description: Combines the organization's configured SCIM endpoint and LDAP connections. Requires connection.read. Organization scope is derived from the authenticated principal and must match the path. Credentials are never returned. Health is unknown until explicitly observed; last_activity_at is a request or login timestamp and is not evidence of a successful synchronization.
+      description: "Combines the organization's configured SCIM endpoint and LDAP connections. Requires connection.read. Organization scope is derived from the authenticated principal and must match the path. Credentials are never returned. Health is unknown until explicitly observed; last_activity_at is a request or login timestamp and is not evidence of a successful synchronization. last_sync_at is the latest successful sync: a SCIM change, or an LDAP connection's scheduled sync. An LDAP connection's scope is users-and-groups, as its scheduled sync keeps people and their groups in step between sign-ins."
       tags:
         - Directory
       security:
@@ -9412,6 +9412,7 @@ components:
         - skip_tls_verify
         - start_tls
         - status
+        - sync_interval_minutes
         - organization_id
         - updated_at
         - user_filter
@@ -9445,6 +9446,11 @@ components:
           type: boolean
         status:
           type: string
+        sync_interval_minutes:
+          type: integer
+          minimum: 5
+          maximum: 60
+          description: How often, in minutes, the scheduled sync reads the directory (15 unless set). Each run reads the people changed since the last (uSNChanged in Active Directory, modifyTimestamp elsewhere), and once a day every person. Someone the directory disabled, deleted or no longer matches by the user filter is suspended and every way they sign in ends; group changes reach their groups through the connection's group mappings. A run that fails, or whose answer looks incomplete, changes nothing and is reported to the people who manage directory connections.
         organization_id:
           type: string
           format: uuid
@@ -9494,9 +9500,18 @@ components:
           type: boolean
         start_tls:
           type: boolean
+          description: Upgrade an ldap:// connection to TLS with StartTLS before anything is sent. Outside development an ldap:// server_url needs it (422 ldap.tls_required otherwise); ldaps:// is encrypted from the start.
         status:
           type: string
           minLength: 1
+        sync_interval_minutes:
+          type:
+            - integer
+            - "null"
+          minimum: 5
+          maximum: 60
+          default: 15
+          description: How often, in minutes, the scheduled sync reads the directory with the service account (5 to 60; 422 ldap.sync_interval_invalid otherwise). It reads the people changed since its last run, and every person once a day; someone the directory disabled, deleted or no longer matches is suspended and signed out.
         user_filter:
           type: string
           minLength: 1
@@ -9541,10 +9556,18 @@ components:
           type:
             - boolean
             - "null"
+          description: Upgrade an ldap:// connection to TLS with StartTLS before anything is sent. Outside development an ldap:// server_url needs it (422 ldap.tls_required otherwise).
         status:
           type:
             - string
             - "null"
+        sync_interval_minutes:
+          type:
+            - integer
+            - "null"
+          minimum: 5
+          maximum: 60
+          description: How often, in minutes, the scheduled sync reads the directory with the service account (5 to 60; 422 ldap.sync_interval_invalid otherwise). It reads the people changed since its last run, and every person once a day; someone the directory disabled, deleted or no longer matches is suspended and signed out.
         user_filter:
           type:
             - string
@@ -9635,12 +9658,15 @@ components:
           type: string
         operation:
           type: string
+          description: "What ran, such as test, sign-in, or sync for an LDAP connection's scheduled sync: one event for the run (resource_type connection, with what it found and changed in params) and one for each person it changed."
         trigger:
           type: string
+          description: "What started it: an identity provider's push (SCIM), an administrator (manual), a person signing in, or the schedule (an LDAP sync)."
           enum:
             - push
             - manual
             - sign-in
+            - scheduled
         resource_type:
           type: string
           enum:
@@ -9701,7 +9727,7 @@ components:
           type: boolean
         reason:
           type: string
-          description: The failure's own code, such as ldap.dial_failed, ldap.service_bind_failed, ldap.tls_verify_required or ldap.invalid_credentials, or the SCIM error type an answer to the identity provider gave (scim.uniqueness, say). Absent on a success, and on events from before it was kept.
+          description: The failure's own code, such as ldap.dial_failed, ldap.service_bind_failed, ldap.tls_verify_required, ldap.tls_required, ldap.sync_search_failed, ldap.sync_empty_result, ldap.sync_people_dropped or ldap.invalid_credentials, or the SCIM error type an answer to the identity provider gave (scim.uniqueness, say). Absent on a success, and on events from before it was kept.
         params:
           type: object
           additionalProperties:

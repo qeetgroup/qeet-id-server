@@ -199,6 +199,7 @@ func (w *wiring) platformDeps() Deps {
 		StartedAt:        w.startedAt,
 		CSRFDisabled:     cfg.CSRFDisabled,
 		CSRFCookieDomain: cfg.CSRFCookieDomain,
+		CSRFKey:          w.sharedCipher,
 		RateLimitStore:   w.limits.store,
 		OrganizationLim:  w.limits.organization,
 		UserLim:          w.limits.user,
@@ -219,6 +220,7 @@ func (w *wiring) workers(outboxPub outbox.Publisher) ([]namedWorker, error) {
 	jobs = append(jobs, BillingJobs(w.billingService, w.invoiceEmails)...)
 	jobs = append(jobs, AccessRequestJobs(w.accessRequestService)...)
 	jobs = append(jobs, AuditRetentionJobs(pool, w.entitlementSvc, w.sharedCipher)...)
+	jobs = append(jobs, ldapSyncJob(w.ldapService))
 	// Committed events reach the organization's webhook subscriptions as well
 	// as the event stream.
 	outboxDispatcher := outbox.NewDispatcher(pool, w.webhookService.Relay(outboxPub), 2*time.Second, 50)

@@ -29515,7 +29515,7 @@
               "request": {
                 "name": "Authenticate (public)",
                 "description": {
-                  "content": "Signs a person in with their directory username and password and answers with a token pair, or with a challenge to complete at POST /v1/auth/mfa as for a password sign-in. The connection's organization's network rules apply first (403 auth.address_not_allowed, whatever the password), then the password is checked by a bind against the connection's directory, under the sign-in lockout, login hook, risk and second-factor rules of that organization, as a password sign-in is. The lockout counts a username case-insensitively, ignoring extra spaces. A wrong username or password is refused with 401 ldap.invalid_credentials and counted by the lockout like a wrong password. A locked account answers 429 auth.account_locked whatever the password (a throttled source network, 429 too_many_requests), and when the lockout counters cannot be read or written the sign-in is refused with 503 auth.sign_in_unavailable. A disabled connection is refused with 403 ldap.connection_disabled, and a draft one, still being set up, with 403 ldap.connection_draft; one whose organization's plan no longer includes LDAP is refused with 402 billing.upgrade_required, before the directory is asked. A sign-in that needs another step (a second factor, setting one up, or a risk confirmation by an emailed code) answers with that challenge, as POST /v1/auth/login does; the session it completes is recorded as an ldap_mfa sign-in. A directory account whose email belongs to an account outside the connection's organization is refused with 403 ldap.account_not_in_organization, and an account that is not active with 403 auth.account_inactive. An empty username or password is refused with 400 ldap.credentials_required, and a connection that does not verify the directory's certificate with 422 ldap.tls_verify_required. The account signed in must have the connection's organization as its home (403 ldap.account_not_in_organization), and an existing one adopted by email a verified address, or one the organization's directory provisioned (SCIM), which is then marked verified (403 ldap.account_unverified otherwise). A directory entry is linked to the connection that bound it. An address not yet linked is adopted or given an account only on a domain the organization has verified (the most specific verified domain decides, 403 ldap.email_domain_unverified otherwise), and an account that owns the organization or holds any permission there but the reads organization.read, user.read, role.read, group.read, connection.read, apikey.read, webhook.read, billing.read, policy.read, audit.read and analytics.read is not adopted by its address (403 ldap.account_administers): it keeps its own credentials. A new account is created only while the domain that manages the address has jit_enabled on; otherwise an address with no account is refused with 403 ldap.jit_not_allowed and nothing is created. Existing members are adopted either way. Every sign-in then brings the account in step with the directory, each change audited: its display name; its address, when the directory's is on a domain the organization has verified, is no other account's, and the account doesn't administer the organization (recovery links sent to the old address then stop working); and its groups, as GET /v1/organizations/{organizationID}/ldap/{id}/group-mappings describes.",
+                  "content": "Signs a person in with their directory username and password and answers with a token pair, or with a challenge to complete at POST /v1/auth/mfa as for a password sign-in. The connection's organization's network rules apply first (403 auth.address_not_allowed, whatever the password), then the password is checked by a bind against the connection's directory, under the sign-in lockout, login hook, risk and second-factor rules of that organization, as a password sign-in is. The lockout counts a username case-insensitively, ignoring extra spaces. A wrong username or password is refused with 401 ldap.invalid_credentials and counted by the lockout like a wrong password. A locked account answers 429 auth.account_locked whatever the password (a throttled source network, 429 too_many_requests), and when the lockout counters cannot be read or written the sign-in is refused with 503 auth.sign_in_unavailable. A disabled connection is refused with 403 ldap.connection_disabled, and a draft one, still being set up, with 403 ldap.connection_draft; one whose organization's plan no longer includes LDAP is refused with 402 billing.upgrade_required, before the directory is asked. A sign-in that needs another step (a second factor, setting one up, or a risk confirmation by an emailed code) answers with that challenge, as POST /v1/auth/login does; the session it completes is recorded as an ldap_mfa sign-in. A directory account whose email belongs to an account outside the connection's organization is refused with 403 ldap.account_not_in_organization, and an account that is not active with 403 auth.account_inactive. An empty username or password is refused with 400 ldap.credentials_required, and a connection that does not verify the directory's certificate with 422 ldap.tls_verify_required. A connection saved without TLS (ldap:// with start_tls off) is refused with 422 ldap.tls_required before the directory is asked, so no password is sent in the clear, and the refusal is recorded in the organization's audit trail (ldap.connection_refused). The account signed in must have the connection's organization as its home (403 ldap.account_not_in_organization), and an existing one adopted by email a verified address, or one the organization's directory provisioned (SCIM), which is then marked verified (403 ldap.account_unverified otherwise). A directory entry is linked to the connection that bound it. An address not yet linked is adopted or given an account only on a domain the organization has verified (the most specific verified domain decides, 403 ldap.email_domain_unverified otherwise), and an account that owns the organization or holds any permission there but the reads organization.read, user.read, role.read, group.read, connection.read, apikey.read, webhook.read, billing.read, policy.read, audit.read and analytics.read is not adopted by its address (403 ldap.account_administers): it keeps its own credentials. A new account is created only while the domain that manages the address has jit_enabled on; otherwise an address with no account is refused with 403 ldap.jit_not_allowed and nothing is created. Existing members are adopted either way. Every sign-in then brings the account in step with the directory, each change audited: its display name; its address, when the directory's is on a domain the organization has verified, is no other account's, and the account doesn't administer the organization (recovery links sent to the old address then stop working); and its groups, as GET /v1/organizations/{organizationID}/ldap/{id}/group-mappings describes.",
                   "type": "text/plain"
                 },
                 "url": {
@@ -29693,7 +29693,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"items\": [\n    {\n      \"base_dn\": \"string\",\n      \"bind_dn\": \"string\",\n      \"created_at\": \"1988-03-13T08:32:20.782Z\",\n      \"email_attribute\": \"string\",\n      \"id\": \"849bd632-cc6d-5f88-1542-cb2579f287d8\",\n      \"last_login_at\": null,\n      \"name\": \"string\",\n      \"name_attribute\": \"string\",\n      \"server_url\": \"string\",\n      \"skip_tls_verify\": false,\n      \"start_tls\": false,\n      \"status\": \"string\",\n      \"organization_id\": \"42102980-2af2-18bd-5f0b-ae82a9c50c6d\",\n      \"updated_at\": \"2009-05-12T18:11:14.461Z\",\n      \"user_filter\": \"string\"\n    },\n    {\n      \"base_dn\": \"string\",\n      \"bind_dn\": \"string\",\n      \"created_at\": \"2017-06-10T00:30:30.619Z\",\n      \"email_attribute\": \"string\",\n      \"id\": \"d74a7bba-6076-e20a-86a8-ad57038d95ba\",\n      \"last_login_at\": \"1974-07-11T00:50:01.473Z\",\n      \"name\": \"string\",\n      \"name_attribute\": \"string\",\n      \"server_url\": \"string\",\n      \"skip_tls_verify\": false,\n      \"start_tls\": false,\n      \"status\": \"string\",\n      \"organization_id\": \"549f270a-d43f-9c18-eab0-95204bfacb1d\",\n      \"updated_at\": \"1951-01-07T18:39:47.089Z\",\n      \"user_filter\": \"string\"\n    }\n  ],\n  \"truncated\": false\n}",
+                  "body": "{\n  \"items\": [\n    {\n      \"base_dn\": \"string\",\n      \"bind_dn\": \"string\",\n      \"created_at\": \"1988-03-13T08:32:20.782Z\",\n      \"email_attribute\": \"string\",\n      \"id\": \"849bd632-cc6d-5f88-1542-cb2579f287d8\",\n      \"last_login_at\": null,\n      \"name\": \"string\",\n      \"name_attribute\": \"string\",\n      \"server_url\": \"string\",\n      \"skip_tls_verify\": false,\n      \"start_tls\": false,\n      \"status\": \"string\",\n      \"sync_interval_minutes\": 45,\n      \"organization_id\": \"102980a4-f281-bd15-0b0a-82a9c50c6db3\",\n      \"updated_at\": \"2025-03-24T19:25:21.295Z\",\n      \"user_filter\": \"string\"\n    },\n    {\n      \"base_dn\": \"string\",\n      \"bind_dn\": \"string\",\n      \"created_at\": \"1961-07-06T18:25:56.236Z\",\n      \"email_attribute\": \"string\",\n      \"id\": \"4a7bba69-764e-0ad8-a80a-57038d95ba11\",\n      \"last_login_at\": \"1951-06-15T20:37:47.255Z\",\n      \"name\": \"string\",\n      \"name_attribute\": \"string\",\n      \"server_url\": \"string\",\n      \"skip_tls_verify\": false,\n      \"start_tls\": false,\n      \"status\": \"string\",\n      \"sync_interval_minutes\": 20,\n      \"organization_id\": \"270a33d4-99c1-3eab-7952-4bfacb1d2e4c\",\n      \"updated_at\": \"1967-07-05T06:41:09.344Z\",\n      \"user_filter\": \"string\"\n    }\n  ],\n  \"truncated\": false\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -29707,7 +29707,7 @@
               "request": {
                 "name": "Create connection",
                 "description": {
-                  "content": "Creates a directory connection. A connection that turns off verification of the directory server's certificate (skip_tls_verify) is refused with 422 ldap.tls_verify_required, and nothing is saved; only a development server (SERVICE_ENV=dev) allows it. Requires connection.write.",
+                  "content": "Creates a directory connection. It must reach the directory over TLS, ldaps:// or ldap:// with start_tls, because binds send passwords: one without is refused with 422 ldap.tls_required (\"Use ldaps:// or turn on StartTLS.\"). A connection that turns off verification of the directory server's certificate (skip_tls_verify) is refused with 422 ldap.tls_verify_required. Nothing is saved either way; only a development server (SERVICE_ENV=dev) allows them. An active connection is synced with its directory every sync_interval_minutes (15 unless set; 5 to 60, 422 ldap.sync_interval_invalid otherwise), so people the directory disables or removes lose access between sign-ins. Requires connection.write.",
                   "type": "text/plain"
                 },
                 "url": {
@@ -29734,7 +29734,7 @@
                 "method": "POST",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"base_dn\": \"string\",\n  \"bind_dn\": \"string\",\n  \"bind_password\": \"string\",\n  \"email_attribute\": \"string\",\n  \"name\": \"string\",\n  \"name_attribute\": \"string\",\n  \"server_url\": \"string\",\n  \"skip_tls_verify\": false,\n  \"start_tls\": true,\n  \"status\": \"string\",\n  \"user_filter\": \"string\"\n}",
+                  "raw": "{\n  \"base_dn\": \"string\",\n  \"bind_dn\": \"string\",\n  \"bind_password\": \"string\",\n  \"email_attribute\": \"str\",\n  \"name\": \"string\",\n  \"name_attribute\": \"string\",\n  \"server_url\": \"string\",\n  \"skip_tls_verify\": true,\n  \"start_tls\": false,\n  \"status\": \"string\",\n  \"user_filter\": \"string\",\n  \"sync_interval_minutes\": 15\n}",
                   "options": { "raw": { "headerFamily": "json", "language": "json" } }
                 },
                 "auth": {
@@ -29779,14 +29779,14 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"base_dn\": \"string\",\n  \"bind_dn\": \"string\",\n  \"bind_password\": \"string\",\n  \"email_attribute\": \"string\",\n  \"name\": \"string\",\n  \"name_attribute\": \"string\",\n  \"server_url\": \"string\",\n  \"skip_tls_verify\": false,\n  \"start_tls\": true,\n  \"status\": \"string\",\n  \"user_filter\": \"string\"\n}",
+                      "raw": "{\n  \"base_dn\": \"string\",\n  \"bind_dn\": \"string\",\n  \"bind_password\": \"string\",\n  \"email_attribute\": \"str\",\n  \"name\": \"string\",\n  \"name_attribute\": \"string\",\n  \"server_url\": \"string\",\n  \"skip_tls_verify\": true,\n  \"start_tls\": false,\n  \"status\": \"string\",\n  \"user_filter\": \"string\",\n  \"sync_interval_minutes\": 15\n}",
                       "options": { "raw": { "headerFamily": "json", "language": "json" } }
                     }
                   },
                   "status": "Created",
                   "code": 201,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"base_dn\": \"string\",\n  \"bind_dn\": \"string\",\n  \"created_at\": \"1972-04-14T08:58:55.515Z\",\n  \"email_attribute\": \"string\",\n  \"id\": \"8a6877c2-dce5-b17c-06ef-26b86f8e3556\",\n  \"last_login_at\": \"1977-01-22T18:09:58.429Z\",\n  \"name\": \"string\",\n  \"name_attribute\": \"string\",\n  \"server_url\": \"string\",\n  \"skip_tls_verify\": false,\n  \"start_tls\": false,\n  \"status\": \"string\",\n  \"organization_id\": \"d5ae15cb-7c9b-9dc2-7cc9-2c48651a8f54\",\n  \"updated_at\": \"1994-11-10T03:50:33.303Z\",\n  \"user_filter\": \"string\"\n}",
+                  "body": "{\n  \"base_dn\": \"string\",\n  \"bind_dn\": \"string\",\n  \"created_at\": \"1984-05-02T01:12:44.437Z\",\n  \"email_attribute\": \"string\",\n  \"id\": \"c20adce5-17c8-6ef4-6b86-8e3556659e17\",\n  \"last_login_at\": \"2002-01-14T20:57:28.915Z\",\n  \"name\": \"string\",\n  \"name_attribute\": \"string\",\n  \"server_url\": \"string\",\n  \"skip_tls_verify\": true,\n  \"start_tls\": true,\n  \"status\": \"string\",\n  \"sync_interval_minutes\": 23,\n  \"organization_id\": \"e57c9b39-207c-942c-8651-8f54566f7c70\",\n  \"updated_at\": \"1952-02-17T13:25:09.458Z\",\n  \"user_filter\": \"string\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -29987,7 +29987,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"base_dn\": \"string\",\n  \"bind_dn\": \"string\",\n  \"created_at\": \"1972-04-14T08:58:55.515Z\",\n  \"email_attribute\": \"string\",\n  \"id\": \"8a6877c2-dce5-b17c-06ef-26b86f8e3556\",\n  \"last_login_at\": \"1977-01-22T18:09:58.429Z\",\n  \"name\": \"string\",\n  \"name_attribute\": \"string\",\n  \"server_url\": \"string\",\n  \"skip_tls_verify\": false,\n  \"start_tls\": false,\n  \"status\": \"string\",\n  \"organization_id\": \"d5ae15cb-7c9b-9dc2-7cc9-2c48651a8f54\",\n  \"updated_at\": \"1994-11-10T03:50:33.303Z\",\n  \"user_filter\": \"string\"\n}",
+                  "body": "{\n  \"base_dn\": \"string\",\n  \"bind_dn\": \"string\",\n  \"created_at\": \"1984-05-02T01:12:44.437Z\",\n  \"email_attribute\": \"string\",\n  \"id\": \"c20adce5-17c8-6ef4-6b86-8e3556659e17\",\n  \"last_login_at\": \"2002-01-14T20:57:28.915Z\",\n  \"name\": \"string\",\n  \"name_attribute\": \"string\",\n  \"server_url\": \"string\",\n  \"skip_tls_verify\": true,\n  \"start_tls\": true,\n  \"status\": \"string\",\n  \"sync_interval_minutes\": 23,\n  \"organization_id\": \"e57c9b39-207c-942c-8651-8f54566f7c70\",\n  \"updated_at\": \"1952-02-17T13:25:09.458Z\",\n  \"user_filter\": \"string\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -30001,7 +30001,7 @@
               "request": {
                 "name": "Update connection",
                 "description": {
-                  "content": "Applies a partial update to a directory connection. A connection that turns off verification of the directory server's certificate (skip_tls_verify) is refused with 422 ldap.tls_verify_required, and so is any other change to a connection saved that way until it turns verification back on; only a development server (SERVICE_ENV=dev) allows it. Requires connection.write. Changing what the connection trusts (its server_url, bind_dn, base_dn, user_filter or TLS settings) is acting on every account linked to it, as the changed connection could sign in as any of them: while an administrator is linked, it needs a caller who outranks each one (403 rbac.trust_change_outranks_caller otherwise).",
+                  "content": "Applies a partial update to a directory connection. The connection it leaves must reach the directory over TLS (ldaps://, or ldap:// with start_tls): one without is refused with 422 ldap.tls_required, and so is any other change to a connection saved without TLS, unless the change turns it off (status disabled), so it can be turned off, then mended. A connection that turns off verification of the directory server's certificate (skip_tls_verify) is refused with 422 ldap.tls_verify_required, and so is any other change to a connection saved that way until it turns verification back on. Only a development server (SERVICE_ENV=dev) allows either. sync_interval_minutes must be 5 to 60 (422 ldap.sync_interval_invalid). Saving the connection starts its sync afresh: the next run reads every person, and isn't held to how many people the last full run found, so an administrator can accept a directory that really shrank. Requires connection.write. Changing what the connection trusts (its server_url, bind_dn, base_dn, user_filter or TLS settings) is acting on every account linked to it, as the changed connection could sign in as any of them: while an administrator is linked, it needs a caller who outranks each one (403 rbac.trust_change_outranks_caller otherwise).",
                   "type": "text/plain"
                 },
                 "url": {
@@ -30035,7 +30035,7 @@
                 "method": "PATCH",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"base_dn\": null,\n  \"bind_dn\": null,\n  \"bind_password\": null,\n  \"email_attribute\": null,\n  \"name\": null,\n  \"name_attribute\": null,\n  \"server_url\": \"string\",\n  \"skip_tls_verify\": true,\n  \"start_tls\": false,\n  \"status\": \"string\",\n  \"user_filter\": \"string\"\n}",
+                  "raw": "{\n  \"base_dn\": null,\n  \"bind_dn\": \"string\",\n  \"bind_password\": \"string\",\n  \"email_attribute\": \"string\",\n  \"name\": \"string\",\n  \"name_attribute\": \"string\",\n  \"server_url\": \"string\",\n  \"skip_tls_verify\": false,\n  \"start_tls\": null,\n  \"status\": \"string\",\n  \"sync_interval_minutes\": null,\n  \"user_filter\": \"string\"\n}",
                   "options": { "raw": { "headerFamily": "json", "language": "json" } }
                 },
                 "auth": {
@@ -30087,14 +30087,14 @@
                     "method": "PATCH",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"base_dn\": null,\n  \"bind_dn\": null,\n  \"bind_password\": null,\n  \"email_attribute\": null,\n  \"name\": null,\n  \"name_attribute\": null,\n  \"server_url\": \"string\",\n  \"skip_tls_verify\": true,\n  \"start_tls\": false,\n  \"status\": \"string\",\n  \"user_filter\": \"string\"\n}",
+                      "raw": "{\n  \"base_dn\": null,\n  \"bind_dn\": \"string\",\n  \"bind_password\": \"string\",\n  \"email_attribute\": \"string\",\n  \"name\": \"string\",\n  \"name_attribute\": \"string\",\n  \"server_url\": \"string\",\n  \"skip_tls_verify\": false,\n  \"start_tls\": null,\n  \"status\": \"string\",\n  \"sync_interval_minutes\": null,\n  \"user_filter\": \"string\"\n}",
                       "options": { "raw": { "headerFamily": "json", "language": "json" } }
                     }
                   },
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"base_dn\": \"string\",\n  \"bind_dn\": \"string\",\n  \"created_at\": \"1972-04-14T08:58:55.515Z\",\n  \"email_attribute\": \"string\",\n  \"id\": \"8a6877c2-dce5-b17c-06ef-26b86f8e3556\",\n  \"last_login_at\": \"1977-01-22T18:09:58.429Z\",\n  \"name\": \"string\",\n  \"name_attribute\": \"string\",\n  \"server_url\": \"string\",\n  \"skip_tls_verify\": false,\n  \"start_tls\": false,\n  \"status\": \"string\",\n  \"organization_id\": \"d5ae15cb-7c9b-9dc2-7cc9-2c48651a8f54\",\n  \"updated_at\": \"1994-11-10T03:50:33.303Z\",\n  \"user_filter\": \"string\"\n}",
+                  "body": "{\n  \"base_dn\": \"string\",\n  \"bind_dn\": \"string\",\n  \"created_at\": \"1984-05-02T01:12:44.437Z\",\n  \"email_attribute\": \"string\",\n  \"id\": \"c20adce5-17c8-6ef4-6b86-8e3556659e17\",\n  \"last_login_at\": \"2002-01-14T20:57:28.915Z\",\n  \"name\": \"string\",\n  \"name_attribute\": \"string\",\n  \"server_url\": \"string\",\n  \"skip_tls_verify\": true,\n  \"start_tls\": true,\n  \"status\": \"string\",\n  \"sync_interval_minutes\": 23,\n  \"organization_id\": \"e57c9b39-207c-942c-8651-8f54566f7c70\",\n  \"updated_at\": \"1952-02-17T13:25:09.458Z\",\n  \"user_filter\": \"string\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -30108,7 +30108,7 @@
               "request": {
                 "name": "Test bind",
                 "description": {
-                  "content": "Binds with the connection's service account to prove its settings, without signing anyone in. A connection that turns off verification of the directory server's certificate (skip_tls_verify) is refused with 422 ldap.tls_verify_required; only a development server (SERVICE_ENV=dev) allows it. Requires connection.write.",
+                  "content": "Binds with the connection's service account to prove its settings, without signing anyone in. A connection that turns off verification of the directory server's certificate (skip_tls_verify) is refused with 422 ldap.tls_verify_required, and one saved without TLS (ldap:// with start_tls off) with 422 ldap.tls_required before the directory is asked, recorded in the organization's audit trail (ldap.connection_refused); only a development server (SERVICE_ENV=dev) allows either. Requires connection.write.",
                   "type": "text/plain"
                 },
                 "url": {
@@ -30672,7 +30672,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"items\": [\n    {\n      \"source_attribute\": \"string\",\n      \"target_field\": \"first_name\",\n      \"value_type\": \"array\",\n      \"transform\": \"uppercase\",\n      \"enabled\": false,\n      \"required\": true,\n      \"id\": \"e8a81686-19ba-3ca0-8ed2-d082b93aa3bc\",\n      \"pattern\": \"string\",\n      \"version\": 799\n    },\n    {\n      \"source_attribute\": \"string\",\n      \"target_field\": \"manager_id\",\n      \"value_type\": \"string\",\n      \"transform\": \"uppercase\",\n      \"enabled\": false,\n      \"required\": false,\n      \"id\": \"1652a5f6-4026-dfa9-0f35-5e2b77ebf5c9\",\n      \"pattern\": \"string\",\n      \"version\": 3287\n    }\n  ],\n  \"truncated\": true,\n  \"targets\": {\n    \"key_0\": \"string\"\n  }\n}",
+                  "body": "{\n  \"items\": [\n    {\n      \"source_attribute\": \"string\",\n      \"target_field\": \"display_name\",\n      \"value_type\": \"array\",\n      \"transform\": \"uppercase\",\n      \"enabled\": false,\n      \"required\": true,\n      \"id\": \"8ed23d08-93aa-bc33-5127-d2433e2c3579\",\n      \"pattern\": \"string\",\n      \"version\": 9972\n    },\n    {\n      \"source_attribute\": \"string\",\n      \"target_field\": \"first_name\",\n      \"value_type\": \"string\",\n      \"transform\": \"lowercase\",\n      \"enabled\": true,\n      \"required\": true,\n      \"id\": \"0f3595e2-7ebf-c924-353b-0fc7ccf85d64\",\n      \"pattern\": \"string\",\n      \"version\": 1876\n    }\n  ],\n  \"truncated\": false,\n  \"targets\": {\n    \"key_0\": \"string\",\n    \"key_1\": \"string\"\n  }\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -30728,7 +30728,7 @@
                 "method": "POST",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"source_attribute\": \"string\",\n  \"target_field\": \"groups\",\n  \"value_type\": \"string\",\n  \"transform\": \"extract\",\n  \"enabled\": false,\n  \"required\": true,\n  \"pattern\": \"string\",\n  \"version\": 5502\n}",
+                  "raw": "{\n  \"source_attribute\": \"string\",\n  \"target_field\": \"groups\",\n  \"value_type\": \"array\",\n  \"transform\": \"none\",\n  \"enabled\": true,\n  \"required\": true,\n  \"pattern\": \"string\",\n  \"version\": 2150\n}",
                   "options": { "raw": { "headerFamily": "json", "language": "json" } }
                 },
                 "auth": {
@@ -30788,14 +30788,14 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"source_attribute\": \"string\",\n  \"target_field\": \"groups\",\n  \"value_type\": \"string\",\n  \"transform\": \"extract\",\n  \"enabled\": false,\n  \"required\": true,\n  \"pattern\": \"string\",\n  \"version\": 5502\n}",
+                      "raw": "{\n  \"source_attribute\": \"string\",\n  \"target_field\": \"groups\",\n  \"value_type\": \"array\",\n  \"transform\": \"none\",\n  \"enabled\": true,\n  \"required\": true,\n  \"pattern\": \"string\",\n  \"version\": 2150\n}",
                       "options": { "raw": { "headerFamily": "json", "language": "json" } }
                     }
                   },
                   "status": "Created",
                   "code": 201,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"source_attribute\": \"string\",\n  \"target_field\": \"manager_id\",\n  \"value_type\": \"string\",\n  \"transform\": \"trim\",\n  \"enabled\": false,\n  \"required\": true,\n  \"id\": \"03c7bda6-9ffb-f25a-285d-37881927d276\",\n  \"pattern\": \"string\",\n  \"version\": 3273\n}",
+                  "body": "{\n  \"source_attribute\": \"string\",\n  \"target_field\": \"groups\",\n  \"value_type\": \"string\",\n  \"transform\": \"none\",\n  \"enabled\": true,\n  \"required\": false,\n  \"id\": \"d1378819-d276-88b5-91d4-6742cdc6e8e1\",\n  \"pattern\": \"string\",\n  \"version\": 409\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -30872,7 +30872,7 @@
                 "method": "PUT",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"source_attribute\": \"string\",\n  \"target_field\": \"groups\",\n  \"value_type\": \"string\",\n  \"transform\": \"extract\",\n  \"enabled\": false,\n  \"required\": true,\n  \"pattern\": \"string\",\n  \"version\": 5502\n}",
+                  "raw": "{\n  \"source_attribute\": \"string\",\n  \"target_field\": \"groups\",\n  \"value_type\": \"array\",\n  \"transform\": \"none\",\n  \"enabled\": true,\n  \"required\": true,\n  \"pattern\": \"string\",\n  \"version\": 2150\n}",
                   "options": { "raw": { "headerFamily": "json", "language": "json" } }
                 },
                 "auth": {
@@ -30940,14 +30940,14 @@
                     "method": "PUT",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"source_attribute\": \"string\",\n  \"target_field\": \"groups\",\n  \"value_type\": \"string\",\n  \"transform\": \"extract\",\n  \"enabled\": false,\n  \"required\": true,\n  \"pattern\": \"string\",\n  \"version\": 5502\n}",
+                      "raw": "{\n  \"source_attribute\": \"string\",\n  \"target_field\": \"groups\",\n  \"value_type\": \"array\",\n  \"transform\": \"none\",\n  \"enabled\": true,\n  \"required\": true,\n  \"pattern\": \"string\",\n  \"version\": 2150\n}",
                       "options": { "raw": { "headerFamily": "json", "language": "json" } }
                     }
                   },
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"source_attribute\": \"string\",\n  \"target_field\": \"manager_id\",\n  \"value_type\": \"string\",\n  \"transform\": \"trim\",\n  \"enabled\": false,\n  \"required\": true,\n  \"id\": \"03c7bda6-9ffb-f25a-285d-37881927d276\",\n  \"pattern\": \"string\",\n  \"version\": 3273\n}",
+                  "body": "{\n  \"source_attribute\": \"string\",\n  \"target_field\": \"groups\",\n  \"value_type\": \"string\",\n  \"transform\": \"none\",\n  \"enabled\": true,\n  \"required\": false,\n  \"id\": \"d1378819-d276-88b5-91d4-6742cdc6e8e1\",\n  \"pattern\": \"string\",\n  \"version\": 409\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -31129,7 +31129,7 @@
                 "method": "POST",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"source\": {\n    \"key_0\": 3077.875424642116,\n    \"key_1\": true\n  }\n}",
+                  "raw": "{\n  \"source\": {\n    \"key_0\": 3811.041114386171,\n    \"key_1\": 6159.923237282783,\n    \"key_2\": true\n  }\n}",
                   "options": { "raw": { "headerFamily": "json", "language": "json" } }
                 },
                 "auth": {
@@ -31190,14 +31190,14 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"source\": {\n    \"key_0\": 3077.875424642116,\n    \"key_1\": true\n  }\n}",
+                      "raw": "{\n  \"source\": {\n    \"key_0\": 3811.041114386171,\n    \"key_1\": 6159.923237282783,\n    \"key_2\": true\n  }\n}",
                       "options": { "raw": { "headerFamily": "json", "language": "json" } }
                     }
                   },
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"valid\": false,\n  \"profile\": {\n    \"key_0\": false\n  },\n  \"values\": {\n    \"key_0\": 783,\n    \"key_1\": true\n  },\n  \"effective\": {\n    \"key_0\": {\n      \"value\": \"\",\n      \"from\": \"mapping\",\n      \"attribute\": \"string\"\n    },\n    \"key_1\": {\n      \"value\": \"\",\n      \"from\": \"default\",\n      \"attribute\": \"string\"\n    }\n  },\n  \"issues\": [\n    {\n      \"mapping_id\": \"a65ad5f1-50e2-6d08-9e51-3ff55e2ab8eb\",\n      \"field\": \"string\",\n      \"code\": \"directory.mapping_pattern_unexpected\",\n      \"message\": \"string\"\n    },\n    {\n      \"mapping_id\": \"fd382d45-f637-ae06-f514-f06761fd626e\",\n      \"field\": \"string\",\n      \"code\": \"directory.mapping_display_name_too_long\",\n      \"message\": \"string\"\n    }\n  ]\n}",
+                  "body": "{\n  \"valid\": true,\n  \"profile\": {\n    \"key_0\": 1329,\n    \"key_1\": 7733.2192356698215\n  },\n  \"values\": {\n    \"key_0\": \"string\",\n    \"key_1\": 4235\n  },\n  \"effective\": {\n    \"key_0\": {\n      \"value\": \"\",\n      \"from\": \"mapping\",\n      \"attribute\": \"string\"\n    },\n    \"key_1\": {\n      \"value\": \"\",\n      \"from\": \"default\",\n      \"attribute\": \"string\"\n    },\n    \"key_2\": {\n      \"value\": \"\",\n      \"from\": \"mapping\",\n      \"attribute\": \"string\"\n    },\n    \"key_3\": {\n      \"value\": \"\",\n      \"from\": \"mapping\",\n      \"attribute\": \"string\"\n    }\n  },\n  \"issues\": [\n    {\n      \"mapping_id\": \"b4fd382d-40f6-7fae-67f5-46f06761fd62\",\n      \"field\": \"string\",\n      \"code\": \"directory.mapping_source_credential\",\n      \"message\": \"string\"\n    },\n    {\n      \"mapping_id\": \"d014514c-8313-8b09-d882-5d57f82ac689\",\n      \"field\": \"string\",\n      \"code\": \"directory.mapping_pattern_invalid\",\n      \"message\": \"string\"\n    }\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -31246,7 +31246,7 @@
                         "type": "text/plain"
                       },
                       "key": "resolution",
-                      "value": "open"
+                      "value": "retried"
                     },
                     {
                       "disabled": true,
@@ -31331,7 +31331,7 @@
                             "type": "text/plain"
                           },
                           "key": "resolution",
-                          "value": "open"
+                          "value": "retried"
                         },
                         {
                           "disabled": true,
@@ -31388,7 +31388,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"items\": [\n    {\n      \"id\": \"2b5d57f8-c689-01c7-f8d6-df2ffce619fa\",\n      \"connection_id\": \"string\",\n      \"operation\": \"string\",\n      \"trigger\": \"sign-in\",\n      \"resource_type\": \"group\",\n      \"resource_id\": \"string\",\n      \"started_at\": \"1950-01-23T07:29:45.531Z\",\n      \"duration_ms\": 6952,\n      \"http_status\": 4433,\n      \"status\": \"success\",\n      \"users_synced\": 7645,\n      \"groups_synced\": 6795,\n      \"error_code\": \"string\",\n      \"message\": \"string\",\n      \"category\": \"string\",\n      \"severity\": \"\",\n      \"resolution\": \"resolved\",\n      \"resolved_at\": \"1966-09-14T21:57:39.184Z\",\n      \"retry_of\": \"3a585120-816f-81b0-eded-be73406b5d5c\",\n      \"retryable\": false,\n      \"reason\": \"string\",\n      \"params\": {\n        \"key_0\": \"string\",\n        \"key_1\": \"string\",\n        \"key_2\": \"string\"\n      },\n      \"subject\": \"string\",\n      \"user_id\": \"cb90bd47-c39c-177b-78d9-c79da8a4200c\"\n    },\n    {\n      \"id\": \"9148210e-67dd-8768-0179-7e75f5c79787\",\n      \"connection_id\": \"string\",\n      \"operation\": \"string\",\n      \"trigger\": \"push\",\n      \"resource_type\": \"connection\",\n      \"resource_id\": \"string\",\n      \"started_at\": \"2002-07-07T18:45:22.584Z\",\n      \"duration_ms\": 8962,\n      \"http_status\": 9809,\n      \"status\": \"failed\",\n      \"users_synced\": 6960,\n      \"groups_synced\": 5699,\n      \"error_code\": \"string\",\n      \"message\": \"string\",\n      \"category\": \"string\",\n      \"severity\": \"warning\",\n      \"resolution\": \"retried\",\n      \"resolved_at\": null,\n      \"retry_of\": \"6d41b769-a650-f30c-5983-23fb664c2046\",\n      \"retryable\": false,\n      \"reason\": \"string\",\n      \"params\": {\n        \"key_0\": \"string\"\n      },\n      \"subject\": \"string\",\n      \"user_id\": \"3d797b5c-1597-2fd2-814a-27294962fbd1\"\n    }\n  ],\n  \"total\": 8485,\n  \"limit\": 5418,\n  \"summary\": {\n    \"open\": 7811,\n    \"critical\": 527,\n    \"warning\": 183,\n    \"retried\": 3000,\n    \"impacted_users\": 533\n  },\n  \"categories\": [\n    {\n      \"key\": \"string\",\n      \"count\": 2330\n    },\n    {\n      \"key\": \"string\",\n      \"count\": 246\n    }\n  ],\n  \"connections\": [\n    {\n      \"key\": \"string\",\n      \"count\": 8986\n    },\n    {\n      \"key\": \"string\",\n      \"count\": 817\n    }\n  ],\n  \"remediations\": [\n    {\n      \"id\": \"76ffede3-6a74-75cc-e271-4fa9fa17eb70\",\n      \"connection_id\": \"string\",\n      \"operation\": \"string\",\n      \"trigger\": \"sign-in\",\n      \"resource_type\": \"group\",\n      \"resource_id\": \"string\",\n      \"started_at\": \"1982-01-06T06:22:17.571Z\",\n      \"duration_ms\": 8095,\n      \"http_status\": 1326,\n      \"status\": \"warning\",\n      \"users_synced\": 6398,\n      \"groups_synced\": 2196,\n      \"error_code\": \"string\",\n      \"message\": \"string\",\n      \"category\": \"string\",\n      \"severity\": \"critical\",\n      \"resolution\": \"retried\",\n      \"resolved_at\": \"1963-09-11T16:56:13.026Z\",\n      \"retry_of\": \"f8c3d74f-4a21-c82d-46bf-3237160c203f\",\n      \"retryable\": true,\n      \"reason\": \"string\",\n      \"params\": {\n        \"key_0\": \"string\",\n        \"key_1\": \"string\",\n        \"key_2\": \"string\",\n        \"key_3\": \"string\"\n      },\n      \"subject\": \"string\",\n      \"user_id\": \"323a08dc-3e59-a66a-5874-dfcff9f9eee1\"\n    },\n    {\n      \"id\": \"149e7d28-400f-7e06-3ee0-0f9bbabf3ab0\",\n      \"connection_id\": \"string\",\n      \"operation\": \"string\",\n      \"trigger\": \"push\",\n      \"resource_type\": \"connection\",\n      \"resource_id\": \"string\",\n      \"started_at\": \"2019-02-08T15:58:55.320Z\",\n      \"duration_ms\": 8930,\n      \"http_status\": 230,\n      \"status\": \"success\",\n      \"users_synced\": 7668,\n      \"groups_synced\": 359,\n      \"error_code\": \"string\",\n      \"message\": \"string\",\n      \"category\": \"string\",\n      \"severity\": \"critical\",\n      \"resolution\": \"retried\",\n      \"resolved_at\": \"2019-03-12T21:46:57.816Z\",\n      \"retry_of\": \"7787c3da-1517-d46d-117c-768934b8117f\",\n      \"retryable\": false,\n      \"reason\": \"string\",\n      \"params\": {\n        \"key_0\": \"string\"\n      },\n      \"subject\": \"string\",\n      \"user_id\": \"aaf44f15-d2cd-f797-b9b5-1b4057a3b0c2\"\n    }\n  ],\n  \"next_cursor\": \"string\"\n}",
+                  "body": "{\n  \"items\": [\n    {\n      \"id\": \"316f2b47-6c0a-846e-a7ac-66f1b4753a58\",\n      \"connection_id\": \"string\",\n      \"operation\": \"string\",\n      \"trigger\": \"push\",\n      \"resource_type\": \"connection\",\n      \"resource_id\": \"string\",\n      \"started_at\": \"2022-05-22T16:12:06.174Z\",\n      \"duration_ms\": 8779,\n      \"http_status\": 8983,\n      \"status\": \"success\",\n      \"users_synced\": 8920,\n      \"groups_synced\": 1993,\n      \"error_code\": \"string\",\n      \"message\": \"string\",\n      \"category\": \"string\",\n      \"severity\": \"critical\",\n      \"resolution\": \"resolved\",\n      \"resolved_at\": null,\n      \"retry_of\": \"ac2f4330-717c-90bd-7b9c-9c9177bf78d9\",\n      \"retryable\": true,\n      \"reason\": \"string\",\n      \"params\": {\n        \"key_0\": \"string\",\n        \"key_1\": \"string\"\n      },\n      \"subject\": \"string\",\n      \"user_id\": \"17914821-6067-db87-8b01-987e75f5c797\"\n    },\n    {\n      \"id\": \"21e6a884-9fba-b59f-44c3-3925cf7fa036\",\n      \"connection_id\": \"string\",\n      \"operation\": \"string\",\n      \"trigger\": \"scheduled\",\n      \"resource_type\": \"group\",\n      \"resource_id\": \"string\",\n      \"started_at\": \"1950-08-25T23:55:33.875Z\",\n      \"duration_ms\": 38,\n      \"http_status\": 251,\n      \"status\": \"warning\",\n      \"users_synced\": 2466,\n      \"groups_synced\": 1318,\n      \"error_code\": \"string\",\n      \"message\": \"string\",\n      \"category\": \"string\",\n      \"severity\": \"warning\",\n      \"resolution\": \"open\",\n      \"resolved_at\": null,\n      \"retry_of\": \"6274aaa3-3d79-b5ce-1597-2fd22814a527\",\n      \"retryable\": true,\n      \"reason\": \"string\",\n      \"params\": {\n        \"key_0\": \"string\",\n        \"key_1\": \"string\",\n        \"key_2\": \"string\",\n        \"key_3\": \"string\"\n      },\n      \"subject\": \"string\",\n      \"user_id\": \"70f6f22f-3644-d290-7316-6ce581770217\"\n    }\n  ],\n  \"total\": 648,\n  \"limit\": 698,\n  \"summary\": {\n    \"open\": 918,\n    \"critical\": 4105,\n    \"warning\": 9977,\n    \"retried\": 8323,\n    \"impacted_users\": 5250\n  },\n  \"categories\": [\n    {\n      \"key\": \"string\",\n      \"count\": 7542\n    },\n    {\n      \"key\": \"string\",\n      \"count\": 3075\n    }\n  ],\n  \"connections\": [\n    {\n      \"key\": \"string\",\n      \"count\": 7240\n    },\n    {\n      \"key\": \"string\",\n      \"count\": 7145\n    }\n  ],\n  \"remediations\": [\n    {\n      \"id\": \"cf2660a9-611e-bd9e-add3-347f8c3d74fd\",\n      \"connection_id\": \"string\",\n      \"operation\": \"string\",\n      \"trigger\": \"sign-in\",\n      \"resource_type\": \"connection\",\n      \"resource_id\": \"string\",\n      \"started_at\": \"1950-02-09T21:14:02.853Z\",\n      \"duration_ms\": 2215,\n      \"http_status\": 2010,\n      \"status\": \"success\",\n      \"users_synced\": 242,\n      \"groups_synced\": 1385,\n      \"error_code\": \"string\",\n      \"message\": \"string\",\n      \"category\": \"string\",\n      \"severity\": \"critical\",\n      \"resolution\": \"open\",\n      \"resolved_at\": null,\n      \"retry_of\": null,\n      \"retryable\": true,\n      \"reason\": \"string\",\n      \"params\": {\n        \"key_0\": \"string\",\n        \"key_1\": \"string\"\n      },\n      \"subject\": \"string\",\n      \"user_id\": \"5e3e596a-aa58-4bdf-ff9f-eee1c02381c3\"\n    },\n    {\n      \"id\": \"aa400f37-643e-0a0f-bbab-3ab0e3fb3684\",\n      \"connection_id\": \"string\",\n      \"operation\": \"string\",\n      \"trigger\": \"scheduled\",\n      \"resource_type\": \"connection\",\n      \"resource_id\": \"string\",\n      \"started_at\": \"1964-08-25T08:54:04.472Z\",\n      \"duration_ms\": 359,\n      \"http_status\": 4883,\n      \"status\": \"failed\",\n      \"users_synced\": 2307,\n      \"groups_synced\": 1158,\n      \"error_code\": \"string\",\n      \"message\": \"string\",\n      \"category\": \"string\",\n      \"severity\": \"warning\",\n      \"resolution\": \"resolved\",\n      \"resolved_at\": \"1962-03-16T23:56:56.473Z\",\n      \"retry_of\": null,\n      \"retryable\": false,\n      \"reason\": \"string\",\n      \"params\": {\n        \"key_0\": \"string\"\n      },\n      \"subject\": \"string\",\n      \"user_id\": \"d768934b-17fc-cb44-1638-a4b47aaf44f1\"\n    }\n  ],\n  \"next_cursor\": \"string\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -31499,7 +31499,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"succeeded\": false\n}",
+                  "body": "{\n  \"succeeded\": true\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -31610,7 +31610,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"succeeded\": false\n}",
+                  "body": "{\n  \"succeeded\": true\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -31650,7 +31650,7 @@
                         "type": "text/plain"
                       },
                       "key": "status",
-                      "value": "success"
+                      "value": "warning"
                     },
                     {
                       "disabled": true,
@@ -31726,7 +31726,7 @@
                             "type": "text/plain"
                           },
                           "key": "status",
-                          "value": "success"
+                          "value": "warning"
                         },
                         {
                           "disabled": true,
@@ -31783,7 +31783,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"items\": [\n    {\n      \"id\": \"6f77714b-e7f5-27f5-07da-c3ff9f908574\",\n      \"connection_id\": \"string\",\n      \"operation\": \"string\",\n      \"trigger\": \"sign-in\",\n      \"resource_type\": \"connection\",\n      \"resource_id\": \"string\",\n      \"started_at\": \"1948-09-19T01:09:25.262Z\",\n      \"duration_ms\": 373,\n      \"http_status\": 527,\n      \"status\": \"success\",\n      \"users_synced\": 6180,\n      \"groups_synced\": 8438,\n      \"error_code\": \"string\",\n      \"message\": \"string\",\n      \"category\": \"string\",\n      \"severity\": \"critical\",\n      \"resolution\": \"resolved\",\n      \"resolved_at\": \"2016-04-08T10:26:35.559Z\",\n      \"retry_of\": \"b2c8587b-b14f-d070-71f4-989c12a781f1\",\n      \"retryable\": true,\n      \"reason\": \"string\",\n      \"params\": {\n        \"key_0\": \"string\",\n        \"key_1\": \"string\"\n      },\n      \"subject\": \"string\",\n      \"user_id\": \"2438f319-e2b8-e355-b7f6-8ee958fe7518\"\n    },\n    {\n      \"id\": \"10784ff5-23a9-05aa-8acd-eb5a16c08d46\",\n      \"connection_id\": \"string\",\n      \"operation\": \"string\",\n      \"trigger\": \"sign-in\",\n      \"resource_type\": \"connection\",\n      \"resource_id\": \"string\",\n      \"started_at\": \"1968-01-26T23:56:09.771Z\",\n      \"duration_ms\": 7276,\n      \"http_status\": 4579,\n      \"status\": \"failed\",\n      \"users_synced\": 1637,\n      \"groups_synced\": 4118,\n      \"error_code\": \"string\",\n      \"message\": \"string\",\n      \"category\": \"string\",\n      \"severity\": \"warning\",\n      \"resolution\": \"resolved\",\n      \"resolved_at\": \"1973-05-25T08:48:58.653Z\",\n      \"retry_of\": \"85d8009b-9756-a2d2-690f-a1505a757318\",\n      \"retryable\": true,\n      \"reason\": \"string\",\n      \"params\": {\n        \"key_0\": \"string\",\n        \"key_1\": \"string\"\n      },\n      \"subject\": \"string\",\n      \"user_id\": \"4847cc7b-f27f-2dec-d414-a50af4987a98\"\n    }\n  ],\n  \"total\": 7866,\n  \"limit\": 2960,\n  \"summary\": {\n    \"total\": 8834,\n    \"successful\": 2588,\n    \"warnings\": 4776,\n    \"failed\": 1410,\n    \"average_duration_ms\": null\n  },\n  \"volume\": [\n    {\n      \"date\": \"1962-02-05\",\n      \"users\": 5368,\n      \"groups\": 6071\n    },\n    {\n      \"date\": \"2012-02-26\",\n      \"users\": 2929,\n      \"groups\": 1629\n    }\n  ],\n  \"next_cursor\": \"string\"\n}",
+                  "body": "{\n  \"items\": [\n    {\n      \"id\": \"3b0c28c6-0982-294a-b840-1387f6f77714\",\n      \"connection_id\": \"string\",\n      \"operation\": \"string\",\n      \"trigger\": \"sign-in\",\n      \"resource_type\": \"group\",\n      \"resource_id\": \"string\",\n      \"started_at\": \"1986-08-29T21:41:38.322Z\",\n      \"duration_ms\": 6629,\n      \"http_status\": 7897,\n      \"status\": \"failed\",\n      \"users_synced\": 5839,\n      \"groups_synced\": 6166,\n      \"error_code\": \"string\",\n      \"message\": \"string\",\n      \"category\": \"string\",\n      \"severity\": \"warning\",\n      \"resolution\": \"retried\",\n      \"resolved_at\": null,\n      \"retry_of\": \"bf1070c1-cd2e-23a1-4edd-b31618b2c858\",\n      \"retryable\": true,\n      \"reason\": \"string\",\n      \"params\": {\n        \"key_0\": \"string\",\n        \"key_1\": \"string\"\n      },\n      \"subject\": \"string\",\n      \"user_id\": \"89c12a78-17c8-fd39-ce87-6c823e2438f3\"\n    },\n    {\n      \"id\": \"e3555b7f-8ee9-8fe7-182f-e0718510784f\",\n      \"connection_id\": \"string\",\n      \"operation\": \"string\",\n      \"trigger\": \"sign-in\",\n      \"resource_type\": \"user\",\n      \"resource_id\": \"string\",\n      \"started_at\": \"1985-10-01T19:57:24.235Z\",\n      \"duration_ms\": 7621,\n      \"http_status\": 194,\n      \"status\": \"failed\",\n      \"users_synced\": 6694,\n      \"groups_synced\": 3887,\n      \"error_code\": \"string\",\n      \"message\": \"string\",\n      \"category\": \"string\",\n      \"severity\": \"warning\",\n      \"resolution\": \"open\",\n      \"resolved_at\": \"1959-09-06T08:39:21.816Z\",\n      \"retry_of\": null,\n      \"retryable\": true,\n      \"reason\": \"string\",\n      \"params\": {\n        \"key_0\": \"string\",\n        \"key_1\": \"string\"\n      },\n      \"subject\": \"string\",\n      \"user_id\": \"d4ea4732-1c85-8009-2997-61a2d27690fc\"\n    }\n  ],\n  \"total\": 857,\n  \"limit\": 168,\n  \"summary\": {\n    \"total\": 4427,\n    \"successful\": 842,\n    \"warnings\": 8440,\n    \"failed\": 1915,\n    \"average_duration_ms\": null\n  },\n  \"volume\": [\n    {\n      \"date\": \"1999-07-13\",\n      \"users\": 5923,\n      \"groups\": 9733\n    },\n    {\n      \"date\": \"1995-02-08\",\n      \"users\": 5592,\n      \"groups\": 4756\n    }\n  ],\n  \"next_cursor\": \"string\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -31864,7 +31864,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"items\": [\n    {\n      \"id\": \"916fdcfb-918e-4085-4788-d65f9ad30ad5\",\n      \"name\": \"string\",\n      \"connection_id\": null,\n      \"threshold\": 1384,\n      \"enabled\": false,\n      \"user_id\": \"b49c2ab4-7c1b-7471-3b5e-5c8e40d5926c\",\n      \"created_at\": \"1989-07-03T21:31:02.674Z\",\n      \"last_notified_at\": null\n    },\n    {\n      \"id\": \"76f7f24a-1ed1-dd32-a9e8-90d33f998d37\",\n      \"name\": \"string\",\n      \"connection_id\": \"string\",\n      \"threshold\": 6444,\n      \"enabled\": false,\n      \"user_id\": \"1464d7fc-ea10-8e67-ed7f-7c062fc610e0\",\n      \"created_at\": \"1963-02-12T23:08:58.850Z\",\n      \"last_notified_at\": \"1965-03-30T10:13:08.578Z\"\n    }\n  ],\n  \"truncated\": true\n}",
+                  "body": "{\n  \"items\": [\n    {\n      \"id\": \"ec7d4148-0af4-87a9-ac04-7d5ed447a28d\",\n      \"name\": \"string\",\n      \"connection_id\": null,\n      \"threshold\": 6316,\n      \"enabled\": true,\n      \"user_id\": \"ff32f4e2-5188-912e-a916-dcfb77918e84\",\n      \"created_at\": \"1983-11-08T22:45:07.285Z\",\n      \"last_notified_at\": null\n    },\n    {\n      \"id\": \"d65f9ad3-d53f-c982-27db-9c2ab4387c1b\",\n      \"name\": \"string\",\n      \"connection_id\": \"string\",\n      \"threshold\": 3451,\n      \"enabled\": true,\n      \"user_id\": \"8e40d592-f7d9-305a-6f7f-4aea1ed1bdd3\",\n      \"created_at\": \"1982-07-28T05:16:44.147Z\",\n      \"last_notified_at\": null\n    }\n  ],\n  \"truncated\": true\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -31905,7 +31905,7 @@
                 "method": "POST",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"string\",\n  \"threshold\": 73,\n  \"connection_id\": null\n}",
+                  "raw": "{\n  \"name\": \"string\",\n  \"threshold\": 61,\n  \"connection_id\": null\n}",
                   "options": { "raw": { "headerFamily": "json", "language": "json" } }
                 },
                 "auth": {
@@ -31950,14 +31950,14 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"name\": \"string\",\n  \"threshold\": 73,\n  \"connection_id\": null\n}",
+                      "raw": "{\n  \"name\": \"string\",\n  \"threshold\": 61,\n  \"connection_id\": null\n}",
                       "options": { "raw": { "headerFamily": "json", "language": "json" } }
                     }
                   },
                   "status": "Created",
                   "code": 201,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"id\": \"87225074-bfd7-acf7-9848-222ceb2644dc\",\n  \"name\": \"string\",\n  \"connection_id\": null,\n  \"threshold\": 8880,\n  \"enabled\": true,\n  \"user_id\": \"3b11d4d5-1b71-828f-40b3-97b6c3f6ed86\",\n  \"created_at\": \"1991-06-03T01:46:53.733Z\",\n  \"last_notified_at\": \"1988-03-08T16:18:32.843Z\"\n}",
+                  "body": "{\n  \"id\": \"6635a4af-2146-d7fc-0ea1-88e678ed7f77\",\n  \"name\": \"string\",\n  \"connection_id\": null,\n  \"threshold\": 3886,\n  \"enabled\": false,\n  \"user_id\": \"4c75c1cd-3685-2bde-9287-2507464bfd77\",\n  \"created_at\": \"1964-03-28T22:35:01.875Z\",\n  \"last_notified_at\": \"2025-04-08T11:40:49.485Z\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -32025,7 +32025,7 @@
                 "method": "PATCH",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"string\",\n  \"connection_id\": null,\n  \"threshold\": 65,\n  \"enabled\": false\n}",
+                  "raw": "{\n  \"name\": null,\n  \"connection_id\": null,\n  \"threshold\": 28,\n  \"enabled\": null\n}",
                   "options": { "raw": { "headerFamily": "json", "language": "json" } }
                 },
                 "auth": {
@@ -32084,14 +32084,14 @@
                     "method": "PATCH",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"name\": \"string\",\n  \"connection_id\": null,\n  \"threshold\": 65,\n  \"enabled\": false\n}",
+                      "raw": "{\n  \"name\": null,\n  \"connection_id\": null,\n  \"threshold\": 28,\n  \"enabled\": null\n}",
                       "options": { "raw": { "headerFamily": "json", "language": "json" } }
                     }
                   },
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"id\": \"87225074-bfd7-acf7-9848-222ceb2644dc\",\n  \"name\": \"string\",\n  \"connection_id\": null,\n  \"threshold\": 8880,\n  \"enabled\": true,\n  \"user_id\": \"3b11d4d5-1b71-828f-40b3-97b6c3f6ed86\",\n  \"created_at\": \"1991-06-03T01:46:53.733Z\",\n  \"last_notified_at\": \"1988-03-08T16:18:32.843Z\"\n}",
+                  "body": "{\n  \"id\": \"6635a4af-2146-d7fc-0ea1-88e678ed7f77\",\n  \"name\": \"string\",\n  \"connection_id\": null,\n  \"threshold\": 3886,\n  \"enabled\": false,\n  \"user_id\": \"4c75c1cd-3685-2bde-9287-2507464bfd77\",\n  \"created_at\": \"1964-03-28T22:35:01.875Z\",\n  \"last_notified_at\": \"2025-04-08T11:40:49.485Z\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -32307,7 +32307,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"items\": [\n    {\n      \"connection_id\": \"string\",\n      \"connection_name\": \"string\",\n      \"fields\": {\n        \"key_0\": false,\n        \"key_1\": true,\n        \"key_2\": \"string\"\n      },\n      \"updated_at\": \"2001-08-25T16:18:39.817Z\"\n    },\n    {\n      \"connection_id\": \"string\",\n      \"connection_name\": \"string\",\n      \"fields\": {\n        \"key_0\": false\n      },\n      \"updated_at\": \"2016-10-26T03:56:07.246Z\"\n    }\n  ],\n  \"truncated\": true\n}",
+                  "body": "{\n  \"items\": [\n    {\n      \"connection_id\": \"string\",\n      \"connection_name\": \"string\",\n      \"fields\": {\n        \"key_0\": 8157.303601037711\n      },\n      \"updated_at\": \"2018-04-09T17:12:04.278Z\"\n    },\n    {\n      \"connection_id\": \"string\",\n      \"connection_name\": \"string\",\n      \"fields\": {\n        \"key_0\": 4621\n      },\n      \"updated_at\": \"1995-05-15T10:21:05.875Z\"\n    }\n  ],\n  \"truncated\": false\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -32321,7 +32321,7 @@
               "request": {
                 "name": "List directory connections",
                 "description": {
-                  "content": "Combines the organization's configured SCIM endpoint and LDAP connections. Requires connection.read. Organization scope is derived from the authenticated principal and must match the path. Credentials are never returned. Health is unknown until explicitly observed; last_activity_at is a request or login timestamp and is not evidence of a successful synchronization.",
+                  "content": "Combines the organization's configured SCIM endpoint and LDAP connections. Requires connection.read. Organization scope is derived from the authenticated principal and must match the path. Credentials are never returned. Health is unknown until explicitly observed; last_activity_at is a request or login timestamp and is not evidence of a successful synchronization. last_sync_at is the latest successful sync: a SCIM change, or an LDAP connection's scheduled sync. An LDAP connection's scope is users-and-groups, as its scheduled sync keeps people and their groups in step between sign-ins.",
                   "type": "text/plain"
                 },
                 "url": {
@@ -32394,7 +32394,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"items\": [\n    {\n      \"id\": \"string\",\n      \"name\": \"string\",\n      \"reference\": \"string\",\n      \"type\": \"scim\",\n      \"status\": \"disabled\",\n      \"health\": \"healthy\",\n      \"scope\": \"users-on-signin\",\n      \"environment\": null,\n      \"created_at\": null,\n      \"last_activity_at\": \"1999-05-30T05:53:49.709Z\",\n      \"last_sync_at\": null,\n      \"user_count\": null,\n      \"group_count\": null,\n      \"server_url\": \"string\"\n    },\n    {\n      \"id\": \"string\",\n      \"name\": \"string\",\n      \"reference\": \"string\",\n      \"type\": \"scim\",\n      \"status\": \"disabled\",\n      \"health\": \"warning\",\n      \"scope\": \"users-and-groups\",\n      \"environment\": null,\n      \"created_at\": \"1968-09-02T21:04:51.472Z\",\n      \"last_activity_at\": \"2023-03-18T09:55:07.717Z\",\n      \"last_sync_at\": \"2024-03-11T05:54:42.427Z\",\n      \"user_count\": null,\n      \"group_count\": null,\n      \"server_url\": null\n    }\n  ],\n  \"truncated\": true\n}",
+                  "body": "{\n  \"items\": [\n    {\n      \"id\": \"string\",\n      \"name\": \"string\",\n      \"reference\": \"string\",\n      \"type\": \"scim\",\n      \"status\": \"draft\",\n      \"health\": \"healthy\",\n      \"scope\": \"users-and-groups\",\n      \"environment\": null,\n      \"created_at\": null,\n      \"last_activity_at\": \"2003-06-23T01:42:01.569Z\",\n      \"last_sync_at\": \"2021-01-12T06:38:02.615Z\",\n      \"user_count\": null,\n      \"group_count\": null,\n      \"server_url\": \"string\"\n    },\n    {\n      \"id\": \"string\",\n      \"name\": \"string\",\n      \"reference\": \"string\",\n      \"type\": \"ldap\",\n      \"status\": \"configured\",\n      \"health\": \"unknown\",\n      \"scope\": \"users-on-signin\",\n      \"environment\": \"string\",\n      \"created_at\": \"2003-08-23T17:03:32.413Z\",\n      \"last_activity_at\": null,\n      \"last_sync_at\": \"1979-05-10T18:13:02.308Z\",\n      \"user_count\": 3251,\n      \"group_count\": null,\n      \"server_url\": \"string\"\n    }\n  ],\n  \"truncated\": true\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -32497,7 +32497,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/scim+json" }],
-                  "body": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:api:messages:2.0:ListResponse\"\n  ],\n  \"totalResults\": 4443,\n  \"startIndex\": 9253,\n  \"itemsPerPage\": 3289,\n  \"Resources\": [\n    {\n      \"key_0\": \"string\",\n      \"key_1\": 8315,\n      \"key_2\": false\n    },\n    {\n      \"key_0\": \"string\"\n    }\n  ]\n}",
+                  "body": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:api:messages:2.0:ListResponse\"\n  ],\n  \"totalResults\": 2323,\n  \"startIndex\": 9285,\n  \"itemsPerPage\": 8144,\n  \"Resources\": [\n    {\n      \"key_0\": 7455\n    },\n    {\n      \"key_0\": \"string\",\n      \"key_1\": true\n    }\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -32527,7 +32527,7 @@
                 "method": "POST",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:Group\"\n  ],\n  \"displayName\": \"string\",\n  \"id\": \"string\",\n  \"externalId\": \"string\",\n  \"members\": [\n    {\n      \"value\": \"string\",\n      \"display\": \"string\"\n    },\n    {\n      \"value\": \"string\",\n      \"display\": \"string\"\n    }\n  ],\n  \"meta\": {\n    \"key_0\": false,\n    \"key_1\": 7623.279772233218,\n    \"key_2\": \"string\"\n  }\n}",
+                  "raw": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:Group\"\n  ],\n  \"displayName\": \"string\",\n  \"id\": \"string\",\n  \"externalId\": \"string\",\n  \"members\": [\n    {\n      \"value\": \"string\",\n      \"display\": \"string\"\n    },\n    {\n      \"value\": \"string\",\n      \"display\": \"string\"\n    }\n  ],\n  \"meta\": {\n    \"key_0\": 8582.634723279625\n  }\n}",
                   "options": { "raw": { "headerFamily": "json", "language": "json" } }
                 },
                 "auth": {
@@ -32561,14 +32561,14 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:Group\"\n  ],\n  \"displayName\": \"string\",\n  \"id\": \"string\",\n  \"externalId\": \"string\",\n  \"members\": [\n    {\n      \"value\": \"string\",\n      \"display\": \"string\"\n    },\n    {\n      \"value\": \"string\",\n      \"display\": \"string\"\n    }\n  ],\n  \"meta\": {\n    \"key_0\": false,\n    \"key_1\": 7623.279772233218,\n    \"key_2\": \"string\"\n  }\n}",
+                      "raw": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:Group\"\n  ],\n  \"displayName\": \"string\",\n  \"id\": \"string\",\n  \"externalId\": \"string\",\n  \"members\": [\n    {\n      \"value\": \"string\",\n      \"display\": \"string\"\n    },\n    {\n      \"value\": \"string\",\n      \"display\": \"string\"\n    }\n  ],\n  \"meta\": {\n    \"key_0\": 8582.634723279625\n  }\n}",
                       "options": { "raw": { "headerFamily": "json", "language": "json" } }
                     }
                   },
                   "status": "Created",
                   "code": 201,
                   "header": [{ "key": "Content-Type", "value": "application/scim+json" }],
-                  "body": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:Group\"\n  ],\n  \"displayName\": \"string\",\n  \"id\": \"string\",\n  \"externalId\": \"string\",\n  \"members\": [\n    {\n      \"value\": \"string\",\n      \"display\": \"string\"\n    },\n    {\n      \"value\": \"string\",\n      \"display\": \"string\"\n    }\n  ],\n  \"meta\": {\n    \"key_0\": false,\n    \"key_1\": 7623.279772233218,\n    \"key_2\": \"string\"\n  }\n}",
+                  "body": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:Group\"\n  ],\n  \"displayName\": \"string\",\n  \"id\": \"string\",\n  \"externalId\": \"string\",\n  \"members\": [\n    {\n      \"value\": \"string\",\n      \"display\": \"string\"\n    },\n    {\n      \"value\": \"string\",\n      \"display\": \"string\"\n    }\n  ],\n  \"meta\": {\n    \"key_0\": 8582.634723279625\n  }\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -32729,7 +32729,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/scim+json" }],
-                  "body": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:Group\"\n  ],\n  \"displayName\": \"string\",\n  \"id\": \"string\",\n  \"externalId\": \"string\",\n  \"members\": [\n    {\n      \"value\": \"string\",\n      \"display\": \"string\"\n    },\n    {\n      \"value\": \"string\",\n      \"display\": \"string\"\n    }\n  ],\n  \"meta\": {\n    \"key_0\": false,\n    \"key_1\": 7623.279772233218,\n    \"key_2\": \"string\"\n  }\n}",
+                  "body": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:Group\"\n  ],\n  \"displayName\": \"string\",\n  \"id\": \"string\",\n  \"externalId\": \"string\",\n  \"members\": [\n    {\n      \"value\": \"string\",\n      \"display\": \"string\"\n    },\n    {\n      \"value\": \"string\",\n      \"display\": \"string\"\n    }\n  ],\n  \"meta\": {\n    \"key_0\": 8582.634723279625\n  }\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -32816,7 +32816,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/scim+json" }],
-                  "body": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:Group\"\n  ],\n  \"displayName\": \"string\",\n  \"id\": \"string\",\n  \"externalId\": \"string\",\n  \"members\": [\n    {\n      \"value\": \"string\",\n      \"display\": \"string\"\n    },\n    {\n      \"value\": \"string\",\n      \"display\": \"string\"\n    }\n  ],\n  \"meta\": {\n    \"key_0\": false,\n    \"key_1\": 7623.279772233218,\n    \"key_2\": \"string\"\n  }\n}",
+                  "body": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:Group\"\n  ],\n  \"displayName\": \"string\",\n  \"id\": \"string\",\n  \"externalId\": \"string\",\n  \"members\": [\n    {\n      \"value\": \"string\",\n      \"display\": \"string\"\n    },\n    {\n      \"value\": \"string\",\n      \"display\": \"string\"\n    }\n  ],\n  \"meta\": {\n    \"key_0\": 8582.634723279625\n  }\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -32854,7 +32854,7 @@
                 "method": "PUT",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:Group\"\n  ],\n  \"displayName\": \"string\",\n  \"id\": \"string\",\n  \"externalId\": \"string\",\n  \"members\": [\n    {\n      \"value\": \"string\",\n      \"display\": \"string\"\n    },\n    {\n      \"value\": \"string\",\n      \"display\": \"string\"\n    }\n  ],\n  \"meta\": {\n    \"key_0\": false,\n    \"key_1\": 7623.279772233218,\n    \"key_2\": \"string\"\n  }\n}",
+                  "raw": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:Group\"\n  ],\n  \"displayName\": \"string\",\n  \"id\": \"string\",\n  \"externalId\": \"string\",\n  \"members\": [\n    {\n      \"value\": \"string\",\n      \"display\": \"string\"\n    },\n    {\n      \"value\": \"string\",\n      \"display\": \"string\"\n    }\n  ],\n  \"meta\": {\n    \"key_0\": 8582.634723279625\n  }\n}",
                   "options": { "raw": { "headerFamily": "json", "language": "json" } }
                 },
                 "auth": {
@@ -32896,14 +32896,14 @@
                     "method": "PUT",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:Group\"\n  ],\n  \"displayName\": \"string\",\n  \"id\": \"string\",\n  \"externalId\": \"string\",\n  \"members\": [\n    {\n      \"value\": \"string\",\n      \"display\": \"string\"\n    },\n    {\n      \"value\": \"string\",\n      \"display\": \"string\"\n    }\n  ],\n  \"meta\": {\n    \"key_0\": false,\n    \"key_1\": 7623.279772233218,\n    \"key_2\": \"string\"\n  }\n}",
+                      "raw": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:Group\"\n  ],\n  \"displayName\": \"string\",\n  \"id\": \"string\",\n  \"externalId\": \"string\",\n  \"members\": [\n    {\n      \"value\": \"string\",\n      \"display\": \"string\"\n    },\n    {\n      \"value\": \"string\",\n      \"display\": \"string\"\n    }\n  ],\n  \"meta\": {\n    \"key_0\": 8582.634723279625\n  }\n}",
                       "options": { "raw": { "headerFamily": "json", "language": "json" } }
                     }
                   },
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/scim+json" }],
-                  "body": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:Group\"\n  ],\n  \"displayName\": \"string\",\n  \"id\": \"string\",\n  \"externalId\": \"string\",\n  \"members\": [\n    {\n      \"value\": \"string\",\n      \"display\": \"string\"\n    },\n    {\n      \"value\": \"string\",\n      \"display\": \"string\"\n    }\n  ],\n  \"meta\": {\n    \"key_0\": false,\n    \"key_1\": 7623.279772233218,\n    \"key_2\": \"string\"\n  }\n}",
+                  "body": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:Group\"\n  ],\n  \"displayName\": \"string\",\n  \"id\": \"string\",\n  \"externalId\": \"string\",\n  \"members\": [\n    {\n      \"value\": \"string\",\n      \"display\": \"string\"\n    },\n    {\n      \"value\": \"string\",\n      \"display\": \"string\"\n    }\n  ],\n  \"meta\": {\n    \"key_0\": 8582.634723279625\n  }\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -32962,7 +32962,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/scim+json" }],
-                  "body": "{\n  \"key_0\": \"string\",\n  \"key_1\": 4474,\n  \"key_2\": false\n}",
+                  "body": "{\n  \"key_0\": 8712.197055574507,\n  \"key_1\": 6124,\n  \"key_2\": 8464.334663003683\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -33021,7 +33021,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/scim+json" }],
-                  "body": "{\n  \"key_0\": \"string\",\n  \"key_1\": 4474,\n  \"key_2\": false\n}",
+                  "body": "{\n  \"key_0\": 8712.197055574507,\n  \"key_1\": 6124,\n  \"key_2\": 8464.334663003683\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -33080,7 +33080,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/scim+json" }],
-                  "body": "{\n  \"key_0\": \"string\",\n  \"key_1\": 4474,\n  \"key_2\": false\n}",
+                  "body": "{\n  \"key_0\": 8712.197055574507,\n  \"key_1\": 6124,\n  \"key_2\": 8464.334663003683\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -33114,7 +33114,7 @@
                       "disabled": true,
                       "description": { "content": "", "type": "text/plain" },
                       "key": "startIndex",
-                      "value": "6473"
+                      "value": "9776"
                     },
                     {
                       "disabled": true,
@@ -33155,7 +33155,7 @@
                           "disabled": true,
                           "description": { "content": "", "type": "text/plain" },
                           "key": "startIndex",
-                          "value": "6473"
+                          "value": "9776"
                         },
                         {
                           "disabled": true,
@@ -33183,7 +33183,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/scim+json" }],
-                  "body": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:api:messages:2.0:ListResponse\"\n  ],\n  \"totalResults\": 4443,\n  \"startIndex\": 9253,\n  \"itemsPerPage\": 3289,\n  \"Resources\": [\n    {\n      \"key_0\": \"string\",\n      \"key_1\": 8315,\n      \"key_2\": false\n    },\n    {\n      \"key_0\": \"string\"\n    }\n  ]\n}",
+                  "body": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:api:messages:2.0:ListResponse\"\n  ],\n  \"totalResults\": 2323,\n  \"startIndex\": 9285,\n  \"itemsPerPage\": 8144,\n  \"Resources\": [\n    {\n      \"key_0\": 7455\n    },\n    {\n      \"key_0\": \"string\",\n      \"key_1\": true\n    }\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -33213,7 +33213,7 @@
                 "method": "POST",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:User\"\n  ],\n  \"id\": \"string\",\n  \"externalId\": \"string\",\n  \"userName\": \"string\",\n  \"displayName\": \"string\",\n  \"active\": true,\n  \"name\": {\n    \"formatted\": \"string\",\n    \"givenName\": \"string\",\n    \"familyName\": \"string\"\n  },\n  \"emails\": [\n    {\n      \"value\": \"string\",\n      \"primary\": false,\n      \"type\": \"string\"\n    },\n    {\n      \"value\": \"string\",\n      \"primary\": false,\n      \"type\": \"string\"\n    }\n  ],\n  \"meta\": {\n    \"key_0\": 4587,\n    \"key_1\": 2400.069599971175,\n    \"key_2\": 5136,\n    \"key_3\": 856,\n    \"key_4\": 1973.937088623643\n  }\n}",
+                  "raw": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:User\"\n  ],\n  \"id\": \"string\",\n  \"externalId\": \"string\",\n  \"userName\": \"string\",\n  \"displayName\": \"string\",\n  \"active\": true,\n  \"name\": {\n    \"formatted\": \"string\",\n    \"givenName\": \"string\",\n    \"familyName\": \"string\"\n  },\n  \"emails\": [\n    {\n      \"value\": \"string\",\n      \"primary\": false,\n      \"type\": \"string\"\n    },\n    {\n      \"value\": \"string\",\n      \"primary\": false,\n      \"type\": \"string\"\n    }\n  ],\n  \"meta\": {\n    \"key_0\": \"string\",\n    \"key_1\": 5167.703102342784\n  }\n}",
                   "options": { "raw": { "headerFamily": "json", "language": "json" } }
                 },
                 "auth": {
@@ -33247,7 +33247,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:User\"\n  ],\n  \"id\": \"string\",\n  \"externalId\": \"string\",\n  \"userName\": \"string\",\n  \"displayName\": \"string\",\n  \"active\": true,\n  \"name\": {\n    \"formatted\": \"string\",\n    \"givenName\": \"string\",\n    \"familyName\": \"string\"\n  },\n  \"emails\": [\n    {\n      \"value\": \"string\",\n      \"primary\": false,\n      \"type\": \"string\"\n    },\n    {\n      \"value\": \"string\",\n      \"primary\": false,\n      \"type\": \"string\"\n    }\n  ],\n  \"meta\": {\n    \"key_0\": 4587,\n    \"key_1\": 2400.069599971175,\n    \"key_2\": 5136,\n    \"key_3\": 856,\n    \"key_4\": 1973.937088623643\n  }\n}",
+                      "raw": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:User\"\n  ],\n  \"id\": \"string\",\n  \"externalId\": \"string\",\n  \"userName\": \"string\",\n  \"displayName\": \"string\",\n  \"active\": true,\n  \"name\": {\n    \"formatted\": \"string\",\n    \"givenName\": \"string\",\n    \"familyName\": \"string\"\n  },\n  \"emails\": [\n    {\n      \"value\": \"string\",\n      \"primary\": false,\n      \"type\": \"string\"\n    },\n    {\n      \"value\": \"string\",\n      \"primary\": false,\n      \"type\": \"string\"\n    }\n  ],\n  \"meta\": {\n    \"key_0\": \"string\",\n    \"key_1\": 5167.703102342784\n  }\n}",
                       "options": { "raw": { "headerFamily": "json", "language": "json" } }
                     }
                   },
@@ -33415,7 +33415,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/scim+json" }],
-                  "body": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:User\"\n  ],\n  \"id\": \"string\",\n  \"externalId\": \"string\",\n  \"userName\": \"string\",\n  \"displayName\": \"string\",\n  \"active\": true,\n  \"name\": {\n    \"formatted\": \"string\",\n    \"givenName\": \"string\",\n    \"familyName\": \"string\"\n  },\n  \"emails\": [\n    {\n      \"value\": \"string\",\n      \"primary\": false,\n      \"type\": \"string\"\n    },\n    {\n      \"value\": \"string\",\n      \"primary\": false,\n      \"type\": \"string\"\n    }\n  ],\n  \"meta\": {\n    \"key_0\": 4587,\n    \"key_1\": 2400.069599971175,\n    \"key_2\": 5136,\n    \"key_3\": 856,\n    \"key_4\": 1973.937088623643\n  }\n}",
+                  "body": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:User\"\n  ],\n  \"id\": \"string\",\n  \"externalId\": \"string\",\n  \"userName\": \"string\",\n  \"displayName\": \"string\",\n  \"active\": true,\n  \"name\": {\n    \"formatted\": \"string\",\n    \"givenName\": \"string\",\n    \"familyName\": \"string\"\n  },\n  \"emails\": [\n    {\n      \"value\": \"string\",\n      \"primary\": false,\n      \"type\": \"string\"\n    },\n    {\n      \"value\": \"string\",\n      \"primary\": false,\n      \"type\": \"string\"\n    }\n  ],\n  \"meta\": {\n    \"key_0\": \"string\",\n    \"key_1\": 5167.703102342784\n  }\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -33502,7 +33502,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/scim+json" }],
-                  "body": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:User\"\n  ],\n  \"id\": \"string\",\n  \"externalId\": \"string\",\n  \"userName\": \"string\",\n  \"displayName\": \"string\",\n  \"active\": true,\n  \"name\": {\n    \"formatted\": \"string\",\n    \"givenName\": \"string\",\n    \"familyName\": \"string\"\n  },\n  \"emails\": [\n    {\n      \"value\": \"string\",\n      \"primary\": false,\n      \"type\": \"string\"\n    },\n    {\n      \"value\": \"string\",\n      \"primary\": false,\n      \"type\": \"string\"\n    }\n  ],\n  \"meta\": {\n    \"key_0\": 4587,\n    \"key_1\": 2400.069599971175,\n    \"key_2\": 5136,\n    \"key_3\": 856,\n    \"key_4\": 1973.937088623643\n  }\n}",
+                  "body": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:User\"\n  ],\n  \"id\": \"string\",\n  \"externalId\": \"string\",\n  \"userName\": \"string\",\n  \"displayName\": \"string\",\n  \"active\": true,\n  \"name\": {\n    \"formatted\": \"string\",\n    \"givenName\": \"string\",\n    \"familyName\": \"string\"\n  },\n  \"emails\": [\n    {\n      \"value\": \"string\",\n      \"primary\": false,\n      \"type\": \"string\"\n    },\n    {\n      \"value\": \"string\",\n      \"primary\": false,\n      \"type\": \"string\"\n    }\n  ],\n  \"meta\": {\n    \"key_0\": \"string\",\n    \"key_1\": 5167.703102342784\n  }\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -33540,7 +33540,7 @@
                 "method": "PUT",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:User\"\n  ],\n  \"id\": \"string\",\n  \"externalId\": \"string\",\n  \"userName\": \"string\",\n  \"displayName\": \"string\",\n  \"active\": true,\n  \"name\": {\n    \"formatted\": \"string\",\n    \"givenName\": \"string\",\n    \"familyName\": \"string\"\n  },\n  \"emails\": [\n    {\n      \"value\": \"string\",\n      \"primary\": false,\n      \"type\": \"string\"\n    },\n    {\n      \"value\": \"string\",\n      \"primary\": false,\n      \"type\": \"string\"\n    }\n  ],\n  \"meta\": {\n    \"key_0\": 4587,\n    \"key_1\": 2400.069599971175,\n    \"key_2\": 5136,\n    \"key_3\": 856,\n    \"key_4\": 1973.937088623643\n  }\n}",
+                  "raw": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:User\"\n  ],\n  \"id\": \"string\",\n  \"externalId\": \"string\",\n  \"userName\": \"string\",\n  \"displayName\": \"string\",\n  \"active\": true,\n  \"name\": {\n    \"formatted\": \"string\",\n    \"givenName\": \"string\",\n    \"familyName\": \"string\"\n  },\n  \"emails\": [\n    {\n      \"value\": \"string\",\n      \"primary\": false,\n      \"type\": \"string\"\n    },\n    {\n      \"value\": \"string\",\n      \"primary\": false,\n      \"type\": \"string\"\n    }\n  ],\n  \"meta\": {\n    \"key_0\": \"string\",\n    \"key_1\": 5167.703102342784\n  }\n}",
                   "options": { "raw": { "headerFamily": "json", "language": "json" } }
                 },
                 "auth": {
@@ -33582,14 +33582,14 @@
                     "method": "PUT",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:User\"\n  ],\n  \"id\": \"string\",\n  \"externalId\": \"string\",\n  \"userName\": \"string\",\n  \"displayName\": \"string\",\n  \"active\": true,\n  \"name\": {\n    \"formatted\": \"string\",\n    \"givenName\": \"string\",\n    \"familyName\": \"string\"\n  },\n  \"emails\": [\n    {\n      \"value\": \"string\",\n      \"primary\": false,\n      \"type\": \"string\"\n    },\n    {\n      \"value\": \"string\",\n      \"primary\": false,\n      \"type\": \"string\"\n    }\n  ],\n  \"meta\": {\n    \"key_0\": 4587,\n    \"key_1\": 2400.069599971175,\n    \"key_2\": 5136,\n    \"key_3\": 856,\n    \"key_4\": 1973.937088623643\n  }\n}",
+                      "raw": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:User\"\n  ],\n  \"id\": \"string\",\n  \"externalId\": \"string\",\n  \"userName\": \"string\",\n  \"displayName\": \"string\",\n  \"active\": true,\n  \"name\": {\n    \"formatted\": \"string\",\n    \"givenName\": \"string\",\n    \"familyName\": \"string\"\n  },\n  \"emails\": [\n    {\n      \"value\": \"string\",\n      \"primary\": false,\n      \"type\": \"string\"\n    },\n    {\n      \"value\": \"string\",\n      \"primary\": false,\n      \"type\": \"string\"\n    }\n  ],\n  \"meta\": {\n    \"key_0\": \"string\",\n    \"key_1\": 5167.703102342784\n  }\n}",
                       "options": { "raw": { "headerFamily": "json", "language": "json" } }
                     }
                   },
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/scim+json" }],
-                  "body": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:User\"\n  ],\n  \"id\": \"string\",\n  \"externalId\": \"string\",\n  \"userName\": \"string\",\n  \"displayName\": \"string\",\n  \"active\": true,\n  \"name\": {\n    \"formatted\": \"string\",\n    \"givenName\": \"string\",\n    \"familyName\": \"string\"\n  },\n  \"emails\": [\n    {\n      \"value\": \"string\",\n      \"primary\": false,\n      \"type\": \"string\"\n    },\n    {\n      \"value\": \"string\",\n      \"primary\": false,\n      \"type\": \"string\"\n    }\n  ],\n  \"meta\": {\n    \"key_0\": 4587,\n    \"key_1\": 2400.069599971175,\n    \"key_2\": 5136,\n    \"key_3\": 856,\n    \"key_4\": 1973.937088623643\n  }\n}",
+                  "body": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:User\"\n  ],\n  \"id\": \"string\",\n  \"externalId\": \"string\",\n  \"userName\": \"string\",\n  \"displayName\": \"string\",\n  \"active\": true,\n  \"name\": {\n    \"formatted\": \"string\",\n    \"givenName\": \"string\",\n    \"familyName\": \"string\"\n  },\n  \"emails\": [\n    {\n      \"value\": \"string\",\n      \"primary\": false,\n      \"type\": \"string\"\n    },\n    {\n      \"value\": \"string\",\n      \"primary\": false,\n      \"type\": \"string\"\n    }\n  ],\n  \"meta\": {\n    \"key_0\": \"string\",\n    \"key_1\": 5167.703102342784\n  }\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -33670,7 +33670,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"created_at\": \"1963-08-12T00:24:51.366Z\",\n  \"last_request\": {\n    \"at\": \"1995-04-05T00:43:37.523Z\",\n    \"operation\": \"patch\",\n    \"resource\": \"group\",\n    \"http_status\": 293,\n    \"status\": \"failed\",\n    \"error_code\": \"string\",\n    \"reason\": \"string\"\n  },\n  \"last_used_at\": null,\n  \"provisioned_count\": 8461,\n  \"token_count\": 2785,\n  \"token_set\": false,\n  \"token_prefix\": \"string\"\n}",
+                  "body": "{\n  \"created_at\": null,\n  \"last_request\": null,\n  \"last_used_at\": null,\n  \"provisioned_count\": 2383,\n  \"token_count\": 4169,\n  \"token_set\": true,\n  \"token_prefix\": \"string\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -33850,7 +33850,7 @@
                       "value": "no-cache"
                     }
                   ],
-                  "body": "{\n  \"config\": {\n    \"created_at\": null,\n    \"last_request\": null,\n    \"last_used_at\": null,\n    \"provisioned_count\": 6684,\n    \"token_count\": 4936,\n    \"token_set\": false,\n    \"token_prefix\": \"string\"\n  },\n  \"token\": \"string\"\n}",
+                  "body": "{\n  \"config\": {\n    \"created_at\": \"1946-11-01T08:16:07.423Z\",\n    \"last_request\": null,\n    \"last_used_at\": null,\n    \"provisioned_count\": 1409,\n    \"token_count\": 5154,\n    \"token_set\": true,\n    \"token_prefix\": \"string\"\n  },\n  \"token\": \"string\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -33931,7 +33931,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"items\": [\n    {\n      \"created_at\": \"2023-10-20T17:32:45.382Z\",\n      \"expires_at\": null,\n      \"id\": \"250b1d99-4b03-d47a-c9bf-27962bb35ded\",\n      \"last_used_at\": \"1959-09-12T07:29:34.009Z\",\n      \"name\": \"string\",\n      \"replaced_by\": \"7f03e0d0-b526-62da-a4b5-9af59e894e7c\",\n      \"revoked_at\": \"2024-08-21T21:45:25.536Z\",\n      \"status\": \"rotated\",\n      \"token_prefix\": \"string\"\n    },\n    {\n      \"created_at\": \"1976-09-23T21:33:52.806Z\",\n      \"expires_at\": null,\n      \"id\": \"54057c26-8d73-0b5c-4655-4293ff12012e\",\n      \"last_used_at\": null,\n      \"name\": \"string\",\n      \"replaced_by\": null,\n      \"revoked_at\": \"2020-05-08T05:27:12.169Z\",\n      \"status\": \"revoked\",\n      \"token_prefix\": \"string\"\n    }\n  ],\n  \"truncated\": true\n}",
+                  "body": "{\n  \"items\": [\n    {\n      \"created_at\": \"1966-08-24T19:06:37.936Z\",\n      \"expires_at\": \"2011-06-23T12:41:58.287Z\",\n      \"id\": \"806e9982-e00f-29ff-5975-3db8ba125359\",\n      \"last_used_at\": \"1979-10-08T02:25:02.679Z\",\n      \"name\": \"string\",\n      \"replaced_by\": null,\n      \"revoked_at\": \"1979-07-13T17:00:55.073Z\",\n      \"status\": \"rotated\",\n      \"token_prefix\": \"string\"\n    },\n    {\n      \"created_at\": \"1969-08-16T04:31:30.752Z\",\n      \"expires_at\": null,\n      \"id\": \"bc1c9dd4-8fa6-4a85-f80e-a6a1740f738d\",\n      \"last_used_at\": null,\n      \"name\": \"string\",\n      \"replaced_by\": \"2c028192-b1d9-344b-33d4-adc9bfd27962\",\n      \"revoked_at\": null,\n      \"status\": \"rotated\",\n      \"token_prefix\": \"string\"\n    }\n  ],\n  \"truncated\": false\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -33972,7 +33972,7 @@
                 "method": "POST",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"string\",\n  \"expires_at\": \"1977-03-24T01:46:46.247Z\"\n}",
+                  "raw": "{\n  \"name\": \"string\",\n  \"expires_at\": \"1950-10-05T07:52:26.634Z\"\n}",
                   "options": { "raw": { "headerFamily": "json", "language": "json" } }
                 },
                 "auth": {
@@ -34017,7 +34017,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"name\": \"string\",\n  \"expires_at\": \"1977-03-24T01:46:46.247Z\"\n}",
+                      "raw": "{\n  \"name\": \"string\",\n  \"expires_at\": \"1950-10-05T07:52:26.634Z\"\n}",
                       "options": { "raw": { "headerFamily": "json", "language": "json" } }
                     }
                   },
@@ -34044,7 +34044,7 @@
                       "value": "no-cache"
                     }
                   ],
-                  "body": "{\n  \"scim_token\": {\n    \"created_at\": \"2011-08-28T19:34:40.113Z\",\n    \"expires_at\": null,\n    \"id\": \"ad2b937f-8b47-2f50-f7e0-bbeb817b40d3\",\n    \"last_used_at\": \"1973-11-07T02:06:14.741Z\",\n    \"name\": \"string\",\n    \"replaced_by\": \"454cc24c-44a7-bffc-61db-5d3c18098f05\",\n    \"revoked_at\": null,\n    \"status\": \"active\",\n    \"token_prefix\": \"string\"\n  },\n  \"token\": \"string\"\n}",
+                  "body": "{\n  \"scim_token\": {\n    \"created_at\": \"1953-12-22T16:01:03.790Z\",\n    \"expires_at\": \"2013-04-06T23:02:02.368Z\",\n    \"id\": \"62da6a4b-9af5-e894-7c36-14e7354649ba\",\n    \"last_used_at\": null,\n    \"name\": \"string\",\n    \"replaced_by\": \"265d8d73-b5c4-6559-293f-12012e1c6ea6\",\n    \"revoked_at\": null,\n    \"status\": \"active\",\n    \"token_prefix\": \"string\"\n  },\n  \"token\": \"string\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -34193,7 +34193,7 @@
                 "method": "POST",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"overlap_hours\": 219,\n  \"expires_at\": \"1990-04-28T15:08:06.387Z\"\n}",
+                  "raw": "{\n  \"overlap_hours\": 349,\n  \"expires_at\": null\n}",
                   "options": { "raw": { "headerFamily": "json", "language": "json" } }
                 },
                 "auth": {
@@ -34253,7 +34253,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"overlap_hours\": 219,\n  \"expires_at\": \"1990-04-28T15:08:06.387Z\"\n}",
+                      "raw": "{\n  \"overlap_hours\": 349,\n  \"expires_at\": null\n}",
                       "options": { "raw": { "headerFamily": "json", "language": "json" } }
                     }
                   },
@@ -34280,7 +34280,7 @@
                       "value": "no-cache"
                     }
                   ],
-                  "body": "{\n  \"replaced\": {\n    \"created_at\": \"2012-07-25T18:45:03.881Z\",\n    \"expires_at\": \"2020-04-18T17:44:45.091Z\",\n    \"id\": \"11d8c0a1-6189-c9ac-fe2e-ff86c4a61fab\",\n    \"last_used_at\": \"1947-02-27T16:20:58.599Z\",\n    \"name\": \"string\",\n    \"replaced_by\": \"aeabe6ef-db23-e702-04a8-3a1fcdade7d8\",\n    \"revoked_at\": null,\n    \"status\": \"revoked\",\n    \"token_prefix\": \"string\"\n  },\n  \"scim_token\": {\n    \"created_at\": \"2013-02-01T23:35:06.607Z\",\n    \"expires_at\": \"1963-02-14T17:32:48.583Z\",\n    \"id\": \"42146969-cdcd-cdc0-1191-b301dcd9df82\",\n    \"last_used_at\": null,\n    \"name\": \"string\",\n    \"replaced_by\": null,\n    \"revoked_at\": \"2009-08-11T04:47:10.110Z\",\n    \"status\": \"expired\",\n    \"token_prefix\": \"string\"\n  },\n  \"token\": \"string\"\n}",
+                  "body": "{\n  \"replaced\": {\n    \"created_at\": \"2011-08-28T19:34:40.113Z\",\n    \"expires_at\": null,\n    \"id\": \"ad2b937f-8b47-2f50-f7e0-bbeb817b40d3\",\n    \"last_used_at\": \"1973-11-07T02:06:14.741Z\",\n    \"name\": \"string\",\n    \"replaced_by\": \"454cc24c-44a7-bffc-61db-5d3c18098f05\",\n    \"revoked_at\": null,\n    \"status\": \"active\",\n    \"token_prefix\": \"string\"\n  },\n  \"scim_token\": {\n    \"created_at\": \"1956-01-23T00:48:25.201Z\",\n    \"expires_at\": null,\n    \"id\": \"3471775d-6c2c-1181-d8c0-13a61890c9ac\",\n    \"last_used_at\": null,\n    \"name\": \"string\",\n    \"replaced_by\": null,\n    \"revoked_at\": null,\n    \"status\": \"revoked\",\n    \"token_prefix\": \"string\"\n  },\n  \"token\": \"string\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -34399,7 +34399,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"items\": [\n    {\n      \"id\": \"dd760142-64eb-5a95-454e-20890477dac4\",\n      \"name\": \"string\",\n      \"external_id\": \"string\",\n      \"members\": 8020,\n      \"created_at\": \"2008-09-21T00:47:03.175Z\",\n      \"updated_at\": \"1972-05-13T22:55:07.058Z\"\n    },\n    {\n      \"id\": \"4805dd1c-e2bc-21b5-b6c1-6fdb54130aaf\",\n      \"name\": \"string\",\n      \"external_id\": null,\n      \"members\": 8374,\n      \"created_at\": \"1947-10-20T15:04:38.685Z\",\n      \"updated_at\": \"2003-08-08T00:45:46.232Z\"\n    }\n  ],\n  \"total\": 3666,\n  \"next_cursor\": \"string\"\n}",
+                  "body": "{\n  \"items\": [\n    {\n      \"id\": \"aeabe6ef-db23-e702-04a8-3a1fcdade7d8\",\n      \"name\": \"string\",\n      \"external_id\": null,\n      \"members\": 642,\n      \"created_at\": \"1951-05-16T13:42:45.052Z\",\n      \"updated_at\": \"2001-07-29T19:51:40.256Z\"\n    },\n    {\n      \"id\": \"c4214696-4cdc-fcdc-f119-1b301dcd9df8\",\n      \"name\": \"string\",\n      \"external_id\": \"string\",\n      \"members\": 1503,\n      \"created_at\": \"2009-08-11T04:47:10.110Z\",\n      \"updated_at\": \"1983-04-19T04:36:20.103Z\"\n    }\n  ],\n  \"total\": 2240,\n  \"next_cursor\": \"string\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -34518,7 +34518,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"items\": [\n    {\n      \"created_at\": \"1989-05-23T00:37:14.683Z\",\n      \"display_name\": \"string\",\n      \"email\": \"string\",\n      \"external_id\": null,\n      \"id\": \"3a926558-75c5-8ac3-c828-6297a4e99059\",\n      \"status\": \"string\"\n    },\n    {\n      \"created_at\": \"1983-06-27T18:30:10.106Z\",\n      \"display_name\": \"string\",\n      \"email\": \"string\",\n      \"external_id\": \"string\",\n      \"id\": \"7278bf7d-e794-af59-5127-d56896ee62c5\",\n      \"status\": \"string\"\n    }\n  ],\n  \"total\": 623,\n  \"next_cursor\": \"string\"\n}",
+                  "body": "{\n  \"items\": [\n    {\n      \"created_at\": \"1996-06-22T00:59:26.412Z\",\n      \"display_name\": null,\n      \"email\": \"string\",\n      \"external_id\": \"string\",\n      \"id\": \"64eb55a9-454e-2089-477d-c4455242bece\",\n      \"status\": \"string\"\n    },\n    {\n      \"created_at\": \"1948-05-09T09:57:33.045Z\",\n      \"display_name\": null,\n      \"email\": \"string\",\n      \"external_id\": \"string\",\n      \"id\": \"2bcb21b5-6c1e-fdb5-130a-f290bf4d1f34\",\n      \"status\": \"string\"\n    }\n  ],\n  \"total\": 3080,\n  \"next_cursor\": \"string\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -34605,7 +34605,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"items\": [\n    {\n      \"id\": \"4a3e84ab-8ea1-0963-48bc-455d435dff23\",\n      \"organization_id\": \"00a48ba7-ccb5-2bd7-e500-c5a18919368a\",\n      \"capabilities\": [\n        \"domain_verification\",\n        \"domain_verification\"\n      ],\n      \"created_by\": \"adbe8e11-0b66-57e5-c2b6-5d0b1431435f\",\n      \"expires_at\": \"1986-02-27T16:53:19.663Z\",\n      \"revoked_at\": \"1994-02-04T03:43:29.089Z\",\n      \"last_used_at\": null,\n      \"created_at\": \"2008-03-12T11:59:49.146Z\"\n    },\n    {\n      \"id\": \"c0e94666-cecb-452f-66db-e158ef7f7312\",\n      \"organization_id\": \"b786e807-962f-3540-a0b0-47e9889396ac\",\n      \"capabilities\": [\n        \"scim\",\n        \"domain_verification\"\n      ],\n      \"created_by\": \"f65f61a3-48b2-fa7b-249f-a7b54eda98e2\",\n      \"expires_at\": \"1973-09-25T10:53:33.127Z\",\n      \"revoked_at\": \"2000-03-20T11:05:00.060Z\",\n      \"last_used_at\": null,\n      \"created_at\": \"2024-05-07T21:35:01.258Z\"\n    }\n  ],\n  \"truncated\": false\n}",
+                  "body": "{\n  \"items\": [\n    {\n      \"id\": \"0c9b9b75-9265-85e7-c538-c32c828c6297\",\n      \"organization_id\": \"e99059fd-c928-2932-bc2f-ad7278bf7d28\",\n      \"capabilities\": [\n        \"scim\",\n        \"domain_verification\"\n      ],\n      \"created_by\": null,\n      \"expires_at\": \"1979-11-05T20:15:15.879Z\",\n      \"revoked_at\": \"2018-12-21T16:03:10.426Z\",\n      \"last_used_at\": \"1990-10-17T03:19:30.892Z\",\n      \"created_at\": \"1997-02-03T03:28:47.320Z\"\n    },\n    {\n      \"id\": \"e62c565a-5962-6946-6e34-3e84aba28ea1\",\n      \"organization_id\": \"963f48bc-55d4-5dff-3c80-a48ba7edccb5\",\n      \"capabilities\": [\n        \"domain_verification\",\n        \"scim\"\n      ],\n      \"created_by\": null,\n      \"expires_at\": \"2021-06-19T11:26:38.980Z\",\n      \"revoked_at\": \"1963-10-06T13:42:23.799Z\",\n      \"last_used_at\": null,\n      \"created_at\": \"1982-04-21T02:19:17.799Z\"\n    }\n  ],\n  \"truncated\": false\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -34646,7 +34646,7 @@
                 "method": "POST",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"capabilities\": [\n    \"saml\",\n    \"scim\"\n  ],\n  \"ttl_seconds\": 27667\n}",
+                  "raw": "{\n  \"capabilities\": [\n    \"saml\",\n    \"domain_verification\"\n  ],\n  \"ttl_seconds\": null\n}",
                   "options": { "raw": { "headerFamily": "json", "language": "json" } }
                 },
                 "auth": {
@@ -34691,7 +34691,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"capabilities\": [\n    \"saml\",\n    \"scim\"\n  ],\n  \"ttl_seconds\": 27667\n}",
+                      "raw": "{\n  \"capabilities\": [\n    \"saml\",\n    \"domain_verification\"\n  ],\n  \"ttl_seconds\": null\n}",
                       "options": { "raw": { "headerFamily": "json", "language": "json" } }
                     }
                   },
@@ -34718,7 +34718,7 @@
                       "value": "no-cache"
                     }
                   ],
-                  "body": "{\n  \"link\": {\n    \"id\": \"be8731a3-6cdb-feba-3cbe-26f699820b95\",\n    \"organization_id\": \"3addc0d1-5bd8-9261-be1a-2c71ffae97ea\",\n    \"capabilities\": [\n      \"saml\",\n      \"saml\"\n    ],\n    \"created_by\": null,\n    \"expires_at\": \"1961-08-28T10:21:45.109Z\",\n    \"revoked_at\": \"2023-06-09T15:55:11.753Z\",\n    \"last_used_at\": null,\n    \"created_at\": \"2005-02-17T04:33:37.504Z\"\n  },\n  \"token\": \"string\",\n  \"url\": \"https://gLaIcmzIbwBhSXkaVrJM.hbajl6rAC6H46s1eUYJGpVo-UhLQajhTbbtggfpjzwKkcRLzR0SK\"\n}",
+                  "body": "{\n  \"link\": {\n    \"id\": \"2f0b6675-50c2-6e5d-b143-435fc79660a4\",\n    \"organization_id\": \"3fadc0e9-6691-ecba-52f1-6dbce158ef7f\",\n    \"capabilities\": [\n      \"saml\",\n      \"saml\"\n    ],\n    \"created_by\": null,\n    \"expires_at\": \"1981-09-07T11:40:27.530Z\",\n    \"revoked_at\": null,\n    \"last_used_at\": \"1988-12-16T05:39:14.209Z\",\n    \"created_at\": \"2005-08-02T13:32:29.989Z\"\n  },\n  \"token\": \"string\",\n  \"url\": \"https://ulKMpdYt.ylbqcNSbcUrF6NIApNzSYA\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -34905,7 +34905,7 @@
                       "value": "string"
                     }
                   ],
-                  "body": "{\n  \"context\": {\n    \"capabilities\": [\n      \"domain_verification\",\n      \"saml\"\n    ],\n    \"expires_at\": \"2022-02-28T11:40:14.156Z\",\n    \"organization_name\": \"string\",\n    \"branding\": {\n      \"background_color\": \"string\",\n      \"logo_url\": \"string\",\n      \"primary_color\": \"string\",\n      \"secondary_color\": \"string\"\n    },\n    \"scim_base_url\": \"https://GjxTEPrzOaFRxCHPedYOsXaIkeBy.ztuuld9yx7.9pcJ\"\n  },\n  \"expires_at\": \"1980-04-23T14:29:10.674Z\",\n  \"redirect_url\": \"string\"\n}",
+                  "body": "{\n  \"context\": {\n    \"capabilities\": [\n      \"domain_verification\",\n      \"domain_verification\"\n    ],\n    \"expires_at\": \"2013-04-18T13:10:21.854Z\",\n    \"organization_name\": \"string\",\n    \"branding\": {\n      \"background_color\": \"string\",\n      \"logo_url\": \"string\",\n      \"primary_color\": \"string\",\n      \"secondary_color\": \"string\"\n    },\n    \"scim_base_url\": \"https://kXrNcBDihqqWojMN.qvoq\"\n  },\n  \"expires_at\": \"1969-05-23T13:11:49.611Z\",\n  \"redirect_url\": \"string\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -35015,7 +35015,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"capabilities\": [\n    \"domain_verification\",\n    \"scim\"\n  ],\n  \"expires_at\": \"1960-11-16T22:57:36.572Z\",\n  \"organization_name\": \"string\",\n  \"branding\": {\n    \"background_color\": \"string\",\n    \"logo_url\": \"string\",\n    \"primary_color\": \"string\",\n    \"secondary_color\": \"string\"\n  },\n  \"scim_base_url\": \"https://LoAIXSDsxdcqiBShnHsXHdMgelYcGx.ayrpIZtEskrq1S2MaKCAzMW3y4e,Q.d9xsg6DJwBeDUQo\"\n}",
+                  "body": "{\n  \"capabilities\": [\n    \"domain_verification\",\n    \"domain_verification\"\n  ],\n  \"expires_at\": \"1946-02-25T23:17:06.755Z\",\n  \"organization_name\": \"string\",\n  \"branding\": {\n    \"background_color\": \"string\",\n    \"logo_url\": \"string\",\n    \"primary_color\": \"string\",\n    \"secondary_color\": \"string\"\n  },\n  \"scim_base_url\": \"http://vwUHzSToQ.xsQXe2gN.wWSuNlyey7eRFkYDe+T8MG7RPdsffQ5PhcgZDMFS60mOl6\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -35071,7 +35071,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"items\": [\n    {\n      \"acs_url\": \"http://CwtuiFUaTupwVDsUXHcV.gfBSpRLM9GfOfGbX5Z4ReV7iVlSDi8zF9BqOBZ68J\",\n      \"allow_idp_initiated\": false,\n      \"certificates\": [\n        {\n          \"id\": \"a411585c-b539-84a4-779d-09e0aa5e8769\",\n          \"certificate\": \"string\",\n          \"subject\": \"string\",\n          \"fingerprint_sha256\": \"string\",\n          \"not_before\": \"1980-09-02T12:12:34.118Z\",\n          \"not_after\": null,\n          \"source\": \"manual\",\n          \"created_at\": \"1985-10-18T20:44:18.555Z\"\n        },\n        {\n          \"id\": \"b4747316-4be0-b7b1-4b38-716d56d23a52\",\n          \"certificate\": \"string\",\n          \"subject\": \"string\",\n          \"fingerprint_sha256\": \"string\",\n          \"not_before\": null,\n          \"not_after\": null,\n          \"source\": \"manual\",\n          \"created_at\": \"1979-11-22T12:25:46.351Z\"\n        }\n      ],\n      \"created_at\": \"1983-03-27T00:27:21.382Z\",\n      \"email_attribute\": \"string\",\n      \"groups_attribute\": \"string\",\n      \"id\": \"a3a9c91d-07f0-b1db-b4fb-de5dd8ffc4d9\",\n      \"idp_certificate\": \"string\",\n      \"idp_entity_id\": \"string\",\n      \"idp_sso_url\": \"https://RHnNc.lpLeWApmgYAyLngwG,lv\",\n      \"last_login_at\": null,\n      \"metadata_error\": \"string\",\n      \"metadata_refreshed_at\": \"1989-09-02T21:23:41.270Z\",\n      \"metadata_url\": null,\n      \"name\": \"string\",\n      \"name_attribute\": \"string\",\n      \"organization_id\": \"97eb093d-e76f-d708-1433-1f821befcaba\",\n      \"sp_entity_id\": \"string\",\n      \"sp_metadata_url\": \"http://wGkQGKfUSlzuTnrHFctdjaMIFIpWw.kxmtSg9k2KvoR\",\n      \"status\": \"disabled\",\n      \"updated_at\": \"1952-08-24T22:40:54.361Z\"\n    },\n    {\n      \"acs_url\": \"http://qEpfecmc.jxoL1MOTGJj8um5z7nCBvTgQlgPYtwamk5UIukcjL-u81W+m\",\n      \"allow_idp_initiated\": false,\n      \"certificates\": [\n        {\n          \"id\": \"ba8e3cc0-5f00-bcfe-4153-31629f09ee55\",\n          \"certificate\": \"string\",\n          \"subject\": \"string\",\n          \"fingerprint_sha256\": \"string\",\n          \"not_before\": null,\n          \"not_after\": null,\n          \"source\": \"manual\",\n          \"created_at\": \"1963-09-16T06:35:24.797Z\"\n        },\n        {\n          \"id\": \"530b4e95-50b8-ebf5-48ca-7ae9fe2d3c6f\",\n          \"certificate\": \"string\",\n          \"subject\": \"string\",\n          \"fingerprint_sha256\": \"string\",\n          \"not_before\": \"2012-02-29T14:03:46.788Z\",\n          \"not_after\": null,\n          \"source\": \"manual\",\n          \"created_at\": \"2001-01-31T11:54:58.097Z\"\n        }\n      ],\n      \"created_at\": \"1993-06-01T18:05:37.626Z\",\n      \"email_attribute\": \"string\",\n      \"groups_attribute\": \"string\",\n      \"id\": \"b5687edd-06bf-a8e3-35a6-f1e567a17dc6\",\n      \"idp_certificate\": \"string\",\n      \"idp_entity_id\": \"string\",\n      \"idp_sso_url\": \"http://ukEXGZPee.hxeJDBAIzcXXyR.YHGR-oIuWYUpYA23mK4hMwvSnW1\",\n      \"last_login_at\": \"1953-08-14T17:07:43.122Z\",\n      \"metadata_error\": \"string\",\n      \"metadata_refreshed_at\": \"1946-05-02T09:45:42.208Z\",\n      \"metadata_url\": \"https://BzmIjjfkIl.qdJaEhKV0lQBNJ3gQJ0Dt4QNUHE1hVE1WPLNSXLr1I6d\",\n      \"name\": \"string\",\n      \"name_attribute\": \"string\",\n      \"organization_id\": \"33d75432-0e92-1213-0c57-1e1673d8fa8e\",\n      \"sp_entity_id\": \"string\",\n      \"sp_metadata_url\": \"https://rHrROcGXhBXqxVjNf.kxumQA-+4c\",\n      \"status\": \"draft\",\n      \"updated_at\": \"1967-09-30T23:36:18.224Z\"\n    }\n  ],\n  \"truncated\": false\n}",
+                  "body": "{\n  \"items\": [\n    {\n      \"acs_url\": \"http://I.gmHjhTbbtggfpjzwKkcRLzR0SKEV\",\n      \"allow_idp_initiated\": false,\n      \"certificates\": [\n        {\n          \"id\": \"10203222-48ea-c043-85b1-6d8ccd4801d1\",\n          \"certificate\": \"string\",\n          \"subject\": \"string\",\n          \"fingerprint_sha256\": \"string\",\n          \"not_before\": \"1953-06-08T21:48:48.693Z\",\n          \"not_after\": null,\n          \"source\": \"manual\",\n          \"created_at\": \"1982-06-18T09:58:21.100Z\"\n        },\n        {\n          \"id\": \"78ac10fc-0a31-7dfb-c19e-36837aeca2a0\",\n          \"certificate\": \"string\",\n          \"subject\": \"string\",\n          \"fingerprint_sha256\": \"string\",\n          \"not_before\": \"1965-05-22T22:18:27.405Z\",\n          \"not_after\": \"1984-05-13T23:20:42.322Z\",\n          \"source\": \"metadata\",\n          \"created_at\": \"1994-11-10T07:37:46.877Z\"\n        }\n      ],\n      \"created_at\": \"2013-03-29T05:54:09.139Z\",\n      \"email_attribute\": \"string\",\n      \"groups_attribute\": \"string\",\n      \"id\": \"47522515-ad90-6674-bd77-1faf15e541fe\",\n      \"idp_certificate\": \"string\",\n      \"idp_entity_id\": \"string\",\n      \"idp_sso_url\": \"https://hnHsXHdMgelYcGxJbWIFdydALvKtW.onUsIR+4LxDdqJ\",\n      \"last_login_at\": null,\n      \"metadata_error\": null,\n      \"metadata_refreshed_at\": null,\n      \"metadata_url\": \"http://T.hlxeSbX5Z4IV7iVlSDi8zF9BqOBZ68JECyAlN7\",\n      \"name\": \"string\",\n      \"name_attribute\": \"string\",\n      \"organization_id\": \"33006980-ad9b-55a4-1585-68b539b84a4e\",\n      \"sp_entity_id\": \"string\",\n      \"sp_metadata_url\": \"http://bDiWTRL.vcorDdPSv6IFBN\",\n      \"status\": \"active\",\n      \"updated_at\": \"1967-01-16T18:36:45.420Z\"\n    },\n    {\n      \"acs_url\": \"http://oECwJdHjIDOEfQSjdzZcnKdS.eshzNRroKY.VsEsxfzHrW7cZVDTdtWpIODez5r4lpPrvxy-XwFkzUo4iaMfJ+\",\n      \"allow_idp_initiated\": false,\n      \"certificates\": [\n        {\n          \"id\": \"bd0533e3-1b63-1c65-4117-7f252da4c046\",\n          \"certificate\": \"string\",\n          \"subject\": \"string\",\n          \"fingerprint_sha256\": \"string\",\n          \"not_before\": null,\n          \"not_after\": null,\n          \"source\": \"manual\",\n          \"created_at\": \"1961-05-01T04:11:19.652Z\"\n        },\n        {\n          \"id\": \"e76f1d70-1433-1f82-befc-bafe4850db1e\",\n          \"certificate\": \"string\",\n          \"subject\": \"string\",\n          \"fingerprint_sha256\": \"string\",\n          \"not_before\": null,\n          \"not_after\": null,\n          \"source\": \"metadata\",\n          \"created_at\": \"2008-04-14T14:06:07.095Z\"\n        }\n      ],\n      \"created_at\": \"1995-03-09T15:16:17.886Z\",\n      \"email_attribute\": \"string\",\n      \"groups_attribute\": \"string\",\n      \"id\": \"20ba9a4e-6e7c-b1ea-503e-1cb79a782be4\",\n      \"idp_certificate\": \"string\",\n      \"idp_entity_id\": \"string\",\n      \"idp_sso_url\": \"http://qEpfecmc.jxopgQofiMPNwamk5UIukcjL-u81W+m\",\n      \"last_login_at\": \"1988-02-06T23:08:56.388Z\",\n      \"metadata_error\": \"string\",\n      \"metadata_refreshed_at\": \"1946-06-29T01:06:11.320Z\",\n      \"metadata_url\": null,\n      \"name\": \"string\",\n      \"name_attribute\": \"string\",\n      \"organization_id\": \"cc01e5f0-bcfe-4153-3162-f09ee5516f92\",\n      \"sp_entity_id\": \"string\",\n      \"sp_metadata_url\": \"http://zfHqMvBDKhygLFJqvBxURSABc.tzvx6xwZyVWxLvJUNOjrwpcs8OyfgwaJT8V,wtpZRLDRU.6l5qZtP,+PAeqsWete\",\n      \"status\": \"active\",\n      \"updated_at\": \"2008-03-25T07:21:09.482Z\"\n    }\n  ],\n  \"truncated\": false\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -35139,7 +35139,7 @@
                   "status": "Created",
                   "code": 201,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"acs_url\": \"https://Db.zkjsk3,+LY\",\n  \"allow_idp_initiated\": false,\n  \"certificates\": [\n    {\n      \"id\": \"ceeb6fd7-70b8-11fe-9252-036a59f63882\",\n      \"certificate\": \"string\",\n      \"subject\": \"string\",\n      \"fingerprint_sha256\": \"string\",\n      \"not_before\": \"1964-03-03T06:35:34.567Z\",\n      \"not_after\": \"1988-08-16T18:28:07.508Z\",\n      \"source\": \"manual\",\n      \"created_at\": \"2006-12-24T06:31:14.547Z\"\n    },\n    {\n      \"id\": \"67522c08-659f-2f46-4c09-f65ce4c38ca3\",\n      \"certificate\": \"string\",\n      \"subject\": \"string\",\n      \"fingerprint_sha256\": \"string\",\n      \"not_before\": \"2000-10-26T23:36:17.814Z\",\n      \"not_after\": \"2023-03-08T23:53:03.624Z\",\n      \"source\": \"metadata\",\n      \"created_at\": \"2007-06-13T13:37:34.182Z\"\n    }\n  ],\n  \"created_at\": \"2000-01-11T20:36:19.086Z\",\n  \"email_attribute\": \"string\",\n  \"groups_attribute\": \"string\",\n  \"id\": \"f8773574-e82c-857a-5353-5ff1a04a6bff\",\n  \"idp_certificate\": \"string\",\n  \"idp_entity_id\": \"string\",\n  \"idp_sso_url\": \"http://advTOmvrPdQMnzmt.kxvi33o-zSkZr20N1b5qhJ.TTVttst2OcZquE1\",\n  \"last_login_at\": \"1959-11-14T06:41:52.319Z\",\n  \"metadata_error\": \"string\",\n  \"metadata_refreshed_at\": \"1980-07-08T20:33:34.940Z\",\n  \"metadata_url\": \"https://XCg.myCrLw.siKWYJH3j3\",\n  \"name\": \"string\",\n  \"name_attribute\": \"string\",\n  \"organization_id\": \"ad6af1ea-a504-99da-86a6-add6fd9839fe\",\n  \"sp_entity_id\": \"string\",\n  \"sp_metadata_url\": \"http://BCVYzQyUekdDjBZMhXIqR.owY3ewDOitRF+puYOrryJ6Di5cr8eAoO2zyez3K0dM6ULalW7WSdBu0whITczlb5\",\n  \"status\": \"draft\",\n  \"updated_at\": \"1993-03-24T03:22:23.904Z\"\n}",
+                  "body": "{\n  \"acs_url\": \"https://zTPw.ucuWzDR\",\n  \"allow_idp_initiated\": false,\n  \"certificates\": [\n    {\n      \"id\": \"f55afcab-f384-ce14-c6dd-8d19675a3bc3\",\n      \"certificate\": \"string\",\n      \"subject\": \"string\",\n      \"fingerprint_sha256\": \"string\",\n      \"not_before\": \"1952-07-11T10:24:18.262Z\",\n      \"not_after\": \"1999-05-17T13:53:20.574Z\",\n      \"source\": \"manual\",\n      \"created_at\": \"2006-09-10T10:54:02.274Z\"\n    },\n    {\n      \"id\": \"8bc2a69b-1a8c-4da9-c87d-b7cbc389dac9\",\n      \"certificate\": \"string\",\n      \"subject\": \"string\",\n      \"fingerprint_sha256\": \"string\",\n      \"not_before\": \"2010-12-10T11:37:25.082Z\",\n      \"not_after\": \"1973-08-07T08:49:22.095Z\",\n      \"source\": \"manual\",\n      \"created_at\": \"2015-05-13T12:31:43.632Z\"\n    }\n  ],\n  \"created_at\": \"1970-05-06T12:09:26.929Z\",\n  \"email_attribute\": \"string\",\n  \"groups_attribute\": \"string\",\n  \"id\": \"d754320a-92e1-1340-5791-1673d8fa8efe\",\n  \"idp_certificate\": \"string\",\n  \"idp_entity_id\": \"string\",\n  \"idp_sso_url\": \"https://FdsFiSXXDNcDbwYutNdQuPAsDNkKdcFJO.xslzZ4cGwRv3ZcPXIXE7lNcv0sBW8g5ke\",\n  \"last_login_at\": \"1982-06-14T15:31:54.710Z\",\n  \"metadata_error\": \"string\",\n  \"metadata_refreshed_at\": \"2018-05-25T06:28:09.392Z\",\n  \"metadata_url\": null,\n  \"name\": \"string\",\n  \"name_attribute\": \"string\",\n  \"organization_id\": \"36a59f63-2b16-3313-b1c4-701d35bef83d\",\n  \"sp_entity_id\": \"string\",\n  \"sp_metadata_url\": \"http://Cs.kjtvlk0\",\n  \"status\": \"disabled\",\n  \"updated_at\": \"2014-09-20T19:19:07.277Z\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -35224,7 +35224,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"acs_url\": \"https://Db.zkjsk3,+LY\",\n  \"allow_idp_initiated\": false,\n  \"certificates\": [\n    {\n      \"id\": \"ceeb6fd7-70b8-11fe-9252-036a59f63882\",\n      \"certificate\": \"string\",\n      \"subject\": \"string\",\n      \"fingerprint_sha256\": \"string\",\n      \"not_before\": \"1964-03-03T06:35:34.567Z\",\n      \"not_after\": \"1988-08-16T18:28:07.508Z\",\n      \"source\": \"manual\",\n      \"created_at\": \"2006-12-24T06:31:14.547Z\"\n    },\n    {\n      \"id\": \"67522c08-659f-2f46-4c09-f65ce4c38ca3\",\n      \"certificate\": \"string\",\n      \"subject\": \"string\",\n      \"fingerprint_sha256\": \"string\",\n      \"not_before\": \"2000-10-26T23:36:17.814Z\",\n      \"not_after\": \"2023-03-08T23:53:03.624Z\",\n      \"source\": \"metadata\",\n      \"created_at\": \"2007-06-13T13:37:34.182Z\"\n    }\n  ],\n  \"created_at\": \"2000-01-11T20:36:19.086Z\",\n  \"email_attribute\": \"string\",\n  \"groups_attribute\": \"string\",\n  \"id\": \"f8773574-e82c-857a-5353-5ff1a04a6bff\",\n  \"idp_certificate\": \"string\",\n  \"idp_entity_id\": \"string\",\n  \"idp_sso_url\": \"http://advTOmvrPdQMnzmt.kxvi33o-zSkZr20N1b5qhJ.TTVttst2OcZquE1\",\n  \"last_login_at\": \"1959-11-14T06:41:52.319Z\",\n  \"metadata_error\": \"string\",\n  \"metadata_refreshed_at\": \"1980-07-08T20:33:34.940Z\",\n  \"metadata_url\": \"https://XCg.myCrLw.siKWYJH3j3\",\n  \"name\": \"string\",\n  \"name_attribute\": \"string\",\n  \"organization_id\": \"ad6af1ea-a504-99da-86a6-add6fd9839fe\",\n  \"sp_entity_id\": \"string\",\n  \"sp_metadata_url\": \"http://BCVYzQyUekdDjBZMhXIqR.owY3ewDOitRF+puYOrryJ6Di5cr8eAoO2zyez3K0dM6ULalW7WSdBu0whITczlb5\",\n  \"status\": \"draft\",\n  \"updated_at\": \"1993-03-24T03:22:23.904Z\"\n}",
+                  "body": "{\n  \"acs_url\": \"https://zTPw.ucuWzDR\",\n  \"allow_idp_initiated\": false,\n  \"certificates\": [\n    {\n      \"id\": \"f55afcab-f384-ce14-c6dd-8d19675a3bc3\",\n      \"certificate\": \"string\",\n      \"subject\": \"string\",\n      \"fingerprint_sha256\": \"string\",\n      \"not_before\": \"1952-07-11T10:24:18.262Z\",\n      \"not_after\": \"1999-05-17T13:53:20.574Z\",\n      \"source\": \"manual\",\n      \"created_at\": \"2006-09-10T10:54:02.274Z\"\n    },\n    {\n      \"id\": \"8bc2a69b-1a8c-4da9-c87d-b7cbc389dac9\",\n      \"certificate\": \"string\",\n      \"subject\": \"string\",\n      \"fingerprint_sha256\": \"string\",\n      \"not_before\": \"2010-12-10T11:37:25.082Z\",\n      \"not_after\": \"1973-08-07T08:49:22.095Z\",\n      \"source\": \"manual\",\n      \"created_at\": \"2015-05-13T12:31:43.632Z\"\n    }\n  ],\n  \"created_at\": \"1970-05-06T12:09:26.929Z\",\n  \"email_attribute\": \"string\",\n  \"groups_attribute\": \"string\",\n  \"id\": \"d754320a-92e1-1340-5791-1673d8fa8efe\",\n  \"idp_certificate\": \"string\",\n  \"idp_entity_id\": \"string\",\n  \"idp_sso_url\": \"https://FdsFiSXXDNcDbwYutNdQuPAsDNkKdcFJO.xslzZ4cGwRv3ZcPXIXE7lNcv0sBW8g5ke\",\n  \"last_login_at\": \"1982-06-14T15:31:54.710Z\",\n  \"metadata_error\": \"string\",\n  \"metadata_refreshed_at\": \"2018-05-25T06:28:09.392Z\",\n  \"metadata_url\": null,\n  \"name\": \"string\",\n  \"name_attribute\": \"string\",\n  \"organization_id\": \"36a59f63-2b16-3313-b1c4-701d35bef83d\",\n  \"sp_entity_id\": \"string\",\n  \"sp_metadata_url\": \"http://Cs.kjtvlk0\",\n  \"status\": \"disabled\",\n  \"updated_at\": \"2014-09-20T19:19:07.277Z\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -35308,7 +35308,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"acs_url\": \"https://Db.zkjsk3,+LY\",\n  \"allow_idp_initiated\": false,\n  \"certificates\": [\n    {\n      \"id\": \"ceeb6fd7-70b8-11fe-9252-036a59f63882\",\n      \"certificate\": \"string\",\n      \"subject\": \"string\",\n      \"fingerprint_sha256\": \"string\",\n      \"not_before\": \"1964-03-03T06:35:34.567Z\",\n      \"not_after\": \"1988-08-16T18:28:07.508Z\",\n      \"source\": \"manual\",\n      \"created_at\": \"2006-12-24T06:31:14.547Z\"\n    },\n    {\n      \"id\": \"67522c08-659f-2f46-4c09-f65ce4c38ca3\",\n      \"certificate\": \"string\",\n      \"subject\": \"string\",\n      \"fingerprint_sha256\": \"string\",\n      \"not_before\": \"2000-10-26T23:36:17.814Z\",\n      \"not_after\": \"2023-03-08T23:53:03.624Z\",\n      \"source\": \"metadata\",\n      \"created_at\": \"2007-06-13T13:37:34.182Z\"\n    }\n  ],\n  \"created_at\": \"2000-01-11T20:36:19.086Z\",\n  \"email_attribute\": \"string\",\n  \"groups_attribute\": \"string\",\n  \"id\": \"f8773574-e82c-857a-5353-5ff1a04a6bff\",\n  \"idp_certificate\": \"string\",\n  \"idp_entity_id\": \"string\",\n  \"idp_sso_url\": \"http://advTOmvrPdQMnzmt.kxvi33o-zSkZr20N1b5qhJ.TTVttst2OcZquE1\",\n  \"last_login_at\": \"1959-11-14T06:41:52.319Z\",\n  \"metadata_error\": \"string\",\n  \"metadata_refreshed_at\": \"1980-07-08T20:33:34.940Z\",\n  \"metadata_url\": \"https://XCg.myCrLw.siKWYJH3j3\",\n  \"name\": \"string\",\n  \"name_attribute\": \"string\",\n  \"organization_id\": \"ad6af1ea-a504-99da-86a6-add6fd9839fe\",\n  \"sp_entity_id\": \"string\",\n  \"sp_metadata_url\": \"http://BCVYzQyUekdDjBZMhXIqR.owY3ewDOitRF+puYOrryJ6Di5cr8eAoO2zyez3K0dM6ULalW7WSdBu0whITczlb5\",\n  \"status\": \"draft\",\n  \"updated_at\": \"1993-03-24T03:22:23.904Z\"\n}",
+                  "body": "{\n  \"acs_url\": \"https://zTPw.ucuWzDR\",\n  \"allow_idp_initiated\": false,\n  \"certificates\": [\n    {\n      \"id\": \"f55afcab-f384-ce14-c6dd-8d19675a3bc3\",\n      \"certificate\": \"string\",\n      \"subject\": \"string\",\n      \"fingerprint_sha256\": \"string\",\n      \"not_before\": \"1952-07-11T10:24:18.262Z\",\n      \"not_after\": \"1999-05-17T13:53:20.574Z\",\n      \"source\": \"manual\",\n      \"created_at\": \"2006-09-10T10:54:02.274Z\"\n    },\n    {\n      \"id\": \"8bc2a69b-1a8c-4da9-c87d-b7cbc389dac9\",\n      \"certificate\": \"string\",\n      \"subject\": \"string\",\n      \"fingerprint_sha256\": \"string\",\n      \"not_before\": \"2010-12-10T11:37:25.082Z\",\n      \"not_after\": \"1973-08-07T08:49:22.095Z\",\n      \"source\": \"manual\",\n      \"created_at\": \"2015-05-13T12:31:43.632Z\"\n    }\n  ],\n  \"created_at\": \"1970-05-06T12:09:26.929Z\",\n  \"email_attribute\": \"string\",\n  \"groups_attribute\": \"string\",\n  \"id\": \"d754320a-92e1-1340-5791-1673d8fa8efe\",\n  \"idp_certificate\": \"string\",\n  \"idp_entity_id\": \"string\",\n  \"idp_sso_url\": \"https://FdsFiSXXDNcDbwYutNdQuPAsDNkKdcFJO.xslzZ4cGwRv3ZcPXIXE7lNcv0sBW8g5ke\",\n  \"last_login_at\": \"1982-06-14T15:31:54.710Z\",\n  \"metadata_error\": \"string\",\n  \"metadata_refreshed_at\": \"2018-05-25T06:28:09.392Z\",\n  \"metadata_url\": null,\n  \"name\": \"string\",\n  \"name_attribute\": \"string\",\n  \"organization_id\": \"36a59f63-2b16-3313-b1c4-701d35bef83d\",\n  \"sp_entity_id\": \"string\",\n  \"sp_metadata_url\": \"http://Cs.kjtvlk0\",\n  \"status\": \"disabled\",\n  \"updated_at\": \"2014-09-20T19:19:07.277Z\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -35533,7 +35533,7 @@
                       "value": "string"
                     }
                   ],
-                  "body": "{\n  \"connection_id\": \"ecb90fa1-eba0-7799-cd4d-67ac50babaab\",\n  \"created_at\": \"1956-09-27T14:33:34.510Z\",\n  \"email_domain_verified\": true,\n  \"expires_at\": \"1974-03-05T11:59:23.525Z\",\n  \"id\": \"a02f5f43-c962-f008-364e-a18b3d3c90a6\",\n  \"status\": \"succeeded\",\n  \"redirect_url\": \"https://FiBlBhQfacmmMjFbqcATcMqOQtEivON.gvgxOsbbch4HPalQMhl4OWQKv9PZqeamkAwFYkVPqYvQL\",\n  \"completed_at\": null,\n  \"error_code\": \"string\",\n  \"error_message\": \"string\",\n  \"error_detail\": \"string\",\n  \"name_id\": \"string\",\n  \"name_id_format\": \"string\",\n  \"email\": \"string\",\n  \"name\": \"string\",\n  \"attributes\": [\n    {\n      \"name\": \"string\",\n      \"values\": [\n        \"string\",\n        \"string\"\n      ],\n      \"friendly_name\": \"string\"\n    },\n    {\n      \"name\": \"string\",\n      \"values\": [\n        \"string\",\n        \"string\"\n      ],\n      \"friendly_name\": \"string\"\n    }\n  ]\n}",
+                  "body": "{\n  \"connection_id\": \"c38ca346-97de-5155-03c7-e50519be64f8\",\n  \"created_at\": \"1986-03-24T07:18:15.961Z\",\n  \"email_domain_verified\": false,\n  \"expires_at\": \"2003-08-30T18:16:37.027Z\",\n  \"id\": \"e82c4857-5353-5ff1-04a6-ff9e03e2f272\",\n  \"status\": \"expired\",\n  \"redirect_url\": \"http://LOCARhSdXCgcyWJWAiB.zzqwunkZwA20Ec85qhJ.TJttyezY2FOuEPaeA5Zmv0d2MGptz71Ln2KucqzLAbgJJrLw.sk1\",\n  \"completed_at\": null,\n  \"error_code\": \"string\",\n  \"error_message\": \"string\",\n  \"error_detail\": \"string\",\n  \"name_id\": \"string\",\n  \"name_id_format\": \"string\",\n  \"email\": \"string\",\n  \"name\": \"string\",\n  \"attributes\": [\n    {\n      \"name\": \"string\",\n      \"values\": [\n        \"string\",\n        \"string\"\n      ],\n      \"friendly_name\": \"string\"\n    },\n    {\n      \"name\": \"string\",\n      \"values\": [\n        \"string\",\n        \"string\"\n      ],\n      \"friendly_name\": \"string\"\n    }\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -35632,7 +35632,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"connection_id\": \"ecb90fa1-eba0-7799-cd4d-67ac50babaab\",\n  \"created_at\": \"1956-09-27T14:33:34.510Z\",\n  \"email_domain_verified\": true,\n  \"expires_at\": \"1974-03-05T11:59:23.525Z\",\n  \"id\": \"a02f5f43-c962-f008-364e-a18b3d3c90a6\",\n  \"status\": \"succeeded\",\n  \"redirect_url\": \"https://FiBlBhQfacmmMjFbqcATcMqOQtEivON.gvgxOsbbch4HPalQMhl4OWQKv9PZqeamkAwFYkVPqYvQL\",\n  \"completed_at\": null,\n  \"error_code\": \"string\",\n  \"error_message\": \"string\",\n  \"error_detail\": \"string\",\n  \"name_id\": \"string\",\n  \"name_id_format\": \"string\",\n  \"email\": \"string\",\n  \"name\": \"string\",\n  \"attributes\": [\n    {\n      \"name\": \"string\",\n      \"values\": [\n        \"string\",\n        \"string\"\n      ],\n      \"friendly_name\": \"string\"\n    },\n    {\n      \"name\": \"string\",\n      \"values\": [\n        \"string\",\n        \"string\"\n      ],\n      \"friendly_name\": \"string\"\n    }\n  ]\n}",
+                  "body": "{\n  \"connection_id\": \"c38ca346-97de-5155-03c7-e50519be64f8\",\n  \"created_at\": \"1986-03-24T07:18:15.961Z\",\n  \"email_domain_verified\": false,\n  \"expires_at\": \"2003-08-30T18:16:37.027Z\",\n  \"id\": \"e82c4857-5353-5ff1-04a6-ff9e03e2f272\",\n  \"status\": \"expired\",\n  \"redirect_url\": \"http://LOCARhSdXCgcyWJWAiB.zzqwunkZwA20Ec85qhJ.TJttyezY2FOuEPaeA5Zmv0d2MGptz71Ln2KucqzLAbgJJrLw.sk1\",\n  \"completed_at\": null,\n  \"error_code\": \"string\",\n  \"error_message\": \"string\",\n  \"error_detail\": \"string\",\n  \"name_id\": \"string\",\n  \"name_id_format\": \"string\",\n  \"email\": \"string\",\n  \"name\": \"string\",\n  \"attributes\": [\n    {\n      \"name\": \"string\",\n      \"values\": [\n        \"string\",\n        \"string\"\n      ],\n      \"friendly_name\": \"string\"\n    },\n    {\n      \"name\": \"string\",\n      \"values\": [\n        \"string\",\n        \"string\"\n      ],\n      \"friendly_name\": \"string\"\n    }\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -35688,7 +35688,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"created_at\": \"1963-08-12T00:24:51.366Z\",\n  \"last_request\": {\n    \"at\": \"1995-04-05T00:43:37.523Z\",\n    \"operation\": \"patch\",\n    \"resource\": \"group\",\n    \"http_status\": 293,\n    \"status\": \"failed\",\n    \"error_code\": \"string\",\n    \"reason\": \"string\"\n  },\n  \"last_used_at\": null,\n  \"provisioned_count\": 8461,\n  \"token_count\": 2785,\n  \"token_set\": false,\n  \"token_prefix\": \"string\"\n}",
+                  "body": "{\n  \"created_at\": null,\n  \"last_request\": null,\n  \"last_used_at\": null,\n  \"provisioned_count\": 2383,\n  \"token_count\": 4169,\n  \"token_set\": true,\n  \"token_prefix\": \"string\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -35744,7 +35744,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"config\": {\n    \"created_at\": null,\n    \"last_request\": null,\n    \"last_used_at\": null,\n    \"provisioned_count\": 6684,\n    \"token_count\": 4936,\n    \"token_set\": false,\n    \"token_prefix\": \"string\"\n  },\n  \"token\": \"string\"\n}",
+                  "body": "{\n  \"config\": {\n    \"created_at\": \"1946-11-01T08:16:07.423Z\",\n    \"last_request\": null,\n    \"last_used_at\": null,\n    \"provisioned_count\": 1409,\n    \"token_count\": 5154,\n    \"token_set\": true,\n    \"token_prefix\": \"string\"\n  },\n  \"token\": \"string\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -35854,7 +35854,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"items\": [\n    {\n      \"created_at\": \"1971-11-12T12:58:46.599Z\",\n      \"dns_record_name\": \"string\",\n      \"dns_record_type\": \"string\",\n      \"dns_record_value\": \"string\",\n      \"domain\": \"string\",\n      \"id\": \"7ed7cd0d-ddc7-43c1-6417-0897f1f86067\",\n      \"jit_enabled\": true,\n      \"sso_enabled\": false,\n      \"status\": \"string\",\n      \"verification_token\": \"string\",\n      \"last_checked_at\": \"1955-04-21T02:19:52.854Z\",\n      \"last_error\": \"string\",\n      \"verified_at\": \"1980-01-27T17:08:35.632Z\"\n    },\n    {\n      \"created_at\": \"1989-01-03T05:36:02.345Z\",\n      \"dns_record_name\": \"string\",\n      \"dns_record_type\": \"string\",\n      \"dns_record_value\": \"string\",\n      \"domain\": \"string\",\n      \"id\": \"1ef5c95f-1463-5703-deb7-316bd700e9af\",\n      \"jit_enabled\": true,\n      \"sso_enabled\": false,\n      \"status\": \"string\",\n      \"verification_token\": \"string\",\n      \"last_checked_at\": \"2016-11-23T23:05:06.406Z\",\n      \"last_error\": \"string\",\n      \"verified_at\": \"1966-05-15T05:00:31.902Z\"\n    }\n  ],\n  \"truncated\": true\n}",
+                  "body": "{\n  \"items\": [\n    {\n      \"created_at\": \"1998-05-14T21:25:10.252Z\",\n      \"dns_record_name\": \"string\",\n      \"dns_record_type\": \"string\",\n      \"dns_record_value\": \"string\",\n      \"domain\": \"string\",\n      \"id\": \"c069eb90-beba-64c6-1a9a-620d988ef7d7\",\n      \"jit_enabled\": false,\n      \"sso_enabled\": false,\n      \"status\": \"string\",\n      \"verification_token\": \"string\",\n      \"last_checked_at\": \"1972-05-17T23:11:11.660Z\",\n      \"last_error\": \"string\",\n      \"verified_at\": \"1956-04-17T08:30:30.951Z\"\n    },\n    {\n      \"created_at\": \"2024-03-26T18:23:11.005Z\",\n      \"dns_record_name\": \"string\",\n      \"dns_record_type\": \"string\",\n      \"dns_record_value\": \"string\",\n      \"domain\": \"string\",\n      \"id\": \"90fa147e-0d77-97cd-de67-c50babaabeda\",\n      \"jit_enabled\": false,\n      \"sso_enabled\": false,\n      \"status\": \"string\",\n      \"verification_token\": \"string\",\n      \"last_checked_at\": \"2004-08-11T12:26:28.860Z\",\n      \"last_error\": \"string\",\n      \"verified_at\": \"1976-11-06T06:30:23.697Z\"\n    }\n  ],\n  \"truncated\": false\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -35884,7 +35884,7 @@
                 "method": "POST",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"domain\": \"string\"\n}",
+                  "raw": "{\n  \"domain\": \"str\"\n}",
                   "options": { "raw": { "headerFamily": "json", "language": "json" } }
                 },
                 "auth": { "type": "noauth" }
@@ -35915,14 +35915,14 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"domain\": \"string\"\n}",
+                      "raw": "{\n  \"domain\": \"str\"\n}",
                       "options": { "raw": { "headerFamily": "json", "language": "json" } }
                     }
                   },
                   "status": "Created",
                   "code": 201,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"created_at\": \"1987-10-02T09:28:07.697Z\",\n  \"dns_record_name\": \"string\",\n  \"dns_record_type\": \"string\",\n  \"dns_record_value\": \"string\",\n  \"domain\": \"string\",\n  \"id\": \"2638d3b7-ac99-44f1-7614-3dab0d73bd0c\",\n  \"jit_enabled\": false,\n  \"sso_enabled\": true,\n  \"status\": \"string\",\n  \"verification_token\": \"string\",\n  \"last_checked_at\": \"1958-11-08T17:14:54.490Z\",\n  \"last_error\": \"string\",\n  \"verified_at\": \"1995-10-02T10:34:34.533Z\"\n}",
+                  "body": "{\n  \"created_at\": \"2016-05-19T01:54:16.216Z\",\n  \"dns_record_name\": \"string\",\n  \"dns_record_type\": \"string\",\n  \"dns_record_value\": \"string\",\n  \"domain\": \"string\",\n  \"id\": \"9c054000-dac9-2a91-dcdb-85eac310f226\",\n  \"jit_enabled\": false,\n  \"sso_enabled\": false,\n  \"status\": \"string\",\n  \"verification_token\": \"string\",\n  \"last_checked_at\": \"1980-09-26T05:37:15.627Z\",\n  \"last_error\": \"string\",\n  \"verified_at\": \"2008-10-20T15:11:51.113Z\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -36007,7 +36007,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"created_at\": \"1987-10-02T09:28:07.697Z\",\n  \"dns_record_name\": \"string\",\n  \"dns_record_type\": \"string\",\n  \"dns_record_value\": \"string\",\n  \"domain\": \"string\",\n  \"id\": \"2638d3b7-ac99-44f1-7614-3dab0d73bd0c\",\n  \"jit_enabled\": false,\n  \"sso_enabled\": true,\n  \"status\": \"string\",\n  \"verification_token\": \"string\",\n  \"last_checked_at\": \"1958-11-08T17:14:54.490Z\",\n  \"last_error\": \"string\",\n  \"verified_at\": \"1995-10-02T10:34:34.533Z\"\n}",
+                  "body": "{\n  \"created_at\": \"2016-05-19T01:54:16.216Z\",\n  \"dns_record_name\": \"string\",\n  \"dns_record_type\": \"string\",\n  \"dns_record_value\": \"string\",\n  \"domain\": \"string\",\n  \"id\": \"9c054000-dac9-2a91-dcdb-85eac310f226\",\n  \"jit_enabled\": false,\n  \"sso_enabled\": false,\n  \"status\": \"string\",\n  \"verification_token\": \"string\",\n  \"last_checked_at\": \"1980-09-26T05:37:15.627Z\",\n  \"last_error\": \"string\",\n  \"verified_at\": \"2008-10-20T15:11:51.113Z\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -36091,7 +36091,7 @@
                   "status": "OK",
                   "code": 200,
                   "header": [{ "key": "Content-Type", "value": "application/json" }],
-                  "body": "{\n  \"created_at\": \"1987-10-02T09:28:07.697Z\",\n  \"dns_record_name\": \"string\",\n  \"dns_record_type\": \"string\",\n  \"dns_record_value\": \"string\",\n  \"domain\": \"string\",\n  \"id\": \"2638d3b7-ac99-44f1-7614-3dab0d73bd0c\",\n  \"jit_enabled\": false,\n  \"sso_enabled\": true,\n  \"status\": \"string\",\n  \"verification_token\": \"string\",\n  \"last_checked_at\": \"1958-11-08T17:14:54.490Z\",\n  \"last_error\": \"string\",\n  \"verified_at\": \"1995-10-02T10:34:34.533Z\"\n}",
+                  "body": "{\n  \"created_at\": \"2016-05-19T01:54:16.216Z\",\n  \"dns_record_name\": \"string\",\n  \"dns_record_type\": \"string\",\n  \"dns_record_value\": \"string\",\n  \"domain\": \"string\",\n  \"id\": \"9c054000-dac9-2a91-dcdb-85eac310f226\",\n  \"jit_enabled\": false,\n  \"sso_enabled\": false,\n  \"status\": \"string\",\n  \"verification_token\": \"string\",\n  \"last_checked_at\": \"1980-09-26T05:37:15.627Z\",\n  \"last_error\": \"string\",\n  \"verified_at\": \"2008-10-20T15:11:51.113Z\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -47173,7 +47173,7 @@
               "request": {
                 "name": "List templates",
                 "description": {
-                  "content": "Lists the organization-scoped catalogue and overrides. Capabilities indicate rich-text/localization support and whether a mail transport is configured for test delivery. delivery_scope distinguishes organization invitations/magic links from platform-account security email.",
+                  "content": "Lists the organization-scoped catalogue and overrides. Capabilities indicate rich-text/localization support and whether a mail transport is configured for test delivery. Every template is sent with the organization's version (delivery_scope organization): email verification codes to people signed in to the organization, password reset links to accounts whose organization it is, magic links, invitations, and sign-in codes sent by email. A code sent by SMS, and one that confirms a change to an account's security, keeps the platform's wording.",
                   "type": "text/plain"
                 },
                 "url": {
@@ -47444,7 +47444,7 @@
               "request": {
                 "name": "Override template",
                 "description": {
-                  "content": "Saves the template and options atomically with its audit event. Organization invitations and magic links use saved overrides; platform-account recovery, verification and MFA remain platform-managed.",
+                  "content": "Saves the template and options atomically with its audit event. Every template's saved version is the one sent: email verification, password reset, magic link, invitation and emailed sign-in codes. Removing it sends the default again. A template must keep its link variable (a `*_url`) and, for verification and sign-in codes, its `code` variable.",
                   "type": "text/plain"
                 },
                 "url": {

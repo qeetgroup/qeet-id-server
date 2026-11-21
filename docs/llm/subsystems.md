@@ -248,7 +248,7 @@ ssosync/                a connection's sign-in keeps name, address and groups in
 oidcrp/                 the OpenID Connect relying party: discovery, JWKS, code exchange, ID-token checks
 logincode/ · oauthstate/   the one-time login codes and the OAuth states of every federated sign-in
 scim/scim.go · http.go · users.go · user_change.go · groups.go · group_patch.go · admin.go · tokens.go · discovery.go
-ldap/ldap.go · http.go · connections.go · protocol.go · signin.go   (the shape of oidcsso/)
+ldap/ldap.go · http.go · connections.go · protocol.go · signin.go · sync.go   (the shape of oidcsso/; sync.go is the scheduled directory sync)
 social/social.go · http.go · providers.go · identities.go · signin.go · provisioning.go · login_code.go · platform.go · apple.go · github.go · adapters.go
 adminportal/adminportal.go · http.go · links.go · session.go · portal_context.go · portal_saml.go · portal_scim.go · portal_domains.go   capability-scoped, time-limited SSO/SCIM config links
 directory/              one view of the SCIM and LDAP connections: http.go, events.go · sync_errors.go (their filtered lists' SQL stays inline), alerts.go, mapping_store.go

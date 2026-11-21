@@ -68,6 +68,10 @@ func directorySignIn[R any](ctx context.Context, s *Service, connID uuid.UUID, u
 	if username == "" || password == "" {
 		return res, ErrCredentialsRequired
 	}
+	actor := audit.Actor{Type: provider, IP: ip, UserAgent: ua, RequestID: middleware.GetReqID(ctx)}
+	if err := s.requireTLS(ctx, c, "sign-in", actor); err != nil {
+		return res, err
+	}
 	res, err = finish(ctx, authentication.ExternalSignIn{
 		OrganizationID: c.OrganizationID,
 		Account:        provider + ":" + connID.String() + ":" + lockoutName(username),
@@ -79,8 +83,7 @@ func directorySignIn[R any](ctx context.Context, s *Service, connID uuid.UUID, u
 		if err != nil {
 			return uuid.Nil, errors.Is(err, ErrInvalidCredentials), err
 		}
-		userID, err := s.findOrCreateUser(ctx, c.OrganizationID, connID, du,
-			audit.Actor{Type: provider, IP: ip, UserAgent: ua, RequestID: middleware.GetReqID(ctx)})
+		userID, err := s.findOrCreateUser(ctx, c.OrganizationID, connID, du, actor)
 		if err == nil {
 			signedIn = &userID
 		}

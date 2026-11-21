@@ -6,7 +6,9 @@ import (
 	"context"
 	"net"
 	"net/http"
-	"strings"
+	"regexp"
+	"sort"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -23,10 +25,16 @@ func TestMain(m *testing.M) { dbtest.Main(m) }
 
 // directory is a minimal LDAPv3 server for tests: simple binds checked against
 // binds (DN to password), and searches answered from entries (uid to the
-// entry's DN and attributes).
+// entry's DN and attributes); a sync's search lists every entry. It refuses StartTLS.
 type directory struct {
 	binds   map[string]string
 	entries map[string]dirEntry
+
+	mu         sync.Mutex
+	ln         net.Listener
+	bound      []string // the DNs bound as, in order
+	searches   []string // the filters searched, in order
+	failSearch bool     // answer every search with an error
 }
 
 type dirEntry struct {
@@ -42,6 +50,9 @@ func (d *directory) start(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
+	d.mu.Lock()
+	d.ln = ln
+	d.mu.Unlock()
 	t.Cleanup(func() { _ = ln.Close() })
 	go func() {
 		for {
@@ -53,6 +64,45 @@ func (d *directory) start(t *testing.T) string {
 		}
 	}()
 	return "ldap://" + ln.Addr().String()
+}
+
+func (d *directory) stop() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	_ = d.ln.Close()
+}
+
+func (d *directory) bindsAs(dn string) int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	n := 0
+	for _, b := range d.bound {
+		if b == dn {
+			n++
+		}
+	}
+	return n
+}
+
+func (d *directory) url() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return "ldap://" + d.ln.Addr().String()
+}
+
+func (d *directory) lastSearch() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(d.searches) == 0 {
+		return ""
+	}
+	return d.searches[len(d.searches)-1]
+}
+
+func (d *directory) set(entries map[string]dirEntry) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.entries = entries
 }
 
 func (d *directory) serve(conn net.Conn) {
@@ -68,18 +118,18 @@ func (d *directory) serve(conn net.Conn) {
 		switch op.Tag {
 		case goldap.ApplicationBindRequest:
 			dn, _ := op.Children[1].Value.(string)
+			d.mu.Lock()
+			d.bound = append(d.bound, dn)
+			want, ok := d.binds[dn]
+			d.mu.Unlock()
 			code := goldap.LDAPResultInvalidCredentials
-			if want, ok := d.binds[dn]; ok && want == op.Children[2].Data.String() {
+			if ok && want == op.Children[2].Data.String() {
 				code = goldap.LDAPResultSuccess
 			}
 			replies = append(replies, ldapResult(goldap.ApplicationBindResponse, code))
 		case goldap.ApplicationSearchRequest:
 			filter, _ := goldap.DecompileFilter(op.Children[6])
-			uid := strings.TrimSuffix(strings.TrimPrefix(filter, "(uid="), ")")
-			if e, ok := d.entries[uid]; ok {
-				replies = append(replies, ldapEntry(e))
-			}
-			replies = append(replies, ldapResult(goldap.ApplicationSearchResultDone, goldap.LDAPResultSuccess))
+			replies = append(replies, d.search(filter)...)
 		default:
 			return
 		}
@@ -92,6 +142,53 @@ func (d *directory) serve(conn net.Conn) {
 			}
 		}
 	}
+}
+
+var (
+	uidFilter = regexp.MustCompile(`^\(uid=([^*()]+)\)$`)
+	atLeast   = regexp.MustCompile(`\(([A-Za-z]+)>=([^)]+)\)`)
+)
+
+func (d *directory) search(filter string) []*ber.Packet {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.searches = append(d.searches, filter)
+	if d.failSearch {
+		return []*ber.Packet{ldapResult(goldap.ApplicationSearchResultDone, goldap.LDAPResultBusy)}
+	}
+	var replies []*ber.Packet
+	if m := uidFilter.FindStringSubmatch(filter); m != nil {
+		if e, ok := d.entries[m[1]]; ok {
+			replies = append(replies, ldapEntry(e))
+		}
+		return append(replies, ldapResult(goldap.ApplicationSearchResultDone, goldap.LDAPResultSuccess))
+	}
+	uids := make([]string, 0, len(d.entries))
+	for uid := range d.entries {
+		uids = append(uids, uid)
+	}
+	sort.Strings(uids)
+entries:
+	for _, uid := range uids {
+		e := d.entries[uid]
+		for _, term := range atLeast.FindAllStringSubmatch(filter, -1) {
+			if !newerOrEqual(e.attrs[term[1]], term[2]) {
+				continue entries
+			}
+		}
+		replies = append(replies, ldapEntry(e))
+	}
+	return append(replies, ldapResult(goldap.ApplicationSearchResultDone, goldap.LDAPResultSuccess))
+}
+
+// newerOrEqual compares uSNChanged as a number, modifyTimestamp as text.
+func newerOrEqual(value, floor string) bool {
+	v, verr := strconv.ParseInt(value, 10, 64)
+	f, ferr := strconv.ParseInt(floor, 10, 64)
+	if verr == nil && ferr == nil {
+		return v >= f
+	}
+	return value != "" && value >= floor
 }
 
 func ldapResult(tag ber.Tag, code int) *ber.Packet {

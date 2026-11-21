@@ -28,12 +28,20 @@ properties:
     type: string
   operation:
     type: string
+    description: >-
+      What ran, such as test, sign-in, or sync for an LDAP connection's
+      scheduled sync: one event for the run (resource_type connection, with
+      what it found and changed in params) and one for each person it changed.
   trigger:
     type: string
+    description: >-
+      What started it: an identity provider's push (SCIM), an administrator
+      (manual), a person signing in, or the schedule (an LDAP sync).
     enum:
       - push
       - manual
       - sign-in
+      - scheduled
   resource_type:
     type: string
     enum:
@@ -96,7 +104,9 @@ properties:
     type: string
     description: >-
       The failure's own code, such as ldap.dial_failed,
-      ldap.service_bind_failed, ldap.tls_verify_required or
+      ldap.service_bind_failed, ldap.tls_verify_required, ldap.tls_required,
+      ldap.sync_search_failed, ldap.sync_empty_result, ldap.sync_people_dropped
+      or
       ldap.invalid_credentials, or the SCIM error type an answer to the identity
       provider gave (scim.uniqueness, say). Absent on a success, and on events
       from before it was kept.

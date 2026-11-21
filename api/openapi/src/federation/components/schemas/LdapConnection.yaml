@@ -12,6 +12,7 @@ required:
   - skip_tls_verify
   - start_tls
   - status
+  - sync_interval_minutes
   - organization_id
   - updated_at
   - user_filter
@@ -45,6 +46,19 @@ properties:
     type: boolean
   status:
     type: string
+  sync_interval_minutes:
+    type: integer
+    minimum: 5
+    maximum: 60
+    description: >-
+      How often, in minutes, the scheduled sync reads the directory (15 unless
+      set). Each run reads the people changed since the last (uSNChanged in
+      Active Directory, modifyTimestamp elsewhere), and once a day every
+      person. Someone the directory disabled, deleted or no longer matches by
+      the user filter is suspended and every way they sign in ends; group
+      changes reach their groups through the connection's group mappings. A
+      run that fails, or whose answer looks incomplete, changes nothing and is
+      reported to the people who manage directory connections.
   organization_id:
     type: string
     format: uuid

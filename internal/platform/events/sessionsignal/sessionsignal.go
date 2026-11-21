@@ -31,7 +31,7 @@ const (
 	ReasonAdminPasswordSet        = "admin_password_set"        // an administrator set the password
 	ReasonOrganizationSwitch      = "organization_switch"       // replaced by a session in another organization
 	ReasonSuspended               = "suspended"                 // the account was suspended
-	ReasonDeprovisioned           = "deprovisioned"             // SCIM deactivated the account
+	ReasonDeprovisioned           = "deprovisioned"             // a directory (SCIM or the LDAP sync) deactivated the account
 	ReasonReactivated             = "reactivated"               // sessions from before the suspension stay ended
 	ReasonDeleted                 = "deleted"                   // the account was deleted
 	ReasonRemovedFromOrganization = "removed_from_organization" // the user was removed from the organization

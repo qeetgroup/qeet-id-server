@@ -50,17 +50,24 @@ func (service *Service) recordOperation(ctx context.Context, c *connFull, operat
 	if u, err := url.Parse(c.ServerURL); err == nil && u.Host != "" {
 		op.Params = map[string]string{"host": u.Host}
 	}
+	service.observe(ctx, op)
+}
+
+// observe records op, best effort.
+func (service *Service) observe(ctx context.Context, op Operation) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer cancel()
 	if err := service.observer.RecordLDAPOperation(ctx, op); err != nil {
-		slog.Warn("LDAP operation telemetry unavailable", "organization_id", c.OrganizationID, "err", err)
+		slog.Warn("LDAP operation telemetry unavailable", "organization_id", op.OrganizationID, "err", err)
 	}
 }
 
 // operationStatus is how an operation's outcome is recorded: a person's own
 // credentials refused (401) apart from the service account refused (403), the
-// directory unreachable (502), and a sign-in this organization refuses (422).
+// directory unreachable (502), a sign-in or sync this organization refuses (422),
+// and a sync stopped because the directory's answer looked incomplete (412).
 func operationStatus(operation string, err error) int {
+	unreachable := errors.Is(err, ErrDialFailed) || errors.Is(err, ErrDirectoryUnreachable) || errors.Is(err, ErrSyncSearchFailed)
 	switch {
 	case err == nil:
 		return http.StatusOK
@@ -68,7 +75,9 @@ func operationStatus(operation string, err error) int {
 		return http.StatusUnauthorized
 	case errors.Is(err, ErrServiceBindFailed):
 		return http.StatusForbidden
-	case operation == "sign-in" && !errors.Is(err, ErrDialFailed) && !errors.Is(err, ErrDirectoryUnreachable):
+	case errors.Is(err, ErrSyncEmptyResult), errors.Is(err, ErrSyncPeopleDropped):
+		return http.StatusPreconditionFailed
+	case (operation == "sign-in" || operation == "sync") && !unreachable && reasonOf(err) != "":
 		return http.StatusUnprocessableEntity
 	default:
 		return http.StatusBadGateway

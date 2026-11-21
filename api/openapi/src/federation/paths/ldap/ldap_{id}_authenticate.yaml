@@ -53,7 +53,10 @@ post:
     and an account that is not active with 403 auth.account_inactive. An empty
     username or password is refused with 400 ldap.credentials_required, and a
     connection that does not verify the directory's certificate with 422
-    ldap.tls_verify_required. The account signed in must have the connection's
+    ldap.tls_verify_required. A connection saved without TLS (ldap:// with
+    start_tls off) is refused with 422 ldap.tls_required before the directory
+    is asked, so no password is sent in the clear, and the refusal is recorded
+    in the organization's audit trail (ldap.connection_refused). The account signed in must have the connection's
     organization as its home (403 ldap.account_not_in_organization), and an existing
     one adopted by email a verified address, or one the organization's directory
     provisioned (SCIM), which is then marked verified (403

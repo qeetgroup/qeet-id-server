@@ -20,6 +20,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/strutil"
 )
@@ -256,6 +257,24 @@ func (f *Flow) SingleSignOn(ctx context.Context, src Source, p Person) (Vouching
 		return Vouching{Create: refusal(f.Errors.JITNotAllowed)}, nil
 	}
 	return Vouching{}, nil
+}
+
+// SuspendForDirectory suspends userID, at home in organizationID, for its
+// directory (source "scim" or "ldap") and ends every way it signs in, in tx. It
+// reports whether this suspended the account. SCIM and the LDAP sync both use it.
+func SuspendForDirectory(ctx context.Context, tx pgx.Tx, signals *sessionsignal.Signaller, organizationID, userID uuid.UUID, source string) (bool, error) {
+	q := dbgen.New(tx)
+	n, err := q.SuspendDirectoryAccount(ctx, dbgen.SuspendDirectoryAccountParams{ID: userID, OrganizationID: organizationID})
+	if err != nil {
+		return false, err
+	}
+	if err := q.ClaimDirectorySuspension(ctx, dbgen.ClaimDirectorySuspensionParams{Source: source, ID: userID, OrganizationID: organizationID}); err != nil {
+		return false, err
+	}
+	if _, err := authentication.EndSignIns(ctx, tx, signals, userID, sessionsignal.ReasonDeprovisioned); err != nil {
+		return false, err
+	}
+	return n == 1, nil
 }
 
 // record records a refused sign-in through src, with the error code as its

@@ -3,18 +3,22 @@ package ldap
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"net/url"
 	"strings"
 
+	"github.com/go-chi/chi/v5/middleware"
 	goldap "github.com/go-ldap/ldap/v3"
 
+	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
 // tlsConfig verifies the directory's certificate unless the connection turns
-// that off and allowSkipVerify permits it (see SetAllowSkipTLSVerify).
-func (c *connFull) tlsConfig(allowSkipVerify bool) *tls.Config {
-	cfg := &tls.Config{InsecureSkipVerify: c.SkipTLSVerify && allowSkipVerify} // #nosec G402 -- only with SERVICE_ENV=dev; refused elsewhere
+// that off and allowInsecure permits it.
+func (c *connFull) tlsConfig(allowInsecure bool) *tls.Config {
+	cfg := &tls.Config{InsecureSkipVerify: c.SkipTLSVerify && allowInsecure} // #nosec G402 -- only with SERVICE_ENV=dev; refused elsewhere
 	if host := hostOnly(c.ServerURL); host != "" {
 		cfg.ServerName = host
 	}
@@ -29,24 +33,32 @@ func hostOnly(serverURL string) string {
 	return u.Hostname()
 }
 
-// dial opens a connection, applying LDAPS or StartTLS as configured.
-func (c *connFull) dial(ctx context.Context, policy *egress.Policy, allowSkipVerify bool) (*goldap.Conn, error) {
-	u, err := policy.ValidateLDAPURL(c.ServerURL)
+// dial opens a connection, applying LDAPS or StartTLS as configured. Unless
+// allowInsecure, one left unencrypted is refused, so no bind sends a password in the clear.
+func (c *connFull) dial(ctx context.Context, policy *egress.Policy, allowInsecure bool) (*goldap.Conn, error) {
+	if !allowInsecure && !encrypted(c.ServerURL, c.StartTLS) {
+		return nil, ErrTLSRequired
+	}
+	u, err := policy.ValidateLDAPURL(c.ServerURL, c.StartTLS)
 	if err != nil {
 		return nil, err
 	}
 	if err := policy.ValidateHost(ctx, u.Hostname()); err != nil {
 		return nil, err
 	}
-	conn, err := goldap.DialURL(c.ServerURL, goldap.DialWithDialer(policy.NetDialer(dialTimeout)), goldap.DialWithTLSConfig(c.tlsConfig(allowSkipVerify)))
+	conn, err := goldap.DialURL(c.ServerURL, goldap.DialWithDialer(policy.NetDialer(dialTimeout)), goldap.DialWithTLSConfig(c.tlsConfig(allowInsecure)))
 	if err != nil {
 		return nil, err
 	}
-	if c.StartTLS && strings.HasPrefix(strings.ToLower(c.ServerURL), "ldap://") {
-		if err := conn.StartTLS(c.tlsConfig(allowSkipVerify)); err != nil {
+	if c.StartTLS && strings.EqualFold(u.Scheme, "ldap") {
+		if err := conn.StartTLS(c.tlsConfig(allowInsecure)); err != nil {
 			conn.Close() // #nosec G104 -- the StartTLS error is returned instead
 			return nil, err
 		}
+	}
+	if _, ok := conn.TLSConnectionState(); !ok && !allowInsecure {
+		conn.Close() // #nosec G104 -- the refusal is returned instead
+		return nil, ErrTLSRequired
 	}
 	return conn, nil
 }
@@ -57,7 +69,13 @@ func (s *Service) TestBind(ctx context.Context, c *connFull) error {
 	if err := s.checkTLSVerify(c.SkipTLSVerify); err != nil {
 		return err
 	}
-	conn, err := c.dial(ctx, s.egress, s.allowSkipVerify)
+	if err := s.requireTLS(ctx, c, "test", callerOf(ctx)); err != nil {
+		return err
+	}
+	conn, err := c.dial(ctx, s.egress, s.allowInsecureTLS)
+	if errors.Is(err, ErrTLSRequired) {
+		return err
+	}
 	if err != nil {
 		return ErrDialFailed.Wrap(err)
 	}
@@ -78,15 +96,35 @@ type ldapUser struct {
 	Groups  []string // the connection's groups mapping's values, else memberOf's
 }
 
+// unreachable is a dial's failure as a sign-in reports it.
+func unreachable(err error) error {
+	if errors.Is(err, ErrTLSRequired) {
+		return err
+	}
+	return ErrDirectoryUnreachable.Wrap(err)
+}
+
+// callerOf is the audit actor of the request in ctx.
+func callerOf(ctx context.Context) audit.Actor {
+	actor := audit.Actor{Type: "system", RequestID: middleware.GetReqID(ctx)}
+	if p := httpx.PrincipalFromCtx(ctx); p != nil && p.UserID != nil {
+		actor.UserID, actor.Type = p.UserID, "user"
+	}
+	return actor
+}
+
 // authenticate binds the service account, finds the user, then verifies the
 // password by binding as the user's DN. Returns the resolved directory user.
 func (s *Service) authenticate(ctx context.Context, c *connFull, username, password string) (*ldapUser, error) {
 	if err := s.checkTLSVerify(c.SkipTLSVerify); err != nil {
 		return nil, err
 	}
-	conn, err := c.dial(ctx, s.egress, s.allowSkipVerify)
+	if err := s.checkTransport(c.ServerURL, c.StartTLS); err != nil {
+		return nil, err
+	}
+	conn, err := c.dial(ctx, s.egress, s.allowInsecureTLS)
 	if err != nil {
-		return nil, ErrDirectoryUnreachable.Wrap(err)
+		return nil, unreachable(err)
 	}
 	defer conn.Close()
 
@@ -117,9 +155,9 @@ func (s *Service) authenticate(ctx context.Context, c *connFull, username, passw
 
 	// Verify the password by binding as the user. A fresh conn keeps the
 	// service-account binding intact and side-steps connection-state quirks.
-	userConn, err := c.dial(ctx, s.egress, s.allowSkipVerify)
+	userConn, err := c.dial(ctx, s.egress, s.allowInsecureTLS)
 	if err != nil {
-		return nil, ErrDirectoryUnreachable.Wrap(err)
+		return nil, unreachable(err)
 	}
 	defer userConn.Close()
 	if err := userConn.Bind(entry.DN, password); err != nil {

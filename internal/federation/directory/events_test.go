@@ -3,6 +3,7 @@ package directory
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,6 +34,13 @@ func TestOperationClassificationAndFilterBounds(test *testing.T) {
 		if outcome, _, _, _, severity := classifyOperation("sign-in", status); outcome != "failed" || severity != "critical" {
 			test.Fatalf("sign-in status %d classified %s/%s, want a critical failure", status, outcome, severity)
 		}
+	}
+	if outcome, category, code, message, severity := classifyOperation("sync", http.StatusPreconditionFailed); outcome != "failed" || category != "provisioning" ||
+		code != "DIR-412" || !strings.Contains(message, "without changes") || severity != "critical" {
+		test.Fatalf("a stopped sync classified %s/%s/%s/%q/%s, want a critical provisioning failure", outcome, category, code, message, severity)
+	}
+	if outcome, _, _, _, severity := classifyOperation("sync", http.StatusConflict); outcome != "warning" || severity != "" {
+		test.Fatalf("an owner the sync kept classified %s/%s, want a warning", outcome, severity)
 	}
 	for _, query := range []string{"days=0", "days=91", "cursor=not-a-cursor", "status=invalid"} {
 		if _, err := parseEventFilter(httptest.NewRequest(http.MethodGet, "/?"+query, nil)); err == nil {

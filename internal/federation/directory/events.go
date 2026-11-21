@@ -98,6 +98,10 @@ func classifyOperation(operation string, status int) (outcome, category, code, m
 	if operation == "sign-in" && status == http.StatusUnauthorized {
 		return "warning", "credentials", "DIR-401", "The person's directory credentials were refused", ""
 	}
+	// An owner the LDAP sync kept, as SCIM keeps one, is for an administrator.
+	if operation == "sync" && status == http.StatusConflict {
+		return "warning", "provisioning", "DIR-409", "The directory disabled or removed an owner of the organization, who keeps their access", ""
+	}
 	outcome, category, severity = "failed", "provisioning", "warning"
 	switch {
 	case status == http.StatusUnauthorized || status == http.StatusForbidden:
@@ -108,6 +112,8 @@ func classifyOperation(operation string, status int) (outcome, category, code, m
 		message = "The requested directory object was not found"
 	case status == http.StatusTooManyRequests:
 		category, message = "limit", "The directory request limit was reached"
+	case status == http.StatusPreconditionFailed:
+		category, message, severity = "provisioning", "The sync stopped without changes: the directory's answer looked incomplete", "critical"
 	case status >= 500:
 		category, message, severity = "connection", "The directory operation could not be completed", "critical"
 	default:
@@ -180,10 +186,13 @@ func (store *Store) Record(ctx context.Context, op Operation) error {
 	}
 	outcome, category, code, message, severity := classifyOperation(operation, status)
 	trigger := "manual"
-	if strings.HasPrefix(connectionID, "scim:") {
+	switch {
+	case strings.HasPrefix(connectionID, "scim:"):
 		trigger = "push"
-	} else if operation == "sign-in" {
+	case operation == "sign-in":
 		trigger = "sign-in"
+	case operation == "sync":
+		trigger = "scheduled"
 	}
 	users, groups := 0, 0
 	if outcome == "success" && resourceType == "user" {
@@ -211,20 +220,20 @@ func (store *Store) Record(ctx context.Context, op Operation) error {
 		return store.notifyAlerts(ctx, organizationID, connectionID)
 	}
 	if outcome == "success" {
-		return store.resolveConnectionFailures(ctx, organizationID, connectionID)
+		return store.resolveConnectionFailures(ctx, organizationID, connectionID, operation == "sync" && resourceType == "connection")
 	}
 	return nil
 }
 
 // resolveConnectionFailures marks the connection's open failures of the kind a
 // success disproves, the directory unreachable or refusing the connection's
-// own credentials, resolved by the system, and audits it once. A failure being
-// retried is left for its retry to settle.
-func (store *Store) resolveConnectionFailures(ctx context.Context, organizationID uuid.UUID, connectionID string) error {
+// own credentials (and, once synced, a failed sync), resolved by the system, and audits it
+// once. A failure being retried is left for its retry to settle.
+func (store *Store) resolveConnectionFailures(ctx context.Context, organizationID uuid.UUID, connectionID string, synced bool) error {
 	retrying, _ := ctx.Value(retryContextKey{}).(uuid.UUID)
 	// Most successes find nothing to resolve; only then is a transaction opened.
 	found, err := store.q.OpenConnectionFailuresExist(ctx, dbgen.OpenConnectionFailuresExistParams{
-		OrganizationID: organizationID, ConnectionID: connectionID, Retrying: retrying,
+		OrganizationID: organizationID, ConnectionID: connectionID, Retrying: retrying, Synced: synced,
 	})
 	if err != nil || !found {
 		return err
@@ -235,7 +244,7 @@ func (store *Store) resolveConnectionFailures(ctx context.Context, organizationI
 	}
 	defer tx.Rollback(ctx)
 	resolved, err := store.q.WithTx(tx).ResolveConnectionFailures(ctx, dbgen.ResolveConnectionFailuresParams{
-		OrganizationID: organizationID, ConnectionID: connectionID, Retrying: retrying,
+		OrganizationID: organizationID, ConnectionID: connectionID, Retrying: retrying, Synced: synced,
 	})
 	if err != nil {
 		return err

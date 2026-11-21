@@ -43,6 +43,33 @@ func TestPublicPolicyURLValidation(t *testing.T) {
 	}
 }
 
+// TestLDAPURLNeedsTLS checks that only development allows cleartext ldap.
+func TestLDAPURLNeedsTLS(t *testing.T) {
+	public, development := NewPolicy(Options{}), DevelopmentPolicy()
+	for _, test := range []struct {
+		raw      string
+		startTLS bool
+		public   bool
+	}{
+		{"ldaps://ad.example.com:636", false, true},
+		{"ldaps://ad.example.com:636", true, true},
+		{"ldap://ad.example.com:389", true, true},
+		{"LDAP://ad.example.com:389", true, true},
+		{"ldap://ad.example.com:389", false, false},
+		{"LDAP://ad.example.com", false, false},
+	} {
+		if _, err := public.ValidateLDAPURL(test.raw, test.startTLS); (err == nil) != test.public {
+			t.Errorf("%s with StartTLS %v outside development: %v, want allowed %v", test.raw, test.startTLS, err, test.public)
+		}
+		if _, err := development.ValidateLDAPURL(test.raw, test.startTLS); err != nil {
+			t.Errorf("%s with StartTLS %v in development: %v", test.raw, test.startTLS, err)
+		}
+	}
+	if _, err := public.ValidateLDAPURL("https://ad.example.com", true); err == nil {
+		t.Error("an https URL accepted as a directory")
+	}
+}
+
 func TestDialRejectsMixedDNSAnswers(t *testing.T) {
 	policy := NewPolicy(Options{Resolver: staticResolver{
 		"mixed.example": {net.ParseIP("203.0.113.10"), net.ParseIP("127.0.0.1")},

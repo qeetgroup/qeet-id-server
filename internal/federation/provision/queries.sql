@@ -29,3 +29,12 @@ VALUES (@user_id, @organization_id, @provider, sqlc.narg('connection_id')::uuid,
 ON CONFLICT (organization_id, provider, connection_id, subject) DO UPDATE
 SET email = EXCLUDED.email, metadata = COALESCE(sqlc.narg('metadata')::jsonb, account.external_identities.metadata)
 WHERE account.external_identities.user_id = EXCLUDED.user_id;
+
+-- name: SuspendDirectoryAccount :execrows
+UPDATE account.users SET status = 'suspended', updated_at = NOW()
+WHERE id = @id AND organization_id = @organization_id::uuid AND deleted_at IS NULL AND status <> 'suspended';
+
+-- Only the directory that claimed a suspension lifts it.
+-- name: ClaimDirectorySuspension :exec
+UPDATE account.users SET suspension_source = @source::text, suspension_reason = 'provider'
+WHERE id = @id AND organization_id = @organization_id::uuid AND status = 'suspended' AND suspension_source = 'unknown';

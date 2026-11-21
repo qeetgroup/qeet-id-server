@@ -254,3 +254,44 @@ func TestDirectorySearchTakesWildcardsLiterally(test *testing.T) {
 		}
 	}
 }
+
+// TestScheduledSyncEvents checks how an LDAP connection's scheduled syncs are
+// recorded, resolved and shown.
+func TestScheduledSyncEvents(test *testing.T) {
+	pool := dbtest.Pool(test)
+	ctx := dbtest.Context(test)
+	organizationID := dbtest.Organization(test)
+	connection := uuid.New()
+	ldapSource := &ldapFixture{records: []ldap.Connection{{ID: connection, OrganizationID: organizationID, Name: "Head office", Status: "active"}}}
+	service := newService(test, pool, &scimFixture{config: &scim.ConfigView{}}, ldapSource)
+	record := func(status int, reason string, at time.Time) {
+		test.Helper()
+		if err := service.RecordLDAPOperation(ctx, ldap.Operation{OrganizationID: organizationID, ConnectionID: connection, Operation: "sync",
+			Resource: "connection", Status: status, Started: at, Duration: time.Second, Reason: reason}); err != nil {
+			test.Fatal(err)
+		}
+	}
+	stopped := time.Now().Add(-10 * time.Minute)
+	record(http.StatusPreconditionFailed, ldap.CodeSyncEmptyResult, stopped)
+	open := func() int {
+		return dbtest.Count(test, `SELECT count(*) FROM organization.directory_events WHERE organization_id = $1 AND connection_id = $2
+			AND status = 'failed' AND resolution = 'open'`, organizationID, connection.String())
+	}
+	if n := dbtest.Count(test, `SELECT count(*) FROM organization.directory_events WHERE organization_id = $1 AND trigger_type = 'scheduled'
+		AND category = 'provisioning' AND severity = 'critical'`, organizationID); n != 1 || open() != 1 {
+		test.Fatalf("a stopped sync: %d scheduled critical events, %d open; want 1 and 1", n, open())
+	}
+	synced := time.Now().Add(-time.Minute)
+	record(http.StatusOK, "", synced)
+	if open() != 0 {
+		test.Error("a successful sync left the stopped one open")
+	}
+	records, err := service.List(ctx, organizationID)
+	if err != nil {
+		test.Fatal(err)
+	}
+	if len(records) != 1 || records[0].LastSyncAt == nil || records[0].LastSyncAt.Sub(synced).Abs() > time.Second ||
+		records[0].Health != "healthy" || records[0].Scope != "users-and-groups" {
+		test.Fatalf("connection %+v; want healthy, last synced by the scheduled sync, people and groups in scope", records)
+	}
+}

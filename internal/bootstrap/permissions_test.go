@@ -14,8 +14,29 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
+
+// csrfTestKey signs the tests' CSRF tokens.
+func csrfTestKey(t *testing.T) *envelope.Cipher {
+	t.Helper()
+	key, err := envelope.New([]byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return key
+}
+
+// TestCSRFRotatePathsAreSignIns checks that each CSRF rotate path is a mounted POST route.
+func TestCSRFRotatePathsAreSignIns(t *testing.T) {
+	mounted := productionRouteInventory(t)
+	for _, path := range csrfRotatePaths() {
+		if _, ok := mounted[http.MethodPost+" "+path]; !ok {
+			t.Errorf("CSRF rotate path %s is not a mounted POST route", path)
+		}
+	}
+}
 
 type allowRouteInventoryChecker struct{}
 
@@ -34,6 +55,7 @@ func routeInventoryDeps(t *testing.T) Deps {
 		}
 	}
 	deps.RBACChecker = allowRouteInventoryChecker{}
+	deps.CSRFKey = csrfTestKey(t)
 	// The route throttles the access and identity handlers mount with.
 	pass := func(h http.Handler) http.Handler { return h }
 	deps.Auth.Throttle, deps.MFA.PairingThrottle, deps.Verification.Throttle = pass, pass, pass
@@ -365,7 +387,7 @@ func TestSensitiveRoutesNeedStepUp(t *testing.T) {
 // CSRF check, and nothing else on the push-device paths may.
 func TestLinkedPhoneCallsPassCSRF(t *testing.T) {
 	reached := false
-	h := httpx.CSRF(httpx.CSRFConfig{AllowedOrigins: []string{"https://console.example"}, ExemptPaths: csrfExemptPaths()})(
+	h := httpx.CSRF(httpx.CSRFConfig{Key: csrfTestKey(t), AllowedOrigins: []string{"https://console.example"}, ExemptPaths: csrfExemptPaths()})(
 		http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true }))
 	for path, want := range map[string]bool{
 		"/v1/mfa/push/challenges/" + uuid.NewString() + "/respond": true,
@@ -389,7 +411,7 @@ func TestLinkedPhoneCallsPassCSRF(t *testing.T) {
 // in to an account of its choosing.
 func TestHostedLoginCookieRoutesKeepTheCSRFCheck(t *testing.T) {
 	reached := false
-	h := httpx.CSRF(httpx.CSRFConfig{AllowedOrigins: []string{"https://login.example"}, ExemptPaths: csrfExemptPaths()})(
+	h := httpx.CSRF(httpx.CSRFConfig{Key: csrfTestKey(t), AllowedOrigins: []string{"https://login.example"}, ExemptPaths: csrfExemptPaths()})(
 		http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true }))
 	for path, want := range map[string]bool{
 		"/v1/auth/session":            false,
@@ -420,7 +442,7 @@ func TestHostedLoginCookieRoutesKeepTheCSRFCheck(t *testing.T) {
 // signed-in person, does not.
 func TestConsentAnswerKeepsTheCSRFCheck(t *testing.T) {
 	reached := false
-	h := httpx.CSRF(httpx.CSRFConfig{AllowedOrigins: []string{"https://login.example"}, ExemptPaths: csrfExemptPaths()})(
+	h := httpx.CSRF(httpx.CSRFConfig{Key: csrfTestKey(t), AllowedOrigins: []string{"https://login.example"}, ExemptPaths: csrfExemptPaths()})(
 		http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true }))
 	for path, want := range map[string]bool{
 		"/v1/oauth/authorize":          true,
@@ -441,7 +463,7 @@ func TestConsentAnswerKeepsTheCSRFCheck(t *testing.T) {
 // form posts and Basic credentials still don't.
 func TestServerCallersPassTheCSRFCheck(t *testing.T) {
 	reached := false
-	h := CSRF([]string{"https://console.example"}, true, "")(
+	h := CSRF([]string{"https://console.example"}, true, "", csrfTestKey(t))(
 		http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true }))
 	for _, c := range []struct {
 		name, path, authorization, cookie, origin, contentType string

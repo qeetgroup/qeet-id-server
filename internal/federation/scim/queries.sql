@@ -162,11 +162,6 @@ WHERE id = @id AND organization_id = @organization_id;
 UPDATE account.users SET suspension_source = 'scim', suspension_reason = 'provider'
 WHERE organization_id = @organization_id AND id = @id;
 
--- name: ClaimUnattributedSuspension :exec
--- A suspension nothing else claimed becomes the directory's.
-UPDATE account.users SET suspension_source = 'scim', suspension_reason = 'provider'
-WHERE organization_id = @organization_id AND id = @id AND suspension_source = 'unknown';
-
 -- ==========================================================================
 -- Groups
 -- ==========================================================================

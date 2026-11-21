@@ -113,7 +113,7 @@ func (service *Service) List(ctx context.Context, organizationID uuid.UUID) ([]C
 		}
 		records = append(records, Connection{
 			ID: source.ID.String(), Name: source.Name, Reference: source.ID.String(),
-			Type: "ldap", Status: source.Status, Health: "unknown", Scope: "users-on-signin",
+			Type: "ldap", Status: source.Status, Health: "unknown", Scope: "users-and-groups",
 			CreatedAt: &source.CreatedAt, LastActivityAt: source.LastLoginAt, ServerURL: &source.ServerURL,
 		})
 	}

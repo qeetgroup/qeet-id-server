@@ -50,22 +50,6 @@ func (q *Queries) CheckUserInOrganization(ctx context.Context, arg CheckUserInOr
 	return exists, err
 }
 
-const claimUnattributedSuspension = `-- name: ClaimUnattributedSuspension :exec
-UPDATE account.users SET suspension_source = 'scim', suspension_reason = 'provider'
-WHERE organization_id = $1 AND id = $2 AND suspension_source = 'unknown'
-`
-
-type ClaimUnattributedSuspensionParams struct {
-	OrganizationID *uuid.UUID
-	ID             uuid.UUID
-}
-
-// A suspension nothing else claimed becomes the directory's.
-func (q *Queries) ClaimUnattributedSuspension(ctx context.Context, arg ClaimUnattributedSuspensionParams) error {
-	_, err := q.db.Exec(ctx, claimUnattributedSuspension, arg.OrganizationID, arg.ID)
-	return err
-}
-
 const countHomeUsersByEmail = `-- name: CountHomeUsersByEmail :one
 SELECT count(*) FROM account.users
 WHERE organization_id = $1 AND deleted_at IS NULL AND LOWER(email) = LOWER($2)

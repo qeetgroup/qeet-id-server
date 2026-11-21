@@ -10,6 +10,21 @@ The first release, 2027.1.0, is in preparation. No version has been published ye
 
 ### Added
 
+- LDAP connections sync with their directory on a schedule, with the connection's service account, every
+  `sync_interval_minutes` (15 unless set; 5 to 60, `422 ldap.sync_interval_invalid` otherwise): the people
+  changed since the last run (`uSNChanged` in Active Directory, `modifyTimestamp` elsewhere), and everyone once
+  a day. Someone the directory disabled (Active Directory's ACCOUNTDISABLE) is suspended at the next run, and
+  someone deleted or no longer matched by the user filter at the next full run, and every way they sign in ends
+  as SCIM deactivation ends it, recorded as `user.suspended` by `ldap_sync`; owners are kept, as SCIM keeps them.
+  The sync lifts a suspension it set when the directory enables the person again. Group changes reach Qeet ID
+  groups through the connection's group mappings. A run that fails, or whose answer looks incomplete (nobody
+  listed, under half the last full run's people, or most of the connection's people gone at once), changes
+  nothing; saving the connection accepts a directory that really shrank. Runs show in the directory's sync
+  activity (operation `sync`, trigger `scheduled`), and the people who can change connections are told in the
+  app when syncs start failing and when they recover.
+- Release images are signed with cosign, keyless, by the deploy workflow on `main`, by digest, after they are
+  promoted to ECR; no signing key is stored.
+
 - `GET /v1/organizations/{organizationID}/overview`: the dashboard's set-up checklist and counts in one read,
   in place of the many list reads it made only to learn what is set up: single sign-on connections, social
   providers and SCIM tokens, applications and their grants, domains, directory errors, remembered devices, API
@@ -87,6 +102,16 @@ The first release, 2027.1.0, is in preparation. No version has been published ye
   applies that migration again.
 
 ### Changed
+
+- Every email template an organization edits is sent in its version: email verification codes (the session's
+  organization), password reset links (the account's home organization) and emailed sign-in codes, besides magic
+  links and invitations. Codes that confirm a security change or a new factor, and SMS codes, keep the platform's
+  wording. `delivery_scope` is `organization` for every template. A verification or sign-in code template must
+  keep `{{code}}`.
+- An LDAP connection's `scope` on the directory's connection list is `users-and-groups`, and its `last_sync_at`
+  is its last successful sync.
+- A release that isn't ready (`/readyz`) and serving within 5 minutes of its deploy is rolled back to the release
+  before, with no manual step, and isn't tagged or released.
 
 - A refresh token lasts 7 days unused by default (`REFRESH_TOKEN_TTL=168h`, was 30 days). Each renewal starts
   the 7 days again, so a person who keeps using an application stays signed in until the session's maximum
@@ -282,6 +307,11 @@ The first release, 2027.1.0, is in preparation. No version has been published ye
 
 ### Fixed
 
+- Customised email verification, password reset and sign-in code emails were never sent: every one went out as
+  the default.
+- A rollback to a commit sha checked `/version` against the sha and failed even when it worked; it now checks the
+  release that commit's image reports.
+
 - The Users summary's `by_department` and the list's `department` filter read only the metadata of the people
   whose home is the organization. A member managed by another organization, whose metadata the organization
   never sees, was counted and matched by that organization's department.
@@ -362,6 +392,15 @@ The first release, 2027.1.0, is in preparation. No version has been published ye
   the 15 minutes the sign-in policy now allows.
 
 ### Security
+
+- An LDAP connection outside development must reach its directory over TLS, `ldaps://` or `ldap://` with
+  StartTLS: creating, updating, testing or signing in through one without is refused with `422
+ldap.tls_required`, before any password is sent. One saved before is refused at use, recorded as
+  `ldap.connection_refused`, and can still be turned off. `ldap://` with StartTLS is now accepted in production.
+- CSRF tokens are signed with a key derived from the data key, and bound to the browser (an HttpOnly
+  `__Host-qe_csrf_nonce` cookie) and to its hosted-login session, so a cookie and header pair from another
+  session, another browser or a sibling subdomain is refused. Each sign-in, sign-out and organization switch
+  issues a new token. Tokens of the old shape are refused, and replaced at the next page load.
 
 - Request metrics count a made-up HTTP method as `other`. Each one used to add series of its own, so anyone
   could grow the server's memory and its `/metrics` answer without limit, with no sign-in.

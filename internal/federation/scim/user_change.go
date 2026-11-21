@@ -12,6 +12,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/provision"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
@@ -262,12 +263,9 @@ func (s *Service) applyUserChange(ctx context.Context, actor audit.Actor, organi
 		return err
 	}
 	if in.Status != nil && *in.Status == "suspended" {
-		if err := q.ClaimUnattributedSuspension(ctx, dbgen.ClaimUnattributedSuspensionParams{OrganizationID: &organizationID, ID: userID}); err != nil {
-			return failed
-		}
 		// Every way in ends, as an administrator's suspension ends them, so a
 		// later reactivation revives none.
-		if _, err := authentication.EndSignIns(ctx, tx, s.signals, userID, sessionsignal.ReasonDeprovisioned); err != nil {
+		if _, err := provision.SuspendForDirectory(ctx, tx, s.signals, organizationID, userID, "scim"); err != nil {
 			return failed
 		}
 	}

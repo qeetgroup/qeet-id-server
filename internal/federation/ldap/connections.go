@@ -19,7 +19,8 @@ import (
 // ldap_connections queries (pubCols — no bind_password).
 func connFields(c *Connection, id, organizationID uuid.UUID, name, serverURL string, startTLS, skipTLSVerify bool,
 	bindDN, baseDN, userFilter, emailAttribute, nameAttribute, status string,
-	createdAt, updatedAt time.Time, lastLoginAt *time.Time) {
+	createdAt, updatedAt time.Time, lastLoginAt *time.Time, syncInterval int32) {
+	c.SyncIntervalMinutes = int(syncInterval)
 	c.ID = id
 	c.OrganizationID = organizationID
 	c.Name = name
@@ -39,17 +40,28 @@ func connFields(c *Connection, id, organizationID uuid.UUID, name, serverURL str
 
 // CreateInput is what Create takes.
 type CreateInput struct {
-	Name           string `json:"name"`
-	ServerURL      string `json:"server_url"`
-	StartTLS       bool   `json:"start_tls"`
-	SkipTLSVerify  bool   `json:"skip_tls_verify"`
-	BindDN         string `json:"bind_dn"`
-	BindPassword   string `json:"bind_password"`
-	BaseDN         string `json:"base_dn"`
-	UserFilter     string `json:"user_filter"`
-	EmailAttribute string `json:"email_attribute"`
-	NameAttribute  string `json:"name_attribute"`
-	Status         string `json:"status"`
+	Name                string `json:"name"`
+	ServerURL           string `json:"server_url"`
+	StartTLS            bool   `json:"start_tls"`
+	SkipTLSVerify       bool   `json:"skip_tls_verify"`
+	BindDN              string `json:"bind_dn"`
+	BindPassword        string `json:"bind_password"`
+	BaseDN              string `json:"base_dn"`
+	UserFilter          string `json:"user_filter"`
+	EmailAttribute      string `json:"email_attribute"`
+	NameAttribute       string `json:"name_attribute"`
+	Status              string `json:"status"`
+	SyncIntervalMinutes *int   `json:"sync_interval_minutes"`
+}
+
+func syncInterval(minutes *int, def int32) (int32, error) {
+	if minutes == nil {
+		return def, nil
+	}
+	if *minutes < MinSyncInterval || *minutes > MaxSyncInterval {
+		return 0, ErrSyncIntervalInvalid
+	}
+	return int32(*minutes), nil // #nosec G115 -- 5..60
 }
 
 func defaulted(v, def string) string {
@@ -61,10 +73,17 @@ func defaulted(v, def string) string {
 
 // Create adds an LDAP connection to the organization, recorded as actor's.
 func (s *Service) Create(ctx context.Context, organizationID uuid.UUID, in CreateInput, actor audit.Actor) (*Connection, error) {
-	if _, err := s.egress.ValidateLDAPURL(in.ServerURL); err != nil {
+	if err := s.checkTransport(in.ServerURL, in.StartTLS); err != nil {
+		return nil, err
+	}
+	if _, err := s.egress.ValidateLDAPURL(in.ServerURL, in.StartTLS); err != nil {
 		return nil, ErrServerURLInvalid
 	}
 	if err := s.checkTLSVerify(in.SkipTLSVerify); err != nil {
+		return nil, err
+	}
+	interval, err := syncInterval(in.SyncIntervalMinutes, DefaultSyncInterval)
+	if err != nil {
 		return nil, err
 	}
 	// Plan gate: LDAP/AD directory sync is an Enterprise feature.
@@ -87,6 +106,7 @@ func (s *Service) Create(ctx context.Context, organizationID uuid.UUID, in Creat
 		BindPasswordCt: ciphertext, BindPasswordNonce: nonce, BaseDn: in.BaseDN,
 		UserFilter: defaulted(in.UserFilter, "(uid=%s)"), EmailAttribute: defaulted(in.EmailAttribute, "mail"),
 		NameAttribute: defaulted(in.NameAttribute, "cn"), Status: defaulted(in.Status, "draft"),
+		SyncIntervalMinutes: interval,
 	})
 	if err != nil {
 		return nil, err
@@ -94,7 +114,7 @@ func (s *Service) Create(ctx context.Context, organizationID uuid.UUID, in Creat
 	var c Connection
 	connFields(&c, r.ID, r.OrganizationID, r.Name, r.ServerUrl, r.StartTls, r.SkipTlsVerify,
 		r.BindDn, r.BaseDn, r.UserFilter, r.EmailAttribute, r.NameAttribute, r.Status,
-		r.CreatedAt, r.UpdatedAt, r.LastLoginAt)
+		r.CreatedAt, r.UpdatedAt, r.LastLoginAt, r.SyncIntervalMinutes)
 	if err := recordChange(ctx, tx, actor, organizationID, c.ID, "ldap.connection_created", map[string]any{"name": c.Name, "server": c.ServerURL}); err != nil {
 		return nil, err
 	}
@@ -119,7 +139,7 @@ func (s *Service) List(ctx context.Context, organizationID uuid.UUID) ([]Connect
 	for i, r := range rows {
 		connFields(&out[i], r.ID, r.OrganizationID, r.Name, r.ServerUrl, r.StartTls, r.SkipTlsVerify,
 			r.BindDn, r.BaseDn, r.UserFilter, r.EmailAttribute, r.NameAttribute, r.Status,
-			r.CreatedAt, r.UpdatedAt, r.LastLoginAt)
+			r.CreatedAt, r.UpdatedAt, r.LastLoginAt, r.SyncIntervalMinutes)
 	}
 	return out, nil
 }
@@ -136,7 +156,7 @@ func (s *Service) Get(ctx context.Context, id, organizationID uuid.UUID) (*Conne
 	var c Connection
 	connFields(&c, r.ID, r.OrganizationID, r.Name, r.ServerUrl, r.StartTls, r.SkipTlsVerify,
 		r.BindDn, r.BaseDn, r.UserFilter, r.EmailAttribute, r.NameAttribute, r.Status,
-		r.CreatedAt, r.UpdatedAt, r.LastLoginAt)
+		r.CreatedAt, r.UpdatedAt, r.LastLoginAt, r.SyncIntervalMinutes)
 	return &c, nil
 }
 
@@ -154,7 +174,7 @@ func (s *Service) getFull(ctx context.Context, id, organizationID uuid.UUID) (*c
 	var c connFull
 	connFields(&c.Connection, r.ID, r.OrganizationID, r.Name, r.ServerUrl, r.StartTls, r.SkipTlsVerify,
 		r.BindDn, r.BaseDn, r.UserFilter, r.EmailAttribute, r.NameAttribute, r.Status,
-		r.CreatedAt, r.UpdatedAt, r.LastLoginAt)
+		r.CreatedAt, r.UpdatedAt, r.LastLoginAt, r.SyncIntervalMinutes)
 	plain, err := s.box.Open(c.OrganizationID, "ldap-bind", c.ID.String(), r.BindPasswordCt, r.BindPasswordNonce)
 	if err != nil {
 		return nil, err
@@ -165,17 +185,18 @@ func (s *Service) getFull(ctx context.Context, id, organizationID uuid.UUID) (*c
 
 // UpdateInput is what Update takes.
 type UpdateInput struct {
-	Name           *string `json:"name"`
-	ServerURL      *string `json:"server_url"`
-	StartTLS       *bool   `json:"start_tls"`
-	SkipTLSVerify  *bool   `json:"skip_tls_verify"`
-	BindDN         *string `json:"bind_dn"`
-	BindPassword   *string `json:"bind_password"`
-	BaseDN         *string `json:"base_dn"`
-	UserFilter     *string `json:"user_filter"`
-	EmailAttribute *string `json:"email_attribute"`
-	NameAttribute  *string `json:"name_attribute"`
-	Status         *string `json:"status"`
+	Name                *string `json:"name"`
+	ServerURL           *string `json:"server_url"`
+	StartTLS            *bool   `json:"start_tls"`
+	SkipTLSVerify       *bool   `json:"skip_tls_verify"`
+	BindDN              *string `json:"bind_dn"`
+	BindPassword        *string `json:"bind_password"`
+	BaseDN              *string `json:"base_dn"`
+	UserFilter          *string `json:"user_filter"`
+	EmailAttribute      *string `json:"email_attribute"`
+	NameAttribute       *string `json:"name_attribute"`
+	Status              *string `json:"status"`
+	SyncIntervalMinutes *int    `json:"sync_interval_minutes"`
 }
 
 // ChangesTrust reports whether in changes what c trusts: the directory it asks,
@@ -191,7 +212,7 @@ func (in UpdateInput) ChangesTrust(c *Connection) bool {
 // Update changes one of the organization's LDAP connections, recorded as actor's.
 func (s *Service) Update(ctx context.Context, id, organizationID uuid.UUID, in UpdateInput, actor audit.Actor) (*Connection, error) {
 	if in.ServerURL != nil {
-		if _, err := s.egress.ValidateLDAPURL(*in.ServerURL); err != nil {
+		if _, err := s.egress.ValidateLDAPURL(*in.ServerURL, true); err != nil {
 			return nil, ErrServerURLInvalid
 		}
 	}
@@ -199,6 +220,14 @@ func (s *Service) Update(ctx context.Context, id, organizationID uuid.UUID, in U
 		if err := s.checkTLSVerify(*in.SkipTLSVerify); err != nil {
 			return nil, err
 		}
+	}
+	var interval *int32
+	if in.SyncIntervalMinutes != nil {
+		minutes, err := syncInterval(in.SyncIntervalMinutes, 0)
+		if err != nil {
+			return nil, err
+		}
+		interval = &minutes
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -208,18 +237,19 @@ func (s *Service) Update(ctx context.Context, id, organizationID uuid.UUID, in U
 	q := s.q.WithTx(tx)
 	bindPassword := in.BindPassword
 	r, err := q.UpdateLdapConnection(ctx, dbgen.UpdateLdapConnectionParams{
-		ID:             id,
-		OrganizationID: organizationID,
-		Name:           in.Name,
-		ServerUrl:      in.ServerURL,
-		StartTls:       in.StartTLS,
-		SkipTlsVerify:  in.SkipTLSVerify,
-		BindDn:         in.BindDN,
-		BaseDn:         in.BaseDN,
-		UserFilter:     in.UserFilter,
-		EmailAttribute: in.EmailAttribute,
-		NameAttribute:  in.NameAttribute,
-		Status:         in.Status,
+		ID:                  id,
+		OrganizationID:      organizationID,
+		Name:                in.Name,
+		ServerUrl:           in.ServerURL,
+		StartTls:            in.StartTLS,
+		SkipTlsVerify:       in.SkipTLSVerify,
+		BindDn:              in.BindDN,
+		BaseDn:              in.BaseDN,
+		UserFilter:          in.UserFilter,
+		EmailAttribute:      in.EmailAttribute,
+		NameAttribute:       in.NameAttribute,
+		Status:              in.Status,
+		SyncIntervalMinutes: interval,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
@@ -230,6 +260,16 @@ func (s *Service) Update(ctx context.Context, id, organizationID uuid.UUID, in U
 	// A connection saved before verification was required keeps it off until
 	// changed; it can't be saved again that way.
 	if err := s.checkTLSVerify(r.SkipTlsVerify); err != nil {
+		return nil, err
+	}
+	// One saved before TLS was required can still be turned off.
+	if r.Status != "disabled" {
+		if err := s.checkTransport(r.ServerUrl, r.StartTls); err != nil {
+			return nil, err
+		}
+	}
+	// Saving re-baselines the sync, so an administrator can accept a directory that really shrank.
+	if err := q.ResetLdapSync(ctx, dbgen.ResetLdapSyncParams{ID: id, OrganizationID: organizationID}); err != nil {
 		return nil, err
 	}
 	if bindPassword != nil {
@@ -246,7 +286,7 @@ func (s *Service) Update(ctx context.Context, id, organizationID uuid.UUID, in U
 	var c Connection
 	connFields(&c, r.ID, r.OrganizationID, r.Name, r.ServerUrl, r.StartTls, r.SkipTlsVerify,
 		r.BindDn, r.BaseDn, r.UserFilter, r.EmailAttribute, r.NameAttribute, r.Status,
-		r.CreatedAt, r.UpdatedAt, r.LastLoginAt)
+		r.CreatedAt, r.UpdatedAt, r.LastLoginAt, r.SyncIntervalMinutes)
 	if err := recordChange(ctx, tx, actor, organizationID, c.ID, "ldap.connection_updated", map[string]any{"status": c.Status}); err != nil {
 		return nil, err
 	}

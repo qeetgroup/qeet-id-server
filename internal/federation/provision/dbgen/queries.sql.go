@@ -22,6 +22,23 @@ func (q *Queries) AccountByEmail(ctx context.Context, email string) (uuid.UUID, 
 	return id, err
 }
 
+const claimDirectorySuspension = `-- name: ClaimDirectorySuspension :exec
+UPDATE account.users SET suspension_source = $1::text, suspension_reason = 'provider'
+WHERE id = $2 AND organization_id = $3::uuid AND status = 'suspended' AND suspension_source = 'unknown'
+`
+
+type ClaimDirectorySuspensionParams struct {
+	Source         string
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+// Only the directory that claimed a suspension lifts it.
+func (q *Queries) ClaimDirectorySuspension(ctx context.Context, arg ClaimDirectorySuspensionParams) error {
+	_, err := q.db.Exec(ctx, claimDirectorySuspension, arg.Source, arg.ID, arg.OrganizationID)
+	return err
+}
+
 const insertAccount = `-- name: InsertAccount :one
 INSERT INTO account.users (organization_id, email, email_verified_at, display_name, status)
 VALUES ($1, $2, CASE WHEN $3::bool THEN NOW() END, $4, 'active')
@@ -113,4 +130,22 @@ func (q *Queries) LinkedAccount(ctx context.Context, arg LinkedAccountParams) (u
 	var user_id uuid.UUID
 	err := row.Scan(&user_id)
 	return user_id, err
+}
+
+const suspendDirectoryAccount = `-- name: SuspendDirectoryAccount :execrows
+UPDATE account.users SET status = 'suspended', updated_at = NOW()
+WHERE id = $1 AND organization_id = $2::uuid AND deleted_at IS NULL AND status <> 'suspended'
+`
+
+type SuspendDirectoryAccountParams struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+}
+
+func (q *Queries) SuspendDirectoryAccount(ctx context.Context, arg SuspendDirectoryAccountParams) (int64, error) {
+	result, err := q.db.Exec(ctx, suspendDirectoryAccount, arg.ID, arg.OrganizationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

@@ -171,7 +171,7 @@ internal/platform/database/migrations/NNNN_description.up.sql
 internal/platform/database/migrations/NNNN_description.down.sql
 ```
 
-Numbering continues from the highest present (currently `0012`). `0001`–`0012` are the schema
+Numbering continues from the highest present (currently `0013`). `0001`–`0012` are the schema
 baseline: one file per schema with every table in its final shape, written in November 2026 in
 place of 243 incremental migrations, before any database held real data. A database the earlier
 migrations built is refused at start as newer than this build: recreate it (`make db-reset`).

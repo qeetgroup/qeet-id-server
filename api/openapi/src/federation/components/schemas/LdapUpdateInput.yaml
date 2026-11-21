@@ -40,10 +40,26 @@ properties:
     type:
       - boolean
       - "null"
+    description: >-
+      Upgrade an ldap:// connection to TLS with StartTLS before anything is
+      sent. Outside development an ldap:// server_url needs it (422
+      ldap.tls_required otherwise).
   status:
     type:
       - string
       - "null"
+  sync_interval_minutes:
+    type:
+      - integer
+      - "null"
+    minimum: 5
+    maximum: 60
+    description: >-
+      How often, in minutes, the scheduled sync reads the directory with the
+      service account (5 to 60; 422 ldap.sync_interval_invalid otherwise). It
+      reads the people changed since its last run, and every person once a
+      day; someone the directory disabled, deleted or no longer matches is
+      suspended and signed out.
   user_filter:
     type:
       - string

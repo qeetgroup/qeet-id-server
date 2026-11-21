@@ -29,6 +29,9 @@ const (
 	portalCookiePath    = "/v1/admin-portal"
 )
 
+// SessionCookie names the portal session cookie.
+const SessionCookie = portalSessionCookie
+
 var validCapabilities = []string{CapabilitySAML, CapabilitySCIM, CapabilityDomainVerification}
 
 // Link is an admin-portal link, without its token.

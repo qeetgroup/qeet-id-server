@@ -6,7 +6,10 @@ get:
     Requires connection.read. Organization scope is derived from the authenticated
     principal and must match the path. Credentials are never returned. Health is
     unknown until explicitly observed; last_activity_at is a request or login
-    timestamp and is not evidence of a successful synchronization.
+    timestamp and is not evidence of a successful synchronization. last_sync_at
+    is the latest successful sync: a SCIM change, or an LDAP connection's
+    scheduled sync. An LDAP connection's scope is users-and-groups, as its
+    scheduled sync keeps people and their groups in step between sign-ins.
   tags:
     - Directory
   security:

@@ -112,6 +112,7 @@ internal/federation/adminportal/queries.sql#GetAdminPortalSessionByHash  secret-
 internal/federation/adminportal/queries.sql#LockAdminPortalLinkByHash  secret-lookup: link found by its token hash
 internal/federation/identitylink/queries.sql#AddressVerified  pre-organization: federated sign-in checks the account it found
 internal/federation/identitylink/queries.sql#MarkAddressVerified  pre-organization: federated sign-in marks the home account it just adopted
+internal/federation/ldap/queries.sql#DueLdapSyncs  background-sweep: the scheduled LDAP sync lists due connections of every organization, each then claimed and read with its organization_id
 internal/federation/ldap/queries.sql#TouchLdapLastLogin  parent-scoped: connection row read for this sign-in
 internal/federation/oidc/queries.sql#ApproveCIBARequest  parent-scoped: request locked and checked against the caller
 internal/federation/oidc/queries.sql#ApproveDevice  secret-lookup: request found by its user code

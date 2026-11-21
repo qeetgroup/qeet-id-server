@@ -4,6 +4,7 @@ package ldap
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -70,7 +71,6 @@ func TestDirectoryConnectionsOverHTTP(t *testing.T) {
 	for name, change := range map[string]map[string]any{
 		CodeConnectionFieldsRequired: {"bind_password": ""},
 		CodeServerURLInvalid:         {"server_url": "https://directory.example.test"},
-		CodeTLSVerifyRequired:        {"skip_tls_verify": true},
 	} {
 		bad := map[string]any{}
 		for k, v := range connection {
@@ -234,4 +234,128 @@ func TestLDAPTrustChangeMustOutrankLinkedAdministrators(t *testing.T) {
 	if rec := dbtest.Do(t, asEditor, http.MethodPatch, base+"/"+conn.ID.String(), map[string]any{"name": "Directory (EU)"}); rec.Code != http.StatusOK {
 		t.Errorf("an editor renames it: %d %s, want 200", rec.Code, rec.Body.String())
 	}
+}
+
+// TestDirectoryMustBeReachedOverTLS checks create, update, test and sign-in with
+// and without TLS, outside development and on a developer workstation.
+func TestDirectoryMustBeReachedOverTLS(t *testing.T) {
+	organization := dbtest.Organization(t)
+	domain := dbtest.Domain(t, organization)
+	admin := dbtest.User(t, organization, organization)
+	const service, bobDN = "cn=service,dc=example,dc=test", "uid=bob,dc=example,dc=test"
+	dir := &directory{
+		binds:   map[string]string{service: "service-secret", bobDN: "bob-secret"},
+		entries: map[string]dirEntry{"bob": {dn: bobDN, attrs: map[string]string{"mail": dbtest.Unique("bob") + "@" + domain, "cn": "Bob"}}},
+	}
+	plainURL := dir.start(t)
+	base := "/organizations/" + organization.String() + "/ldap"
+	connection := func(serverURL string, startTLS bool) map[string]any {
+		return map[string]any{
+			"name": "Directory", "server_url": serverURL, "start_tls": startTLS, "bind_dn": service,
+			"bind_password": "service-secret", "base_dn": "dc=example,dc=test", "status": "active",
+		}
+	}
+	refused := func(rec *httptest.ResponseRecorder) bool {
+		var body struct {
+			Error struct{ Code, Message string } `json:"error"`
+		}
+		dbtest.Decode(t, rec, &body)
+		return rec.Code == http.StatusUnprocessableEntity && body.Error.Code == CodeTLSRequired && body.Error.Message == "Use ldaps:// or turn on StartTLS."
+	}
+
+	t.Run("production", func(t *testing.T) {
+		h := &Handler{Service: directoryService(t, production)}
+		asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)
+		public := chi.NewRouter()
+		h.MountPublic(public)
+
+		if rec := dbtest.Do(t, asAdmin, http.MethodPost, base, connection(plainURL, false)); !refused(rec) {
+			t.Errorf("create without TLS: %d %s, want 422 %s", rec.Code, rec.Body.String(), CodeTLSRequired)
+		}
+		skip := connection("ldaps://"+strings.TrimPrefix(plainURL, "ldap://"), false)
+		skip["skip_tls_verify"] = true
+		if rec := dbtest.Do(t, asAdmin, http.MethodPost, base, skip); !strings.Contains(rec.Body.String(), CodeTLSVerifyRequired) {
+			t.Errorf("create without verifying the certificate: %d %s, want %s", rec.Code, rec.Body.String(), CodeTLSVerifyRequired)
+		}
+		var startTLS, ldaps Connection
+		rec := dbtest.Do(t, asAdmin, http.MethodPost, base, connection(plainURL, true))
+		dbtest.Decode(t, rec, &startTLS)
+		if rec.Code != http.StatusCreated || !startTLS.StartTLS {
+			t.Fatalf("create with StartTLS: %d %s", rec.Code, rec.Body.String())
+		}
+		rec = dbtest.Do(t, asAdmin, http.MethodPost, base, connection("ldaps://"+strings.TrimPrefix(plainURL, "ldap://"), false))
+		dbtest.Decode(t, rec, &ldaps)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create with ldaps: %d %s", rec.Code, rec.Body.String())
+		}
+		for name, change := range map[string]struct {
+			id   uuid.UUID
+			body map[string]any
+		}{
+			"turn StartTLS off":       {startTLS.ID, map[string]any{"start_tls": false}},
+			"move ldaps to plain URL": {ldaps.ID, map[string]any{"server_url": plainURL}},
+		} {
+			if rec := dbtest.Do(t, asAdmin, http.MethodPatch, base+"/"+change.id.String(), change.body); !refused(rec) {
+				t.Errorf("update to %s: %d %s, want 422 %s", name, rec.Code, rec.Body.String(), CodeTLSRequired)
+			}
+		}
+		if got, err := h.Service.Get(dbtest.Context(t), startTLS.ID, organization); err != nil || !got.StartTLS {
+			t.Errorf("after a refused update: %+v, %v; want StartTLS still on", got, err)
+		}
+
+		if rec := dbtest.Do(t, asAdmin, http.MethodPost, base+"/"+startTLS.ID.String()+"/test", nil); rec.Code == http.StatusOK {
+			t.Errorf("test against a directory without StartTLS: %d, want a failure", rec.Code)
+		}
+		if res := dbtest.Do(t, public, http.MethodPost, "/ldap/"+startTLS.ID.String()+"/authenticate", map[string]string{"username": "bob", "password": "bob-secret"}); res.Code == http.StatusOK {
+			t.Errorf("sign in where StartTLS fails: %d %s", res.Code, res.Body.String())
+		}
+
+		// A connection saved before TLS was required.
+		legacy := storedConnection(t, organization, plainURL, service)
+		legacyPath := base + "/" + legacy.String()
+		if rec := dbtest.Do(t, asAdmin, http.MethodPost, legacyPath+"/test", nil); !refused(rec) {
+			t.Errorf("test a connection without TLS: %d %s, want 422 %s", rec.Code, rec.Body.String(), CodeTLSRequired)
+		}
+		if res := dbtest.Do(t, public, http.MethodPost, "/ldap/"+legacy.String()+"/authenticate", map[string]string{"username": "bob", "password": "bob-secret"}); !refused(res) {
+			t.Errorf("sign in through a connection without TLS: %d %s, want 422 %s", res.Code, res.Body.String(), CodeTLSRequired)
+		}
+		if n := dir.bindsAs(service) + dir.bindsAs(bobDN); n != 0 {
+			t.Errorf("the directory was sent %d binds, want none: no password goes in the clear", n)
+		}
+		if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE organization_id = $1 AND action = 'ldap.connection_refused'
+			AND resource_id = $2 AND metadata->>'reason' = $3`, organization, legacy, CodeTLSRequired); n != 2 {
+			t.Errorf("%d refusals recorded, want the test and the sign-in", n)
+		}
+		if rec := dbtest.Do(t, asAdmin, http.MethodPatch, legacyPath, map[string]any{"name": "Old directory"}); !refused(rec) {
+			t.Errorf("rename a connection without TLS: %d %s, want 422 %s", rec.Code, rec.Body.String(), CodeTLSRequired)
+		}
+		if rec := dbtest.Do(t, asAdmin, http.MethodPatch, legacyPath, map[string]any{"status": "disabled"}); rec.Code != http.StatusOK {
+			t.Errorf("turn off a connection without TLS: %d %s, want 200", rec.Code, rec.Body.String())
+		}
+		if rec := dbtest.Do(t, asAdmin, http.MethodPatch, legacyPath, map[string]any{"status": "active", "start_tls": true}); rec.Code != http.StatusOK {
+			t.Errorf("mend it with StartTLS: %d %s, want 200", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("developer workstation", func(t *testing.T) {
+		h := &Handler{Service: directoryService(t)}
+		asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, organization), h.Mount)
+		public := chi.NewRouter()
+		h.MountPublic(public)
+		var plain Connection
+		rec := dbtest.Do(t, asAdmin, http.MethodPost, base, connection(plainURL, false))
+		dbtest.Decode(t, rec, &plain)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create without TLS: %d %s", rec.Code, rec.Body.String())
+		}
+		if rec := dbtest.Do(t, asAdmin, http.MethodPatch, base+"/"+plain.ID.String(), map[string]any{"name": "Lab directory"}); rec.Code != http.StatusOK {
+			t.Errorf("update without TLS: %d %s", rec.Code, rec.Body.String())
+		}
+		if rec := dbtest.Do(t, asAdmin, http.MethodPost, base+"/"+plain.ID.String()+"/test", nil); rec.Code != http.StatusOK {
+			t.Errorf("test without TLS: %d %s", rec.Code, rec.Body.String())
+		}
+		if res := dbtest.Do(t, public, http.MethodPost, "/ldap/"+plain.ID.String()+"/authenticate", map[string]string{"username": "bob", "password": "bob-secret"}); res.Code != http.StatusOK {
+			t.Errorf("sign in without TLS: %d %s", res.Code, res.Body.String())
+		}
+	})
 }

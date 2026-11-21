@@ -1,7 +1,8 @@
-// Package ssosync keeps an account in step with what each connection sign-in (SAML, LDAP, OIDC)
-// asserts: the mapped profile and its groups. It changes only memberships that connection's sign-ins
-// made (never an administrator's, an import's or SCIM's) and never reaches a group holding the owner
-// role or an administrative permission. Every change is audited in the sign-in's transaction.
+// Package ssosync keeps an account in step with what each connection sign-in (SAML, LDAP, OIDC), or
+// the scheduled LDAP sync, asserts: the mapped profile and its groups. It changes only memberships
+// that connection's sign-ins made (never an administrator's, an import's or SCIM's) and never reaches
+// a group holding the owner role or an administrative permission. Every change is audited in the
+// sign-in's transaction.
 package ssosync
 
 import (
@@ -44,41 +45,60 @@ type SignIn struct {
 // Apply refreshes the account's profile and groups from in, within the
 // sign-in's transaction tx.
 func Apply(ctx context.Context, tx pgx.Tx, in SignIn) error {
-	if err := refreshProfile(ctx, tx, in); err != nil {
-		return err
+	_, err := Refresh(ctx, tx, in)
+	return err
+}
+
+// Changes are what Refresh changed on an account.
+type Changes struct {
+	Profile       bool
+	GroupsAdded   int
+	GroupsRemoved int
+}
+
+// Any reports whether anything changed.
+func (c Changes) Any() bool { return c.Profile || c.GroupsAdded+c.GroupsRemoved > 0 }
+
+// Refresh is Apply, reporting what it changed.
+func Refresh(ctx context.Context, tx pgx.Tx, in SignIn) (Changes, error) {
+	var c Changes
+	var err error
+	if c.Profile, err = refreshProfile(ctx, tx, in); err != nil {
+		return c, err
 	}
-	return syncGroups(ctx, tx, in)
+	c.GroupsAdded, c.GroupsRemoved, err = syncGroups(ctx, tx, in)
+	return c, err
 }
 
 // refreshProfile sets the asserted display name, and the asserted address when
 // refreshEmail allows it, recording what changed.
-func refreshProfile(ctx context.Context, tx pgx.Tx, in SignIn) error {
+func refreshProfile(ctx context.Context, tx pgx.Tx, in SignIn) (bool, error) {
 	q := dbgen.New(tx)
 	current, err := q.GetAccountProfile(ctx, dbgen.GetAccountProfileParams{ID: in.UserID, OrganizationID: in.OrganizationID})
 	if err != nil {
-		return err
+		return false, err
 	}
 	changed := map[string]any{}
 	name := DisplayName(in.DisplayName)
 	if name != "" && (current.DisplayName == nil || *current.DisplayName != name) {
 		if err := q.SetDisplayName(ctx, dbgen.SetDisplayNameParams{DisplayName: &name, ID: in.UserID, OrganizationID: in.OrganizationID}); err != nil {
-			return err
+			return false, err
 		}
 		changed["display_name_changed"] = true
 	}
 	emailChanged, err := refreshEmail(ctx, tx, in, current.Email)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if emailChanged {
 		changed["email_changed"] = true
 	}
 	if len(changed) == 0 {
-		return nil
+		return false, nil
 	}
 	changed["connection_id"] = in.ConnectionID
 	changed["source"] = in.Provider
-	return audit.Record(ctx, tx, in.Actor.Event(in.OrganizationID, "user.updated", "user", in.UserID, changed))
+	return true, audit.Record(ctx, tx, in.Actor.Event(in.OrganizationID, "user.updated", "user", in.UserID, changed))
 }
 
 // DisplayName is name as a sign-in sets it on an account: trimmed, or "" when
@@ -126,25 +146,24 @@ func refreshEmail(ctx context.Context, tx pgx.Tx, in SignIn, current string) (bo
 // syncGroups adds the person to the groups the asserted groups reach and takes
 // them out of those the connection's sign-ins put them in that they no longer
 // reach, recording each change with its event.
-func syncGroups(ctx context.Context, tx pgx.Tx, in SignIn) error {
+func syncGroups(ctx context.Context, tx pgx.Tx, in SignIn) (added, removed int, err error) {
 	if in.GroupsWithheld {
-		return nil
+		return 0, 0, nil
 	}
 	q := dbgen.New(tx)
 	var targets []uuid.UUID
 	if values := groupValues(in.Groups); len(values) > 0 {
-		var err error
 		targets, err = q.SyncTargets(ctx, dbgen.SyncTargetsParams{
 			OrganizationID: in.OrganizationID, ConnectionID: in.ConnectionID,
 			MemberPermissions: identitylink.MemberPermissions(), IdpGroups: values,
 		})
 		if err != nil {
-			return err
+			return 0, 0, err
 		}
 	}
 	current, err := q.SyncedMemberships(ctx, dbgen.SyncedMembershipsParams{OrganizationID: in.OrganizationID, UserID: in.UserID, ConnectionID: in.ConnectionID})
 	if err != nil {
-		return err
+		return 0, 0, err
 	}
 	held := make(map[uuid.UUID]bool, len(current))
 	for _, id := range current {
@@ -158,11 +177,12 @@ func syncGroups(ctx context.Context, tx pgx.Tx, in SignIn) error {
 		}
 		n, err := q.AddSyncedMembership(ctx, dbgen.AddSyncedMembershipParams{GroupID: id, UserID: in.UserID, OrganizationID: in.OrganizationID, ConnectionID: in.ConnectionID})
 		if err != nil {
-			return err
+			return added, removed, err
 		}
 		if n == 1 {
+			added++
 			if err := recordMembership(ctx, tx, in.Actor, in.OrganizationID, id, in.UserID, in.ConnectionID, in.Provider, "group.member_added"); err != nil {
-				return err
+				return added, removed, err
 			}
 		}
 	}
@@ -172,15 +192,16 @@ func syncGroups(ctx context.Context, tx pgx.Tx, in SignIn) error {
 		}
 		n, err := q.RemoveSyncedMembership(ctx, dbgen.RemoveSyncedMembershipParams{OrganizationID: in.OrganizationID, GroupID: id, UserID: in.UserID, ConnectionID: in.ConnectionID})
 		if err != nil {
-			return err
+			return added, removed, err
 		}
 		if n == 1 {
+			removed++
 			if err := recordMembership(ctx, tx, in.Actor, in.OrganizationID, id, in.UserID, in.ConnectionID, in.Provider, "group.member_removed"); err != nil {
-				return err
+				return added, removed, err
 			}
 		}
 	}
-	return nil
+	return added, removed, nil
 }
 
 // recordMembership audits, in tx, a membership change sync made through

@@ -303,11 +303,11 @@ One PostgreSQL database, **seven schemas**: `auth`, `organization`, `account`, `
 
 ### Migrations
 
-**Evidence:** `internal/platform/database/migrations/` — 12 up/down pairs, `0001`–`0012`: the schema
-baseline, one file per schema with every table in its final shape (`0001` schemas and the
+**Evidence:** `internal/platform/database/migrations/` — 13 up/down pairs. `0001`–`0012` are the
+schema baseline, one file per schema with every table in its final shape (`0001` schemas and the
 application role, `0002` functions, `0003`–`0009` the schemas, `0010` foreign keys between schemas,
-`0011` row-level security, `0012` owner guards and triggers). Embedded with `//go:embed *.sql` in
-`runner.go` and applied on startup.
+`0011` row-level security, `0012` owner guards and triggers); `0013` adds the LDAP connections'
+scheduled sync. Embedded with `//go:embed *.sql` in `runner.go` and applied on startup.
 
 ```text
 NNNN_description.up.sql
@@ -440,16 +440,16 @@ OAuth scope. ABAC denies are evaluated by the composed checker and override a ro
 
 ## Tokens and cryptography
 
-| Concern       | Implementation                                                                                                                                                                                      |
-| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Algorithm     | **ES256 or RS256**, by the active key's type (EC P-256 or RSA of 2048 bits or more). `validMethods` allows only those two and `keyFunc` holds each key to its own, so `alg` confusion is impossible |
-| `kid`         | RFC 7638 JWK thumbprint, computed at key load                                                                                                                                                       |
-| Verification  | Missing or unknown `kid` → rejected                                                                                                                                                                 |
-| Rotation      | Shared encrypted registry: candidate staging, explicit activation, replica refresh, timed public-key retirement                                                                                     |
-| Password hash | Argon2id                                                                                                                                                                                            |
-| CSRF token    | HMAC-keyed, constant-time comparison                                                                                                                                                                |
-| Vault         | AES-256-GCM, per-organization HKDF-derived key, static or AWS KMS provider                                                                                                                          |
-| Randomness    | `crypto/rand` only                                                                                                                                                                                  |
+| Concern       | Implementation                                                                                                                                                                                                             |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Algorithm     | **ES256 or RS256**, by the active key's type (EC P-256 or RSA of 2048 bits or more). `validMethods` allows only those two and `keyFunc` holds each key to its own, so `alg` confusion is impossible                        |
+| `kid`         | RFC 7638 JWK thumbprint, computed at key load                                                                                                                                                                              |
+| Verification  | Missing or unknown `kid` → rejected                                                                                                                                                                                        |
+| Rotation      | Shared encrypted registry: candidate staging, explicit activation, replica refresh, timed public-key retirement                                                                                                            |
+| Password hash | Argon2id                                                                                                                                                                                                                   |
+| CSRF token    | Signed double-submit: a random value with HMACs (an HKDF subkey of the data key) binding it to the browser's HttpOnly `__Host-` nonce and its hosted-login session; re-issued at sign-in, sign-out and organization switch |
+| Vault         | AES-256-GCM, per-organization HKDF-derived key, static or AWS KMS provider                                                                                                                                                 |
+| Randomness    | `crypto/rand` only                                                                                                                                                                                                         |
 
 **Evidence:** `internal/platform/crypto/tokens/{tokens,issue,verify,keys,registry}.go`, `internal/platform/crypto/envelope/`
 

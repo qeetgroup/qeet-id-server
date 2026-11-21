@@ -15,18 +15,21 @@ VALUES (@id, @organization_id, @connection_id, @operation, @trigger_type, @resou
 
 -- OpenConnectionFailuresExist reports whether the connection has an open
 -- failure a success disproves (the directory unreachable or refusing the
--- connection's own credentials), other than the one being retried.
+-- connection's own credentials, or after a sync a failed one), other than the
+-- one being retried.
 -- name: OpenConnectionFailuresExist :one
 SELECT EXISTS (
     SELECT 1 FROM organization.directory_events
     WHERE organization_id = @organization_id AND connection_id = @connection_id AND status = 'failed'
-      AND resolution = 'open' AND category IN ('connection', 'permission') AND id <> @retrying
+      AND resolution = 'open' AND id <> @retrying
+      AND (category IN ('connection', 'permission') OR (@synced::bool AND operation = 'sync' AND resource_type = 'connection'))
 );
 
 -- name: ResolveConnectionFailures :many
 UPDATE organization.directory_events SET resolution = 'resolved', resolved_at = NOW(), resolved_by = NULL
 WHERE organization_id = @organization_id AND connection_id = @connection_id AND status = 'failed'
-  AND resolution = 'open' AND category IN ('connection', 'permission') AND id <> @retrying
+  AND resolution = 'open' AND id <> @retrying
+  AND (category IN ('connection', 'permission') OR (@synced::bool AND operation = 'sync' AND resource_type = 'connection'))
 RETURNING id;
 
 -- name: LatestDirectoryEvents :many
@@ -37,10 +40,10 @@ WHERE organization_id = @organization_id
 ORDER BY connection_id, started_at DESC, id DESC;
 
 -- name: LastDirectorySyncs :many
--- Each connection's latest successful sync of a user or group.
+-- Each connection's latest successful sync of a user, a group or the directory.
 SELECT connection_id, max(started_at)::timestamptz AS synced_at
 FROM organization.directory_events
-WHERE organization_id = @organization_id AND status = 'success' AND resource_type <> 'connection'
+WHERE organization_id = @organization_id AND status = 'success' AND (resource_type <> 'connection' OR operation = 'sync')
 GROUP BY connection_id;
 
 -- ---- Connections (directory.go) ----

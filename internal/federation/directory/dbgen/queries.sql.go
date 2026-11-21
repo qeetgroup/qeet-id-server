@@ -362,7 +362,7 @@ func (q *Queries) InsertDirectoryMapping(ctx context.Context, arg InsertDirector
 const lastDirectorySyncs = `-- name: LastDirectorySyncs :many
 SELECT connection_id, max(started_at)::timestamptz AS synced_at
 FROM organization.directory_events
-WHERE organization_id = $1 AND status = 'success' AND resource_type <> 'connection'
+WHERE organization_id = $1 AND status = 'success' AND (resource_type <> 'connection' OR operation = 'sync')
 GROUP BY connection_id
 `
 
@@ -371,7 +371,7 @@ type LastDirectorySyncsRow struct {
 	SyncedAt     time.Time
 }
 
-// Each connection's latest successful sync of a user or group.
+// Each connection's latest successful sync of a user, a group or the directory.
 func (q *Queries) LastDirectorySyncs(ctx context.Context, organizationID uuid.UUID) ([]LastDirectorySyncsRow, error) {
 	rows, err := q.db.Query(ctx, lastDirectorySyncs, organizationID)
 	if err != nil {
@@ -676,7 +676,8 @@ const openConnectionFailuresExist = `-- name: OpenConnectionFailuresExist :one
 SELECT EXISTS (
     SELECT 1 FROM organization.directory_events
     WHERE organization_id = $1 AND connection_id = $2 AND status = 'failed'
-      AND resolution = 'open' AND category IN ('connection', 'permission') AND id <> $3
+      AND resolution = 'open' AND id <> $3
+      AND (category IN ('connection', 'permission') OR ($4::bool AND operation = 'sync' AND resource_type = 'connection'))
 )
 `
 
@@ -684,13 +685,20 @@ type OpenConnectionFailuresExistParams struct {
 	OrganizationID uuid.UUID
 	ConnectionID   string
 	Retrying       uuid.UUID
+	Synced         bool
 }
 
 // OpenConnectionFailuresExist reports whether the connection has an open
 // failure a success disproves (the directory unreachable or refusing the
-// connection's own credentials), other than the one being retried.
+// connection's own credentials, or after a sync a failed one), other than the
+// one being retried.
 func (q *Queries) OpenConnectionFailuresExist(ctx context.Context, arg OpenConnectionFailuresExistParams) (bool, error) {
-	row := q.db.QueryRow(ctx, openConnectionFailuresExist, arg.OrganizationID, arg.ConnectionID, arg.Retrying)
+	row := q.db.QueryRow(ctx, openConnectionFailuresExist,
+		arg.OrganizationID,
+		arg.ConnectionID,
+		arg.Retrying,
+		arg.Synced,
+	)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
@@ -785,7 +793,8 @@ func (q *Queries) RecentRemediations(ctx context.Context, arg RecentRemediations
 const resolveConnectionFailures = `-- name: ResolveConnectionFailures :many
 UPDATE organization.directory_events SET resolution = 'resolved', resolved_at = NOW(), resolved_by = NULL
 WHERE organization_id = $1 AND connection_id = $2 AND status = 'failed'
-  AND resolution = 'open' AND category IN ('connection', 'permission') AND id <> $3
+  AND resolution = 'open' AND id <> $3
+  AND (category IN ('connection', 'permission') OR ($4::bool AND operation = 'sync' AND resource_type = 'connection'))
 RETURNING id
 `
 
@@ -793,10 +802,16 @@ type ResolveConnectionFailuresParams struct {
 	OrganizationID uuid.UUID
 	ConnectionID   string
 	Retrying       uuid.UUID
+	Synced         bool
 }
 
 func (q *Queries) ResolveConnectionFailures(ctx context.Context, arg ResolveConnectionFailuresParams) ([]uuid.UUID, error) {
-	rows, err := q.db.Query(ctx, resolveConnectionFailures, arg.OrganizationID, arg.ConnectionID, arg.Retrying)
+	rows, err := q.db.Query(ctx, resolveConnectionFailures,
+		arg.OrganizationID,
+		arg.ConnectionID,
+		arg.Retrying,
+		arg.Synced,
+	)
 	if err != nil {
 		return nil, err
 	}
