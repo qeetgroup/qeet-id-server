@@ -88,6 +88,10 @@ The first release, 2027.1.0, is in preparation. No version has been published ye
 
 ### Changed
 
+- A refresh token lasts 7 days unused by default (`REFRESH_TOKEN_TTL=168h`, was 30 days). Each renewal starts
+  the 7 days again, so a person who keeps using an application stays signed in until the session's maximum
+  age (`SESSION_MAX_AGE`, still 30 days); an application left unused for 7 days signs in again. API and
+  console sessions still end after `SESSION_IDLE_TIMEOUT` (24 hours) without renewal.
 - The API says organization, not tenant. Paths under `/v1/tenants/{tenantID}/…` are under
   `/v1/organizations/{organizationID}/…`; every `tenant_id` JSON field and query parameter is
   `organization_id`, and `?tenant=` (a slug) is `?organization=`; the access token's `tenant_id` claim is

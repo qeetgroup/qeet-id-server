@@ -84,8 +84,13 @@ type Config struct {
 	// AccessTokenTTL caps how long a revoked access token stays usable to a
 	// verifier that checks it offline. Introspection (POST /oauth/introspect) and
 	// the session.revoked and token.claims_change signals report revocation at once.
-	AccessTokenTTL  time.Duration `envconfig:"ACCESS_TOKEN_TTL" default:"10m"`
-	RefreshTokenTTL time.Duration `envconfig:"REFRESH_TOKEN_TTL" default:"720h"`
+	AccessTokenTTL time.Duration `envconfig:"ACCESS_TOKEN_TTL" default:"10m"`
+	// RefreshTokenTTL is how long a refresh token lasts unused. Each renewal
+	// issues a new one that lasts this long again, never past its session or
+	// grant. An application's grant has no other idle bound, so this is how
+	// long an application can go unused and stay signed in; API and console
+	// sessions also end after SessionIdleTimeout without renewal.
+	RefreshTokenTTL time.Duration `envconfig:"REFRESH_TOKEN_TTL" default:"168h"`
 	// RefreshTokenReuseGrace is how long after a refresh token's rotation the
 	// same token gets the rotation's pair again, for a client that raced itself
 	// or lost the answer, rather than ending the session as theft. 0 turns it
