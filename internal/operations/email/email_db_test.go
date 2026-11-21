@@ -72,6 +72,62 @@ func TestRecipientLocaleStaysWithItsOrganization(t *testing.T) {
 	}
 }
 
+// TestEachTemplateIsSentCustomisedUntilReset checks that each template's saved
+// version is sent until it is reset, and only for its organization.
+func TestEachTemplateIsSentCustomisedUntilReset(t *testing.T) {
+	ctx := dbtest.Context(t)
+	service := NewService(dbtest.Pool(t))
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	actor := audit.Actor{Type: "system"}
+	mailbox := &dbtest.Mailbox{}
+	sender := TemplateSender{Templates: service, Next: mailbox}
+	for _, test := range []struct {
+		key       string
+		custom    EditorInput
+		variables map[string]string
+		want      string // what the customised text shows of the message's values
+	}{
+		{"verify_email", EditorInput{Subject: "Confirm your Brightleaf address", Body: "Your Brightleaf code is {{code}}. It expires in {{ttl}}."},
+			map[string]string{"code": "482913", "ttl": "10 minutes"}, "Your Brightleaf code is 482913. It expires in 10 minutes."},
+		{"password_reset", EditorInput{Subject: "Reset your Brightleaf password", Body: "Choose a new password:\n{{reset_url}}"},
+			map[string]string{"reset_url": "https://accounts.example.test/reset-password?token=once"}, "https://accounts.example.test/reset-password?token=once"},
+		{"mfa_otp", EditorInput{Subject: "Your Brightleaf sign-in code", Body: "Your Brightleaf sign-in code is {{code}}. It expires in {{ttl}}."},
+			map[string]string{"code": "771204", "ttl": "10 minutes"}, "Your Brightleaf sign-in code is 771204."},
+		{"magic_link", EditorInput{Subject: "Sign in to Brightleaf", Body: "Use this link:\n{{magic_url}}"},
+			map[string]string{"magic_url": "https://accounts.example.test/magic-link?token=once"}, "https://accounts.example.test/magic-link?token=once"},
+		{"invite", EditorInput{Subject: "Join Brightleaf", Body: "Accept your invitation:\n{{invite_url}}"},
+			map[string]string{"invite_url": "https://console.example.test/invite/accept?token=once"}, "https://console.example.test/invite/accept?token=once"},
+	} {
+		send := func(to uuid.UUID) notifier.Message {
+			t.Helper()
+			if err := sender.Send(ctx, notifier.Message{OrganizationID: to.String(), Channel: "email", To: "anne@example.test", TemplateKey: test.key,
+				TemplateVariables: test.variables, Subject: "Platform subject", Body: "Platform body"}); err != nil {
+				t.Fatalf("%s: send: %v", test.key, err)
+			}
+			return mailbox.Last(t)
+		}
+		if got := send(organization); got.Subject != "Platform subject" {
+			t.Errorf("%s before it is customised: subject %q, want the platform's", test.key, got.Subject)
+		}
+		if _, err := service.UpsertEditor(ctx, organization, test.key, test.custom, actor); err != nil {
+			t.Fatalf("%s: save: %v", test.key, err)
+		}
+		got := send(organization)
+		if got.Subject != test.custom.Subject || !strings.Contains(got.Body, test.want) || !strings.Contains(got.HTML, test.custom.Subject) {
+			t.Errorf("%s customised: subject %q body %q; want the organization's version showing %q", test.key, got.Subject, got.Body, test.want)
+		}
+		if got := send(other); got.Subject != "Platform subject" || got.Body != "Platform body" {
+			t.Errorf("%s to another organization's member: %q, want the platform's", test.key, got.Subject)
+		}
+		if _, err := service.Reset(ctx, organization, test.key, actor); err != nil {
+			t.Fatalf("%s: reset: %v", test.key, err)
+		}
+		if got := send(organization); got.Subject != "Platform subject" || got.Body != "Platform body" {
+			t.Errorf("%s after the customisation is removed: subject %q body %q, want the platform's", test.key, got.Subject, got.Body)
+		}
+	}
+}
+
 func TestMain(m *testing.M) { dbtest.Main(m) }
 
 // refuseAudit makes the organization's audit writes of action fail until t

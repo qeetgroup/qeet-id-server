@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
@@ -51,5 +53,32 @@ func TestEmailVerification(t *testing.T) {
 	}
 	if err := svc.ConfirmEmail(ctx, a.ID, code, who); !errors.Is(err, ErrVerifyCodeUsed) {
 		t.Errorf("second use of the code: %v, want %v", err, ErrVerifyCodeUsed)
+	}
+}
+
+// TestEmailVerificationNamesItsTemplate checks that the code names the
+// verify_email template of the session's organization, if any.
+func TestEmailVerificationNamesItsTemplate(t *testing.T) {
+	ctx := dbtest.Context(t)
+	mail := &dbtest.Mailbox{}
+	svc := newService(t, mail)
+	organization := dbtest.Organization(t)
+	a := dbtest.User(t, organization, organization)
+	for _, session := range []*uuid.UUID{&organization, nil} {
+		who := Requester{Actor: audit.Actor{UserID: &a.ID, Type: "user"}, OrganizationID: session}
+		if err := svc.StartEmail(ctx, a.ID, "", who); err != nil {
+			t.Fatalf("start: %v", err)
+		}
+		msg := mail.Last(t)
+		want := ""
+		if session != nil {
+			want = organization.String()
+		}
+		code := regexp.MustCompile(`\b\d{6}\b`).FindString(msg.Body)
+		if msg.TemplateKey != "verify_email" || msg.OrganizationID != want || code == "" ||
+			msg.TemplateVariables["code"] != code || msg.TemplateVariables["ttl"] == "" {
+			t.Errorf("session in %v: template %q of organization %q with %v; want verify_email of %q with the code %s and its lifetime",
+				session, msg.TemplateKey, msg.OrganizationID, msg.TemplateVariables, want, code)
+		}
 	}
 }

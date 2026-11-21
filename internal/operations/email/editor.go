@@ -58,8 +58,8 @@ type templateSource interface {
 	RecipientLocale(ctx context.Context, organizationID uuid.UUID, address string) (string, error)
 }
 
-// TemplateSender is a notifier.Sender that applies an organization's customised invite
-// or magic-link template before passing the message to Next.
+// TemplateSender is a notifier.Sender that applies an organization's customised
+// catalog template before passing the message to Next.
 type TemplateSender struct {
 	Templates  templateSource
 	Appearance EmailAppearanceSource
@@ -71,7 +71,10 @@ type TemplateSender struct {
 // template's default locale, and sends it through Next. Other messages,
 // uncustomised templates and render failures are sent unchanged.
 func (sender TemplateSender) Send(ctx context.Context, message notifier.Message) error {
-	if (message.Channel != "" && message.Channel != "email") || (message.TemplateKey != "invite" && message.TemplateKey != "magic_link") {
+	if message.Channel != "" && message.Channel != "email" {
+		return sender.Next.Send(ctx, message)
+	}
+	if _, known := defByKey(message.TemplateKey); !known {
 		return sender.Next.Send(ctx, message)
 	}
 	organizationID, err := uuid.Parse(message.OrganizationID)
@@ -236,7 +239,13 @@ func normalizeContent(content *LocalizedContent, definition Definition) error {
 		return err
 	}
 	for _, name := range definition.Variables {
-		if !strings.HasSuffix(name, "_url") {
+		detail := ""
+		switch {
+		case strings.HasSuffix(name, "_url"):
+			detail = "template must retain its action URL variable"
+		case name == codeVariable:
+			detail = "template must retain its code variable"
+		default:
 			continue
 		}
 		contains := func(value string) bool {
@@ -248,11 +257,13 @@ func normalizeContent(content *LocalizedContent, definition Definition) error {
 			return false
 		}
 		if !contains(content.Body) || (content.HTML != "" && !contains(content.HTML)) {
-			return errs.ErrBadRequest.WithDetail("template must retain its action URL variable")
+			return errs.ErrBadRequest.WithDetail(detail)
 		}
 	}
 	return nil
 }
+
+const codeVariable = "code"
 
 func boundedRender(value string, variables map[string]string) (string, error) {
 	size := len(value)

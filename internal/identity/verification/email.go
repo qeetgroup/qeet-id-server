@@ -57,10 +57,13 @@ func (s *Service) StartEmail(ctx context.Context, userID uuid.UUID, email string
 	}
 	expiry := fmt.Sprintf("%d minutes", int(s.ttl.Minutes()))
 	return s.withdrawUndelivered(ctx, s.q.DeleteEmailVerification, id, s.sender.Send(ctx, notifier.Message{
-		Channel: "email",
-		To:      email,
-		Subject: "Verify your email",
-		Body:    fmt.Sprintf("Your Qeet ID verification code is %s. It expires in %s.", code, expiry),
+		TemplateKey:       "verify_email",
+		TemplateVariables: map[string]string{"code": code, "ttl": expiry},
+		OrganizationID:    who.organization(),
+		Channel:           "email",
+		To:                email,
+		Subject:           "Verify your email",
+		Body:              fmt.Sprintf("Your Qeet ID verification code is %s. It expires in %s.", code, expiry),
 		HTML: emailtmpl.Code(
 			"Verify your email",
 			"Use the code below to verify your email address.",

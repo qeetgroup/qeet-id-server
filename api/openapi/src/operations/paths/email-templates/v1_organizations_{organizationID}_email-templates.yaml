@@ -11,8 +11,12 @@ get:
   description: >-
     Lists the organization-scoped catalogue and overrides. Capabilities indicate
     rich-text/localization support and whether a mail transport is configured
-    for test delivery. delivery_scope distinguishes organization invitations/magic
-    links from platform-account security email.
+    for test delivery. Every template is sent with the organization's version
+    (delivery_scope organization): email verification codes to people signed in
+    to the organization, password reset links to accounts whose organization it
+    is, magic links, invitations, and sign-in codes sent by email. A code sent
+    by SMS, and one that confirms a change to an account's security, keeps the
+    platform's wording.
   responses:
     "200":
       description: OK

@@ -2703,7 +2703,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Lists the organization-scoped catalogue and overrides. Capabilities indicate rich-text/localization support and whether a mail transport is configured for test delivery. delivery_scope distinguishes organization invitations/magic links from platform-account security email.
+      description: "Lists the organization-scoped catalogue and overrides. Capabilities indicate rich-text/localization support and whether a mail transport is configured for test delivery. Every template is sent with the organization's version (delivery_scope organization): email verification codes to people signed in to the organization, password reset links to accounts whose organization it is, magic links, invitations, and sign-in codes sent by email. A code sent by SMS, and one that confirms a change to an account's security, keeps the platform's wording."
       responses:
         "200":
           description: OK
@@ -2840,7 +2840,7 @@ paths:
             schema:
               $ref: "#/components/schemas/EmailEditorInput"
         description: Subject, plain-text alternative, and optional rich HTML, preheader, design and language variants. HTML is sanitized. Only catalogue variables are accepted.
-      description: Saves the template and options atomically with its audit event. Organization invitations and magic links use saved overrides; platform-account recovery, verification and MFA remain platform-managed.
+      description: "Saves the template and options atomically with its audit event. Every template's saved version is the one sent: email verification, password reset, magic link, invitation and emailed sign-in codes. Removing it sends the default again. A template must keep its link variable (a `*_url`) and, for verification and sign-in codes, its `code` variable."
       responses:
         "200":
           description: OK
@@ -6294,6 +6294,7 @@ components:
               type: boolean
             delivery_scope:
               type: string
+              description: "Whose version of the template is sent. Every template answers organization: the organization's saved version is sent, else the default. platform stays in the enumeration for compatibility."
               enum:
                 - organization
                 - platform

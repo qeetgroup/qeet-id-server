@@ -101,9 +101,11 @@ put:
       and language variants. HTML is sanitized. Only catalogue variables are
       accepted.
   description: >-
-    Saves the template and options atomically with its audit event. Organization
-    invitations and magic links use saved overrides; platform-account recovery,
-    verification and MFA remain platform-managed.
+    Saves the template and options atomically with its audit event. Every
+    template's saved version is the one sent: email verification, password
+    reset, magic link, invitation and emailed sign-in codes. Removing it sends
+    the default again. A template must keep its link variable (a `*_url`) and,
+    for verification and sign-in codes, its `code` variable.
   responses:
     "200":
       description: OK

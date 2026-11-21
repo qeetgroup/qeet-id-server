@@ -197,11 +197,19 @@ func (s *Service) StartPasswordReset(ctx context.Context, email string, from Res
 		}); err != nil {
 			return err
 		}
+		// The home organization's template, as its audit trail records the request.
+		organization := ""
+		if account.OrganizationID != nil {
+			organization = account.OrganizationID.String()
+		}
 		if err := s.sender.Send(ctx, notifier.Message{
-			Channel: "email",
-			To:      account.Email,
-			Subject: "Reset your password",
-			Body:    fmt.Sprintf("Reset your Qeet ID password: %s", resetURL),
+			TemplateKey:       "password_reset",
+			TemplateVariables: map[string]string{"reset_url": resetURL},
+			OrganizationID:    organization,
+			Channel:           "email",
+			To:                account.Email,
+			Subject:           "Reset your password",
+			Body:              fmt.Sprintf("Reset your Qeet ID password: %s", resetURL),
 			HTML: emailtmpl.Action(
 				"Reset your password",
 				"We received a request to reset the password for your Qeet ID account. Click the button below to choose a new one.",

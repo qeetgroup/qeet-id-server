@@ -30,6 +30,9 @@ func TestEmailCodes(t *testing.T) {
 	if sent.To != a.Email || code == "" {
 		t.Fatalf("sent %q to %s; want a code to %s", sent.Body, sent.To, a.Email)
 	}
+	if sent.TemplateKey != "" {
+		t.Errorf("an enrollment code sent as the %q template; want the platform's wording", sent.TemplateKey)
+	}
 	wrong := "000000"
 	if wrong == code {
 		wrong = "111111"
@@ -62,8 +65,8 @@ func TestEmailCodes(t *testing.T) {
 		t.Fatalf("send step-up code: %v", err)
 	}
 	stepUp := mail.Last(t)
-	if !strings.Contains(stepUp.Body, "confirm a change") {
-		t.Errorf("step-up mail %q; want it to say what the code is for", stepUp.Body)
+	if !strings.Contains(stepUp.Body, "confirm a change") || stepUp.TemplateKey != "" {
+		t.Errorf("step-up mail %q as template %q; want the platform's wording, saying what the code is for", stepUp.Body, stepUp.TemplateKey)
 	}
 	if _, err := authSvc.CompleteMFALogin(ctx, token, sixDigits.FindString(stepUp.Body), "", ""); err == nil {
 		t.Error("a step-up code completed a sign-in")
@@ -72,7 +75,13 @@ func TestEmailCodes(t *testing.T) {
 	if err := authSvc.SendMFACode(ctx, token, factor); err != nil {
 		t.Fatalf("send sign-in code: %v", err)
 	}
-	signInCode := sixDigits.FindString(mail.Last(t).Body)
+	signInMail := mail.Last(t)
+	signInCode := sixDigits.FindString(signInMail.Body)
+	if signInMail.TemplateKey != "mfa_otp" || signInMail.OrganizationID != organization.String() ||
+		signInMail.TemplateVariables["code"] != signInCode || signInMail.TemplateVariables["ttl"] == "" {
+		t.Errorf("sign-in code sent as template %q of organization %q with %v; want mfa_otp of %s with the code %s",
+			signInMail.TemplateKey, signInMail.OrganizationID, signInMail.TemplateVariables, organization, signInCode)
+	}
 	if err := mfaSvc.VerifyOTP(ctx, a.ID, signInCode, self(a.ID)); !errors.Is(err, errs.ErrMFACodeInvalid) {
 		t.Errorf("a sign-in code as a step-up: %v, want %v", err, errs.ErrMFACodeInvalid)
 	}

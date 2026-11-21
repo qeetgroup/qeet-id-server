@@ -35,6 +35,14 @@ type Requester struct {
 	OrganizationID *uuid.UUID
 }
 
+// organization is r's session organization as a message names it ("" for none).
+func (r Requester) organization() string {
+	if r.OrganizationID == nil || *r.OrganizationID == uuid.Nil {
+		return ""
+	}
+	return r.OrganizationID.String()
+}
+
 // event is an audit event of action on userID's account, on the chain of the
 // organization r's session is in, or with none on a platform chain.
 func (r Requester) event(action string, userID uuid.UUID, metadata map[string]any) audit.Event {

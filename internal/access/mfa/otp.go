@@ -107,16 +107,28 @@ func (s *Service) sendOTP(ctx context.Context, in otpSend) error {
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	if err := s.sender.Send(ctx, notifier.Message{
-		Channel: in.channel,
-		To:      in.destination,
-		Subject: "Your verification code",
-		Body:    fmt.Sprintf(otpWording[in.purpose], s.issuer, code, otpTTL),
-	}); err != nil {
+	if err := s.sender.Send(ctx, in.message(s.issuer, code)); err != nil {
 		s.undeliveredOTP(ctx, in, code)
 		return errs.ErrMFADeliveryFailed.Wrap(err)
 	}
 	return nil
+}
+
+// message is in's code as sent. Only an emailed sign-in code uses the
+// organization's mfa_otp template: step-up and enrollment wording says what the code does.
+func (in otpSend) message(issuer, code string) notifier.Message {
+	m := notifier.Message{
+		Channel: in.channel,
+		To:      in.destination,
+		Subject: "Your verification code",
+		Body:    fmt.Sprintf(otpWording[in.purpose], issuer, code, otpTTL),
+	}
+	if in.channel == "email" && in.purpose == "sign_in" && in.organizationID != nil && *in.organizationID != uuid.Nil {
+		m.TemplateKey = "mfa_otp"
+		m.TemplateVariables = map[string]string{"code": code, "ttl": fmt.Sprintf("%d minutes", int(otpTTL.Minutes()))}
+		m.OrganizationID = in.organizationID.String()
+	}
+	return m
 }
 
 // otpWording is each purpose's message, so a person asked for a code knows

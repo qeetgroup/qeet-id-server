@@ -145,6 +145,33 @@ func TestPasswordReset(t *testing.T) {
 	}
 }
 
+// TestPasswordResetNamesItsTemplate checks that a reset link names the
+// password_reset template of the account's home organization, if any.
+func TestPasswordResetNamesItsTemplate(t *testing.T) {
+	ctx := dbtest.Context(t)
+	mail := &dbtest.Mailbox{}
+	svc := newService(t, mail)
+	organization := dbtest.Organization(t)
+	member := dbtest.User(t, organization, organization)
+	loner := dbtest.User(t, uuid.Nil)
+	for _, test := range []struct {
+		account dbtest.Account
+		want    string
+	}{{member, organization.String()}, {loner, ""}} {
+		if _, err := svc.StartPasswordReset(ctx, test.account.Email, ResetOrigin{}); err != nil {
+			t.Fatalf("start reset: %v", err)
+		}
+		svc.deliveries.Wait()
+		msg := mail.Last(t)
+		link := msg.TemplateVariables["reset_url"]
+		if msg.To != test.account.Email || msg.TemplateKey != "password_reset" || msg.OrganizationID != test.want ||
+			link == "" || !strings.Contains(msg.Body, link) {
+			t.Errorf("reset to %s: template %q of organization %q with link %q; want password_reset of %q with the link it sends",
+				msg.To, msg.TemplateKey, msg.OrganizationID, link, test.want)
+		}
+	}
+}
+
 // refusingSender refuses every message, as the delivery tracker does for a
 // suppressed address.
 type refusingSender struct{ sent chan notifier.Message }

@@ -23,6 +23,10 @@ allOf:
         type: boolean
       delivery_scope:
         type: string
+        description: >-
+          Whose version of the template is sent. Every template answers
+          organization: the organization's saved version is sent, else the
+          default. platform stays in the enumeration for compatibility.
         enum:
           - organization
           - platform

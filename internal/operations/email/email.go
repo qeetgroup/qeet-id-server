@@ -63,7 +63,7 @@ var catalog = []Definition{
 	},
 	{
 		Key: "mfa_otp", Name: "MFA one-time passcode",
-		Description:    "A second-factor code delivered by email or SMS.",
+		Description:    "A second-factor sign-in code sent by email. Codes sent by SMS, and codes that confirm a change to an account's security, keep the platform's wording.",
 		DefaultSubject: "Your verification code",
 		DefaultBody:    "Your sign-in code is {{code}}. It expires in {{ttl}}.",
 		Variables:      []string{"code", "ttl"},
@@ -80,8 +80,7 @@ func defByKey(key string) (Definition, bool) {
 }
 
 // Resolved is a template as the API shows it: its catalog entry merged with any
-// organization override. DeliveryScope is "organization" for templates sent with the
-// organization's customisation (invite, magic_link), else "platform".
+// organization override.
 type Resolved struct {
 	Key           string        `json:"key"`
 	Name          string        `json:"name"`
@@ -98,10 +97,7 @@ func resolve(d Definition, subject, body *string) Resolved {
 	r := Resolved{
 		Key: d.Key, Name: d.Name, Description: d.Description,
 		Subject: d.DefaultSubject, Body: d.DefaultBody, Variables: d.Variables,
-		DeliveryScope: "platform",
-	}
-	if d.Key == "invite" || d.Key == "magic_link" {
-		r.DeliveryScope = "organization"
+		DeliveryScope: "organization",
 	}
 	if subject != nil && body != nil {
 		r.Subject, r.Body, r.Custom = *subject, *body, true

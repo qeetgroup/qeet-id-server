@@ -115,11 +115,12 @@ func TestEmailTestThrottle(t *testing.T) {
 
 type templateFixture struct {
 	organization uuid.UUID
+	key          string
 	calls        int
 }
 
 func (fixture *templateFixture) Get(_ context.Context, organizationID uuid.UUID, key string) (*Resolved, error) {
-	fixture.organization = organizationID
+	fixture.organization, fixture.key = organizationID, key
 	fixture.calls++
 	return &Resolved{Key: key, Subject: "Custom sign-in", Body: "Use this link:\n{{magic_url}}", Options: EditorOptions{HTML: `<p><strong>Use</strong> <a href="{{magic_url}}">Sign in</a></p>`}, Custom: true}, nil
 }
@@ -197,6 +198,7 @@ func (sink *emailSink) Send(_ context.Context, message notifier.Message) error {
 	return nil
 }
 
+// TestTemplateSenderScope checks which messages get an organization's template.
 func TestTemplateSenderScope(t *testing.T) {
 	organizationID := uuid.New()
 	templates := &templateFixture{}
@@ -209,12 +211,48 @@ func TestTemplateSenderScope(t *testing.T) {
 	if templates.organization != organizationID || sink.last.Subject != "Custom sign-in" || !strings.Contains(sink.last.HTML, "https://example.test/once") {
 		t.Fatal("scoped template not applied")
 	}
-	for _, message := range []notifier.Message{{TemplateKey: "magic_link", Subject: "Platform"}, {OrganizationID: organizationID.String(), TemplateKey: "password_reset", Subject: "Platform"}, {OrganizationID: organizationID.String(), Channel: "sms", TemplateKey: "magic_link", Subject: "Platform"}} {
+	for _, key := range []string{"verify_email", "password_reset", "mfa_otp", "invite"} {
+		calls := templates.calls
+		if err := sender.Send(context.Background(), notifier.Message{OrganizationID: organizationID.String(), Channel: "email", TemplateKey: key, Subject: "Platform"}); err != nil {
+			t.Fatal(err)
+		}
+		if templates.calls != calls+1 || templates.key != key {
+			t.Errorf("%s: the organization's template was not looked up", key)
+		}
+	}
+	calls := templates.calls
+	for _, message := range []notifier.Message{
+		{TemplateKey: "magic_link", Subject: "Platform"},
+		{OrganizationID: uuid.Nil.String(), TemplateKey: "password_reset", Subject: "Platform"},
+		{OrganizationID: organizationID.String(), TemplateKey: "account_notice", Subject: "Platform"},
+		{OrganizationID: organizationID.String(), Channel: "sms", TemplateKey: "mfa_otp", Subject: "Platform"},
+	} {
 		if err := sender.Send(context.Background(), message); err != nil {
 			t.Fatal(err)
 		}
-		if sink.last.Subject != "Platform" || templates.calls != 1 {
-			t.Fatal("platform security email was overridden")
+		if sink.last.Subject != "Platform" || templates.calls != calls {
+			t.Errorf("%+v: sent as %q after %d lookups, want the platform's wording unlooked-up", message, sink.last.Subject, templates.calls-calls)
+		}
+	}
+}
+
+// TestCodeTemplatesKeepTheirCode checks that a code template must keep {{code}}.
+func TestCodeTemplatesKeepTheirCode(t *testing.T) {
+	for _, key := range []string{"verify_email", "mfa_otp"} {
+		d, _ := defByKey(key)
+		for name, input := range map[string]EditorInput{
+			"no code in the text": {Subject: "Your code", Body: "Enter the code we sent."},
+			"no code in the HTML": {Subject: "Your code", Body: "Your code is {{code}}.", Options: EditorOptions{HTML: "<p>Enter the code we sent.</p>"}},
+			"code only in a translation": {Subject: "Your code", Body: "Enter it.", Options: EditorOptions{
+				Translations: map[string]LocalizedContent{"fr": {Subject: "Votre code", Body: "Votre code est {{code}}."}}}},
+		} {
+			if err := normalizeEditor(&input, d); err == nil {
+				t.Errorf("%s with %s: accepted", key, name)
+			}
+		}
+		kept := EditorInput{Subject: "Your code", Body: "Your code is {{code}}. It expires in {{ttl}}.", Options: EditorOptions{HTML: "<p><strong>{{code}}</strong></p>"}}
+		if err := normalizeEditor(&kept, d); err != nil {
+			t.Errorf("%s with its code: %v", key, err)
 		}
 	}
 }
