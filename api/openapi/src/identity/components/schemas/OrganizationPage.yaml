@@ -1,6 +1,8 @@
 allOf:
   - $ref: ./Page.yaml
 type: object
+required:
+  - items
 properties:
   items:
     type: array

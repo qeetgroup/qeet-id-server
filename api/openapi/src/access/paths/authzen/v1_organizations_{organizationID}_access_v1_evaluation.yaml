@@ -84,11 +84,59 @@ post:
         application/json:
           schema:
             type: object
+            required:
+              - decision
+              - context
             properties:
               decision:
                 type: boolean
               context:
                 type: object
+                required:
+                  - decided_by
+                additionalProperties: true
+                properties:
+                  decided_by:
+                    $ref: ../../components/schemas/AuthzDecidedBy.yaml
+                  paths:
+                    type:
+                      - array
+                      - "null"
+                    description: >-
+                      With explain, for a permission check: every grant behind
+                      an allow.
+                    items:
+                      $ref: ../../components/schemas/AuthzGrantStep.yaml
+                  path:
+                    type:
+                      - array
+                      - "null"
+                    description: >-
+                      With explain, for a relation check: the chain of
+                      relation tuples that allowed it; null when nothing did.
+                    items:
+                      type: object
+                      required:
+                        - object
+                        - relation
+                        - subject
+                        - depth
+                      properties:
+                        object:
+                          type: string
+                        relation:
+                          type: string
+                        subject:
+                          type: string
+                        depth:
+                          type: integer
+                  trace:
+                    type:
+                      - array
+                      - "null"
+                    description: With explain, the decision's trace.
+                    items:
+                      type: string
     "400":
       $ref: ../../../shared/responses/BadRequest.yaml
     "401":

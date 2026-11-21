@@ -2,6 +2,14 @@ type: object
 description: >-
   Immutable snapshot of one compliance evidence generation pass for a
   organization+framework pair. Controls are populated on GetRun; omitted on ListRuns.
+required:
+  - id
+  - organization_id
+  - framework
+  - generated_at
+  - pass_count
+  - fail_count
+  - na_count
 properties:
   id:
     type: string

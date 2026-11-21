@@ -1,5 +1,8 @@
 type: object
 description: A single token-bucket limit (rate tokens/sec, burst capacity).
+required:
+  - rate
+  - capacity
 properties:
   rate:
     type: number

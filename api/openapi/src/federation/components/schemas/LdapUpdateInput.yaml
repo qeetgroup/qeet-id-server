@@ -1,17 +1,8 @@
 type: object
 additionalProperties: false
-required:
-  - base_dn
-  - bind_dn
-  - bind_password
-  - email_attribute
-  - name
-  - name_attribute
-  - server_url
-  - skip_tls_verify
-  - start_tls
-  - status
-  - user_filter
+description: >-
+  The fields to change; every one is optional, and one left out or null keeps
+  its value.
 properties:
   base_dn:
     type:

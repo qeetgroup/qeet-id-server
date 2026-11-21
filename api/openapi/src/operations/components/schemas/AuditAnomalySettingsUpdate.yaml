@@ -1,0 +1,22 @@
+type: object
+description: >-
+  The anomaly detection settings PUT stores. It replaces all three, so each is
+  sent: a value left out would be stored as false or 0.
+required:
+  - enabled
+  - score_threshold
+  - min_baseline_events
+properties:
+  enabled:
+    type: boolean
+  score_threshold:
+    type: number
+    minimum: 0
+    maximum: 1
+    description: 0..1; an event scoring at or above this is flagged.
+  min_baseline_events:
+    type: integer
+    minimum: 0
+    description: >-
+      Cold-start guard — an actor needs this many historical events before
+      anything is flagged for them.

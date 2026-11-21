@@ -173,8 +173,8 @@ That is the whole setup. Everything else on this page is reference.
   application itself runs on your host, not in Compose.
 - **`make dev`** first runs `make dev-secrets`, generating a persistent ES256 JWT signing key and a
   SAML IdP key/certificate pair into `.secrets/` (gitignored, idempotent — it skips whatever already
-  exists). It then starts the API, which **applies database migrations on startup**. There is no
-  separate migrate step to remember.
+  exists). It then starts the API, which **applies database migrations on startup**, so there is no
+  separate migrate step to remember. To apply them without starting the API, run `make migrate-up`.
 - **`make seed`** loads fictional, production-shaped demo data into an empty database in about a
   minute, so every console and hosted-login screen has something to show:
   - Ten organizations: Qeet Group, whose own products (Qeet Pay, Qeet People, Qeet Notify, Qeet Logs,
@@ -210,40 +210,41 @@ which makes the app **log** emails instead of sending them. To capture them in M
 
 ### If something goes wrong
 
-| Symptom                                                                                            | Cause                                                                                                                                                                                                                                     |
-| :------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Connection refused or password auth failure at startup                                             | `<password>` is still literal in `.env`                                                                                                                                                                                                   |
-| Your `.env` edits appear to be ignored                                                             | You ran `go run ./cmd/api` directly. **Only `make` / `go run ./cmd/devtool` load `.env`**: the server doesn't, so a direct `go run ./cmd/api` silently uses built-in defaults. Use `make dev`                                             |
-| `address already in use` on `:4001`                                                                | `make kill` frees the port                                                                                                                                                                                                                |
-| A passkey ceremony fails with `passkey.attestation_invalid`                                        | The browser origin is missing from `WEBAUTHN_RP_ORIGINS`. CORS being correct is not enough                                                                                                                                                |
-| You want a clean slate                                                                             | `make seed-reset` (drops the volume, then seeds), or `make db-reset`, then `make dev`                                                                                                                                                     |
-| `database schema … isn't recorded as built from the migration files this build carries` at startup | The database was migrated by an earlier build, from an earlier copy of the migrations, or by the `migrate` CLI. `make db-reset`, then `make dev`. For a migration of your own that isn't merged yet: `make migrate-down`, then `make dev` |
+| Symptom                                                                                            | Cause                                                                                                                                                                                                                                            |
+| :------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Connection refused or password auth failure at startup                                             | `<password>` is still literal in `.env`                                                                                                                                                                                                          |
+| Your `.env` edits appear to be ignored                                                             | You ran `go run ./cmd/api` directly. **Only `make` / `go run ./cmd/devtool` load `.env`**: the server doesn't, so a direct `go run ./cmd/api` silently uses built-in defaults. Use `make dev`                                                    |
+| `address already in use` on `:4001`                                                                | `make kill` frees the port                                                                                                                                                                                                                       |
+| A passkey ceremony fails with `passkey.attestation_invalid`                                        | The browser origin is missing from `WEBAUTHN_RP_ORIGINS`. CORS being correct is not enough                                                                                                                                                       |
+| You want a clean slate                                                                             | `make seed-reset` (drops the volume, then seeds), or `make db-reset`, then `make dev`                                                                                                                                                            |
+| `database schema … isn't recorded as built from the migration files this build carries` at startup | The database was migrated by an earlier build, from an earlier copy of the migrations, or by the `migrate` CLI. `make db-reset`, then `make dev`. For a migration of your own that isn't merged yet: `make migrate-down`, then `make migrate-up` |
 
 ## 🛠️ Development
 
 Every target in the [Makefile](./Makefile) — there are no others.
 
-| Command                          | Purpose                                                                                                        |
-| :------------------------------- | :------------------------------------------------------------------------------------------------------------- |
-| `make install`                   | `go mod download`                                                                                              |
-| `make dev`                       | Run the API on `:4001` with persistent keys from `.secrets/`                                                   |
-| `make dev-secrets`               | Generate the local JWT and SAML key material only                                                              |
-| `make build`                     | Compile the API to `bin/qeet-id`                                                                               |
-| `make test`                      | Run the unit tests                                                                                             |
-| `make test-db`                   | Run the database tests against PostgreSQL; Docker required                                                     |
-| `make lint`                      | Run `go vet` and `golangci-lint` as CI does                                                                    |
-| `make fmt` / `fmt-check`         | Format every file (Go, JavaScript, JSON, YAML, Markdown, shell), or check it is formatted                      |
-| `make sqlc` / `sqlc-check`       | Regenerate `dbgen/` from `queries.sql`, or check it is up to date                                              |
-| `make openapi` / `openapi-check` | Build the five API documents from `api/openapi/src/` and the Postman collection, or check they are up to date  |
-| `make postman`                   | Rebuild only the Postman collection in `api/postman/`; import it as its README says                            |
-| `make db-up` / `db-down`         | Start or stop PostgreSQL, NATS and Mailpit                                                                     |
-| `make db-reset`                  | Recreate the local database volume                                                                             |
-| `make migrate-down`              | Roll one migration back, to try its down file; needs the `migrate` CLI. The server applies migrations at start |
-| `make seed` / `seed-reset`       | Load development demo data into an empty database, or recreate the database and load it                        |
-| `make kill`                      | Free a stuck `:4001`                                                                                           |
-| `make load`                      | k6 load test of a running local server; fails when a service level objective is missed                         |
-| `make dast` / `fuzz-api`         | OWASP ZAP and Schemathesis scans of a running local server, from the API documents (they change data)          |
-| `make sonar-up` / `sonar`        | Start a local SonarQube Community Build, then analyse the code with test coverage (needs `SONAR_TOKEN`)        |
+| Command                          | Purpose                                                                                                       |
+| :------------------------------- | :------------------------------------------------------------------------------------------------------------ |
+| `make install`                   | `go mod download`                                                                                             |
+| `make dev`                       | Run the API on `:4001` with persistent keys from `.secrets/`                                                  |
+| `make dev-secrets`               | Generate the local JWT and SAML key material only                                                             |
+| `make build`                     | Compile the API to `bin/qeet-id`                                                                              |
+| `make test`                      | Run the unit tests                                                                                            |
+| `make test-db`                   | Run the database tests against PostgreSQL; Docker required                                                    |
+| `make lint`                      | Run `go vet` and `golangci-lint` as CI does                                                                   |
+| `make fmt` / `fmt-check`         | Format every file (Go, JavaScript, JSON, YAML, Markdown, shell), or check it is formatted                     |
+| `make sqlc` / `sqlc-check`       | Regenerate `dbgen/` from `queries.sql`, or check it is up to date                                             |
+| `make openapi` / `openapi-check` | Build the five API documents from `api/openapi/src/` and the Postman collection, or check they are up to date |
+| `make postman`                   | Rebuild only the Postman collection in `api/postman/`; import it as its README says                           |
+| `make db-up` / `db-down`         | Start or stop PostgreSQL, NATS and Mailpit                                                                    |
+| `make db-reset`                  | Recreate the local database volume                                                                            |
+| `make migrate-up`                | Apply every pending migration without starting the API (`make dev` and `make seed` also apply them)           |
+| `make migrate-down`              | Roll one migration back, to try its down file; needs the `migrate` CLI. `make migrate-up` applies it again    |
+| `make seed` / `seed-reset`       | Load development demo data into an empty database, or recreate the database and load it                       |
+| `make kill`                      | Free a stuck `:4001`                                                                                          |
+| `make load`                      | k6 load test of a running local server; fails when a service level objective is missed                        |
+| `make dast` / `fuzz-api`         | OWASP ZAP and Schemathesis scans of a running local server, from the API documents (they change data)         |
+| `make sonar-up` / `sonar`        | Start a local SonarQube Community Build, then analyse the code with test coverage (needs `SONAR_TOKEN`)       |
 
 Run a single test with `go test ./internal/access/authentication/... -run TestName`.
 

@@ -45,7 +45,7 @@ put:
     content:
       application/json:
         schema:
-          $ref: ../../components/schemas/SecurityPolicy.yaml
+          $ref: ../../components/schemas/SecurityPolicyUpdate.yaml
     description: The whole policy; organization_id is taken from the path.
   description: >-
     Replaces the organization's security policy. Session bounds apply to
@@ -91,7 +91,7 @@ patch:
     content:
       application/json:
         schema:
-          $ref: ../../components/schemas/SecurityPolicy.yaml
+          $ref: ../../components/schemas/SecurityPolicyUpdate.yaml
     description: >-
       Only the fields to change; a null clears a nullable one, such as
       max_sessions.

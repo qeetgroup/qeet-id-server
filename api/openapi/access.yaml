@@ -362,6 +362,9 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - session_id
+                  - publicKey
                 properties:
                   session_id:
                     type: string
@@ -467,6 +470,9 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - secret
+                  - provisioning_url
                 properties:
                   secret:
                     type: string
@@ -840,8 +846,28 @@ paths:
         - Auth
       security: []
       responses:
+        "200":
+          description: "Signed out and the cookie cleared, and applications that registered a front-channel logout URI took part in the session: the hosted login loads each URI, which carries iss and sid, to sign the browser out of that application too."
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStoreCacheControl"
+            Pragma:
+              $ref: "#/components/headers/NoStorePragma"
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - frontchannel_logout_uris
+                properties:
+                  frontchannel_logout_uris:
+                    type: array
+                    minItems: 1
+                    items:
+                      type: string
+                      format: uri
         "204":
-          description: Signed out (or there was no session to end), cookie cleared
+          description: Signed out (or there was no session to end), cookie cleared, and no application to sign out of in the browser
           headers:
             Cache-Control:
               $ref: "#/components/headers/NoStoreCacheControl"
@@ -1221,6 +1247,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   truncated:
                     $ref: "#/components/schemas/Truncated"
@@ -1228,6 +1256,16 @@ paths:
                     type: array
                     items:
                       type: object
+                      required:
+                        - id
+                        - organization_id
+                        - device
+                        - device_kind
+                        - user_agent
+                        - created_at
+                        - last_used_at
+                        - expires_at
+                        - current
                       properties:
                         id:
                           type: string
@@ -1403,6 +1441,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   items:
                     type: array
@@ -1577,6 +1617,19 @@ paths:
           content:
             application/json:
               example:
+                user:
+                  id: 018f2a70-1a2b-7c3d-9e4f-5a6b7c8d9e0f
+                  organization_id: 00000000-0000-0000-0000-000000000000
+                  email: ananya.rao@brightleaffoods.in
+                  email_verified_at: null
+                  phone: null
+                  phone_verified_at: null
+                  display_name: Ananya Rao
+                  avatar_url: null
+                  status: active
+                  metadata: {}
+                  created_at: "2026-09-24T11:00:00Z"
+                  updated_at: "2026-09-24T11:00:00Z"
                 access_token: eyJhbGciOiJFUzI1NiIsImtpZCI6ImsxIn0.eyJzdWIiOiIwMThmMmE3MCJ9.FAKE-signature
                 token_type: Bearer
                 expires_at: "2026-09-24T11:15:00Z"
@@ -3568,6 +3621,9 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - allowed
+                  - decided_by
                 properties:
                   allowed:
                     type: boolean
@@ -3620,6 +3676,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   items:
                     type: array
@@ -3653,6 +3711,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   truncated:
                     $ref: "#/components/schemas/Truncated"
@@ -3766,6 +3826,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   truncated:
                     $ref: "#/components/schemas/Truncated"
@@ -3976,6 +4038,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   items:
                     type: array
@@ -4112,6 +4176,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   truncated:
                     $ref: "#/components/schemas/Truncated"
@@ -4166,7 +4232,7 @@ paths:
   /v1/users/{userID}/organizations/{organizationID}/permissions:
     get:
       operationId: listEffectivePermissions
-      description: "Returns the flattened set of permission keys a user effectively holds in a organization, combining direct role assignments with roles inherited through group membership, and in grants every grant behind them: each permission with the role granting it, held directly or through which group (one entry per role and group, so a permission granted twice appears twice). Use it to explain why a user can or cannot perform an action, complementing the single-permission decision from the permission-check call. It is read-only and reflects the grants in force at call time. Needs role.read."
+      description: "Returns the flattened set of permission keys a user effectively holds in a organization, combining direct role assignments with roles inherited through group membership, and in grants every grant behind them: each permission with the role granting it, held directly or through which group (one entry per role and group, so a permission granted twice appears twice). Use it to explain why a user can or cannot perform an action, complementing the single-permission decision from the permission-check call. It is read-only and reflects the grants in force at call time. Needs role.read, even for the caller's own: a person reads their own without it at GET /v1/me/permissions."
       summary: Effective permissions
       tags:
         - RBAC
@@ -4188,6 +4254,9 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - permissions
+                  - grants
                 properties:
                   permissions:
                     type: array
@@ -4205,6 +4274,42 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/me/permissions:
+    get:
+      operationId: listMyEffectivePermissions
+      summary: My effective permissions
+      description: The permission keys the signed-in person holds in the organization their token is for, from the roles assigned to them and those their groups hold, with every grant behind them, as GET /v1/users/{userID}/organizations/{organizationID}/permissions answers for anyone. It needs no permission, so someone holding none (the built-in member role grants none) reads empty lists and an application can show them what they may use. Another person's permissions still need role.read. A token for no organization is refused with 401.
+      tags:
+        - RBAC
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The caller's effective permissions
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - permissions
+                  - grants
+                properties:
+                  permissions:
+                    type: array
+                    description: Each permission key once, in order.
+                    items:
+                      type: string
+                  grants:
+                    type: array
+                    description: "Every grant behind them: one entry per permission, role and group (a permission granted twice appears twice)."
+                    items:
+                      $ref: "#/components/schemas/AuthzGrantStep"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "429":
           $ref: "#/components/responses/TooManyRequests"
   /v1/users/{userID}/organizations/{organizationID}/roles/{roleID}:
@@ -4301,6 +4406,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   truncated:
                     $ref: "#/components/schemas/Truncated"
@@ -4684,6 +4791,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   truncated:
                     $ref: "#/components/schemas/Truncated"
@@ -4832,6 +4941,9 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - allowed
+                  - decided_by
                 properties:
                   allowed:
                     type: boolean
@@ -4845,6 +4957,11 @@ paths:
                     type: array
                     items:
                       type: object
+                      required:
+                        - object
+                        - relation
+                        - subject
+                        - depth
                       properties:
                         object:
                           type: string
@@ -5041,11 +5158,18 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - nodes
+                  - edges
                 properties:
                   nodes:
                     type: array
                     items:
                       type: object
+                      required:
+                        - id
+                        - type
+                        - label
                       properties:
                         id:
                           type: string
@@ -5061,6 +5185,10 @@ paths:
                     type: array
                     items:
                       type: object
+                      required:
+                        - from
+                        - to
+                        - relation
                       properties:
                         from:
                           type: string
@@ -5278,11 +5406,55 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - decision
+                  - context
                 properties:
                   decision:
                     type: boolean
                   context:
                     type: object
+                    required:
+                      - decided_by
+                    additionalProperties: true
+                    properties:
+                      decided_by:
+                        $ref: "#/components/schemas/AuthzDecidedBy"
+                      paths:
+                        type:
+                          - array
+                          - "null"
+                        description: "With explain, for a permission check: every grant behind an allow."
+                        items:
+                          $ref: "#/components/schemas/AuthzGrantStep"
+                      path:
+                        type:
+                          - array
+                          - "null"
+                        description: "With explain, for a relation check: the chain of relation tuples that allowed it; null when nothing did."
+                        items:
+                          type: object
+                          required:
+                            - object
+                            - relation
+                            - subject
+                            - depth
+                          properties:
+                            object:
+                              type: string
+                            relation:
+                              type: string
+                            subject:
+                              type: string
+                            depth:
+                              type: integer
+                      trace:
+                        type:
+                          - array
+                          - "null"
+                        description: With explain, the decision's trace.
+                        items:
+                          type: string
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -5506,7 +5678,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AuthPolicy"
+              $ref: "#/components/schemas/AuthPolicyUpdate"
         description: The whole policy (a full replace). `lockout_limits` is read-only and ignored.
       description: Replaces the organization's authentication policy. The sign-in lockout settings apply to the next sign-in attempt with no deployment. A lockout setting outside the documented bounds (`lockout_limits.min`..`lockout_limits.max`) is refused with 422 validation_failed, naming each field (code out_of_range), and nothing is stored. The password minimum length (8..128) and magic-link lifetime (5..1440 minutes) are clamped. Refused with 422 validation_failed, storing nothing, when the change would switch off every sign-in method (password, passkey and magic link; field password_enabled, code no_sign_in_method) or switch on otp_email_enabled / otp_sms_enabled (code not_available — no one-time-code sign-in exists). Changes apply to the next sign-in; the policy is not cached. Every sign-in method may be switched off only while the organization has an active SAML, LDAP or OpenID Connect connection to sign in through (a draft or disabled one does not count); its members then sign in with single sign-on alone, break-glass members included.
       responses:
@@ -5580,7 +5752,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SecurityPolicy"
+              $ref: "#/components/schemas/SecurityPolicyUpdate"
         description: The whole policy; organization_id is taken from the path.
       description: "Replaces the organization's security policy. Session bounds apply to sessions and application grants started afterwards. A value out of range is refused with 422 validation_failed naming the field. The policy holds no IP lists: which addresses may sign in is the address rules (/v1/organizations/{organizationID}/ip-rules). ip_allowlist and ip_denylist are still accepted empty, for older consoles; entries are refused with 422 validation_failed, code retired."
       responses:
@@ -5619,7 +5791,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SecurityPolicy"
+              $ref: "#/components/schemas/SecurityPolicyUpdate"
         description: Only the fields to change; a null clears a nullable one, such as max_sessions.
       description: Changes only the fields sent, over the stored policy, and keeps the rest; the read, the change and the write happen under the policy's lock, so a rule saved meanwhile is kept (PUT takes the same lock). Validation, auditing (security_policy.updated) and the step-up are as for PUT.
       responses:
@@ -6028,7 +6200,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/RiskSettings"
+              $ref: "#/components/schemas/RiskSettingsUpdate"
       responses:
         "200":
           description: Updated settings
@@ -6932,6 +7104,19 @@ components:
           maxLength: 200
     User:
       type: object
+      required:
+        - id
+        - organization_id
+        - email
+        - email_verified_at
+        - phone
+        - phone_verified_at
+        - display_name
+        - avatar_url
+        - status
+        - metadata
+        - created_at
+        - updated_at
       properties:
         id:
           type: string
@@ -6967,10 +7152,12 @@ components:
           description: The person's picture as a data:image/ URL, or null for none.
         status:
           type: string
+          description: deleted only for someone since deleted, on a members list that asked to include them (include_deleted).
           enum:
             - active
             - invited
             - suspended
+            - deleted
         metadata:
           type:
             - object
@@ -7020,6 +7207,10 @@ components:
             - string
             - "null"
           description: The name of the organization that manages the account (organization_id).
+        deleted_at:
+          type: string
+          format: date-time
+          description: When someone since deleted was, on a members list that asked to include them (include_deleted); absent for everyone else.
         suspension:
           type:
             - object
@@ -7047,9 +7238,18 @@ components:
                 - "null"
     SignupResponse:
       type: object
+      required:
+        - user
+        - access_token
+        - token_type
+        - expires_at
+        - refresh_token
+        - session_id
+        - user_id
       properties:
         user:
           $ref: "#/components/schemas/User"
+          description: The new account. It belongs to no organization yet, so its organization_id is the nil UUID (all zeros) until it creates or joins one.
         access_token:
           type: string
         token_type:
@@ -7417,6 +7617,12 @@ components:
     AuthzGrantStep:
       type: object
       description: "One link in an authorization decision's grant path: a role that confers the requested permission and how that role reaches the user."
+      required:
+        - permission
+        - granted_by
+        - via
+        - role_id
+        - role_name
       properties:
         permission:
           type: string
@@ -7440,6 +7646,10 @@ components:
           type: string
     Permission:
       type: object
+      required:
+        - id
+        - key
+        - description
       properties:
         id:
           type: string
@@ -7451,6 +7661,10 @@ components:
     GroupRole:
       type: object
       description: A role granted to a group, with the role's name for display.
+      required:
+        - role_id
+        - name
+        - granted_at
       properties:
         role_id:
           type: string
@@ -7477,6 +7691,13 @@ components:
           maxLength: 500
     Role:
       type: object
+      required:
+        - id
+        - organization_id
+        - name
+        - description
+        - is_system
+        - created_at
       properties:
         id:
           type: string
@@ -7529,6 +7750,21 @@ components:
     ABACPolicy:
       type: object
       description: One ABAC policy row.
+      required:
+        - id
+        - organization_id
+        - name
+        - description
+        - effect
+        - resource_type
+        - action
+        - condition
+        - priority
+        - enabled
+        - created_at
+        - updated_at
+        - version
+        - updated_by
       properties:
         id:
           type: string
@@ -7766,6 +8002,10 @@ components:
           additionalProperties: true
     LockoutSettings:
       type: object
+      required:
+        - threshold
+        - window_minutes
+        - duration_minutes
       properties:
         threshold:
           type: integer
@@ -7777,6 +8017,10 @@ components:
       type: object
       readOnly: true
       description: "The platform defaults for the lockout settings (threshold 5, window and duration 15 minutes) and the inclusive bounds an organization may choose within. The bounds run from the defaults toward stricter only: a threshold down to 3, a window and lock up to 24 hours. An organization's settings govern the lock on one network; the lock on every network (4 times the platform threshold) always uses the platform defaults. Ignored on update."
+      required:
+        - defaults
+        - min
+        - max
       properties:
         defaults:
           $ref: "#/components/schemas/LockoutSettings"
@@ -7786,6 +8030,78 @@ components:
           $ref: "#/components/schemas/LockoutSettings"
     AuthPolicy:
       type: object
+      required:
+        - password_enabled
+        - password_min_length
+        - password_require_uppercase
+        - password_require_number
+        - password_require_symbol
+        - magic_link_enabled
+        - magic_link_ttl_minutes
+        - passkey_enabled
+        - otp_email_enabled
+        - otp_sms_enabled
+        - self_registration_enabled
+        - remember_device_enabled
+        - remember_device_days
+        - lockout_threshold
+        - lockout_window_minutes
+        - lockout_duration_minutes
+        - lockout_limits
+      properties:
+        password_enabled:
+          type: boolean
+        password_min_length:
+          type: integer
+          minimum: 8
+          maximum: 128
+        password_require_uppercase:
+          type: boolean
+        password_require_number:
+          type: boolean
+        password_require_symbol:
+          type: boolean
+        magic_link_enabled:
+          type: boolean
+        magic_link_ttl_minutes:
+          type: integer
+          minimum: 5
+          maximum: 1440
+        passkey_enabled:
+          type: boolean
+        otp_email_enabled:
+          type: boolean
+        otp_sms_enabled:
+          type: boolean
+        self_registration_enabled:
+          type: boolean
+        remember_device_enabled:
+          type: boolean
+        remember_device_days:
+          type: integer
+          minimum: 1
+          maximum: 90
+          description: How long a device stays remembered after the sign-in that remembered it, in days (30 by default; 0 on update keeps the default). Applies to devices remembered after it is set.
+        lockout_threshold:
+          type:
+            - integer
+            - "null"
+          description: "Failed password sign-ins to one account from one network, each within the window of the last, that lock the account for that network. null = the platform default. Must lie within lockout_limits (default bounds 3..5): an organization may make the lockout stricter, never looser."
+        lockout_window_minutes:
+          type:
+            - integer
+            - "null"
+          description: A failure is forgotten once this many minutes pass with no new failure. null = the platform default. Must lie within lockout_limits (default bounds 15..1440).
+        lockout_duration_minutes:
+          type:
+            - integer
+            - "null"
+          description: How long a lock lasts. null = the platform default. Must lie within lockout_limits (default bounds 15..1440).
+        lockout_limits:
+          $ref: "#/components/schemas/LockoutLimits"
+    AuthPolicyUpdate:
+      type: object
+      description: "The authentication policy PUT stores, whole: a switch left out is off, a lockout setting left out or null is the platform default, and remember_device_days left out is 30; password_min_length and magic_link_ttl_minutes are clamped to their bounds. lockout_limits is read-only and ignored."
       properties:
         password_enabled:
           type: boolean
@@ -7839,6 +8155,85 @@ components:
           $ref: "#/components/schemas/LockoutLimits"
     SecurityPolicy:
       type: object
+      required:
+        - organization_id
+        - session_max_age
+        - session_idle_timeout
+        - max_sessions
+        - session_limit_action
+        - mfa_enforcement
+        - mfa_grace_days
+        - mfa_enforced_since
+        - step_up_window
+        - step_up_methods
+        - settings
+      properties:
+        organization_id:
+          type: string
+          format: uuid
+        session_max_age:
+          type: string
+          example: 720h
+          description: 'How long a session lasts after sign-in however active it is, and an application''s grant however often it is renewed: a duration such as "720h" or "90m", between 1h and 8760h. Applies to sessions and grants started after it is saved. Omitted or zero on update: the platform default.'
+        session_idle_timeout:
+          type: string
+          example: 24h
+          description: "How long a session may go without being renewed before it ends: a duration of at least 15m and no longer than session_max_age. Applies to sessions started after it is saved. Omitted or zero on update: the platform default (no longer than session_max_age)."
+        max_sessions:
+          type:
+            - integer
+            - "null"
+          minimum: 1
+          maximum: 1000
+          description: How many live sessions one person may hold in the organization at once; null for no limit (the default). Counted and enforced as a session opens, so simultaneous sign-ins cannot exceed it.
+        session_limit_action:
+          type: string
+          enum:
+            - evict_oldest
+            - refuse
+          description: "What a sign-in at max_sessions does: evict_oldest ends the person's least recently used session (renewal stops at once; an access token it already issued lasts out its own lifetime, ACCESS_TOKEN_TTL), announced to session.revoked subscribers as session_limit; refuse refuses the sign-in with 403 auth.session_limit. Both are audited."
+        mfa_enforcement:
+          type: string
+          enum:
+            - optional
+            - required
+            - admin_only
+          description: "Who must use a second factor to sign in, enforced at password sign-in: optional (only people who set one up are challenged), required (everyone), admin_only (anyone holding a role, directly or through a group, that grants an administrative permission: one that changes who signs in or with what authority, such as user.write, user.credentials, user.suspend, session.revoke, member.invite or role.write, the same administrators single sign-on never adopts by address). Separately, an account an administrator marks as requiring MFA must, whatever is set here. An account that must and holds no factor sets up an authenticator app before any session is issued."
+        mfa_grace_days:
+          type: integer
+          minimum: 0
+          maximum: 90
+          description: "For this many days after the requirement is turned on, the accounts that already existed may put setting up a second factor off (they are prompted at each sign-in). 0, the default: no grace period."
+        mfa_enforced_since:
+          type:
+            - string
+            - "null"
+          format: date-time
+          readOnly: true
+          description: When the requirement was turned on (from optional); null while optional. Moving between required and admin_only keeps it.
+        step_up_window:
+          type: string
+          example: 5m
+          description: "How long a step-up keeps a session's sensitive actions unlocked: a duration between 1m and 60m. A step-up belongs to the session that earned it; it ends with that session, and a changed password or an administrative factor reset clears it. Omitted or zero on update: 5m."
+        step_up_methods:
+          type:
+            - array
+            - "null"
+          items:
+            type: string
+            enum:
+              - totp
+              - recovery_code
+              - otp
+              - webauthn
+              - push
+          description: "The factor types that count as a step-up (otp: an emailed or text-message code; webauthn: a passkey). Null or empty: every one. A session stepped up by a factor that is not listed is asked again."
+        settings:
+          type: object
+          additionalProperties: true
+    SecurityPolicyUpdate:
+      type: object
+      description: "The security policy as PUT replaces it and PATCH changes it: PUT takes the whole policy, PATCH only the fields to change."
       properties:
         organization_id:
           type: string
@@ -7913,6 +8308,22 @@ components:
         settings:
           type: object
           additionalProperties: true
+        ip_allowlist:
+          type: array
+          deprecated: true
+          writeOnly: true
+          maxItems: 0
+          items:
+            type: string
+          description: "Retired: accepted only empty, for older consoles; an entry is refused with 422 validation_failed, code retired. Which addresses may sign in is the address rules' (/v1/organizations/{organizationID}/ip-rules)."
+        ip_denylist:
+          type: array
+          deprecated: true
+          writeOnly: true
+          maxItems: 0
+          items:
+            type: string
+          description: Retired, as ip_allowlist.
     Rule:
       type: object
       required:
@@ -7990,6 +8401,48 @@ components:
           type: number
     RiskSettings:
       type: object
+      required:
+        - medium_threshold
+        - high_threshold
+        - force_mfa_at_level
+        - impossible_travel_enabled
+        - min_travel_hours
+        - device_reputation_enabled
+        - country_header_configured
+        - country_last_seen_at
+      properties:
+        medium_threshold:
+          type: number
+        high_threshold:
+          type: number
+        force_mfa_at_level:
+          type: string
+          enum:
+            - medium
+            - high
+        impossible_travel_enabled:
+          type: boolean
+          description: Off by default. Also needs a geo signal to do anything — see GEO_COUNTRY_HEADER.
+        min_travel_hours:
+          type: number
+          description: A login from a different country than the last one, sooner than this many hours later, is flagged.
+        device_reputation_enabled:
+          type: boolean
+          description: Off by default. Flags a login from a browser+OS combination never seen before for this user.
+        country_header_configured:
+          type: boolean
+          readOnly: true
+          description: Whether the deployment names a trusted proxy country header (GEO_COUNTRY_HEADER). Without one impossible travel never fires. Ignored on update.
+        country_last_seen_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+          readOnly: true
+          description: When the instance answering last read a country from that header; null if none since it started (no header, or the proxy isn't sending it). Ignored on update.
+    RiskSettingsUpdate:
+      type: object
+      description: The sign-in risk settings PUT stores. A threshold left out or below 0.1 is 0.1, force_mfa_at_level anything but medium is high, and min_travel_hours left out or not above 0 is the default.
       properties:
         medium_threshold:
           type: number
@@ -8041,6 +8494,13 @@ components:
           type: boolean
     Anomaly:
       type: object
+      required:
+        - id
+        - type
+        - severity
+        - detail
+        - status
+        - created_at
       properties:
         resolved_by:
           type: string

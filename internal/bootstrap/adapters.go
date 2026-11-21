@@ -13,6 +13,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/identity/user"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/billing"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/overview"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
@@ -80,6 +81,18 @@ func (u entitlementUsageResolver) Usage(ctx context.Context, organizationID uuid
 		}
 	}
 	return out, nil
+}
+
+// overviewAccess decides which of the overview's areas a caller may read: an
+// area needing a permission is theirs when a route needing it would admit
+// them, as the route guard decides it.
+func overviewAccess(checker rbac.Checker) overview.Authorizer {
+	return func(ctx context.Context, p *httpx.Principal, permission string) (bool, error) {
+		if p == nil {
+			return false, nil
+		}
+		return rbac.Allows(ctx, checker, p, rbac.PermissionPolicy(permission))
+	}
 }
 
 // streamAccess decides, while an activity stream is open, whether its reader

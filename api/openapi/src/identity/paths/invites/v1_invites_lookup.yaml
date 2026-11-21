@@ -33,9 +33,18 @@ post:
         application/json:
           schema:
             type: object
+            required:
+              - organization
+              - email
+              - expires_at
+              - account_exists
+              - methods
             properties:
               organization:
                 type: object
+                required:
+                  - name
+                  - slug
                 properties:
                   name:
                     type: string
@@ -50,6 +59,9 @@ post:
                 type: boolean
               methods:
                 type: object
+                required:
+                  - password
+                  - passkey
                 properties:
                   password:
                     type: boolean

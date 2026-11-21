@@ -20,6 +20,8 @@ get:
         application/json:
           schema:
             type: object
+            required:
+              - items
             properties:
               next_cursor:
                 $ref: ../../../shared/schemas/NextCursor.yaml
@@ -27,6 +29,13 @@ get:
                 type: array
                 items:
                   type: object
+                  required:
+                    - id
+                    - email
+                    - display_name
+                    - deleted_at
+                    - deleted_by
+                    - created_at
                   properties:
                     id:
                       type: string

@@ -1,0 +1,15 @@
+type: object
+description: >-
+  A bucket's override: rate (requests a second) and capacity (burst), both
+  needed for it to be stored.
+properties:
+  rate:
+    type:
+      - number
+      - "null"
+    description: Sustained tokens per second.
+  capacity:
+    type:
+      - integer
+      - "null"
+    description: Maximum burst capacity.

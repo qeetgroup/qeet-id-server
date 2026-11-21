@@ -495,6 +495,7 @@ func accessUserOnlyRoutes() []string {
 		"GET /v1/me/access-requests",
 		"POST /v1/me/access-requests",
 		"GET /v1/me/access-requests/roles",
+		"GET /v1/me/permissions",
 		"POST /v1/me/access-requests/{id}/cancel",
 		"GET /v1/passkeys",
 		"PATCH /v1/passkeys/{id}",

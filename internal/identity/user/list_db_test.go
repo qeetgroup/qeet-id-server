@@ -17,9 +17,11 @@ import (
 )
 
 // TestTheMembersListIsSearchedAndCountedOnTheServer checks that each of the
-// members list's filters narrows it, that they combine, that the total is how
-// many match, that it pages by cursor alone, that the summary's counts agree
-// with the list, that a malformed filter is refused, and that another
+// members list's filters narrows it, among them the owners and admins without
+// a second factor and the members in none of the organization's groups (not
+// another organization's), that they combine, that the total is how many
+// match, that it pages by cursor alone, that the summary's counts agree with
+// the list, that a malformed filter is refused, and that another
 // organization's people never appear.
 func TestTheMembersListIsSearchedAndCountedOnTheServer(t *testing.T) {
 	ctx := dbtest.Context(t)
@@ -37,11 +39,13 @@ func TestTheMembersListIsSearchedAndCountedOnTheServer(t *testing.T) {
 	}
 	alice := dbtest.UserAt(t, dbtest.Unique("alice")+"@example.test", organization)
 	dbtest.Assign(t, alice.ID, organization, admin)
-	exec(`UPDATE account.users SET display_name = 'Alice Arden', email_verified_at = NOW(), metadata = '{"department":"Sales"}' WHERE id = $1`, alice.ID)
+	exec(`UPDATE account.users SET display_name = 'Alice Arden', email_verified_at = NOW(),
+		metadata = '{"department":"Sales","team":"Enterprise","location":"Pune, India"}' WHERE id = $1`, alice.ID)
 	exec(`INSERT INTO auth.sessions (user_id, organization_id, last_seen_at) VALUES ($1, $2, NOW())`, alice.ID, organization)
 
 	bob := dbtest.UserAt(t, dbtest.Unique("bob")+"@example.test", organization, organization)
-	exec(`UPDATE account.users SET display_name = 'Bob Brook', metadata = '{"department":"Engineering"}' WHERE id = $1`, bob.ID)
+	exec(`UPDATE account.users SET display_name = 'Bob Brook',
+		metadata = '{"department":"Engineering","team":"Platform","location":"Pune, India"}' WHERE id = $1`, bob.ID)
 	exec(`INSERT INTO auth.mfa_totp (user_id, secret_ct, secret_nonce, confirmed_at) VALUES ($1, '\x00', '\x00', NOW())`, bob.ID)
 
 	carol := dbtest.UserAt(t, dbtest.Unique("carol")+"@example.test", organization, organization)
@@ -50,6 +54,16 @@ func TestTheMembersListIsSearchedAndCountedOnTheServer(t *testing.T) {
 
 	visitor := dbtest.User(t, other, organization) // managed by another organization
 	stranger := dbtest.User(t, other, other)
+	// What the visitor's home organization keeps on them, which this one never sees.
+	exec(`UPDATE account.users SET metadata = '{"department":"Engineering","team":"Platform","location":"Lisbon"}' WHERE id = $1`, visitor.ID)
+	for _, in := range []struct {
+		organization uuid.UUID
+		member       uuid.UUID
+	}{{organization, carol.ID}, {other, visitor.ID}} {
+		exec(`WITH g AS (INSERT INTO organization.groups (organization_id, name) VALUES ($1, $2) RETURNING id)
+			INSERT INTO organization.group_members (group_id, user_id, organization_id) SELECT id, $3, $1 FROM g`,
+			in.organization, dbtest.Unique("group"), in.member)
+	}
 
 	h := dbtest.Serve(dbtest.Principal(alice.ID, organization), (&Handler{Repo: NewRepository(pool), Validate: jsonNamedValidator(), SignIns: endSessions{}, Mailer: &dbtest.Mailbox{}}).Mount)
 	type page struct {
@@ -95,6 +109,11 @@ func TestTheMembersListIsSearchedAndCountedOnTheServer(t *testing.T) {
 		"seen this week":        {url.Values{"last_seen": {"week"}}, []uuid.UUID{carol.ID}},
 		"never seen":            {url.Values{"last_seen": {"never"}}, []uuid.UUID{bob.ID, visitor.ID}},
 		"filters together":      {url.Values{"last_seen": {"never"}, "mfa": {"off"}}, []uuid.UUID{visitor.ID}},
+		"admins without MFA":    {url.Values{"admins_without_mfa": {"true"}}, []uuid.UUID{alice.ID}},
+		"not admins without":    {url.Values{"admins_without_mfa": {"false"}}, []uuid.UUID{bob.ID, carol.ID, visitor.ID}},
+		"in a group":            {url.Values{"in_group": {"true"}}, []uuid.UUID{carol.ID}},
+		"in no group":           {url.Values{"in_group": {"false"}}, []uuid.UUID{alice.ID, bob.ID, visitor.ID}},
+		"in no group, with MFA": {url.Values{"in_group": {"false"}, "mfa": {"on"}}, []uuid.UUID{bob.ID}},
 		"filters matching none": {url.Values{"role": {"admin"}, "status": {"suspended"}}, nil},
 	} {
 		got := ids(list(c.query))
@@ -135,19 +154,22 @@ func TestTheMembersListIsSearchedAndCountedOnTheServer(t *testing.T) {
 	if skipped := list(url.Values{"limit": {"2"}, "offset": {"2"}}); len(skipped.Items) != 2 || skipped.Items[0].ID != first.Items[0].ID {
 		t.Errorf("offset=2 lists %v, want the first page %v", ids(skipped), ids(first))
 	}
-	for _, bad := range []url.Values{{"mfa": {"maybe"}}, {"sort": {"email"}}, {"status": {"deleted"}}, {"last_seen": {"yesterday"}}, {"order": {"up"}}} {
+	for _, bad := range []url.Values{{"mfa": {"maybe"}}, {"sort": {"email"}}, {"status": {"deleted"}}, {"last_seen": {"yesterday"}}, {"order": {"up"}},
+		{"admins_without_mfa": {"maybe"}}, {"in_group": {"none"}}} {
 		if rec := dbtest.Do(t, h, http.MethodGet, "/users?"+bad.Encode(), nil); rec.Code != http.StatusBadRequest {
 			t.Errorf("list %v: %d, want 400", bad, rec.Code)
 		}
 	}
 
 	var stats struct {
-		Total            int            `json:"total"`
-		LastSeen         map[string]int `json:"last_seen"`
-		AdminsWithoutMFA int            `json:"admins_without_mfa"`
-		EmailUnverified  int            `json:"email_unverified"`
-		ByRole           []RoleCount    `json:"by_role"`
-		ByDepartment     []DeptCount    `json:"by_department"`
+		Total            int             `json:"total"`
+		LastSeen         map[string]int  `json:"last_seen"`
+		AdminsWithoutMFA int             `json:"admins_without_mfa"`
+		EmailUnverified  int             `json:"email_unverified"`
+		ByRole           []RoleCount     `json:"by_role"`
+		ByDepartment     []DeptCount     `json:"by_department"`
+		ByTeam           []TeamCount     `json:"by_team"`
+		ByLocation       []LocationCount `json:"by_location"`
 	}
 	dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, "/users/stats", nil), &stats)
 	for bucket, n := range stats.LastSeen {
@@ -155,11 +177,22 @@ func TestTheMembersListIsSearchedAndCountedOnTheServer(t *testing.T) {
 			t.Errorf("stats last_seen.%s = %d, the list's total %d", bucket, n, want)
 		}
 	}
-	if stats.Total != 4 || stats.AdminsWithoutMFA != 1 || stats.EmailUnverified != list(url.Values{"email_verified": {"false"}}).Total {
+	if stats.Total != 4 || stats.AdminsWithoutMFA != list(url.Values{"admins_without_mfa": {"true"}}).Total || stats.EmailUnverified != list(url.Values{"email_verified": {"false"}}).Total {
 		t.Errorf("stats %+v", stats)
 	}
-	if len(stats.ByRole) == 0 || len(stats.ByDepartment) != 2 {
-		t.Errorf("stats by role %v, by department %v", stats.ByRole, stats.ByDepartment)
+	if len(stats.ByRole) == 0 || !slices.Equal(stats.ByDepartment, []DeptCount{{"Engineering", 1}, {"Sales", 1}}) {
+		t.Errorf("stats by role %v, by department %v; want Engineering and Sales once each, not the visitor's", stats.ByRole, stats.ByDepartment)
+	}
+	if !slices.Equal(stats.ByTeam, []TeamCount{{"Engineering", "Platform", 1}, {"Sales", "Enterprise", 1}}) {
+		t.Errorf("stats by team %v; want Platform and Enterprise in their departments once each, not the visitor's", stats.ByTeam)
+	}
+	if !slices.Equal(stats.ByLocation, []LocationCount{{"Pune, India", 2}}) {
+		t.Errorf("stats by location %v; want Pune twice, not the visitor's Lisbon", stats.ByLocation)
+	}
+	for _, d := range stats.ByDepartment {
+		if want := list(url.Values{"department": {d.Department}}).Total; d.Count != want {
+			t.Errorf("stats by_department %s = %d, the list's total %d", d.Department, d.Count, want)
+		}
 	}
 }
 
@@ -207,9 +240,9 @@ func TestAMembersRecordSaysWhereTheyStand(t *testing.T) {
 }
 
 // TestListPagesThroughTheOrganizationsMembers checks that the user list walks
-// every live member of the caller's organization exactly once by cursor (in
-// the default order only), leaves out other organizations' people and deleted
-// accounts, and shows a member's roles and groups in this organization only.
+// every live member of the caller's organization exactly once by cursor,
+// leaves out other organizations' people and deleted accounts, and shows a
+// member's roles and groups in this organization only.
 func TestListPagesThroughTheOrganizationsMembers(t *testing.T) {
 	organization, other := dbtest.Organization(t), dbtest.Organization(t)
 	admin := dbtest.User(t, organization, organization)
@@ -271,7 +304,7 @@ func TestListPagesThroughTheOrganizationsMembers(t *testing.T) {
 		t.Errorf("offset=2 lists %v, want the first page %v: the list pages by cursor alone", ids, got[:2])
 	}
 	if rec := dbtest.Do(t, as, http.MethodGet, "/users?limit=2&sort=name&cursor="+url.QueryEscape(paging.EncodeTimeUUID(time.Now(), admin.ID)), nil); rec.Code != http.StatusBadRequest {
-		t.Errorf("a cursor in the name order: %d, want 400", rec.Code)
+		t.Errorf("the default order's cursor in the name order: %d, want 400", rec.Code)
 	}
 	if rec := dbtest.Do(t, as, http.MethodGet, "/users?cursor=not-a-cursor", nil); rec.Code != http.StatusBadRequest {
 		t.Errorf("list with a bad cursor: %d, want 400", rec.Code)
@@ -300,6 +333,10 @@ func TestListPagesThroughTheOrganizationsMembers(t *testing.T) {
 	dbtest.Decode(t, dbtest.Do(t, as, http.MethodGet, "/users/stats", nil), &stats)
 	if stats != (UserStats{Total: 6, Active: 6, MFAEnabled: 1, MFAMissing: 5, NewLast30d: 6}) {
 		t.Errorf("stats %+v, want 6 active members, 1 with a second factor", stats)
+	}
+	if body := dbtest.Do(t, as, http.MethodGet, "/users/stats", nil).Body.String(); !strings.Contains(body, `"by_team":[]`) ||
+		!strings.Contains(body, `"by_location":[]`) || !strings.Contains(body, `"by_department":[]`) {
+		t.Errorf("stats with no departments, teams or locations: %s; want each an empty list", body)
 	}
 	var trends UserTrends
 	dbtest.Decode(t, dbtest.Do(t, as, http.MethodGet, "/users/trends", nil), &trends)
@@ -375,5 +412,186 @@ func TestLastSignInOutlastsTheSessions(t *testing.T) {
 	if err != nil || len(suspended.Items) != 1 || suspended.Items[0].LastSignIn == nil ||
 		time.Since(*suspended.Items[0].LastSignIn) < 19*24*time.Hour {
 		t.Errorf("suspended list %+v, %v; want the member, last signed in here 20 days ago", suspended.Items, err)
+	}
+}
+
+// TestEveryOrderPagesToTheEnd checks that the members list pages by cursor in
+// every order, by name, by when last seen and by creation, each either way:
+// small pages walk every member once, in the order one page of all of them
+// has, though names, sightings and creation times tie and some members were
+// never seen. A cursor from a page in another order is refused.
+func TestEveryOrderPagesToTheEnd(t *testing.T) {
+	organization := dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	members := []uuid.UUID{admin.ID}
+	seen := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	created := time.Now().Add(-48 * time.Hour).UTC().Truncate(time.Second)
+	for i := range 9 {
+		u := dbtest.User(t, organization, organization)
+		members = append(members, u.ID)
+		// Three people to a name, three to a moment, and a third never seen.
+		exec(t, `UPDATE account.users SET display_name = $2, created_at = $3 WHERE id = $1`,
+			u.ID, []string{"Asha", "Ravi", ""}[i%3], created.Add(time.Duration(i/3)*time.Hour))
+		if i%3 != 2 {
+			exec(t, `INSERT INTO auth.sessions (user_id, organization_id, last_seen_at) VALUES ($1, $2, $3)`,
+				u.ID, organization, seen.Add(time.Duration(i%2)*time.Minute))
+		}
+	}
+	as := dbtest.Serve(dbtest.Principal(admin.ID, organization), testHandler(t, nil).Mount)
+	type page struct {
+		Items      []User `json:"items"`
+		NextCursor string `json:"next_cursor"`
+		Total      int    `json:"total"`
+	}
+	get := func(query url.Values) page {
+		t.Helper()
+		rec := dbtest.Do(t, as, http.MethodGet, "/users?"+query.Encode(), nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list %v: %d %s", query, rec.Code, rec.Body.String())
+		}
+		var p page
+		dbtest.Decode(t, rec, &p)
+		return p
+	}
+	ids := func(users []User) []uuid.UUID {
+		out := make([]uuid.UUID, len(users))
+		for i, u := range users {
+			out[i] = u.ID
+		}
+		return out
+	}
+
+	cursors := map[string]string{}
+	for _, order := range []url.Values{
+		{"sort": {"name"}}, {"sort": {"name"}, "order": {"desc"}},
+		{"sort": {"last_seen"}}, {"sort": {"last_seen"}, "order": {"asc"}},
+		{"sort": {"created"}, "order": {"asc"}}, {"sort": {"created"}},
+	} {
+		all := get(url.Values{"sort": order["sort"], "order": order["order"], "limit": {"200"}})
+		if len(all.Items) != len(members) || all.NextCursor != "" {
+			t.Fatalf("%v in one page: %d members, cursor %q; want all %d and no cursor", order, len(all.Items), all.NextCursor, len(members))
+		}
+		var walked []User
+		cursor := ""
+		for range len(members) {
+			query := url.Values{"sort": order["sort"], "order": order["order"], "limit": {"2"}}
+			if cursor != "" {
+				query.Set("cursor", cursor)
+			}
+			p := get(query)
+			if p.Total != len(members) {
+				t.Errorf("%v: a page's total %d, want %d", order, p.Total, len(members))
+			}
+			walked = append(walked, p.Items...)
+			if cursor = p.NextCursor; cursor == "" {
+				break
+			}
+			cursors[order.Encode()] = cursor
+		}
+		if !slices.Equal(ids(walked), ids(all.Items)) {
+			t.Errorf("%v walked two at a time:\n%v\nwant the one page's order:\n%v", order, ids(walked), ids(all.Items))
+		}
+	}
+	for _, order := range []string{"last_seen", "last_seen&order=asc"} {
+		q, _ := url.ParseQuery("sort=" + order + "&limit=200")
+		items := get(q).Items
+		if last := items[len(items)-1]; last.LastSeenAt != nil {
+			t.Errorf("%s: the last member was seen at %v, want one never seen", order, last.LastSeenAt)
+		}
+	}
+
+	nameCursor := cursors[url.Values{"sort": {"name"}}.Encode()]
+	for _, bad := range []url.Values{
+		{"sort": {"name"}, "order": {"desc"}, "cursor": {nameCursor}},
+		{"sort": {"last_seen"}, "cursor": {nameCursor}},
+		{"cursor": {nameCursor}},
+		{"sort": {"name"}, "cursor": {cursors[url.Values{"sort": {"created"}}.Encode()]}},
+		{"sort": {"name"}, "cursor": {"not-a-cursor"}},
+	} {
+		if rec := dbtest.Do(t, as, http.MethodGet, "/users?"+bad.Encode(), nil); rec.Code != http.StatusBadRequest {
+			t.Errorf("list %v: %d, want 400", bad, rec.Code)
+		}
+	}
+}
+
+// TestTheListNamesMembersByIDOrEmail checks that the members list answers
+// exactly the members named by id or by email (in any case), combined with the
+// other filters, never another organization's people, and someone since
+// deleted only when asked to include them, marked as deleted. Too many names,
+// or a malformed one, is refused.
+func TestTheListNamesMembersByIDOrEmail(t *testing.T) {
+	organization, other := dbtest.Organization(t), dbtest.Organization(t)
+	admin := dbtest.User(t, organization, organization)
+	asha := dbtest.UserAt(t, dbtest.Unique("Asha")+"@Example.test", organization, organization)
+	ravi := dbtest.User(t, organization, organization)
+	exec(t, `UPDATE account.users SET status = 'suspended' WHERE id = $1`, ravi.ID)
+	visitor := dbtest.User(t, other, organization)
+	stranger := dbtest.User(t, other, other)
+	gone := dbtest.User(t, organization, organization)
+	exec(t, `UPDATE account.users SET deleted_at = NOW(), status = 'deleted' WHERE id = $1`, gone.ID)
+	as := dbtest.Serve(dbtest.Principal(admin.ID, organization), testHandler(t, nil).Mount)
+	type page struct {
+		Items []User `json:"items"`
+		Total int    `json:"total"`
+	}
+	list := func(query url.Values) page {
+		t.Helper()
+		rec := dbtest.Do(t, as, http.MethodGet, "/users?"+query.Encode(), nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list %v: %d %s", query, rec.Code, rec.Body.String())
+		}
+		var p page
+		dbtest.Decode(t, rec, &p)
+		return p
+	}
+	sorted := func(p page) []uuid.UUID {
+		out := make([]uuid.UUID, 0, len(p.Items))
+		for _, u := range p.Items {
+			out = append(out, u.ID)
+		}
+		return slices.SortedFunc(slices.Values(out), uuidCompare)
+	}
+	want := func(ids ...uuid.UUID) []uuid.UUID { return slices.SortedFunc(slices.Values(ids), uuidCompare) }
+
+	for name, c := range map[string]struct {
+		query url.Values
+		want  []uuid.UUID
+	}{
+		"two by id":                    {url.Values{"id": {asha.ID.String(), visitor.ID.String()}}, want(asha.ID, visitor.ID)},
+		"by id, with a filter":         {url.Values{"id": {asha.ID.String(), ravi.ID.String()}, "status": {"suspended"}}, want(ravi.ID)},
+		"another organization's by id": {url.Values{"id": {stranger.ID.String()}}, nil},
+		"by email, in another case":    {url.Values{"email": {strings.ToUpper(asha.Email), ravi.Email}}, want(asha.ID, ravi.ID)},
+		"another organization's email": {url.Values{"email": {stranger.Email}}, nil},
+		"by id and by email":           {url.Values{"id": {asha.ID.String()}, "email": {asha.Email, ravi.Email}}, want(asha.ID)},
+		"someone deleted":              {url.Values{"id": {gone.ID.String()}}, nil},
+		"someone deleted, asked for":   {url.Values{"id": {gone.ID.String(), asha.ID.String()}, "include_deleted": {"true"}}, want(gone.ID, asha.ID)},
+	} {
+		p := list(c.query)
+		if got := sorted(p); !slices.Equal(got, c.want) || p.Total != len(c.want) {
+			t.Errorf("%s: %v (total %d), want %v", name, got, p.Total, c.want)
+		}
+	}
+
+	everyone := list(url.Values{"include_deleted": {"true"}, "limit": {"200"}})
+	if got := sorted(everyone); !slices.Equal(got, want(admin.ID, asha.ID, ravi.ID, visitor.ID, gone.ID)) {
+		t.Errorf("everyone, the deleted included: %v", got)
+	}
+	for _, u := range everyone.Items {
+		if (u.ID == gone.ID) != (u.DeletedAt != nil) || u.ID == gone.ID && u.Status != "deleted" {
+			t.Errorf("%s is marked deleted at %v with status %s; want only the deleted person marked", u.ID, u.DeletedAt, u.Status)
+		}
+	}
+	if body := dbtest.Do(t, as, http.MethodGet, "/users", nil).Body.String(); strings.Contains(body, "deleted_at") || strings.Contains(body, gone.ID.String()) {
+		t.Errorf("the list without include_deleted: %s; want no one deleted", body)
+	}
+
+	many := url.Values{}
+	for range 201 {
+		many.Add("id", uuid.NewString())
+	}
+	for _, bad := range []url.Values{many, {"id": {"not-an-id"}}, {"email": {" "}}, {"include_deleted": {"maybe"}}} {
+		if rec := dbtest.Do(t, as, http.MethodGet, "/users?"+bad.Encode(), nil); rec.Code != http.StatusBadRequest {
+			t.Errorf("list with %.80s: %d, want 400", bad.Encode(), rec.Code)
+		}
 	}
 }

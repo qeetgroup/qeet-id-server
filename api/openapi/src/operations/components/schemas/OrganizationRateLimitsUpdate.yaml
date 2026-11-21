@@ -1,0 +1,27 @@
+type: object
+description: >-
+  The overrides PUT stores, per bucket: a bucket given with both rate and
+  capacity is stored as the organization's override, between the lowest rate
+  (min_rate) and the platform's default, which is also its ceiling; one left
+  out, or given without both, is left as it is. The read-only fields a body
+  read back from GET carries (defaults, ceiling, min_rate, built_in) are
+  accepted and ignored.
+properties:
+  organization:
+    $ref: ./RateLimitOverride.yaml
+  user:
+    $ref: ./RateLimitOverride.yaml
+  api_key:
+    $ref: ./RateLimitOverride.yaml
+  defaults:
+    readOnly: true
+    description: Ignored.
+  ceiling:
+    readOnly: true
+    description: Ignored.
+  min_rate:
+    readOnly: true
+    description: Ignored.
+  built_in:
+    readOnly: true
+    description: Ignored.

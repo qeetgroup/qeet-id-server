@@ -103,7 +103,7 @@ patch:
     content:
       application/json:
         schema:
-          $ref: ../../components/schemas/SAMLServiceProviderCreate.yaml
+          $ref: ../../components/schemas/SAMLServiceProviderUpdate.yaml
   responses:
     "200":
       description: Updated

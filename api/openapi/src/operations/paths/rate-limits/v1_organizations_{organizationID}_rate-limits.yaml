@@ -47,7 +47,7 @@ put:
     content:
       application/json:
         schema:
-          $ref: ../../components/schemas/OrganizationRateLimits.yaml
+          $ref: ../../components/schemas/OrganizationRateLimitsUpdate.yaml
   responses:
     "200":
       description: Updated effective limits

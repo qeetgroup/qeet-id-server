@@ -42,7 +42,7 @@ tags:
   - name: Activity
     description: Live Activity feed — a real-time SSE event stream and cursor-paginated history, both sourced from the hash-chained audit log and the NATS outbox. Organization-scoped; requires audit.read. The SSE stream fans out domain events from the transactional outbox; reconnects replay missed events via Last-Event-ID.
   - name: Analytics
-    description: Per-organization usage analytics.
+    description: Per-organization usage analytics, and the dashboard's overview of what is set up.
   - name: Search
     description: Universal organization-scoped fuzzy search across all resource types. Results are RBAC-gated per type — the caller only sees resources their role allows them to read.
   - name: Audit
@@ -740,6 +740,35 @@ paths:
           $ref: "#/components/responses/Unprocessable"
         "429":
           $ref: "#/components/responses/TooManyRequests"
+  /v1/organizations/{organizationID}/overview:
+    get:
+      operationId: getOrganizationOverview
+      summary: Organization overview
+      description: "The dashboard's set-up checklist and counts in one read. Each area is answered only to a caller the area's own list would admit, and left out of the answer otherwise: single_sign_on, applications, domains, directory and remembered_devices need connection.read; api_keys apikey.read; webhooks webhook.read; sign_in, access_policies and threats policy.read; invitations user.read; billing billing.read. A person is judged by their roles, an application's token also by its scopes, and an API key, service principal or agent by its scopes, as the route guard judges them. The read itself needs organization.read. The detailed lists stay at their own reads."
+      tags:
+        - Analytics
+      parameters:
+        - $ref: "#/components/parameters/OrganizationID"
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        "200":
+          description: The overview, with the areas the caller may read
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizationOverview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/search:
     get:
       operationId: search
@@ -1082,6 +1111,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   next_cursor:
                     $ref: "#/components/schemas/NextCursor"
@@ -1198,7 +1229,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AuditAnomalySettings"
+              $ref: "#/components/schemas/AuditAnomalySettingsUpdate"
       responses:
         "200":
           description: Updated
@@ -1279,6 +1310,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   truncated:
                     $ref: "#/components/schemas/Truncated"
@@ -1313,6 +1346,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   truncated:
                     $ref: "#/components/schemas/Truncated"
@@ -1435,6 +1470,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   truncated:
                     $ref: "#/components/schemas/Truncated"
@@ -2111,6 +2148,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   truncated:
                     $ref: "#/components/schemas/Truncated"
@@ -2390,6 +2429,9 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
+                  - unread_count
                 properties:
                   truncated:
                     $ref: "#/components/schemas/Truncated"
@@ -2462,7 +2504,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/OrganizationRateLimits"
+              $ref: "#/components/schemas/OrganizationRateLimitsUpdate"
       responses:
         "200":
           description: Updated effective limits
@@ -2537,6 +2579,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   next_cursor:
                     $ref: "#/components/schemas/NextCursor"
@@ -2600,6 +2644,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   next_cursor:
                     $ref: "#/components/schemas/NextCursor"
@@ -2665,6 +2711,9 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
+                  - capabilities
                 properties:
                   items:
                     type: array
@@ -2672,6 +2721,10 @@ paths:
                       $ref: "#/components/schemas/EmailResolvedTemplate"
                   capabilities:
                     type: object
+                    required:
+                      - rich_text
+                      - localization
+                      - test_email
                     properties:
                       rich_text:
                         type: boolean
@@ -3117,7 +3170,7 @@ paths:
     get:
       operationId: getQeetAiStatus
       summary: Qeet AI configuration status
-      description: Returns whether the AI qeetai is configured server-side and which provider/model is active. Never returns key material. Used by the console to render the unconfigured setup state.
+      description: Returns whether Qeet AI is configured for the caller's organization, whose key applies (source), whether the assistant may be used (available) and which provider and model are active. Never returns key material. Used by the console to render the unconfigured setup state.
       tags:
         - Qeet AI
       security:
@@ -3149,6 +3202,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   truncated:
                     $ref: "#/components/schemas/Truncated"
@@ -3221,6 +3276,9 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - conversation
+                  - messages
                 properties:
                   conversation:
                     $ref: "#/components/schemas/QeetAIConversation"
@@ -5128,6 +5186,212 @@ components:
                     type: integer
                   failed:
                     type: integer
+    OverviewCount:
+      type: object
+      description: How many there are of something, and how many are in use.
+      required:
+        - total
+        - active
+      properties:
+        total:
+          type: integer
+        active:
+          type: integer
+    OrganizationOverview:
+      type: object
+      description: An organization's set-up state and counts. An area is present only when the caller may read it, and then carries every one of its fields.
+      required:
+        - organization_id
+        - generated_at
+      properties:
+        organization_id:
+          type: string
+          format: uuid
+        generated_at:
+          type: string
+          format: date-time
+        single_sign_on:
+          type: object
+          description: "The organization's SAML, LDAP and OpenID Connect connections (active: status active), its social providers (active: turned on) and its SCIM tokens still accepted. Needs connection.read."
+          required:
+            - saml
+            - ldap
+            - oidc
+            - social_providers
+            - scim_tokens_active
+          properties:
+            saml:
+              $ref: "#/components/schemas/OverviewCount"
+            ldap:
+              $ref: "#/components/schemas/OverviewCount"
+            oidc:
+              $ref: "#/components/schemas/OverviewCount"
+            social_providers:
+              $ref: "#/components/schemas/OverviewCount"
+            scim_tokens_active:
+              type: integer
+        applications:
+          type: object
+          description: "The organization's OpenID Connect applications, the SAML service providers it signs people in to (active: status active), the live grants people gave the applications, and how many people hold one. Needs connection.read."
+          required:
+            - oidc_clients
+            - saml_service_providers
+            - active_grants
+            - people_with_grants
+          properties:
+            oidc_clients:
+              type: integer
+            saml_service_providers:
+              $ref: "#/components/schemas/OverviewCount"
+            active_grants:
+              type: integer
+            people_with_grants:
+              type: integer
+        domains:
+          type: object
+          description: "The organization's domains: all, verified, and verified with single sign-on required. Needs connection.read."
+          required:
+            - total
+            - verified
+            - sso_required
+          properties:
+            total:
+              type: integer
+            verified:
+              type: integer
+            sso_required:
+              type: integer
+        directory:
+          type: object
+          description: The directory errors of the last 7 days still open, as the directory errors page shows them by default. Needs connection.read.
+          required:
+            - open_errors
+          properties:
+            open_errors:
+              type: integer
+        remembered_devices:
+          type: object
+          description: The devices that still skip the second step, and the people they belong to. Needs connection.read.
+          required:
+            - devices
+            - people
+          properties:
+            devices:
+              type: integer
+            people:
+              type: integer
+        api_keys:
+          type: object
+          description: The API keys still accepted (not revoked, not expired). Needs apikey.read.
+          required:
+            - active
+          properties:
+            active:
+              type: integer
+        webhooks:
+          type: object
+          description: "The webhook subscriptions: all, turned on, and turned on with failing deliveries. Needs webhook.read."
+          required:
+            - total
+            - enabled
+            - failing
+          properties:
+            total:
+              type: integer
+            enabled:
+              type: integer
+            failing:
+              type: integer
+        sign_in:
+          type: object
+          description: The first-factor methods allowed, whether people may register themselves and devices be remembered, and who must use a second factor. Needs policy.read.
+          required:
+            - password
+            - passkey
+            - magic_link
+            - self_registration
+            - remember_device
+            - mfa_enforcement
+          properties:
+            password:
+              type: boolean
+            passkey:
+              type: boolean
+            magic_link:
+              type: boolean
+            self_registration:
+              type: boolean
+            remember_device:
+              type: boolean
+            mfa_enforcement:
+              type: string
+              enum:
+                - optional
+                - required
+                - admin_only
+        access_policies:
+          type: object
+          description: "The attribute-based access policies (active: turned on). Needs policy.read."
+          required:
+            - abac
+          properties:
+            abac:
+              $ref: "#/components/schemas/OverviewCount"
+        threats:
+          type: object
+          description: The security anomalies still open. Needs policy.read.
+          required:
+            - open_anomalies
+          properties:
+            open_anomalies:
+              type: integer
+        invitations:
+          type: object
+          description: "The invitations still waiting to be answered: pending and not expired. Needs user.read."
+          required:
+            - pending
+          properties:
+            pending:
+              type: integer
+        billing:
+          type: object
+          description: The plan, and the subscription's state when there is one (null fields without). Needs billing.read.
+          required:
+            - plan
+            - subscription_status
+            - trial_end
+            - current_period_end
+            - cancel_at_period_end
+          properties:
+            plan:
+              type: string
+              enum:
+                - free
+                - starter
+                - pro
+                - enterprise
+            subscription_status:
+              type:
+                - string
+                - "null"
+              enum:
+                - active
+                - trialing
+                - canceled
+                - past_due
+                - null
+            trial_end:
+              type:
+                - string
+                - "null"
+              format: date-time
+            current_period_end:
+              type:
+                - string
+                - "null"
+              format: date-time
+            cancel_at_period_end:
+              type: boolean
     SearchResult:
       type: object
       description: One item returned by the universal search endpoint.
@@ -5282,6 +5546,22 @@ components:
           type: integer
     AuditAnomaly:
       type: object
+      required:
+        - id
+        - organization_id
+        - event_id
+        - actor_user_id
+        - actor_email
+        - score
+        - reasons
+        - status
+        - resolved_at
+        - resolved_by
+        - created_at
+        - action
+        - resource_type
+        - ip
+        - event_at
       properties:
         id:
           type: string
@@ -5356,6 +5636,11 @@ components:
           type: integer
     AuditAnomalySettings:
       type: object
+      required:
+        - organization_id
+        - enabled
+        - score_threshold
+        - min_baseline_events
       properties:
         organization_id:
           type: string
@@ -5367,6 +5652,25 @@ components:
           description: 0..1; an event scoring at or above this is flagged.
         min_baseline_events:
           type: integer
+          description: Cold-start guard — an actor needs this many historical events before anything is flagged for them.
+    AuditAnomalySettingsUpdate:
+      type: object
+      description: "The anomaly detection settings PUT stores. It replaces all three, so each is sent: a value left out would be stored as false or 0."
+      required:
+        - enabled
+        - score_threshold
+        - min_baseline_events
+      properties:
+        enabled:
+          type: boolean
+        score_threshold:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: 0..1; an event scoring at or above this is flagged.
+        min_baseline_events:
+          type: integer
+          minimum: 0
           description: Cold-start guard — an actor needs this many historical events before anything is flagged for them.
     Truncated:
       type: boolean
@@ -5394,6 +5698,14 @@ components:
     EvidenceControlResult:
       type: object
       description: Outcome of a single compliance control check against live system state.
+      required:
+        - id
+        - name
+        - category
+        - criteria
+        - status
+        - detail
+        - detail_code
       properties:
         id:
           type: string
@@ -5437,6 +5749,14 @@ components:
     EvidenceRun:
       type: object
       description: Immutable snapshot of one compliance evidence generation pass for a organization+framework pair. Controls are populated on GetRun; omitted on ListRuns.
+      required:
+        - id
+        - organization_id
+        - framework
+        - generated_at
+        - pass_count
+        - fail_count
+        - na_count
       properties:
         id:
           type: string
@@ -5719,6 +6039,9 @@ components:
     RateLimitBucket:
       type: object
       description: A single token-bucket limit (rate tokens/sec, burst capacity).
+      required:
+        - rate
+        - capacity
       properties:
         rate:
           type: number
@@ -5742,6 +6065,14 @@ components:
     OrganizationRateLimits:
       type: object
       description: "Per-bucket rate limits for an organization. On GET these are the effective values (defaults merged with overrides); on PUT, any bucket supplied is upserted as an override. The answer also carries the defaults, the ceiling an override may reach (the defaults themselves: an organization may tighten its limits, never lift them), the lowest rate an override may set, and the built-in limits every organization shares; those are read-only and ignored on PUT."
+      required:
+        - organization
+        - user
+        - api_key
+        - defaults
+        - ceiling
+        - min_rate
+        - built_in
       properties:
         organization:
           $ref: "#/components/schemas/RateLimitBucket"
@@ -5790,6 +6121,42 @@ components:
               capacity:
                 type: integer
                 description: The burst.
+    RateLimitOverride:
+      type: object
+      description: "A bucket's override: rate (requests a second) and capacity (burst), both needed for it to be stored."
+      properties:
+        rate:
+          type:
+            - number
+            - "null"
+          description: Sustained tokens per second.
+        capacity:
+          type:
+            - integer
+            - "null"
+          description: Maximum burst capacity.
+    OrganizationRateLimitsUpdate:
+      type: object
+      description: "The overrides PUT stores, per bucket: a bucket given with both rate and capacity is stored as the organization's override, between the lowest rate (min_rate) and the platform's default, which is also its ceiling; one left out, or given without both, is left as it is. The read-only fields a body read back from GET carries (defaults, ceiling, min_rate, built_in) are accepted and ignored."
+      properties:
+        organization:
+          $ref: "#/components/schemas/RateLimitOverride"
+        user:
+          $ref: "#/components/schemas/RateLimitOverride"
+        api_key:
+          $ref: "#/components/schemas/RateLimitOverride"
+        defaults:
+          readOnly: true
+          description: Ignored.
+        ceiling:
+          readOnly: true
+          description: Ignored.
+        min_rate:
+          readOnly: true
+          description: Ignored.
+        built_in:
+          readOnly: true
+          description: Ignored.
     EmailMessage:
       type: object
       properties:
@@ -5905,6 +6272,13 @@ components:
       allOf:
         - $ref: "#/components/schemas/EmailEditorInput"
         - type: object
+          required:
+            - key
+            - name
+            - description
+            - variables
+            - custom
+            - delivery_scope
           properties:
             key:
               type: string
@@ -5925,20 +6299,42 @@ components:
                 - platform
     QeetAIStatus:
       type: object
-      description: AI qeetai configuration state. Never contains key material.
+      description: The organization's Qeet AI state. Never contains key material.
+      required:
+        - configured
+        - available
+        - source
       properties:
         configured:
           type: boolean
-          description: True when QEETAI_PROVIDER and QEETAI_API_KEY are set.
+          description: "True when a provider key applies: the organization's own, or the platform's."
+        available:
+          type: boolean
+          description: "True when the assistant may be used: always with the organization's own key, and with the platform's only while the organization's plan includes Qeet AI."
+        source:
+          type: string
+          enum:
+            - organization
+            - platform
+            - none
+          description: "Whose key applies: organization (the organization's own provider key), platform (the deployment's), or none."
         provider:
           type: string
-          description: Provider name (e.g. "anthropic"); empty when not configured.
+          description: Provider name (e.g. "anthropic"); empty when not configured, and absent when the caller has no organization or its settings can't be read.
         model:
           type: string
-          description: Model identifier (e.g. "claude-sonnet-5"); empty when not configured.
+          description: Model identifier (e.g. "claude-sonnet-5"); empty when not configured, and absent as provider is.
     QeetAIConversation:
       type: object
       description: A named qeetai conversation thread (organization + user scoped).
+      required:
+        - id
+        - organization_id
+        - user_id
+        - title
+        - pinned
+        - created_at
+        - updated_at
       properties:
         id:
           type: string

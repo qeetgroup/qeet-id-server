@@ -207,6 +207,9 @@ sql:
     queries: internal/operations/notification/queries.sql
     gen: { go: { <<: *go, out: internal/operations/notification/dbgen } }
   - <<: *package
+    queries: internal/operations/overview/queries.sql
+    gen: { go: { <<: *go, out: internal/operations/overview/dbgen } }
+  - <<: *package
     queries: internal/operations/qeetai/queries.sql
     gen:
       go:

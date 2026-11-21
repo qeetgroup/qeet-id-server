@@ -165,7 +165,7 @@ paths:
           $ref: "#/components/responses/TooManyRequests"
     post:
       operationId: createOrganization
-      description: "Creates an organization and makes the calling user its owner. A newly registered user has no organization until this succeeds; every organization-scoped endpoint requires one. A verified email is required before an organization can be provisioned. Only the free plan is created here (plan may be left out): pro and enterprise answer 402 billing.checkout_required, since a paid plan starts with checkout. Every organization is created in the region this service is hosted in; asking for another is refused with 422 organization.region_unavailable (metadata.available names the one there is). The response includes a organization-scoped token pair so the client can immediately switch into the new organization; it continues the caller's session (its sign-in, second factor and end), and is left out for a caller without one."
+      description: "Creates an organization and makes the calling user its owner. A newly registered user has no organization until this succeeds; every organization-scoped endpoint requires one. A verified email is required before an organization can be provisioned. Only the free plan is created here (plan may be left out): starter, pro and enterprise answer 402 billing.checkout_required, since a paid plan starts with checkout. Every organization is created in the region this service is hosted in; asking for another is refused with 422 organization.region_unavailable (metadata.available names the one there is). The response includes a organization-scoped token pair so the client can immediately switch into the new organization; it continues the caller's session (its sign-in, second factor and end), and is left out for a caller without one."
       summary: Create organization
       tags:
         - Organizations
@@ -198,12 +198,15 @@ paths:
                   id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
                   slug: acme
                   name: Acme, Inc.
+                  status: active
                   plan: free
                   region: ap-south-1
+                  logo_url: ""
+                  metadata:
+                    industry: fintech
                   created_at: "2026-09-24T10:15:00Z"
                   updated_at: "2026-09-24T10:15:00Z"
-                  member_count: 1
-                  mfa_enabled_count: 0
+                  deletion_due_at: null
                 organization_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
                 roles:
                   - owner
@@ -441,6 +444,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   truncated:
                     $ref: "#/components/schemas/Truncated"
@@ -644,6 +649,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   truncated:
                     $ref: "#/components/schemas/Truncated"
@@ -778,6 +785,15 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
+                  - total
+                  - limit
+                  - summary
+                  - reasons
+                  - risks
+                  - queue
+                  - teams
                 properties:
                   next_cursor:
                     $ref: "#/components/schemas/NextCursor"
@@ -791,6 +807,12 @@ paths:
                     type: integer
                   summary:
                     type: object
+                    required:
+                      - total
+                      - high_risk
+                      - policy
+                      - manual
+                      - pending
                     properties:
                       total:
                         type: integer
@@ -806,6 +828,9 @@ paths:
                     type: array
                     items:
                       type: object
+                      required:
+                        - key
+                        - count
                       properties:
                         key:
                           type: string
@@ -815,6 +840,9 @@ paths:
                     type: array
                     items:
                       type: object
+                      required:
+                        - key
+                        - count
                       properties:
                         key:
                           type: string
@@ -968,7 +996,7 @@ paths:
     get:
       operationId: getUserStats
       summary: User directory summary
-      description: "Organization-wide member counts for the Users admin summary: total, active, suspended, invited, with and without a second factor, new in the last 30 days; members by when they were last seen (last_seen: today, week, month, older, never, with the same edges as the list's last_seen filter); owners and admins without a second factor; members whose email isn't verified; and members by role and by department (metadata.department). Each count equals the list's total for the matching filter. Requires `user.read`."
+      description: "Organization-wide member counts for the Users admin summary: total, active, suspended, invited, with and without a second factor, new in the last 30 days; members by when they were last seen (last_seen: today, week, month, older, never, with the same edges as the list's last_seen filter); owners and admins without a second factor; members whose email isn't verified; members by role; and the organization's own people by department (metadata.department), by team within its department (metadata.team) and by location (metadata.location), each up to 200, largest first, and an empty list when there are none. Each count equals the list's total for the matching filter. Requires `user.read`."
       tags:
         - Users
       security:
@@ -990,7 +1018,7 @@ paths:
   /v1/users:
     get:
       operationId: listUsers
-      description: "Returns a page of users in the caller's organization, with total, how many match. Every filter is optional and they combine: q (display name, email or phone, case-insensitive), role (a role name in the organization), department (metadata.department), mfa (on or off: a confirmed second factor), email_verified, status (active, invited or suspended), last_seen (today: under a day; week: 1 to 7 days; month: 7 to 30 days; older: over 30 days; never). sort is created (the default, newest first), name or last_seen, with order asc or desc; a malformed value is refused with 400. Pages by opaque cursor, in the default order only: next_cursor is present while there is another page, and any other order answers its first page. Requires an existing organization; scope comes from the authenticated principal. Members are the organization's own users (their home is this organization) and the people who hold a role in it; a member whose home is another organization is shown with empty metadata, which their home organization keeps; last_seen_at and last_seen_ip come from sessions in this organization only."
+      description: "Returns a page of users in the caller's organization, with total, how many match. Every filter is optional and they combine: q (display name, email or phone, case-insensitive), role (a role name in the organization), department (metadata.department, of the organization's own people), mfa (on or off: a confirmed second factor), email_verified, status (active, invited or suspended), last_seen (today: under a day; week: 1 to 7 days; month: 7 to 30 days; older: over 30 days; never), admins_without_mfa (true: the members holding the built-in owner or admin role with no confirmed second factor, exactly those the summary's admins_without_mfa counts; false: everyone else), in_group (true: in at least one of the organization's groups; false: in none of them, whatever groups they are in elsewhere), id and email (each repeatable, up to 200: exactly the members named, an email in any case; with limit=200 one read puts a name to up to 200 people), include_deleted (true: also the members since deleted, so history can still name them, each marked with deleted_at and status deleted). sort is created (the default, newest first), name (by display name, or the email without one, case-insensitive; A first by default) or last_seen (most recent first by default; a member never seen comes last either way), with order asc or desc; a malformed value is refused with 400. Pages by opaque cursor in every order, stable when sort keys tie: next_cursor is present while there is another page, and a cursor works only with the sort and order of the page that gave it (400 otherwise). Requires an existing organization; scope comes from the authenticated principal. Members are the organization's own users (their home is this organization) and the people who hold a role in it; a member whose home is another organization is shown with empty metadata, which their home organization keeps; last_seen_at and last_seen_ip come from sessions in this organization only."
       summary: List users
       tags:
         - Users
@@ -1048,6 +1076,49 @@ paths:
               - month
               - older
               - never
+        - name: admins_without_mfa
+          in: query
+          required: false
+          description: "true: only the members holding the built-in owner or admin role with no confirmed second factor; false: everyone else."
+          schema:
+            type: boolean
+        - name: in_group
+          in: query
+          required: false
+          description: "true: only the members in at least one of the organization's groups; false: only those in none of them."
+          schema:
+            type: boolean
+        - name: id
+          in: query
+          required: false
+          description: Only these members, by id. Repeat it, up to 200 times (id=a&id=b); another organization's people are never answered.
+          style: form
+          explode: true
+          schema:
+            type: array
+            maxItems: 200
+            items:
+              type: string
+              format: uuid
+        - name: email
+          in: query
+          required: false
+          description: Only these members, by email, exactly but in any case. Repeat it, up to 200 times.
+          style: form
+          explode: true
+          schema:
+            type: array
+            maxItems: 200
+            items:
+              type: string
+              minLength: 1
+              maxLength: 320
+        - name: include_deleted
+          in: query
+          required: false
+          description: "true: the members since deleted too (the organization's own people it deleted, and anyone deleted who still holds one of its roles), each with deleted_at and status deleted."
+          schema:
+            type: boolean
         - name: sort
           in: query
           required: false
@@ -1255,6 +1326,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   next_cursor:
                     $ref: "#/components/schemas/NextCursor"
@@ -1262,6 +1335,13 @@ paths:
                     type: array
                     items:
                       type: object
+                      required:
+                        - id
+                        - email
+                        - display_name
+                        - deleted_at
+                        - deleted_by
+                        - created_at
                       properties:
                         id:
                           type: string
@@ -1523,6 +1603,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   truncated:
                     $ref: "#/components/schemas/Truncated"
@@ -1530,6 +1612,16 @@ paths:
                     type: array
                     items:
                       type: object
+                      required:
+                        - id
+                        - organization_id
+                        - device
+                        - device_kind
+                        - user_agent
+                        - created_at
+                        - last_used_at
+                        - expires_at
+                        - current
                       properties:
                         id:
                           type: string
@@ -1682,6 +1774,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   truncated:
                     $ref: "#/components/schemas/Truncated"
@@ -1689,6 +1783,12 @@ paths:
                     type: array
                     items:
                       type: object
+                      required:
+                        - id
+                        - name
+                        - platform
+                        - created_at
+                        - last_seen_at
                       properties:
                         id:
                           type: string
@@ -1776,6 +1876,19 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - mfa_required
+                  - mfa_enabled
+                  - totp_enabled
+                  - otp_factors
+                  - push_devices
+                  - passkeys
+                  - passkey_last_used_at
+                  - recovery_codes_remaining
+                  - password_set
+                  - password_changed_at
+                  - active_sessions
+                  - distinct_devices
                 properties:
                   mfa_required:
                     type: boolean
@@ -1841,6 +1954,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   truncated:
                     $ref: "#/components/schemas/Truncated"
@@ -1848,6 +1963,14 @@ paths:
                     type: array
                     items:
                       type: object
+                      required:
+                        - id
+                        - ip
+                        - user_agent
+                        - created_at
+                        - last_seen_at
+                        - device
+                        - device_kind
                       properties:
                         id:
                           type: string
@@ -1982,11 +2105,24 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - organization
+                  - roles
+                  - groups
+                  - applications_count
+                  - policies_count
+                  - permissions_direct
+                  - permissions_inherited
+                  - permissions_total
                 properties:
                   organization:
                     type:
                       - object
                       - "null"
+                    required:
+                      - id
+                      - name
+                      - slug
                     properties:
                       id:
                         type: string
@@ -1999,6 +2135,10 @@ paths:
                     type: array
                     items:
                       type: object
+                      required:
+                        - id
+                        - name
+                        - description
                       properties:
                         id:
                           type: string
@@ -2011,6 +2151,10 @@ paths:
                     type: array
                     items:
                       type: object
+                      required:
+                        - id
+                        - name
+                        - description
                       properties:
                         id:
                           type: string
@@ -3279,9 +3423,18 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - organization
+                  - email
+                  - expires_at
+                  - account_exists
+                  - methods
                 properties:
                   organization:
                     type: object
+                    required:
+                      - name
+                      - slug
                     properties:
                       name:
                         type: string
@@ -3296,6 +3449,9 @@ paths:
                     type: boolean
                   methods:
                     type: object
+                    required:
+                      - password
+                      - passkey
                     properties:
                       password:
                         type: boolean
@@ -3703,6 +3859,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - items
                 properties:
                   truncated:
                     $ref: "#/components/schemas/Truncated"
@@ -4131,6 +4289,18 @@ components:
           description: Cursor for the next page; empty/absent at the end.
     Organization:
       type: object
+      required:
+        - id
+        - slug
+        - name
+        - status
+        - plan
+        - region
+        - logo_url
+        - metadata
+        - created_at
+        - updated_at
+        - deletion_due_at
       properties:
         id:
           type: string
@@ -4148,11 +4318,15 @@ components:
           type: string
           enum:
             - free
+            - starter
             - pro
             - enterprise
         region:
           type: string
           description: The region this service is hosted in, where the organization's data is held. It is the same for every organization of a deployment and isn't a per-organization data-residency choice.
+        logo_url:
+          type: string
+          description: The organization's logo, a hosted URL or a small inline data URL; empty when none is set, and the console shows the name's initials.
         metadata:
           type:
             - object
@@ -4180,6 +4354,8 @@ components:
       allOf:
         - $ref: "#/components/schemas/Page"
       type: object
+      required:
+        - items
       properties:
         items:
           type: array
@@ -4208,6 +4384,7 @@ components:
             - "null"
           enum:
             - free
+            - starter
             - pro
             - enterprise
             - null
@@ -4217,6 +4394,12 @@ components:
             - "null"
           description: Optional. Only the region this service is hosted in is accepted (422 organization.region_unavailable, with metadata.available, otherwise); the organization is created there either way.
           maxLength: 64
+        logo_url:
+          type:
+            - string
+            - "null"
+          maxLength: 3000000
+          description: Optional logo, a hosted URL or a small inline data URL, up to 3,000,000 characters. Left out or empty, the console shows the name's initials.
         metadata:
           type:
             - object
@@ -4224,6 +4407,10 @@ components:
           additionalProperties: true
     OrganizationCreateResponse:
       type: object
+      required:
+        - organization
+        - organization_id
+        - roles
       properties:
         organization:
           $ref: "#/components/schemas/Organization"
@@ -4269,21 +4456,18 @@ components:
             - active
             - suspended
             - null
-        plan:
-          type:
-            - string
-            - "null"
-          enum:
-            - free
-            - pro
-            - enterprise
-            - null
         region:
           type:
             - string
             - "null"
           description: "Read-only: the same value is accepted, as a form sends every field back; another is refused with 422 organization.region_read_only."
           maxLength: 64
+        logo_url:
+          type:
+            - string
+            - "null"
+          maxLength: 3000000
+          description: The logo, a hosted URL or a small inline data URL, up to 3,000,000 characters; empty removes it.
         metadata:
           type:
             - object
@@ -4415,6 +4599,19 @@ components:
           format: date-time
     SuspendedDirectoryUser:
       type: object
+      required:
+        - id
+        - email
+        - display_name
+        - avatar_url
+        - team
+        - reason
+        - source
+        - risk
+        - review
+        - suspended_at
+        - last_sign_in
+        - can_manage
       properties:
         id:
           type: string
@@ -4533,6 +4730,9 @@ components:
           format: date-time
     UserTrends:
       type: object
+      required:
+        - total
+        - mfa_enabled
       properties:
         total:
           type: array
@@ -4546,6 +4746,21 @@ components:
           description: 30-day daily cumulative MFA-enrolled count (oldest first).
     UserStats:
       type: object
+      required:
+        - total
+        - active
+        - suspended
+        - invited
+        - mfa_enabled
+        - mfa_missing
+        - new_last_30d
+        - last_seen
+        - admins_without_mfa
+        - email_unverified
+        - by_role
+        - by_department
+        - by_team
+        - by_location
       properties:
         total:
           type: integer
@@ -4563,6 +4778,12 @@ components:
           type: integer
         last_seen:
           type: object
+          required:
+            - today
+            - week
+            - month
+            - older
+            - never
           properties:
             today:
               type: integer
@@ -4583,6 +4804,9 @@ components:
           type: array
           items:
             type: object
+            required:
+              - role
+              - count
             properties:
               role:
                 type: string
@@ -4590,16 +4814,61 @@ components:
                 type: integer
         by_department:
           type: array
-          description: Up to 200 departments, largest first.
+          description: "Up to 200 departments (metadata.department), largest first, counting the organization's own people: another organization's show it no metadata."
           items:
             type: object
+            required:
+              - department
+              - count
             properties:
               department:
                 type: string
               count:
                 type: integer
+        by_team:
+          type: array
+          description: Up to 200 teams (metadata.team) within their departments (metadata.department, "" when a member names none), largest first, counting the organization's own people.
+          items:
+            type: object
+            required:
+              - department
+              - team
+              - count
+            properties:
+              department:
+                type: string
+              team:
+                type: string
+              count:
+                type: integer
+        by_location:
+          type: array
+          description: Up to 200 locations (metadata.location), largest first, counting the organization's own people.
+          items:
+            type: object
+            required:
+              - location
+              - count
+            properties:
+              location:
+                type: string
+              count:
+                type: integer
     User:
       type: object
+      required:
+        - id
+        - organization_id
+        - email
+        - email_verified_at
+        - phone
+        - phone_verified_at
+        - display_name
+        - avatar_url
+        - status
+        - metadata
+        - created_at
+        - updated_at
       properties:
         id:
           type: string
@@ -4635,10 +4904,12 @@ components:
           description: The person's picture as a data:image/ URL, or null for none.
         status:
           type: string
+          description: deleted only for someone since deleted, on a members list that asked to include them (include_deleted).
           enum:
             - active
             - invited
             - suspended
+            - deleted
         metadata:
           type:
             - object
@@ -4688,6 +4959,10 @@ components:
             - string
             - "null"
           description: The name of the organization that manages the account (organization_id).
+        deleted_at:
+          type: string
+          format: date-time
+          description: When someone since deleted was, on a members list that asked to include them (include_deleted); absent for everyone else.
         suspension:
           type:
             - object
@@ -4717,6 +4992,9 @@ components:
       allOf:
         - $ref: "#/components/schemas/Page"
       type: object
+      required:
+        - items
+        - total
       properties:
         items:
           type: array
@@ -5188,6 +5466,12 @@ components:
           format: uuid
         status:
           type: string
+          enum:
+            - pending
+            - accepted
+            - declined
+            - expired
+            - revoked
         organization_id:
           type: string
           format: uuid

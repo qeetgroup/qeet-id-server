@@ -1,4 +1,8 @@
 type: object
+required:
+  - organization
+  - organization_id
+  - roles
 properties:
   organization:
     $ref: ./Organization.yaml

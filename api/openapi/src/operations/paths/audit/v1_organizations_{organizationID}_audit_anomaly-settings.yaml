@@ -49,7 +49,7 @@ put:
     content:
       application/json:
         schema:
-          $ref: ../../components/schemas/AuditAnomalySettings.yaml
+          $ref: ../../components/schemas/AuditAnomalySettingsUpdate.yaml
   responses:
     "200":
       description: Updated

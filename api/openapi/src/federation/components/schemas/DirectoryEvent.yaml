@@ -5,11 +5,20 @@ required:
   - operation
   - trigger
   - resource_type
+  - resource_id
   - started_at
   - duration_ms
+  - http_status
   - status
   - users_synced
   - groups_synced
+  - error_code
+  - message
+  - category
+  - severity
+  - resolution
+  - resolved_at
+  - retry_of
   - retryable
 properties:
   id:

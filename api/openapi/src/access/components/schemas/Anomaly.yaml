@@ -1,4 +1,11 @@
 type: object
+required:
+  - id
+  - type
+  - severity
+  - detail
+  - status
+  - created_at
 properties:
   resolved_by:
     type: string

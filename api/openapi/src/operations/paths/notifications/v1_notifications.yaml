@@ -17,6 +17,9 @@ get:
         application/json:
           schema:
             type: object
+            required:
+              - items
+              - unread_count
             properties:
               truncated:
                 $ref: ../../../shared/schemas/Truncated.yaml

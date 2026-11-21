@@ -34,6 +34,12 @@ properties:
     format: uuid
   status:
     type: string
+    enum:
+      - pending
+      - accepted
+      - declined
+      - expired
+      - revoked
   organization_id:
     type: string
     format: uuid

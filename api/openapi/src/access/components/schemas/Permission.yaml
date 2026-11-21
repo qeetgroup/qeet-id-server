@@ -1,4 +1,8 @@
 type: object
+required:
+  - id
+  - key
+  - description
 properties:
   id:
     type: string

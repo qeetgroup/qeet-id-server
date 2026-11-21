@@ -8,7 +8,9 @@ get:
     and group, so a permission granted twice appears twice). Use it to explain
     why a user can or cannot perform an action, complementing the
     single-permission decision from the permission-check call. It is read-only
-    and reflects the grants in force at call time. Needs role.read.
+    and reflects the grants in force at call time. Needs role.read, even for
+    the caller's own: a person reads their own without it at GET
+    /v1/me/permissions.
   summary: Effective permissions
   tags:
     - RBAC
@@ -30,6 +32,9 @@ get:
         application/json:
           schema:
             type: object
+            required:
+              - permissions
+              - grants
             properties:
               permissions:
                 type: array

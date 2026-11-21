@@ -10,6 +10,26 @@ The first release, 2027.1.0, is in preparation. No version has been published ye
 
 ### Added
 
+- `GET /v1/organizations/{organizationID}/overview`: the dashboard's set-up checklist and counts in one read,
+  in place of the many list reads it made only to learn what is set up: single sign-on connections, social
+  providers and SCIM tokens, applications and their grants, domains, directory errors, remembered devices, API
+  keys, webhooks, sign-in settings, access policies, open anomalies, pending invitations and the plan. Each
+  area is answered only to a caller the area's own list would admit, and left out otherwise; the read itself
+  needs `organization.read`.
+- `GET /v1/users/stats` counts the organization's own people by team (`by_team`: department, team and count) and
+  by location (`by_location`), from their metadata, as `by_department` does: largest first, up to 200 each, and
+  always sent (an empty list when there are none).
+- `GET /v1/users` names people in one read: `id` and `email` (each repeatable, up to 200; an email in any case)
+  answer exactly those members, with the other filters, and `include_deleted=true` adds the members since
+  deleted, each marked with `deleted_at` and status `deleted`, so history can still name them.
+- `GET /v1/users` filters `admins_without_mfa` (the owners and admins with no second factor, exactly those the
+  summary counts) and `in_group` (in one of the organization's groups, or in none), and pages by cursor in
+  every order: by name, by when last seen and by creation, either way, stable when sort keys tie. A cursor
+  works only with the sort and order of the page that gave it.
+- `GET /v1/me/permissions`: a person's own effective permissions in the organization their token is for,
+  with every grant behind them, as `GET /v1/users/{userID}/organizations/{organizationID}/permissions`
+  answers. It needs no permission, so someone holding none (the built-in member role) reads empty lists and
+  the console can show them what they may use; another person's still need `role.read`.
 - Metrics for sign-ins (`sign_ins_total`, by method and outcome), the token endpoint
   (`oauth_token_requests_total`, by grant and outcome), rate-limit rejections (`rate_limit_rejections_total`)
   and webhooks (`webhook_deliveries_total`, `webhook_pending_deliveries`, `webhook_oldest_pending_age_seconds`).
@@ -61,6 +81,10 @@ The first release, 2027.1.0, is in preparation. No version has been published ye
   RS256, so a deployment that is to be OpenID Certified, or serves applications that accept only RS256, signs
   with an RSA key. The key a development instance makes for itself stays ES256. A rotation may change the key's
   type: the retired key's tokens still verify for the grace period.
+- `make migrate-up` applies every pending migration without starting the API. It runs the server's own
+  migrator, as `make dev` and `make seed` do at start, so the files it applies are recorded and the server
+  accepts the database afterwards (the `migrate` CLI keeps no such record). After `make migrate-down`, it
+  applies that migration again.
 
 ### Changed
 
@@ -68,6 +92,41 @@ The first release, 2027.1.0, is in preparation. No version has been published ye
   the 7 days again, so a person who keeps using an application stays signed in until the session's maximum
   age (`SESSION_MAX_AGE`, still 30 days); an application left unused for 7 days signs in again. API and
   console sessions still end after `SESSION_IDLE_TIMEOUT` (24 hours) without renewal.
+- The API says organization, not tenant. Paths under `/v1/tenants/{tenantID}/…` are under
+  `/v1/organizations/{organizationID}/…`; every `tenant_id` JSON field and query parameter is
+  `organization_id`, and `?tenant=` (a slug) is `?organization=`; the access token's `tenant_id` claim is
+  `organization_id`; and the `tenant.*` permissions (`tenant.read`, `tenant.write`, `tenant.delete`), error
+  codes (such as `tenant.owner_only` and `tenant.slug_taken`), audit actions and events (such as
+  `tenant.created` and `tenant.updated`) are `organization.*`. No release has shipped, so the old names
+  are not accepted alongside: every client, and every product that reads the token, follows the new
+  names.
+- The API documents mark as required every field the server always sends (a nullable one may be null),
+  and document what was missing: `logo_url` on an organization (answered, and taken on create and
+  update; `plan` is not taken on update), `providers`, `self_registration_enabled`,
+  `remember_device_enabled` and `sign_in_methods` on the hosted login's context, `available` and `source`
+  on Qeet AI's status, the 200 answer with `frontchannel_logout_uris` when the hosted login signs out,
+  the answer of the LDAP hosted sign-in, the context of an AuthZEN evaluation, and `status` on a new SAML
+  service provider. Where a read and a write shared one definition, the write has its own, with every
+  field optional as the server takes it: `SecurityPolicyUpdate`, `AuthPolicyUpdate`, `RiskSettingsUpdate`,
+  `OrganizationRateLimitsUpdate`, `SAMLConnectionUpdate` (with `allow_idp_initiated`) and
+  `SAMLServiceProviderUpdate`; an LDAP connection's update no longer lists every field as required. The
+  admin portal's context read answers `PortalContext`, as its session does. Invitation, SAML connection
+  and Qeet AI source states are enumerated, and an organization's plan may be `starter`. The answers
+  themselves are unchanged.
+- The API documents also require what these answers always carry: the auth policy's `lockout_limits`
+  (`defaults`, `min` and `max`, each in full), the audit anomaly settings, the sign-up answer (its `user`
+  belongs to no organization yet, so its `organization_id` is the nil UUID), the directory errors page
+  and every directory event's fields (all but `reason`, `params`, `subject` and `user_id`), and the
+  `items` of the SAML connections lists (the organization's and the admin portal's) and of the admin
+  portal's domains. The anomaly settings PUT takes its own `AuditAnomalySettingsUpdate` with all
+  three settings required: it replaces them all, and one left out is stored as false or 0. The answers
+  themselves are unchanged.
+- Every list answer's `items` is required in the API documents: the server always sends the list, an
+  empty one when there is nothing, never null. Twenty answers still left it optional, among them the API
+  keys, agents, webhooks and their deliveries, log sinks, OIDC clients and resources, OIDC connections,
+  sessions and the email lists. The directory activity page's `summary` and each `volume` day, and an
+  OIDC client's auth failures (`locked_until`, and each failure's `at`, `ip` and `reason`), are required
+  in full as well. The answers themselves are unchanged.
 - Releases follow a fixed monthly rhythm: the branch is cut on the first working day of the month, tested for
   about two weeks and released on the third Tuesday; urgent fixes still ship as hotfixes. The first release
   is `2027.1.0`, planned for Tuesday 19 January 2027, and the documents name it that way throughout. Its
@@ -148,11 +207,10 @@ The first release, 2027.1.0, is in preparation. No version has been published ye
   as newer than this build and has to be recreated (`make db-reset`); no release has shipped, so nothing is
   carried over.
 - The schema `"user"` is named `account`, so it no longer has to be quoted.
-- Inside the server the word is organization, not organization. The schema `organization` is `organization`,
-  `organization.organizations` is `organization.organizations`, every `organization_id` column is `organization_id`, the
-  row-security policy is `organization_isolation`, and the Go code, SQL and comments follow. The API is
-  unchanged: its paths, JSON fields, token claim and its permission, event and error names still say
-  organization, and are renamed in one later change.
+- Inside the server the word is organization, not tenant. The schema `tenant` is `organization`,
+  `tenant.tenants` is `organization.organizations`, every `tenant_id` column is `organization_id`, the
+  row-security policy is `organization_isolation`, and the Go code, SQL and comments follow. The API
+  followed in its own change (above).
 - A secret is stored only encrypted. The plaintext columns left from before encryption, and the code that read
   them and encrypted them on first use, are gone: webhook and auth hook signing secrets, Token Vault and
   social provider client secrets, LDAP bind passwords, SIEM tokens, authenticator app secrets and push tokens.
@@ -224,6 +282,9 @@ The first release, 2027.1.0, is in preparation. No version has been published ye
 
 ### Fixed
 
+- The Users summary's `by_department` and the list's `department` filter read only the metadata of the people
+  whose home is the organization. A member managed by another organization, whose metadata the organization
+  never sees, was counted and matched by that organization's department.
 - SonarQube's five findings, all in two scripts. The load test makes its accounts' password for each run
   instead of carrying one, and takes the accounts in turn, not at random. The Postman generator states its
   32-bit wrap, its sort order and its path pattern plainly; the collection it writes is unchanged.

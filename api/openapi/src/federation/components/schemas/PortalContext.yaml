@@ -8,8 +8,13 @@ properties:
     $ref: ./PortalBranding.yaml
   capabilities:
     type: array
+    description: What the link may set up.
     items:
       type: string
+      enum:
+        - saml
+        - scim
+        - domain_verification
   expires_at:
     type: string
     format: date-time

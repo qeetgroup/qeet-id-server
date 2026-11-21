@@ -65,7 +65,7 @@ patch:
     content:
       application/json:
         schema:
-          $ref: ../../components/schemas/SAMLConnectionCreate.yaml
+          $ref: ../../components/schemas/SAMLConnectionUpdate.yaml
   responses:
     "200":
       description: Updated, with the service-provider addresses to enter at the IdP

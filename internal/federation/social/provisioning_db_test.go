@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/invite"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/audit"
@@ -143,7 +144,8 @@ func TestSocialSignUpRefusedOnADomainAnotherOrganizationManages(t *testing.T) {
 
 // TestSocialSignUpRefusedOnACapturedDomain checks that once an organization
 // requires single sign-on on its domain, with an active connection, its social
-// providers create no account there: new people arrive through the connection.
+// providers create no account there: new people arrive through the connection,
+// and the hosted login is told single sign-on is required.
 func TestSocialSignUpRefusedOnACapturedDomain(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := provisioningService(t)
@@ -161,6 +163,14 @@ func TestSocialSignUpRefusedOnACapturedDomain(t *testing.T) {
 	requireSSO(t, organization)
 	if email, err := signUp(); !errors.Is(err, errs.ErrAuthSSORequired) || dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, email) != 0 {
 		t.Errorf("sign-up on a domain that requires single sign-on: %v; want %v and no account", err, errs.ErrAuthSSORequired)
+	}
+
+	f := newSocialFixture(t, capturing(t))
+	addProvider(t, f, organization, "corp")
+	email := dbtest.Unique("x") + "@" + domain
+	target, q := redirectQuery(t, f.signIn(t, "corp", "/social/corp/start?organization_id="+organization.String(), claims(email)))
+	if n := dbtest.Count(t, `SELECT count(*) FROM account.users WHERE email = $1`, email); target != "https://login.example.test/sign-in" || q.Get("error") != "sso_required" || q.Get("code") != "" || n != 0 {
+		t.Errorf("sign-up through the routes went to %s %v, %d accounts; want the hosted login with error=sso_required and no account", target, q, n)
 	}
 }
 
@@ -230,7 +240,8 @@ func TestSocialDoesNotAdoptAnAdministrator(t *testing.T) {
 // TestSocialSignInRefusedOnACapturedDomain checks that once an organization
 // requires single sign-on on its domain, none of its social providers signs a
 // member in there, whether their identity is linked already or would be
-// adopted by address, and nothing new is linked; a break-glass member still
+// adopted by address, and nothing new is linked; the hosted login is told single sign-on is required, with the way back to the
+// application, so it can send the person there. A break-glass member still
 // signs in.
 func TestSocialSignInRefusedOnACapturedDomain(t *testing.T) {
 	f := newSocialFixture(t, capturing(t))
@@ -255,11 +266,21 @@ func TestSocialSignInRefusedOnACapturedDomain(t *testing.T) {
 	adopted, adoptedAs := member()
 
 	requireSSO(t, organization)
-	if q := signIn(linkedAs); q.Get("code") != "" || q.Get("error") != "social" {
-		t.Errorf("a linked member's sign-in on a captured domain: %v; want error=social and no code", q)
+	if q := signIn(linkedAs); q.Get("code") != "" || q.Get("error") != "sso_required" {
+		t.Errorf("a linked member's sign-in on a captured domain: %v; want error=sso_required and no code", q)
 	}
-	if q := signIn(adoptedAs); q.Get("code") != "" {
-		t.Errorf("adopting a member on a captured domain: %v; want no code", q)
+	if q := signIn(adoptedAs); q.Get("code") != "" || q.Get("error") != "sso_required" {
+		t.Errorf("adopting a member on a captured domain: %v; want error=sso_required and no code", q)
+	}
+	returnTo := "https://app.example.test/oauth/authorize?client_id=app"
+	hosted := f.signIn(t, "corp", start+"&return_to="+url.QueryEscape(returnTo), linkedAs)
+	if target, q := redirectQuery(t, hosted); target != "https://login.example.test/sign-in" || q.Get("error") != "sso_required" || q.Get("return_to") != returnTo {
+		t.Errorf("a linked member's hosted sign-in on a captured domain went to %s %v; want the hosted login with error=sso_required and the return_to", target, q)
+	}
+	for _, c := range hosted.Result().Cookies() {
+		if c.Name == authentication.LoginSessionCookie && c.Value != "" {
+			t.Error("a refused hosted sign-in on a captured domain opened a hosted-login session")
+		}
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM account.external_identities WHERE user_id = $1`, adopted.ID); n != 0 {
 		t.Errorf("%d identities linked to a member on a captured domain, want none", n)

@@ -1,21 +1,20 @@
 type: object
+required:
+  - organization_id
+  - session_max_age
+  - session_idle_timeout
+  - max_sessions
+  - session_limit_action
+  - mfa_enforcement
+  - mfa_grace_days
+  - mfa_enforced_since
+  - step_up_window
+  - step_up_methods
+  - settings
 properties:
   organization_id:
     type: string
     format: uuid
-  password_min_length:
-    type: integer
-    deprecated: true
-    writeOnly: true
-    description: >-
-      Accepted and ignored, and never returned. Password rules are the auth
-      policy's (AuthPolicy, PUT /v1/organizations/{organizationID}/auth-policy), which
-      sign-in and the compliance checks apply.
-  password_complexity:
-    type: string
-    deprecated: true
-    writeOnly: true
-    description: Accepted and ignored, and never returned; see password_min_length.
   session_max_age:
     type: string
     example: 720h

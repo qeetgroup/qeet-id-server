@@ -15,7 +15,7 @@ get:
       content:
         application/json:
           schema:
-            $ref: ../../components/schemas/AdminPortalContext.yaml
+            $ref: ../../components/schemas/PortalContext.yaml
     "401":
       $ref: ../../../shared/responses/Unauthorized.yaml
     "429":

@@ -68,11 +68,10 @@ topic (`register.go`, `login.go`). Only three packages (rbac, organization, user
 
 **Names.** Three words say who holds what: an **account** is a person's sign-in, an **organization**
 is a customer company, and an **application** is an app an organization connects. Use them in code,
-SQL, comments and docs, with the one spelling "organization". Never add an `organization` name. The public
-contract still says organization, and changes in one change of its own: the `/v1/organizations/{organizationID}/…`
-paths, the `organization_id` JSON field and token claim, and the `organization.*` permission, event and error
-names. Leave those strings alone until then. A Microsoft Entra directory is also called a tenant;
-that is the provider's word and it stays (`allowed_idp_tenant_ids`).
+SQL, comments and docs, with the one spelling "organization". Never add a `tenant` name. The public
+contract says organization too: the `/v1/organizations/{organizationID}/…` paths, the `organization_id` JSON
+field and token claim, and the `organization.*` permission, event and error names. A Microsoft Entra directory
+is also called a tenant; that is the provider's word and it stays (`allowed_idp_tenant_ids`).
 
 ### 3. Preserve package boundaries
 
@@ -181,7 +180,7 @@ the runner records the checksum of each file it applies (`public.schema_migratio
 refuses a database whose applied migrations aren't recorded as the files this build carries: one built
 before a baseline file was edited, one migrated with the `migrate` tool, or one migrated by a build
 from before the records. To change your own unmerged migration after it ran: `make migrate-down`, then
-`make dev`. Additive first —
+`make migrate-up` (never `migrate up` with the CLI). Additive first —
 expand, migrate, contract across releases. An index on a table that already exists is built with
 `CREATE INDEX CONCURRENTLY`, alone in its file (a plain one blocks writes while it builds;
 `TestNewIndexesDontLockTheirTable` enforces it). A migration waits at most 10s for a busy table,
@@ -243,7 +242,8 @@ make dast / fuzz-api  # OWASP ZAP / Schemathesis against a running local server 
 make sonar-up/sonar   # local SonarQube Community Build, then analyse with coverage (SONAR_TOKEN)
 make db-up/db-down/db-reset      # docker compose: postgres :5001, nats :4222, mailpit :8025
 make obs-up/obs-down             # local observability: Grafana :3300, Prometheus :9090, Loki, Tempo (observability/README.md)
-make migrate-down                # roll one migration back; the server applies them at start
+make migrate-up                  # apply pending migrations without starting the API (make dev does it too)
+make migrate-down                # roll one migration back; make migrate-up applies it again
 make seed/seed-reset             # demo data into an empty database / recreate the database, then seed (development only)
 make kill                        # free a stuck :4001
 ```

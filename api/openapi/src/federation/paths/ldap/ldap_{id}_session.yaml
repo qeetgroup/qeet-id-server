@@ -47,8 +47,15 @@ post:
       content:
         application/json:
           schema:
-            type: object
-            additionalProperties: true
+            oneOf:
+              - type: object
+                required:
+                  - user_id
+                properties:
+                  user_id:
+                    type: string
+                    format: uuid
+              - $ref: ../../../shared/schemas/MFAChallenge.yaml
     "400":
       $ref: ../../../shared/responses/BadRequest.yaml
     "401":

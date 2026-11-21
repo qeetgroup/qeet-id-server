@@ -271,6 +271,8 @@ paths:
     $ref: paths/rbac/v1_organizations_{organizationID}_roles.yaml
   /v1/users/{userID}/organizations/{organizationID}/permissions:
     $ref: paths/rbac/v1_users_{userID}_organizations_{organizationID}_permissions.yaml
+  /v1/me/permissions:
+    $ref: paths/rbac/v1_me_permissions.yaml
   /v1/users/{userID}/organizations/{organizationID}/roles/{roleID}:
     $ref: paths/rbac/v1_users_{userID}_organizations_{organizationID}_roles_{roleID}.yaml
   /v1/organizations/{organizationID}/abac/policies:

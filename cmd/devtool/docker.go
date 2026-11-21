@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/migrations"
 )
 
 // testDB runs every test, the database ones too, with the race detector.
@@ -165,12 +167,44 @@ func obsDown() error {
 	return run("docker", append([]string{"compose", "--profile", "observability", "stop"}, obsServices...)...)
 }
 
-// migrateDown rolls one migration back with the migrate CLI, to try its down file. The server applies
-// migrations at start and records the files; one applied by the migrate tool is refused.
-func migrateDown() error {
-	url := envOr("DB_URL", "postgres://"+envOr("POSTGRES_USER", "postgres")+":"+envOr("POSTGRES_PASSWORD", "password")+
+// localDBURL is the local database: DB_URL, else one built from the docker compose settings.
+func localDBURL() string {
+	return envOr("DB_URL", "postgres://"+envOr("POSTGRES_USER", "postgres")+":"+envOr("POSTGRES_PASSWORD", "password")+
 		"@localhost:"+envOr("POSTGRES_PORT", "5001")+"/"+envOr("POSTGRES_DB", "qeet_id")+"?sslmode=disable")
-	return run("migrate", "-path", filepath.FromSlash("internal/platform/database/migrations"), "-database", url, "down", "1")
+}
+
+// migrateUp applies every pending migration without starting the server. It uses the server's own
+// runner, as make dev and make seed do at start, so the files it applies are recorded and the server
+// accepts the database afterwards; the migrate CLI keeps no such record.
+func migrateUp() error {
+	url := localDBURL()
+	before, err := migrations.Read(url)
+	if err != nil {
+		return fmt.Errorf("%w\nIs the local database running? Start it with make db-up", err)
+	}
+	if err := migrations.Run(url); err != nil {
+		return err
+	}
+	after, err := migrations.Read(url)
+	if err != nil {
+		return err
+	}
+	switch after.Database - before.Database {
+	case 0:
+		fmt.Printf("Nothing to apply: the database is up to date, at migration %04d.\n", after.Database)
+	case 1:
+		fmt.Printf("Applied migration %04d: the database is up to date.\n", after.Database)
+	default:
+		fmt.Printf("Applied migrations %04d to %04d: the database is up to date.\n", before.Database+1, after.Database)
+	}
+	return nil
+}
+
+// migrateDown rolls one migration back with the migrate CLI, to try its down file. Apply it again with
+// migrateUp (or make dev), never the migrate CLI: the server refuses a database that keeps no record of
+// the files that built it.
+func migrateDown() error {
+	return run("migrate", "-path", filepath.FromSlash("internal/platform/database/migrations"), "-database", localDBURL(), "down", "1")
 }
 
 // killPort stops whatever listens on port: netstat on Windows, lsof elsewhere.

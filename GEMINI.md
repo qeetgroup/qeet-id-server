@@ -45,7 +45,7 @@ database, chi router, port 4001.
 ## Commands
 
 `make help · install · dev-secrets · dev · dev-observed · build · kill · db-up · db-down · db-reset ·
-seed · seed-reset · migrate-down · test · test-db · lint · fmt · fmt-check · sqlc · sqlc-check ·
+seed · seed-reset · migrate-up · migrate-down · test · test-db · lint · fmt · fmt-check · sqlc · sqlc-check ·
 openapi · openapi-check · postman · ci · vuln · sast · secrets · scan-image · load · dast · fuzz-api ·
 sonar-up · sonar · sonar-down · obs-up · obs-down`
 

@@ -1,4 +1,16 @@
 type: object
+required:
+  - id
+  - slug
+  - name
+  - status
+  - plan
+  - region
+  - logo_url
+  - metadata
+  - created_at
+  - updated_at
+  - deletion_due_at
 properties:
   id:
     type: string
@@ -16,6 +28,7 @@ properties:
     type: string
     enum:
       - free
+      - starter
       - pro
       - enterprise
   region:
@@ -24,6 +37,11 @@ properties:
       The region this service is hosted in, where the organization's data is
       held. It is the same for every organization of a deployment and isn't a
       per-organization data-residency choice.
+  logo_url:
+    type: string
+    description: >-
+      The organization's logo, a hosted URL or a small inline data URL; empty
+      when none is set, and the console shows the name's initials.
   metadata:
     type:
       - object

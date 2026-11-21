@@ -1,6 +1,13 @@
 allOf:
   - $ref: ./EmailEditorInput.yaml
   - type: object
+    required:
+      - key
+      - name
+      - description
+      - variables
+      - custom
+      - delivery_scope
     properties:
       key:
         type: string

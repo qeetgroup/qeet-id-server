@@ -6,9 +6,12 @@ get:
     suspended, invited, with and without a second factor, new in the last 30
     days; members by when they were last seen (last_seen: today, week, month,
     older, never, with the same edges as the list's last_seen filter); owners
-    and admins without a second factor; members whose email isn't verified; and
-    members by role and by department (metadata.department). Each count equals
-    the list's total for the matching filter. Requires `user.read`.
+    and admins without a second factor; members whose email isn't verified;
+    members by role; and the organization's own people by department
+    (metadata.department), by team within its department (metadata.team) and
+    by location (metadata.location), each up to 200, largest first, and an
+    empty list when there are none. Each count equals the list's total for the
+    matching filter. Requires `user.read`.
   tags:
     - Users
   security:

@@ -35,6 +35,9 @@ get:
         application/json:
           schema:
             type: object
+            required:
+              - locked_until
+              - items
             properties:
               locked_until:
                 type:
@@ -45,6 +48,10 @@ get:
                 type: array
                 items:
                   type: object
+                  required:
+                    - at
+                    - ip
+                    - reason
                   properties:
                     at:
                       type: string

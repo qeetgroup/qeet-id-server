@@ -1,4 +1,20 @@
 type: object
+required:
+  - id
+  - organization_id
+  - event_id
+  - actor_user_id
+  - actor_email
+  - score
+  - reasons
+  - status
+  - resolved_at
+  - resolved_by
+  - created_at
+  - action
+  - resource_type
+  - ip
+  - event_at
 properties:
   id:
     type: string

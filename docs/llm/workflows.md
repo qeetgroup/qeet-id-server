@@ -79,8 +79,9 @@ user's own account); a route without one fails `TestEveryRouteNamesAnApplication
 5  regenerate                      sqlc → dbgen/
 6  service + handler
 7  tests                           including organization-scoping coverage
-8  verify down migration           make migrate-down, then make dev (it applies the migration again)
-9  changed it after it ran?        the same: make migrate-down, then make dev (only while it is unmerged)
+8  apply it                        make migrate-up (or make dev, which applies it at start)
+9  verify down migration           make migrate-down, then make migrate-up (it applies the migration again)
+10 changed it after it ran?        the same: make migrate-down, edit, make migrate-up (only while it is unmerged)
 ```
 
 **Never edit an applied migration.** Fix forward with a new pair.

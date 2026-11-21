@@ -64,6 +64,14 @@ get:
         application/json:
           schema:
             type: object
+            required:
+              - items
+              - total
+              - limit
+              - summary
+              - categories
+              - connections
+              - remediations
             properties:
               next_cursor:
                 $ref: ../../../shared/schemas/NextCursor.yaml
@@ -77,6 +85,12 @@ get:
                 type: integer
               summary:
                 type: object
+                required:
+                  - open
+                  - critical
+                  - warning
+                  - retried
+                  - impacted_users
                 properties:
                   open:
                     type: integer
@@ -94,6 +108,9 @@ get:
                 type: array
                 items:
                   type: object
+                  required:
+                    - key
+                    - count
                   properties:
                     key:
                       type: string
@@ -103,6 +120,9 @@ get:
                 type: array
                 items:
                   type: object
+                  required:
+                    - key
+                    - count
                   properties:
                     key:
                       type: string

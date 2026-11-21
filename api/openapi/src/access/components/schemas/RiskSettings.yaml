@@ -1,4 +1,13 @@
 type: object
+required:
+  - medium_threshold
+  - high_threshold
+  - force_mfa_at_level
+  - impossible_travel_enabled
+  - min_travel_hours
+  - device_reputation_enabled
+  - country_header_configured
+  - country_last_seen_at
 properties:
   medium_threshold:
     type: number

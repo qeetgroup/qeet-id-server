@@ -53,6 +53,9 @@ get:
         application/json:
           schema:
             type: object
+            required:
+              - allowed
+              - decided_by
             properties:
               allowed:
                 type: boolean

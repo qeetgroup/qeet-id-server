@@ -1,4 +1,17 @@
 type: object
+required:
+  - id
+  - email
+  - display_name
+  - avatar_url
+  - team
+  - reason
+  - source
+  - risk
+  - review
+  - suspended_at
+  - last_sign_in
+  - can_manage
 properties:
   id:
     type: string
