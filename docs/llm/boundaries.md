@@ -39,7 +39,7 @@ Do not implement these here, and do not edit these repositories from a task scop
 | PRD, TAD, product ADRs, research                             | `qeet-id-files`                                       |
 | Design system                                                | `qeetrix-ui`                                          |
 | Organization standards                                       | `qeet-context` (L0)                                   |
-| Product architecture and flows                               | `qeet-id-files` (L1)                                  |
+| Product architecture and flows                               | `qeet-id-context` (L1)                                |
 
 `docker-compose.yml` here is **local development dependencies only** — it is not a deployment
 artifact.
@@ -137,7 +137,7 @@ decides. If hiding a button is the only thing preventing an action, that is a de
 ## Requires cross-repository coordination
 
 For _what review_ a change needs, see the safe change matrix in [context.md](context.md#safe-change-matrix).
-For product-level fan-out, consult `qeet-id-files/TAD.md` §15. Before starting any of these:
+For product-level fan-out, consult `qeet-id-context/CHANGE-MATRIX.md`. Before starting any of these:
 
 | Change                           | Reaches                                                         |
 | -------------------------------- | --------------------------------------------------------------- |
@@ -156,7 +156,7 @@ For product-level fan-out, consult `qeet-id-files/TAD.md` §15. Before starting 
 ## Cross-repository relationships
 
 ```text
-qeet-context (L0)  →  qeet-id-files (L1)  →  qeet-id-server (this repository)
+qeet-context (L0)  →  qeet-id-context (L1)  →  qeet-id-server (this repository)
                                                       │  publishes the API contract
         ┌──────────────┬──────────────┬───────────────┼──────────────┬──────────────┐
         ▼              ▼              ▼               ▼              ▼              ▼

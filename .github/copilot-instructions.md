@@ -10,7 +10,7 @@ module `github.com/qeetgroup/qeet-id-server`, chi router, PostgreSQL via pgx + s
 
 **All enforcement lives here.** UIs present; this repository decides.
 
-Context: **L0** `qeet-context` (organization) → **L1** `qeet-id-files` (product) → **L2** this
+Context: **L0** `qeet-context` (organization) → **L1** `qeet-id-context` (product) → **L2** this
 repository → source.
 
 ## Package boundaries — enforced by a test

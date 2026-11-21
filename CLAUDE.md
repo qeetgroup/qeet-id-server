@@ -21,7 +21,7 @@ CLAUDE.md  →  AGENTS.md  →  docs/llm/*
 | [docs/llm/workflows.md](docs/llm/workflows.md)               | Step-by-step for common changes       |
 
 Parent context: **L0** `qeetgroup/qeet-context` (organization standards) · **L1**
-`qeetgroup/qeet-id-files` (Qeet ID product architecture). Read them when a task needs
+`qeetgroup/qeet-id-context` (Qeet ID product architecture). Read them when a task needs
 organization or product understanding; this repository does not restate them.
 
 ## The five things most likely to trip you up here
@@ -73,4 +73,4 @@ Stop and report if a task would weaken a security control, bypass `EnforceOrgani
 applied migration, change JWT claims or signing, change SCIM/SAML/webhook contracts, restructure the
 chi route tree, or require modifying another repository.
 
-Cross-repository impact: `qeet-id-files/TAD.md` §15.
+Cross-repository impact: `qeet-id-context/CHANGE-MATRIX.md`.
