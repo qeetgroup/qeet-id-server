@@ -281,14 +281,15 @@ one-time [release checks](docs/roadmap/release-checks.md), and it is planned for
 
 ## What CI enforces
 
-| Workflow          | Runs                                                                                                                                                                                                                                                                                                                                   |
-| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ci.yml` · Verify | On pull requests into `develop` and `main` (a release reaches `main` by one): compile (`go build ./...`, `go vet ./...`), format and lint (`golangci-lint` v2.15.0 on the whole tree, gofmt and goimports included), dependency audit (`govulncheck ./cmd/... ./internal/...`), secret scan (gitleaks over the pull request's commits) |
-| `candidate.yml`   | On push to `release/**` or `hotfix/**`: publish `ghcr.io/qeetgroup/qeet-id-server:sha-<commit>` (amd64+arm64) with an SBOM and SLSA provenance attached, for the Qeet ID Kit (`qeet-id-kit`). Base images are pinned by digest and every action by commit SHA. Never computes an RC number                                             |
-| `deploy.yml`      | On a merged `release/…` or `hotfix/…` pull request into `main`: copy that branch's tested candidate image to ECR as `vYEAR.MONTH.N` (never rebuilt), roll the host via OIDC and SSM, then tag. Any other push to `main` deploys nothing. A manual run with `rollback_to` rolls back                                                    |
+| Workflow                  | Runs                                                                                                                                                                                                                                                                                                               |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ci.yml` · Verify         | On pull requests into `develop`, `release/**` and `main`: compile (`go build ./...`, `go vet ./...`), format and lint (`golangci-lint` v2.15.0 on the whole tree, gofmt and goimports included), dependency audit (`govulncheck ./cmd/... ./internal/...`), secret scan (gitleaks over the pull request's commits) |
+| `ci.yml` · Database tests | On pull requests into `release/**` and `main`: every test, the database ones too, with the race detector, on one throwaway PostgreSQL (`go run ./cmd/devtool test-db`, as `make test-db`)                                                                                                                          |
+| `candidate.yml`           | On push to `release/**` or `hotfix/**`: publish `ghcr.io/qeetgroup/qeet-id-server:sha-<commit>` (amd64+arm64) with an SBOM and SLSA provenance attached, for the Qeet ID Kit (`qeet-id-kit`). Base images are pinned by digest and every action by commit SHA. Never computes an RC number                         |
+| `deploy.yml`              | On a merged `release/…` or `hotfix/…` pull request into `main`: copy that branch's tested candidate image to ECR as `vYEAR.MONTH.N` (never rebuilt), roll the host via OIDC and SSM, then tag. Any other push to `main` deploys nothing. A manual run with `rollback_to` rolls back                                |
 
-The unit and database tests, the generated-SQL check and `gosec` are not in CI: they run locally
-before every push (`make ci`). On release day, once the deploy is live: delete the release (or hotfix) branch and merge `main` into `develop`.
+The generated-SQL check and `gosec` are not in CI, nor are the tests on pull requests into `develop`: they run
+locally before every push (`make ci`). On release day, once the deploy is live: delete the release (or hotfix) branch and merge `main` into `develop`.
 The tests include the OpenAPI route-coverage and document-validity gates and the static
 guards: organization filter (`internal/platform/database/organizationguard`), pool use inside a transaction
 (`…/txguard`), error-code statuses and `.env.example` completeness. An accepted `gosec` finding
@@ -306,8 +307,9 @@ make test-db               # if you touched SQL, organization scoping or sign-in
 git diff                   # no secrets, no unrelated changes, no generated junk
 ```
 
-Before a push to `develop`, a release or a hotfix branch, run the full local gate, `make ci`: CI
-runs only Verify, which runs the API contract checks but no other tests, so the rest are yours to run.
+Before a push to `develop`, a release or a hotfix branch, run the full local gate, `make ci`: on a
+pull request into `develop` CI runs only Verify, which runs the API contract checks but no other tests, so the rest
+are yours to run.
 
 ---
 
