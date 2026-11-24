@@ -1,13 +1,13 @@
 name: ci
 
-# Verify, on pull requests into develop and main: the code compiles (build and vet), is formatted and linted
+# Verify, on pull requests into develop, release/* and main: the code compiles (build and vet), is formatted and linted
 # (golangci-lint, the database tests included), has no known vulnerability in what ships (govulncheck), and the pull
 # request adds no secret (gitleaks). The unit and database tests, the generated-SQL check and gosec run locally before
 # every push (make ci, AGENTS.md "Before you finish").
 
 on:
   pull_request:
-    branches: [develop, main]
+    branches: [develop, "release/**", main]
 
 concurrency:
   group: ci-${{ github.event.pull_request.number }}
